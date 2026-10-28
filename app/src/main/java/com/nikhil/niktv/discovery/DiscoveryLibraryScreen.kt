@@ -18,7 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.ui.*
 
-internal enum class DiscoveryLibraryDestination { LIVE_TV, MY_LIST }
+internal enum class DiscoveryLibraryDestination { LIVE_TV, MY_LIST, PROVIDERS }
 
 internal class DiscoveryLibraryOptions(val live: Boolean)
 internal val LocalDiscoveryLibraryOptions = staticCompositionLocalOf<DiscoveryLibraryOptions?> { null }

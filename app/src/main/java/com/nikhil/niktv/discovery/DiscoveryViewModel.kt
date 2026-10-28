@@ -149,6 +149,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         }
     }
     suspend fun actorCredits(person: DiscoveryPerson, stale: (List<DiscoveryCard>) -> Unit) = repository.actorCredits(person, stale)
+    fun openRootDetails(card: DiscoveryCard) { stack.clear(); openDetails(card) }
     fun openDetails(card: DiscoveryCard) { stack.add(card); showDetails(card) }
     fun closeDetails() {
         if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex)

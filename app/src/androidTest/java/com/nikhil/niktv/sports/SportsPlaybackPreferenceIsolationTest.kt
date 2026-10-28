@@ -5,6 +5,7 @@ import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.ui.PlaybackDomain
 import com.nikhil.niktv.ui.resolvePlayerEngine
+import com.nikhil.niktv.sports.player.resolvePlayerEngine as resolveSportsPlayerEngine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -25,8 +26,8 @@ class SportsPlaybackPreferenceIsolationTest {
         val oldCount = fallbacks.getInt(key, 0)
         try {
             fallbacks.edit().putInt(key, 2).commit()
-            assertEquals(PlaybackEngine.VLC, PlaybackEngine.AUTO.resolvePlayerEngine(context, "isolation-fixture", PlaybackDomain.IPTV))
-            assertEquals(PlaybackEngine.MEDIA3, PlaybackEngine.AUTO.resolvePlayerEngine(context, "isolation-fixture", PlaybackDomain.SPORTS))
+            assertEquals(PlaybackEngine.VLC, PlaybackEngine.AUTO.resolvePlayerEngine(context, "isolation-fixture"))
+            assertEquals(PlaybackEngine.MEDIA3, PlaybackEngine.AUTO.resolveSportsPlayerEngine(context, "isolation-fixture", PlaybackDomain.SPORTS))
             sports.setPlaybackEngine(PlaybackEngine.FLOW)
             sports.setPlayerControlsTimeoutSeconds(11)
             assertEquals(oldIptvEngine, iptv.playbackEngine.first())

@@ -20,8 +20,11 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
     val back = { if (!vm.back()) onClose() }
     BackHandler(onBack = back)
-    var sport by rememberSaveable { mutableStateOf("All sports") }
-    var status by rememberSaveable { mutableStateOf("Now & next") }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val browsePreferences = remember(context) { SportsBrowsePreferences(context) }
+    var defaults by remember { mutableStateOf(browsePreferences.read()) }
+    var sport by rememberSaveable { mutableStateOf(defaults.sport) }
+    var status by rememberSaveable { mutableStateOf(defaults.status) }
     var search by rememberSaveable { mutableStateOf("") }
     var lastSource by rememberSaveable(state.event?.slug) { mutableStateOf<Int?>(null) }
     val eventsScroll = rememberLazyGridState()
@@ -62,5 +65,8 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
     }
     pages.SaveableStateProvider(state.event?.slug?.let { "event:$it" } ?: "catalogue") { SportsBrowseContent(state, now, sport, { sport = it }, status, { status = it }, search, { search = it },
         back, { state.event?.let(vm::open) ?: vm.refresh() }, vm::open,
-        { lastSource = it; vm.play(it) }, eventsScroll, streamsScroll, lastSource) }
+        { lastSource = it; vm.play(it) }, eventsScroll, streamsScroll, lastSource,
+        defaults = defaults,
+        saveDefaultSport = { browsePreferences.setSport(it); defaults = browsePreferences.read(); sport = it },
+        saveDefaultStatus = { browsePreferences.setStatus(it); defaults = browsePreferences.read(); status = it }) }
 }

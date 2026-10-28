@@ -27,8 +27,7 @@ internal class MpvPlayerAdapter(
     context: Context,
     private val media: PlayingMedia,
     startPosition: Long,
-    @androidx.annotation.VisibleForTesting private val liveStartPosition: String = "0",
-    private val playbackOptionsOverride: Map<String, String>? = null
+    @androidx.annotation.VisibleForTesting private val liveStartPosition: String = "0"
 ) : SimpleBasePlayer(Looper.getMainLooper()) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -251,7 +250,7 @@ internal class MpvPlayerAdapter(
         return enqueueNative {
             val engine = mpv ?: (MPVLib.create(appContext) ?: throw IllegalStateException("MPV initialization failed")).also {
                 mpv = it
-                (playbackOptionsOverride ?: mpvPlaybackOptions(live)).forEach { (key, value) ->
+                mpvPlaybackOptions(live).forEach { (key, value) ->
                     check(it.setOptionString(key, value) >= 0) { "Unsupported MPV option: $key" }
                 }
                 check(it.setOptionString("tls-ca-file", mpvTlsCertificateFile(appContext).path) >= 0)

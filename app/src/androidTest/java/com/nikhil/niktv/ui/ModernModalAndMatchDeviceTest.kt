@@ -31,7 +31,7 @@ class ModernModalAndMatchDeviceTest {
             val bar = remember { FocusRequester() }
             val live = remember { FocusRequester() }
             Row(Modifier.width(650.dp).initialFocusEntry(bar)) {
-                PlaybackProgressBar(20_000, 120_000, { calls.add(it) }, "live-navigation",
+                com.nikhil.niktv.sports.player.PlaybackProgressBar(20_000, 120_000, { calls.add(it) }, "live-navigation",
                     modifier = Modifier.weight(1f).focusRequester(bar),
                     onNavigateRight = { live.requestFocus() })
                 NikTvActionButton("Watch live fixture", modifier = Modifier.focusRequester(live)
@@ -87,7 +87,7 @@ class ModernModalAndMatchDeviceTest {
         fixture({
             val bar = remember { FocusRequester() }
             Box(Modifier.width(600.dp).initialFocusEntry(bar)) {
-                PlaybackProgressBar(0L, 7_200_000L, { calls.add(it) }, "fixture-seek", modifier = Modifier.focusRequester(bar))
+                com.nikhil.niktv.sports.player.PlaybackProgressBar(0L, 7_200_000L, { calls.add(it) }, "fixture-seek", modifier = Modifier.focusRequester(bar))
             }
         }) {
             Thread.sleep(250)

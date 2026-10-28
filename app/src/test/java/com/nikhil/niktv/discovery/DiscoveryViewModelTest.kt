@@ -15,6 +15,17 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryViewModelTest {
+    @Test fun openingProviderRootReplacesPreviousDetailStack() {
+        val vm = DiscoveryViewModel(app, Source())
+        vm.bind("providers", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.openRootDetails(card(1)); pump()
+        vm.openDetails(card(2)); pump()
+        vm.openRootDetails(card(3)); pump()
+        assertEquals(3, vm.state.value.detail?.id)
+        vm.closeDetails(); pump()
+        assertNull(vm.state.value.detail)
+    }
+
     @Test fun clearingFocusedPresentationRejectsLateProviderMetadataAndPreservesFeedAndHero() {
         val old = CompletableDeferred<DiscoveryDetails>()
         val heroResult = CompletableDeferred<DiscoveryDetails>()

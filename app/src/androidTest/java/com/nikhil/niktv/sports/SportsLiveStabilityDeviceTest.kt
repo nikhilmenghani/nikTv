@@ -151,8 +151,8 @@ class SportsLiveStabilityDeviceTest {
                         instrumentation.runOnMainSync { activity.setContent {}; activity.finish() }
                         instrumentation.waitForIdleSync()
                         val vlcDrained = CompletableDeferred<Unit>(); val mpvDrained = CompletableDeferred<Unit>()
-                        com.nikhil.niktv.ui.NativePlaybackWorker.scope.launch { vlcDrained.complete(Unit) }
-                        com.nikhil.niktv.ui.MpvNativePlaybackWorker.scope.launch { mpvDrained.complete(Unit) }
+                        com.nikhil.niktv.sports.player.NativePlaybackWorker.scope.launch { vlcDrained.complete(Unit) }
+                        com.nikhil.niktv.sports.player.MpvNativePlaybackWorker.scope.launch { mpvDrained.complete(Unit) }
                         withTimeout(15_000) { vlcDrained.await(); mpvDrained.await() }
                     }
                 }

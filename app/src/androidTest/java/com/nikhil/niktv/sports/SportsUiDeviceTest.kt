@@ -53,6 +53,53 @@ class SportsUiDeviceTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
     }
 
+    @Test fun heldFiltersSaveDefaultsWithoutSelectingThePopupOnRelease() {
+        val activity = host()
+        val context = instrumentation.targetContext
+        val prefs = SportsBrowsePreferences(context)
+        val previous = prefs.read()
+        val now = Instant.parse("2026-10-27T10:00:00Z")
+        val event = SportsEvent("1", "Cricket fixture", "fixture", "Cricket", "Fixture", "", "A", "B",
+            now.minusSeconds(60), now.plusSeconds(3600), emptyList())
+        var saves = 0
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                var defaults by remember { mutableStateOf(SportsBrowseDefaults()) }
+                var sport by remember { mutableStateOf("All sports") }
+                var status by remember { mutableStateOf("Now & next") }
+                SportsBrowseContent(SportsState(events = listOf(event), loading = false), now,
+                    sport, { sport = it }, status, { status = it }, "", {}, {}, {}, {}, {},
+                    defaults = defaults,
+                    saveDefaultSport = { prefs.setSport(it); defaults = prefs.read(); sport = it; saves++ },
+                    saveDefaultStatus = { prefs.setStatus(it); defaults = prefs.read(); status = it; saves++ })
+            } } }
+            fun hold(label: String) {
+                await("Filter is available") { find(label) != null }
+                var node = find(label)
+                repeat(8) { if (node?.isFocusable != true) node = node?.parent }
+                assertTrue(node?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
+                instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER))
+                SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 100L)
+                instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER))
+                await("Long press opens default menu") { find("Set as default") != null }
+            }
+            hold("Live")
+            assertEquals("Release must not activate popup action", 0, saves)
+            await("Default action is focused") { focused("Set as default") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Live saved") { saves == 1 && find("Set as default") == null }
+            await("Focus returns to held filter") { focused("Live") }
+            hold("Cricket")
+            assertEquals(1, saves)
+            click("Set as default")
+            await("Cricket saved") { saves == 2 && find("Set as default") == null }
+            assertEquals(SportsBrowseDefaults("Cricket", "Live"), SportsBrowsePreferences(context).read())
+        } finally {
+            prefs.setSport(previous.sport); prefs.setStatus(previous.status)
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test fun sportsCatalogueAndSourceCardsSupportTouchAndDpadWithoutBackgroundPlayback() {
         val activity = host()
         val now = Instant.parse("2026-10-27T10:00:00Z")

@@ -14,10 +14,10 @@ class LiveWindowSeekingTest {
         assertFalse(liveWindowCanSeek(true, true, 0))
         assertFalse(liveWindowCanSeek(true, true, 20_000, liveTimeline = false))
     }
-    @Test fun bothProviderTypesCanOptInWithoutEnablingOfflineOrVodSeekingPolicy() {
-        assertTrue(providerLiveWindowSeekingEnabled(com.nikhil.niktv.model.CatalogType.LIVE_TV, false))
-        assertFalse(providerLiveWindowSeekingEnabled(com.nikhil.niktv.model.CatalogType.LIVE_TV, true))
-        assertFalse(providerLiveWindowSeekingEnabled(com.nikhil.niktv.model.CatalogType.MOVIES, false))
-        assertFalse(providerLiveWindowSeekingEnabled(com.nikhil.niktv.model.CatalogType.SERIES, false))
+    @Test fun ordinaryIptvMediaDoesNotEnableLiveWindowSeeking() {
+        val media = com.nikhil.niktv.model.PlayingMedia(
+            com.nikhil.niktv.model.MediaItem("fixture", "Fixture", null, null),
+            "https://example.test/live", com.nikhil.niktv.model.CatalogType.LIVE_TV)
+        assertFalse(media.allowLiveWindowSeeking)
     }
 }

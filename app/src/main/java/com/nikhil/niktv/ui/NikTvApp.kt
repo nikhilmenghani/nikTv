@@ -534,6 +534,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         LocalPlayAlternateSource provides vm::openAlternateSources,
         LocalRefreshProviderCategories provides { type -> vm.refreshProviderCategories(type) },
         com.nikhil.niktv.discovery.LocalOpenDiscovery provides vm::openDiscovery,
+        com.nikhil.niktv.discovery.LocalOpenWatchProviders provides vm::openWatchProviders,
         com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode provides vm::openDiscoveryEpisode,
         com.nikhil.niktv.discovery.LocalDownloadDiscoveryEpisode provides vm::downloadDiscoveryEpisode,
         LocalChooseIptvMovieVersion provides { movie -> vm.chooseTmdbMovieVersion(com.nikhil.niktv.data.TrendingMovie(movie)) },

@@ -11,7 +11,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 
 /** No portal client is available here: speculative discovery cannot search/open provider streams. */
-internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClient = TmdbClient()) : DiscoveryDataSource {
+internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClient = TmdbClient()) : DiscoveryDataSource, WatchProvidersSource {
     private val cache = DiscoveryCache(java.io.File(context.applicationContext.cacheDir, "discovery_preview"))
     companion object { private val slots = Semaphore(2) }
     private val json = Json { ignoreUnknownKeys = true }
@@ -20,6 +20,28 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
         stale: (T) -> Unit = {}, load: suspend () -> T): T {
         return cache.load(key, ttl, serializer, stale) { slots.withPermit { load() } }
     }
+    override suspend fun regions(): List<WatchRegion> = cached("watch-regions-v1", DiscoveryCache.DETAIL_TTL,
+        ListSerializer(WatchRegion.serializer())) {
+        tmdb.discoveryJson("/watch/providers/regions")["results"]?.jsonArray.orEmpty().mapNotNull {
+            val o = it.jsonObject
+            o.string("iso_3166_1")?.let { code -> WatchRegion(code, o.string("english_name") ?: code) }
+        }.sortedBy { it.name }
+    }
+    override suspend fun providers(region: String, series: Boolean, refresh: Boolean): List<WatchProvider> =
+        cached("watch-providers-v1:$region:$series", if (refresh) 0L else DiscoveryCache.DETAIL_TTL, ListSerializer(WatchProvider.serializer())) {
+            val root = tmdb.discoveryJson("/watch/providers/${if (series) "tv" else "movie"}", mapOf("watch_region" to region))
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { parseWatchProviders(root) }
+        }
+    override suspend fun titles(region: String, series: Boolean, provider: Int, page: Int,
+        stale: (WatchProviderPage) -> Unit, refresh: Boolean): WatchProviderPage =
+        cached("watch-titles-v1:$region:$series:$provider:$page", if (refresh) 0L else DiscoveryCache.FEED_TTL, WatchProviderPage.serializer(), stale) {
+            val (path, query) = watchProviderRequest(region, series, provider, page)
+            val root = tmdb.discoveryJson(path, query)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                WatchProviderPage(cards(root, series), root["page"]?.jsonPrimitive?.intOrNull ?: page,
+                    root["total_pages"]?.jsonPrimitive?.intOrNull ?: page)
+            }
+        }.let { it.copy(cards = it.cards.filter { card -> card.released() }) }
     override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> =
         cached("feed-v4:${section.name}", DiscoveryCache.FEED_TTL, ListSerializer(DiscoveryCard.serializer()), stale) {
             val (path, query) = discoveryFeedRequest(section)

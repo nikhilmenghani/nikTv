@@ -192,7 +192,6 @@ class IptvProviderStabilityDeviceTest {
                             onPlayNext = { unexpectedNavigation.incrementAndGet() },
                             onProgress = { _, _, _ -> }, playbackEngine = engine,
                             controlsTimeoutSeconds = 0, startFullscreen = true,
-                            showLiveRecordingAndGuide = false,
                             onVideoFrameRendered = { firstFrame.compareAndSet(-1, SystemClock.elapsedRealtime() - started) },
                             onVideoFramesRendered = { frameCount.set(it) })
                     }

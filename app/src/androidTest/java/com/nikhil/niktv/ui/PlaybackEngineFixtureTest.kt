@@ -289,12 +289,16 @@ class PlaybackEngineFixtureTest {
                             onPlayPrevious = { previousCalls.incrementAndGet(); index.intValue = if (live) 1 - selected else (selected - 1).coerceAtLeast(0) },
                             onPlayNext = { nextCalls.incrementAndGet(); index.intValue = if (live) 1 - selected else (selected + 1).coerceAtMost(1) },
                             onProgress = { _, _, _ -> }, playbackEngine = engine, controlsTimeoutSeconds = 0,
-                            startFullscreen = true, showLiveRecordingAndGuide = false,
+                            startFullscreen = true,
                             onVideoFrameRendered = { frames.incrementAndGet(); selectionFrames[selected].incrementAndGet()
                                 firstFrameAt.compareAndSet(-1L, SystemClock.elapsedRealtime() - started) })
                     } } }
                     await("$label first frame", 25_000) { assertStabilityNoError(label, retries); frames.get() > 0 }
                     showStabilityControls(activity, queue[0].title)
+                    if (type == CatalogType.LIVE_TV) {
+                        assertNull("Baseline IPTV must not expose Sports DVR controls", control("Watch live"))
+                        assertNull("Baseline IPTV live does not rewind", control("Back 10 seconds"))
+                    }
                     if (type != CatalogType.LIVE_TV) await("$label restores its four-second resume") { (shownPosition() ?: -1) >= 4 }
                     nativeStart = shownPosition()
                     val samples = sampleAdvancingSyntheticVideo(label, if (type == CatalogType.LIVE_TV) 12 else 2, retries)
@@ -455,7 +459,7 @@ class PlaybackEngineFixtureTest {
                 allowLiveWindowSeeking = true)
             main { activity.setContent {
                 androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
-                    PlayerScreen(media, onBack = {}, onRetry = { reconnects.incrementAndGet() },
+                    com.nikhil.niktv.sports.player.PlayerScreen(media, playbackDomain = PlaybackDomain.SPORTS, onBack = {}, onRetry = { reconnects.incrementAndGet() },
                         onRetryAlternateDecoder = { reconnects.incrementAndGet() },
                         onPlaybackAuthorizationFailure = { reconnects.incrementAndGet() },
                         onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
@@ -666,7 +670,7 @@ class PlaybackEngineFixtureTest {
         }
     }
 
-    @Test fun iptvWindowSeekingKeepsNextPreviousAndStartsEachChannelLive() {
+    @Test fun sportsWindowSeekingKeepsNextPreviousAndStartsEachSourceLive() {
         check(context.packageName.endsWith(".regression"))
         for ((engine, profile) in listOf(com.nikhil.niktv.model.PlaybackEngine.MEDIA3 to "fixture-wio", com.nikhil.niktv.model.PlaybackEngine.FLOW to "fixture-xtream")) {
             val server = FixtureServer()
@@ -681,8 +685,8 @@ class PlaybackEngineFixtureTest {
                     val media = remember(index) { PlayingMedia(queue[index], "${server.base}/live-dvr?channel=$index", CatalogType.LIVE_TV,
                         previousEpisode = queue[1 - index], nextEpisode = queue[1 - index], episodeQueue = queue,
                         profileKey = profile, progressKey = "$profile:$index", playbackFormat = "HLS",
-                        allowLiveWindowSeeking = providerLiveWindowSeekingEnabled(CatalogType.LIVE_TV, false)) }
-                    PlayerScreen(media, onBack = {}, onRetry = { retries.incrementAndGet() }, onRetryAlternateDecoder = { retries.incrementAndGet() },
+                        allowLiveWindowSeeking = true) }
+                    com.nikhil.niktv.sports.player.PlayerScreen(media, playbackDomain = PlaybackDomain.SPORTS, onBack = {}, onRetry = { retries.incrementAndGet() }, onRetryAlternateDecoder = { retries.incrementAndGet() },
                         onPlaybackAuthorizationFailure = { retries.incrementAndGet() }, onPlayPrevious = { selected.intValue = 1 - index },
                         onPlayNext = { selected.intValue = 1 - index }, onProgress = { _, _, _ -> },
                         controlsTimeoutSeconds = 30, playbackEngine = engine, startFullscreen = true,

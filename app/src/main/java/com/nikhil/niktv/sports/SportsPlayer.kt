@@ -12,7 +12,7 @@ import androidx.media3.common.util.UnstableApi
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.PlaybackStreamDrm
 import com.nikhil.niktv.model.PlayingMedia
-import com.nikhil.niktv.ui.PlayerScreen
+import com.nikhil.niktv.sports.player.PlayerScreen
 import com.nikhil.niktv.ui.findActivity
 import androidx.compose.ui.platform.LocalContext
 import java.util.Base64

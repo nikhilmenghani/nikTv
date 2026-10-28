@@ -84,6 +84,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
     library: DiscoveryLibraryDestination? = null, searchActive: Boolean = false) {
+    val providers = LocalOpenWatchProviders.current
     val tabs = rememberScrollState()
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -121,6 +122,9 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                             onFocus = headerFocus) { classic("Live TV") }
+                        DiscoveryAction("Providers", selected = library == DiscoveryLibraryDestination.PROVIDERS, horizontalPadding = 12.dp,
+                            modifier = if (library == DiscoveryLibraryDestination.PROVIDERS) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
+                            onFocus = headerFocus, onClick = providers)
                         DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.MY_LIST) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                             onFocus = headerFocus) { classic("My List") }

@@ -55,6 +55,7 @@ data class NikTvState(
     val alternateSources: AlternateSourcePickerState? = null,
     val tmdbIptvLookupMiss: TmdbIptvLookupMiss? = null,
     val discoverySurface: DashboardSurface? = null,
+    val watchProvidersOpen: Boolean = false,
     val discoveryNavigationId: Long = 0,
     val discoveryMatchCounts: Map<String, Int> = emptyMap(),
     val parentalControlsEnabled: Boolean = true,
@@ -450,7 +451,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 savedProfile = session.profile,
                 homeOpen = true,
                 discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()),
-                discoverySurface = DashboardSurface.HOME.takeIf { com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()) },
+                watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME.takeIf { com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()) },
                 favoritesOpen = false,
                 settingsOpen = false,
                 offlineDownloadsOpen = false,
@@ -7118,7 +7119,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     media = item,
                     url = url,
                     catalogType = type,
-                    allowLiveWindowSeeking = providerLiveWindowSeekingEnabled(type, offlineUrl != null),
                     previousEpisode = previousItem,
                     nextEpisode = nextItem,
                     series = series,
@@ -8059,7 +8059,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             searchQuery = "", searchResults = emptyList(), searchLocalLoading = false, searchServerLoading = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true,
             discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()),
-            discoverySurface = DashboardSurface.HOME.takeIf { com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()) }, offlineDownloadsOpen = false,
+            watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME.takeIf { com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()) }, offlineDownloadsOpen = false,
             categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList(),
@@ -8193,10 +8193,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         searchSeriesReturn = null
         cancelPendingPlayback()
         com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.setEnabled(getApplication(), true)
-        _state.update { it.copy(discoveryExperienceEnabled = true, discoverySurface = surface,
+        _state.update { it.copy(discoveryExperienceEnabled = true, discoverySurface = surface, watchProvidersOpen = false,
             discoveryNavigationId = it.discoveryNavigationId + 1, homeOpen = true, favoritesOpen = false,
             settingsOpen = false, searchOpen = false, offlineDownloadsOpen = false,
             selectedSeries = null, modernTmdbSection = null, modernIptvCategory = null) }
+    }
+    fun openWatchProviders() {
+        openDiscovery(DashboardSurface.HOME)
+        _state.update { it.copy(watchProvidersOpen = true) }
     }
     fun closeDiscovery() = _state.update { it.copy(discoverySurface = null) }
 

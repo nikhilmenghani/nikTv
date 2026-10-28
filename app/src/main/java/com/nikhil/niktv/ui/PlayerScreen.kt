@@ -292,11 +292,10 @@ private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
 
 internal fun PlaybackEngine.resolvePlayerEngine(
     context: Context,
-    playbackScope: String,
-    domain: PlaybackDomain = PlaybackDomain.IPTV
+    playbackScope: String
 ): PlaybackEngine = when (this) {
     PlaybackEngine.AUTO ->
-        if (domain == PlaybackDomain.IPTV && PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
+        if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
         else PlaybackEngine.MEDIA3
     PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
     PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
@@ -347,12 +346,8 @@ fun PlayerScreen(
     alternateSourceChooserOpen: Boolean = false,
     onReauthenticate: ((Long) -> Unit)? = null,
     reauthenticating: Boolean = false,
-    showLiveRecordingAndGuide: Boolean = true,
     onVideoFrameRendered: () -> Unit = {},
-    onVideoFramesRendered: ((Int) -> Unit)? = null,
-    onManualRetry: ((Long) -> Unit)? = null,
-    playbackDomain: PlaybackDomain = PlaybackDomain.IPTV,
-    onTerminalPlaybackFailure: (() -> Unit)? = null
+    onVideoFramesRendered: ((Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val introSettings = rememberIntroSkipSettings(media)
@@ -436,22 +431,17 @@ fun PlayerScreen(
         PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
-        PlaybackEngine.AUTO -> PlaybackEngine.AUTO.resolvePlayerEngine(context, playbackScope, playbackDomain)
+        PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
 
     val requestedEngine = sessionEngineOverride ?: configuredEngine
 
     val effectiveEngine = if (media.nativeSabr != null || media.separateAudioUrl != null ||
-        (media.streamDrm != null && !requestedEngine.isMedia3Player()) ||
 
         (requestedEngine == PlaybackEngine.VLC && vlcHeaderOptions(media.streamRequestHeaders) == null)) PlaybackEngine.MEDIA3 else requestedEngine
-    val displayedPlayerChoice = if (media.streamDrm != null && selectedPlayerChoice.pickerChoice() !in PROTECTED_PLAYER_ENGINES)
-        effectiveEngine else selectedPlayerChoice
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
-            playbackDomain = playbackDomain,
-            onTerminalPlaybackFailure = onTerminalPlaybackFailure,
             introSettings = introSettings,
             initialResumePosition = engineSwitchResumePosition,
             onBack = onBack,
@@ -480,7 +470,6 @@ fun PlayerScreen(
             initialSubtitleDelayMs = subtitleDelayMs,
             initialExternalSubtitleFile = externalSubtitleFile,
             onRetry = onRetry,
-            onManualRetry = onManualRetry.takeIf { playbackDomain == PlaybackDomain.SPORTS },
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             onReauthenticate = onReauthenticate,
             reauthenticating = reauthenticating,
@@ -502,7 +491,7 @@ fun PlayerScreen(
                 selectedPlayerChoice = selectedEngine
                 engineSwitchResumePosition = playbackRestartPosition(media.catalogType, position)
                 onPlaybackEngineChanged(selectedEngine)
-                sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope, playbackDomain)
+                sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
             },
             configuredEngine = selectedPlayerChoice,
             focusPlayerSwitchOnEnter = restorePlayerSwitchFocus,
@@ -546,8 +535,6 @@ fun PlayerScreen(
             vlcHeaderOptions(media.streamRequestHeaders) == null)
 
             modeFeedback = "Using ExoPlayer for this stream’s required headers"
-        else if (media.streamDrm != null && requestedEngine != effectiveEngine)
-            modeFeedback = "Using ExoPlayer for this protected stream"
 
     }
     var previousLiveRecordingActive by remember { mutableStateOf(liveRecording.active) }
@@ -668,7 +655,6 @@ fun PlayerScreen(
     var playerViewRef by remember(media.progressKey) { mutableStateOf<PlayerView?>(null) }
     var inPictureInPicture by remember { mutableStateOf(false) }
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
-    val watchLiveFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
     val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -732,16 +718,16 @@ fun PlayerScreen(
         }
     }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val pipActivity = activity as? PlayerPictureInPictureHost
+    val pipActivity = activity as? MainActivity
     val pipAvailable = remember(context) {
-        pipActivity != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
     val isTvDevice = rememberPlayerTvDevice()
     // Fire TV has no Google Cast module. Local playback must not depend on it.
-    val castPlayer = remember(context, isTvDevice, media.nativeSabr, media.streamDrm) {
-        if (isTvDevice || media.nativeSabr != null || media.streamDrm != null) null
+    val castPlayer = remember(context, isTvDevice, media.nativeSabr) {
+        if (isTvDevice || media.nativeSabr != null) null
         else runCatching { CastPlayer(CastContext.getSharedInstance(context)) }.getOrNull()
     }
     val castMediaItem = remember(media.url, media.media.title, media.playbackFormat) {
@@ -769,18 +755,16 @@ fun PlayerScreen(
     val detectedManifestMime = remember(media.url, media.playbackAttemptId) {
         java.util.concurrent.atomic.AtomicReference<String?>(null)
     }
+    var manifestFallbackUsed by remember(media.url, media.playbackAttemptId) { mutableStateOf(false) }
     val createLocalPlayer: (Long?) -> Player = { resumePosition ->
         if (effectiveEngine == PlaybackEngine.MPV && mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) {
             MpvPlayerAdapter(context, media, playbackRestartPosition(media.catalogType,
-                resumePosition ?: engineSwitchResumePosition), playbackOptionsOverride =
-                if (playbackDomain == PlaybackDomain.SPORTS) com.nikhil.niktv.sports.SportsPlaybackPolicy.mpvOptions() else null).apply {
+                resumePosition ?: engineSwitchResumePosition)).apply {
                 prepare()
                 playWhenReady = media.playWhenReady && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             }
         } else {
-        val renderersFactory = if (playbackDomain == PlaybackDomain.SPORTS)
-            com.nikhil.niktv.sports.SportsPlaybackPolicy.renderers(context, effectiveEngine, media.decoderSessionId)
-        else (if (effectiveEngine == PlaybackEngine.FLOW)
+        val renderersFactory = (if (effectiveEngine == PlaybackEngine.FLOW)
             io.github.aedev.flow.player.factory.PlayerFactory().createRenderersFactory(context)
             else DefaultRenderersFactory(context)).apply {
             if (effectiveEngine.isMedia3Player()) {
@@ -795,9 +779,7 @@ fun PlayerScreen(
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
 
             .setHandleAudioBecomingNoisy(true)
-        if (playbackDomain == PlaybackDomain.SPORTS) {
-            com.nikhil.niktv.sports.SportsPlaybackPolicy.configure(context, builder, effectiveEngine)
-        } else if (effectiveEngine == PlaybackEngine.FLOW) {
+        if (effectiveEngine == PlaybackEngine.FLOW) {
             configureFlowInspiredPlayer(context, builder, media.catalogType == CatalogType.LIVE_TV)
         } else if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
             // Startup and recovery thresholds are independent of the buffer we
@@ -814,13 +796,11 @@ fun PlayerScreen(
         }
         val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(media.streamRequestHeaders)
-        if (playbackDomain == PlaybackDomain.SPORTS) http.setConnectTimeoutMs(15_000).setReadTimeoutMs(20_000)
         val upstream = androidx.media3.datasource.DefaultDataSource.Factory(context, http)
         val signedStreamSources = DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
             ManifestMimeDataSource(upstream.createDataSource(), android.net.Uri.parse(media.url), detectedManifestMime::set)
         })
         if (!media.offlinePlayback) builder.setMediaSourceFactory(signedStreamSources.apply {
-            withStreamDrm(media.streamDrm)
             if (media.catalogType == CatalogType.LIVE_TV)
                 setLoadErrorHandlingPolicy(LiveSegmentLoadErrorPolicy { playbackHasBeenReady })
         })
@@ -828,7 +808,6 @@ fun PlayerScreen(
             // HLS supplies its own hold-back/segment timing. A fixed six-second
             // offset puts long-segment streams too close to unfinished media.
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
-                .withStreamDrm(media.streamDrm, media.streamRequestHeaders)
 
                 .setMimeType(playbackMimeType(media.playbackFormat, media.url))
             if (media.nativeSabr != null) {
@@ -867,7 +846,6 @@ fun PlayerScreen(
      */
     val localLease = remember(
         media.progressKey,
-        playbackDomain,
         effectiveEngine,
         media.url,
         media.playbackAttemptId,
@@ -883,9 +861,6 @@ fun PlayerScreen(
         }
     }
     val localPlayer = localLease?.player
-    // Each replacement player starts with the original media item. Its one-shot
-    // MIME recovery must not inherit exhaustion from the engine it replaces.
-    var manifestFallbackUsed by remember(localPlayer) { mutableStateOf(false) }
     DisposableEffect(localPlayer, media.playbackAttemptId) {
         val exoPlayer = localPlayer as? ExoPlayer
         if (!com.nikhil.niktv.BuildConfig.DEBUG || exoPlayer == null || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) {
@@ -1045,15 +1020,6 @@ fun PlayerScreen(
             castPlayer = castPlayer,
             localPlayer = localPlayer
         )
-    var liveWindowSeekingAvailable by remember(player) { mutableStateOf(false) }
-    var bufferedPosition by remember(player) { mutableLongStateOf(0L) }
-    var currentWindowIsLive by remember(player) { mutableStateOf(false) }
-    fun sampleLiveWindow() {
-        liveWindowSeekingAvailable = liveWindowCanSeek(media.allowLiveWindowSeeking && player is ExoPlayer,
-            player.isCurrentMediaItemSeekable, player.duration, player.isCurrentMediaItemLive)
-        currentWindowIsLive = player.isCurrentMediaItemLive
-        bufferedPosition = player.bufferedPosition.coerceAtLeast(0L)
-    }
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isCurrentMediaItemSeekable }
     val introAvailable = introSecondsRemaining != null
@@ -1093,7 +1059,6 @@ fun PlayerScreen(
             player.duration
                 .takeIf { it != C.TIME_UNSET && it > 0L }
                 ?: 0L
-        sampleLiveWindow()
         if (playbackState == Player.STATE_READY) {
             playbackError = null
             startupTimedOut = false
@@ -1175,8 +1140,7 @@ fun PlayerScreen(
                     playbackError = null
                     val position = playbackRestartPosition(media.catalogType, player.currentPosition)
                     val requested = playbackRequested
-                    player.setMediaItem(MediaItem.Builder().setUri(media.url).setMimeType(inferredMime)
-                        .withStreamDrm(media.streamDrm, media.streamRequestHeaders).build())
+                    player.setMediaItem(MediaItem.Builder().setUri(media.url).setMimeType(inferredMime).build())
                     if (position > 0L) player.seekTo(position)
                     player.prepare()
                     player.playWhenReady = requested
@@ -1237,9 +1201,6 @@ fun PlayerScreen(
                     return
                 }
                 val failedDecoder =
-                    if (playbackDomain == PlaybackDomain.SPORTS)
-                        com.nikhil.niktv.sports.SportsDecoderPolicy.record(error, media.decoderSessionId)
-                    else
                     FailedDecoderRegistry.record(
                         context,
                         error,
@@ -1268,9 +1229,7 @@ fun PlayerScreen(
                         }
                     }
 
-                    failedDecoder != null && (if (playbackDomain == PlaybackDomain.SPORTS)
-                        com.nikhil.niktv.sports.SportsDecoderPolicy.canRecover(media.decoderRecoveryCount)
-                        else allowDecoderRecovery(media.decoderRecoveryCount)) -> {
+                    failedDecoder != null && allowDecoderRecovery(media.decoderRecoveryCount) -> {
                         /*
                          * MTK_AVC_RUNTIME_RECOVERY_V14
                          *
@@ -1308,7 +1267,7 @@ fun PlayerScreen(
                     }
 
                     effectiveEngine.isMedia3Player() &&
-                        media.nativeSabr == null && media.separateAudioUrl == null && media.streamDrm == null &&
+                        media.nativeSabr == null && media.separateAudioUrl == null &&
                         automaticLivePlayerFallback(selectedPlayerChoice, media.catalogType == CatalogType.LIVE_TV,
                             playbackRequested, media.offlinePlayback, vlcHeaderOptions(media.streamRequestHeaders) != null,
                             error.errorCode) -> {
@@ -1492,7 +1451,6 @@ fun PlayerScreen(
             }
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
-            sampleLiveWindow()
             if (onVideoFramesRendered != null) {
                 (player as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters?.let { counters ->
                     counters.ensureUpdated()
@@ -1521,33 +1479,10 @@ fun PlayerScreen(
                     playbackState == Player.STATE_READY)) {
                 startupTimedOut = true
                 controlsVisible = true
-                if (onTerminalPlaybackFailure != null &&
-                    playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                    // Let the Sports coordinator resolve a replacement while
-                    // retaining this session. A real user pause still cancels
-                    // the pending fallback through the existing intent callback.
-                    onTerminalPlaybackFailure()
-                } else player.pause()
+                player.pause()
                 break
             }
             delay(250L)
-        }
-    }
-    // Sports source fallback consumes the existing player's final error. It
-    // adds no timer/retry loop, and ordinary IPTV has no callback or effect.
-    if (onTerminalPlaybackFailure != null) {
-        val lifecycleState by playbackLifecycleOwner.lifecycle.currentStateFlow.collectAsState()
-        var reported by remember(player, media.playbackAttemptId) { mutableStateOf(false) }
-        LaunchedEffect(player, media.playbackAttemptId, playbackError, playbackRequested,
-            decoderRecoveryInProgress, lifecycleState) {
-            val authorizationPending = media.authorizationRetryCount == 0 &&
-                playbackError?.startsWith("Stream authorization expired.") == true
-            if (!reported && playbackError != null && playbackRequested &&
-                !authorizationPending && !decoderRecoveryInProgress &&
-                lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                reported = true
-                onTerminalPlaybackFailure()
-            }
         }
     }
     /*
@@ -1641,8 +1576,8 @@ fun PlayerScreen(
             }
         }
     }
-    LaunchedEffect(playbackError, startupTimedOut, media.progressKey, controlsVisible, queueVisible) {
-        if ((playbackError != null || startupTimedOut) && controlsVisible && !queueVisible && !currentPlayerOptionsOpen) {
+    LaunchedEffect(playbackError, startupTimedOut, media.progressKey) {
+        if ((playbackError != null || startupTimedOut) && !currentPlayerOptionsOpen) {
             delay(120L)
             if (!currentPlayerOptionsOpen) runCatching { errorRetryFocusRequester.requestFocus() }
         }
@@ -1651,7 +1586,7 @@ fun PlayerScreen(
         controlsVisible = true
         coroutineScope.launch {
             delay(80L)
-            runCatching { (if (playbackError != null || startupTimedOut) errorRetryFocusRequester else playPauseFocusRequester).requestFocus() }
+            runCatching { playPauseFocusRequester.requestFocus() }
         }
     }
 
@@ -1918,7 +1853,7 @@ fun PlayerScreen(
                                     hasPlaybackQueue
                                 ) {
                                     onPlayNext()
-                                } else if (media.catalogType != CatalogType.LIVE_TV || liveWindowSeekingAvailable) {
+                                } else if (media.catalogType != CatalogType.LIVE_TV) {
                                     val maxPosition =
                                         keyPlayer.duration
                                             .takeIf { it > 0L }
@@ -1937,7 +1872,7 @@ fun PlayerScreen(
                                     hasPlaybackQueue
                                 ) {
                                     onPlayPrevious()
-                                } else if (media.catalogType != CatalogType.LIVE_TV || liveWindowSeekingAvailable) {
+                                } else if (media.catalogType != CatalogType.LIVE_TV) {
                                     keyPlayer.seekTo(
                                         (keyPlayer.currentPosition - 10_000L)
                                             .coerceAtLeast(0L)
@@ -1996,9 +1931,12 @@ fun PlayerScreen(
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         !playerOptionsOpen &&
-                                        ((event.x >= playerView.width * 0.25f &&
-                                            event.x <= playerView.width * 0.75f) ||
-                                            (!compactMobileControls && event.y >= playerView.height * 0.72f))
+                                        if (compactMobileControls) {
+                                            event.x >= playerView.width * 0.25f &&
+                                                event.x <= playerView.width * 0.75f
+                                        } else {
+                                            event.y >= playerView.height * 0.72f
+                                        }
                                 gestureStartValue = when {
                                     !levelGestureEligible -> 0f
                                     brightnessGesture -> {
@@ -2220,9 +2158,8 @@ fun PlayerScreen(
         )
         }
         PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
-            val seekable = duration > 0L && (media.catalogType != CatalogType.LIVE_TV || liveWindowSeekingAvailable)
-            val primaryActionRequester = if (playbackError != null || startupTimedOut) errorRetryFocusRequester else playPauseFocusRequester
-            val topDownRequester = if (seekable) progressFocusRequester else primaryActionRequester
+            val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
+            val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseFocusRequester
             } else {
@@ -2247,7 +2184,7 @@ fun PlayerScreen(
                 if (pipAvailable) add(pipFocusRequester)
             }
             val firstQuickActionRequester = when {
-                media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide -> programmeGuideFocusRequester
+                media.catalogType == CatalogType.LIVE_TV -> programmeGuideFocusRequester
                 extraControlsOpen -> secondaryActionRequesters.first()
                 else -> extraControlsRequester
             }
@@ -2433,8 +2370,8 @@ PlayerChromeIconButton(
                         )
                         if (media.nativeSabr == null) PlayerChromeIconButton(
                                     icon = Icons.Default.SmartDisplay,
-                                    badgeText = displayedPlayerChoice.playerChoiceBadge(),
-                                    contentDescription = "Player: ${displayedPlayerChoice.playerChoiceLabel()}",
+                                    badgeText = selectedPlayerChoice.playerChoiceBadge(),
+                                    contentDescription = "Player: ${selectedPlayerChoice.playerChoiceLabel()}",
                                     onClick = { playerPickerVisible = true },
                                     modifier = Modifier
                                         .playerSecondaryFocus(playerSwitchFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
@@ -2568,40 +2505,27 @@ PlayerChromeIconButton(
                         verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
                     ) {
                         if (seekable) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
                             PlaybackProgressBar(
                                 mediaKey = media.progressKey,
                                 active = controlsVisible || (!focusMode && !embeddedMode),
                                 position = position,
                                 duration = duration,
-                                bufferedPosition = bufferedPosition.takeIf { liveWindowSeekingAvailable },
-                                onNavigateRight = if (liveWindowSeekingAvailable && currentWindowIsLive) ({
-                                    runCatching { watchLiveFocusRequester.requestFocus() }.getOrDefault(false)
-                                }) else null,
                                 onSeek = {
                                     player.seekTo(it)
                                 },
                                 compact = compactMobileControls,
                                 modifier = Modifier
-                                    .weight(1f)
+                                    .fillMaxWidth()
                                     .focusRequester(progressFocusRequester)
                                     .focusProperties {
                                         up = backFocusRequester
-                                        down = primaryActionRequester
-                                        if (liveWindowSeekingAvailable && currentWindowIsLive) right = watchLiveFocusRequester
+                                        down = playPauseFocusRequester
                                     }
                                     .playerControlFocus(
                                         shape = RoundedCornerShape(14.dp),
                                         scaleOnFocus = false
                                     ) { controlsFocused = it }
                             )
-                            if (liveWindowSeekingAvailable && currentWindowIsLive) PlayerChromeIconButton(
-                                icon = Icons.Default.LiveTv, contentDescription = "Watch live", badgeText = "LIVE",
-                                onClick = { player.seekToDefaultPosition(); playbackRequested = true; player.play() },
-                                modifier = Modifier.focusRequester(watchLiveFocusRequester)
-                                    .playerDpadFocusRoutes(left = progressFocusRequester, down = primaryActionRequester, up = backFocusRequester),
-                                onFocused = { controlsFocused = it })
-                            }
                         } else if (media.catalogType == CatalogType.LIVE_TV) {
                             Row(
                                 Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
@@ -2774,7 +2698,7 @@ PlayerChromeIconButton(
                                     }
                                 }
 
-                                if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) {
+                                if (media.catalogType == CatalogType.LIVE_TV) {
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -2911,8 +2835,7 @@ PlayerChromeIconButton(
             }
         )
         if (playerPickerVisible) PlayerEngineQuickOverlay(
-            selectedEngine = displayedPlayerChoice,
-            allowedEngines = if (media.streamDrm != null) PROTECTED_PLAYER_ENGINES else null,
+            selectedEngine = selectedPlayerChoice,
             onDismiss = {
                 playerPickerVisible = false
                 controlsVisible = true
@@ -2925,20 +2848,19 @@ PlayerChromeIconButton(
                 playerPickerFromError = false
                 playerPickerVisible = false
                 controlsVisible = true
-                if (fromError && selectedEngine.resolvePlayerEngine(context, playbackScope, playbackDomain) == effectiveEngine) {
+                if (fromError && selectedEngine.resolvePlayerEngine(context, playbackScope) == effectiveEngine) {
                     selectedPlayerChoice = selectedEngine
                     onPlaybackEngineChanged(selectedEngine)
-                    (onManualRetry ?: onRetry)(playbackRestartPosition(media.catalogType, player.currentPosition))
+                    onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                 } else if (selectedEngine != selectedPlayerChoice.pickerChoice()) {
                     restorePlayerSwitchFocus = true
                     selectedPlayerChoice = selectedEngine
                     modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
                     engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
                     onPlaybackEngineChanged(selectedEngine)
-                    sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope, playbackDomain)
-                    if (fromError) onManualRetry?.invoke(playbackRestartPosition(media.catalogType, player.currentPosition))
+                    sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
                 } else if (fromError) {
-                    (onManualRetry ?: onRetry)(playbackRestartPosition(media.catalogType, player.currentPosition))
+                    onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                 } else {
                     coroutineScope.launch { delay(80L); runCatching { playerSwitchFocusRequester.requestFocus() } }
                 }
@@ -3030,7 +2952,7 @@ PlayerChromeIconButton(
             }
         }
         val failure = playbackError ?: if (startupTimedOut) "The stream did not start within 25 seconds." else null
-        if (failure != null && (controlsVisible || (!focusMode && !embeddedMode))) {
+        if (failure != null) {
             Surface(
                 Modifier.align(Alignment.Center).padding(24.dp).widthIn(max = 560.dp),
                 shape = RoundedCornerShape(20.dp),
@@ -3047,7 +2969,7 @@ PlayerChromeIconButton(
                         onBack = onBack,
                         onRetry = {
                             liveRecovery.reset(); liveEdgeRecovery.reset()
-                            (onManualRetry ?: onRetry)(playbackRestartPosition(media.catalogType, player.currentPosition))
+                            onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                         },
                         onNext = onPlayNext,
                         showAlternatePlayer = media.nativeSabr == null,
@@ -3070,9 +2992,48 @@ PlayerChromeIconButton(
             }
         }
         gestureFeedback?.let { (isBrightness, level) ->
-            PlayerLevelFeedback(isBrightness, level, compactMobileControls,
-                Modifier.align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
-                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp))
+            Surface(
+                modifier = Modifier
+                    .align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)
+            ) {
+                Column(
+                    Modifier
+                        .padding(
+                            horizontal = if (compactMobileControls) 10.dp else 18.dp,
+                            vertical = if (compactMobileControls) 12.dp else 16.dp
+                        )
+                        .width(if (compactMobileControls) 88.dp else 136.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        if (isBrightness) Icons.Default.Brightness6 else Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = null
+                    )
+                    Text(if (isBrightness) "Brightness" else "Volume", style = MaterialTheme.typography.labelLarge)
+                    Box(
+                        modifier = Modifier
+                            .height(120.dp)
+                            .width(14.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            // Track container for the vertical level meter.
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                // Fill from the bottom so the meter behaves like a vertical slider.
+                                .fillMaxHeight(level)
+                                .align(Alignment.BottomCenter)
+                                .background(MaterialTheme.colorScheme.primary)
+                        )
+                    }
+                    Text("${(level * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+                }
+            }
         }
         val countdown = remainingSeconds
         modeFeedback?.let { PlayerModeFeedback(it) }
@@ -3208,6 +3169,30 @@ internal fun PlaybackEngine.playerChoiceBadge(): String = when (this) {
 private object FailedDecoderRegistry {
     private val sessions = DecoderSessionFailures()
 
+    /*
+     * Accept both runtime and initialization failure wording emitted by
+     * different Media3/Android codec layers.
+     */
+    private val decoderPattern =
+        Regex(
+            "(?:decoder failed|decoder init failed):\\s*([^,\\s]+)",
+            RegexOption.IGNORE_CASE
+        )
+
+    private fun isAndroidSoftwareDecoder(
+        name: String
+    ): Boolean {
+        val normalized =
+            name.lowercase()
+
+        return normalized.startsWith(
+            "omx.google."
+        ) ||
+            normalized.startsWith(
+                "c2.android."
+            )
+    }
+
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun selector(
         context: Context,
@@ -3257,15 +3242,25 @@ private object FailedDecoderRegistry {
                     "video/avc",
                     ignoreCase = true
                 ) &&
-                    ("omx.mtk.video.decoder.avc" in (failedNames + rememberedMtk) ||
+                    ("omx.mtk.video.decoder.avc" in failedNames ||
                         PlayerEngineFallback.prefersSoftwareAvc(context, playbackScope))
 
-            val candidatesByName = filtered.associateBy { it.name }
-            // Preserve IPTV's committed MTK fallback policy. Sports owns an
-            // independent native-order selector and cannot update this registry.
-            val ordered = iptvDecoderCandidateOrder(candidates.map { it.name }, rememberedMtk, sessions.failed(sessionId),
-                preferSoftware = mtkAvcPreviouslyFailed)
-                .mapNotNull(candidatesByName::get)
+            val ordered =
+                if (mtkAvcPreviouslyFailed) {
+                    filtered.sortedBy { codec ->
+                        if (
+                            isAndroidSoftwareDecoder(
+                                codec.name
+                            )
+                        ) {
+                            0
+                        } else {
+                            1
+                        }
+                    }
+                } else {
+                    filtered
+                }
 
             // Exhaustion is final for this selection: do not restore failed candidates.
             ordered
@@ -3290,7 +3285,10 @@ private object FailedDecoderRegistry {
                 .joinToString("\n")
 
         val decoder =
-            decoderFailureName(messages)
+            decoderPattern
+                .find(messages)
+                ?.groupValues
+                ?.getOrNull(1)
                 ?: return null
 
         val normalized =
@@ -3870,9 +3868,7 @@ internal fun PlaybackProgressBar(
     mediaKey: String,
     compact: Boolean = false,
     active: Boolean = true,
-    modifier: Modifier = Modifier,
-    bufferedPosition: Long? = null,
-    onNavigateRight: (() -> Boolean)? = null
+    modifier: Modifier = Modifier
 ) {
     val safeDuration = duration.coerceAtLeast(0L)
     var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
@@ -3901,10 +3897,6 @@ internal fun PlaybackProgressBar(
             .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
             .onPreviewKeyEvent { event ->
                 if (!active) return@onPreviewKeyEvent true
-                if (event.key == ComposeKey.DirectionRight && onNavigateRight != null) {
-                    if (event.type == ComposeKeyEventType.KeyDown) onNavigateRight()
-                    return@onPreviewKeyEvent true
-                }
                 val direction = when (event.key) {
                     ComposeKey.DirectionLeft, ComposeKey.MediaRewind -> -1
                     ComposeKey.DirectionRight, ComposeKey.MediaFastForward -> 1
@@ -3977,11 +3969,6 @@ internal fun PlaybackProgressBar(
                         .clip(RoundedCornerShape(999.dp))
                         .background(Color.White.copy(alpha = 0.24f))
                 ) {
-                    bufferedPosition?.let { buffered ->
-                        Box(Modifier.fillMaxHeight().fillMaxWidth(
-                            if (safeDuration > 0L) (buffered.toFloat() / safeDuration).coerceIn(0f, 1f) else 0f)
-                            .background(Color.White.copy(alpha = .35f)))
-                    }
                     Box(
                         Modifier
                             .fillMaxHeight()

@@ -44,7 +44,7 @@ import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.ui.tileFocusOutline
 
 internal enum class DiscoveryPhoneDestination(val title: String) {
-    HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), LIBRARY("My List")
+    HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), PROVIDERS("Providers"), LIBRARY("My List")
 }
 
 /** Both feeds anchor hero actions to the same full-screen safe viewport. */
@@ -75,17 +75,18 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                     DiscoveryPhoneDestination.LIVE -> Icons.Default.LiveTv
                     DiscoveryPhoneDestination.MOVIES -> Icons.Default.Movie
                     DiscoveryPhoneDestination.SERIES -> Icons.Default.Tv
+                    DiscoveryPhoneDestination.PROVIDERS -> Icons.Default.Subscriptions
                     DiscoveryPhoneDestination.LIBRARY -> Icons.Default.VideoLibrary
                 }
                 Surface(onClick = { select(destination) },
-                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { this.selected = active },
+                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { this.selected = active; contentDescription = destination.title },
                     shape = RoundedCornerShape(8.dp),
                     color = if (active) Color(0x663D3E45) else Color.Transparent,
                     contentColor = if (active) Color.White else Color(0xFFB1B1B9)) {
                     Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Icon(icon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else Color(0xFFB1B1B9))
-                        Text(destination.title, fontSize = 11.sp, lineHeight = 14.sp,
+                        if (active || androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 400) Text(destination.title, fontSize = 11.sp, lineHeight = 14.sp,
                             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }

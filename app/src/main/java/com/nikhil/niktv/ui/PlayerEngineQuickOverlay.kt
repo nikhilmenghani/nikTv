@@ -28,8 +28,6 @@ internal fun playerPickerOptions(sdk: Int) = PLAYER_ENGINE_OPTIONS.filter {
     it != PlaybackEngine.MPV || mpvSupportedSdk(sdk)
 }
 
-internal val PROTECTED_PLAYER_ENGINES = setOf(PlaybackEngine.AUTO, PlaybackEngine.MEDIA3, PlaybackEngine.FLOW)
-
 internal fun PlaybackEngine.pickerChoice() = if (this == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else this
 
 /** Route automatic dialog focus before the first item can receive or paint focus. */
@@ -41,16 +39,13 @@ internal fun Modifier.playerChoiceFocusEntry(initial: FocusRequester): Modifier 
 internal fun PlayerEngineQuickOverlay(
     selectedEngine: PlaybackEngine,
     onSelect: (PlaybackEngine) -> Unit,
-    onDismiss: () -> Unit,
-    allowedEngines: Set<PlaybackEngine>? = null
+    onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val compactPhone = !context.isTvLikeDevice(configuration) && configuration.smallestScreenWidthDp < 600
     val columns = if (compactPhone) 2 else 3
-    val options = remember(allowedEngines) { playerPickerOptions(Build.VERSION.SDK_INT).filter {
-        allowedEngines == null || it in allowedEngines
-    } }
+    val options = remember { playerPickerOptions(Build.VERSION.SDK_INT) }
     val selected = selectedEngine.pickerChoice()
     val requesters = remember(options) { options.map { FocusRequester() } }
     val closeRequester = remember { FocusRequester() }
@@ -72,8 +67,6 @@ internal fun PlayerEngineQuickOverlay(
                 Text("Choose player", style = MaterialTheme.typography.titleMedium, color = Color.White)
                 Text("Current: ${selected.playerChoiceLabel()}", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary)
-                if (allowedEngines != null) Text("Protected stream · compatible players", style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = .7f))
             }
         },
         text = {
