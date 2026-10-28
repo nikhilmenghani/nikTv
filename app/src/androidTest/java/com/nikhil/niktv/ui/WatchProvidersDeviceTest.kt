@@ -103,7 +103,7 @@ class WatchProvidersDeviceTest {
             assertEquals(20, model!!.state.value.rows[1]!!.cards.size)
         } finally { test.runOnMainSync { activity.finish() } }
     }
-    @Test fun smallPhoneNavigationKeepsProvidersAccessibleWithoutTruncatedInactiveLabels() {
+    @Test fun smallPhoneNavigationAlwaysShowsEveryTitle() {
         val activity = host(); var selected = DiscoveryPhoneDestination.HOME
         try {
             test.runOnMainSync { activity.setContent { MaterialTheme {
@@ -114,6 +114,15 @@ class WatchProvidersDeviceTest {
                 }
             } } }
             await("All six destinations are accessible") { DiscoveryPhoneDestination.entries.all { node(it.title) != null } }
+            fun hasVisibleText(label: String): Boolean {
+                fun find(n: AccessibilityNodeInfo?): Boolean {
+                    if (n == null) return false
+                    if (n.text?.toString() == label && n.isVisibleToUser) return true
+                    return (0 until n.childCount).any { find(n.getChild(it)) }
+                }
+                return find(test.uiAutomation.rootInActiveWindow)
+            }
+            assertTrue("Inactive destinations must have visible titles too", DiscoveryPhoneDestination.entries.all { hasVisibleText(it.title) })
             action("Providers", AccessibilityNodeInfo.ACTION_CLICK)
             await("Providers selected") { selected == DiscoveryPhoneDestination.PROVIDERS }
             val rect = Rect(); node("Providers")!!.getBoundsInScreen(rect)
@@ -145,6 +154,54 @@ class WatchProvidersDeviceTest {
             automation.serviceInfo = automation.serviceInfo.apply { flags = original }
             test.runOnMainSync { activity.finish() }
         }
+    }
+
+    @Test fun everyProviderOpensPagedCollectionAndBackRestoresViewAll() {
+        val activity = host(); test.setInTouchMode(false)
+        var active: WatchProvider? = null
+        var rowCount = 24
+        var detail = ""
+        var pages = 0
+        try {
+            test.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                val scope = rememberCoroutineScope()
+                var provider by remember { mutableStateOf<WatchProvider?>(null) }
+                var loading by remember { mutableStateOf(false) }
+                var count by remember { mutableIntStateOf(24) }
+                val cards = remember(count) { (1..count).map { DiscoveryCard(it, false, "Grid film $it", date = "2020-01-01") } }
+                val registry = remember { mutableMapOf<Int, FocusRequester>() }
+                val holder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+                fun close() {
+                    provider = null; active = null
+                    scope.launch { repeat(30) { withFrameNanos { }; if (runCatching { registry[1]?.requestFocus() ?: false }.getOrDefault(false)) return@launch } }
+                }
+                if (provider != null) WatchProviderCollection(provider!!, "IN", false,
+                    WatchProviderRow(cards, if (count == 24) 1 else 2, count == 24, loading),
+                    load = { more -> if (more && !loading && count == 24) {
+                        pages++; loading = true
+                        scope.launch { delay(100); count = 48; rowCount = 48; loading = false }
+                    } }, refresh = {}, close = ::close, metadataActive = true,
+                    open = { card, _ -> detail = card.title })
+                else holder.SaveableStateProvider("rows") { WatchProviderRows(
+                    WatchProvidersState(providers = listOf(WatchProvider(1, "Fixture one"), WatchProvider(2, "Fixture two")),
+                        rows = mapOf(1 to WatchProviderRow(cards, 1, false), 2 to WatchProviderRow(cards, 1, false)), loading = false),
+                    { _, _ -> }, {}, "", false, {}, remember { FocusRequester() }, remember { FocusRequester() }, {}, {}, {}, {}, { _, _ -> },
+                    viewAll = { selected, _ -> provider = selected; active = selected }, viewAllRequesters = registry) }
+            } } }
+            await("Every provider exposes View all") { node("View all Fixture one") != null && node("View all Fixture two") != null }
+            action("View all Fixture one", AccessibilityNodeInfo.ACTION_FOCUS)
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Provider full collection opens at its first tile") { active?.id == 1 && focused("Grid film 1") }
+            repeat(6) { test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(80) }
+            await("Scrolling auto-loads next page") { rowCount == 48 }
+            assertEquals("One request per next page", 1, pages)
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Grid opens selected title callback") { detail.startsWith("Grid film ") }
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("Back returns to originating provider action") { active == null && focused("View all Fixture one") }
+            action("View all Fixture two", AccessibilityNodeInfo.ACTION_CLICK)
+            await("Another provider opens a new grid at the top") { active?.id == 2 && focused("Grid film 1") }
+        } finally { test.runOnMainSync { activity.finish() } }
     }
 
 }

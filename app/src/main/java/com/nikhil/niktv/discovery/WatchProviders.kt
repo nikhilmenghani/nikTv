@@ -1,6 +1,7 @@
 package com.nikhil.niktv.discovery
 
 import kotlinx.coroutines.*
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
@@ -39,8 +40,8 @@ internal fun parseWatchProviders(root: JsonObject): List<WatchProvider> = root["
 
 /** Only composed provider rows ask for metadata. Cancelled/obsolete work cannot publish across regions. */
 internal class WatchProvidersModel(private val scope: CoroutineScope, private val source: WatchProvidersSource,
-    region: String = "IN", private val retainedRows: Int = 12) {
-    private val mutable = MutableStateFlow(WatchProvidersState(region = region))
+    region: String = "IN", private val retainedRows: Int = 12, initialSeries: Boolean = false) {
+    private val mutable = MutableStateFlow(WatchProvidersState(region = region, series = initialSeries))
     val state = mutable.asStateFlow()
     private var generation = 0
     private var refreshRows = false
@@ -65,8 +66,17 @@ internal class WatchProvidersModel(private val scope: CoroutineScope, private va
               catch (_: Exception) { if (epoch == generation) mutable.update { it.copy(loading = false, error = "Could not load providers. Retry when connected.") } }
         }
     }
+    fun resume() {
+        if (catalogue == null || state.value.loading) select(force = true)
+    }
     fun refresh() = select(force = true, refresh = true)
-    fun load(provider: Int, more: Boolean = false) {
+    fun refreshProvider(provider: Int) {
+        leave(provider)
+        mutable.update { it.copy(rows = it.rows - provider) }
+        loadPage(provider, false, true)
+    }
+    fun load(provider: Int, more: Boolean = false) = loadPage(provider, more, false)
+    private fun loadPage(provider: Int, more: Boolean, refresh: Boolean) {
         if (jobs[provider]?.isActive == true) return
         val before = state.value.rows[provider] ?: WatchProviderRow()
         if (!more && before.page > 0 || more && !before.more) return
@@ -87,7 +97,7 @@ internal class WatchProvidersModel(private val scope: CoroutineScope, private va
                 result.page, result.page < result.totalPages, loading))) }
         }
         jobs[provider] = scope.launch {
-            try { publish(source.titles(region, series, provider, page, stale = { publish(it, true) }, refresh = refreshRows), false) }
+            try { publish(source.titles(region, series, provider, page, stale = { publish(it, true) }, refresh = refresh || refreshRows), false) }
             catch (c: CancellationException) { throw c }
             catch (_: Exception) { if (epoch == generation && tokens[provider] == token) mutable.update {
                 val current = it.rows[provider] ?: before
@@ -100,5 +110,16 @@ internal class WatchProvidersModel(private val scope: CoroutineScope, private va
         jobs.remove(provider)?.cancel()
         mutable.update { val row = it.rows[provider]; if (row == null) it else it.copy(rows = it.rows + (provider to row.copy(loading = false))) }
     }
-    fun stop() { generation++; catalogue?.cancel(); jobs.values.forEach { it.cancel() }; jobs.clear(); tokens.clear() }
+    fun stop() {
+        generation++; catalogue?.cancel(); jobs.values.forEach { it.cancel() }; jobs.clear(); tokens.clear()
+        mutable.update { it.copy(rows = it.rows.mapValues { (_, row) -> row.copy(loading = false) }) }
+    }
+}
+
+/** Retain loaded pages across details/playback; visible UI still owns cancellation. */
+internal class WatchProvidersViewModel(app: android.app.Application) : androidx.lifecycle.AndroidViewModel(app) {
+    private val preferences = app.getSharedPreferences("watch_providers", 0)
+    val model = WatchProvidersModel(viewModelScope, DiscoveryRepository(app),
+        preferences.getString("region", "IN") ?: "IN", initialSeries = preferences.getBoolean("series", false))
+    override fun onCleared() { model.stop() }
 }

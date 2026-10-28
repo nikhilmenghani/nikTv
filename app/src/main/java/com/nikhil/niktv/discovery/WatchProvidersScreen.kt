@@ -4,6 +4,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.material.icons.Icons
@@ -13,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.*
 import androidx.compose.ui.*
 import androidx.compose.ui.focus.*
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.text.font.FontWeight
@@ -31,13 +38,22 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
     val context = LocalContext.current
     val profile = app.savedProfile?.cacheKey().orEmpty()
     val preferences = remember(context) { context.getSharedPreferences("watch_providers", 0) }
-    val scope = rememberCoroutineScope()
-    val model = remember(profile) { WatchProvidersModel(scope, DiscoveryRepository(context), preferences.getString("region", "IN") ?: "IN") }
+    val holder: WatchProvidersViewModel = viewModel(key = "watch-providers:$profile")
+    val model = holder.model
     val state by model.state.collectAsState()
     val cardSaver = remember { Saver<DiscoveryCard?, String>(
         save = { it?.let { card -> kotlinx.serialization.json.Json.encodeToString(DiscoveryCard.serializer(), card) } ?: "" },
         restore = { value -> value.takeIf(String::isNotBlank)?.let { kotlinx.serialization.json.Json.decodeFromString(DiscoveryCard.serializer(), it) } }) }
     var selected by rememberSaveable(profile, stateSaver = cardSaver) { mutableStateOf<DiscoveryCard?>(null) }
+    val providerSaver = remember { Saver<WatchProvider?, String>(
+        save = { it?.let { provider -> kotlinx.serialization.json.Json.encodeToString(WatchProvider.serializer(), provider) } ?: "" },
+        restore = { value -> value.takeIf(String::isNotBlank)?.let { kotlinx.serialization.json.Json.decodeFromString(WatchProvider.serializer(), it) } }) }
+    var collection by rememberSaveable(profile, stateSaver = providerSaver) { mutableStateOf<WatchProvider?>(null) }
+    val pages = rememberSaveableStateHolder()
+    val allRequesters = remember(profile) { mutableMapOf<Int, FocusRequester>() }
+    val gridRequesters = remember(profile) { mutableMapOf<String, FocusRequester>() }
+    var originKey by rememberSaveable(profile) { mutableStateOf<String?>(null) }
+    var collectionOrigin by remember { mutableStateOf<FocusRequester?>(null) }
     var regions by remember { mutableStateOf(false) }
     var query by rememberSaveable(profile) { mutableStateOf("") }
     var search by rememberSaveable(profile) { mutableStateOf(false) }
@@ -47,17 +63,29 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
     val scopeForFocus = rememberCoroutineScope()
     val host = LocalView.current
     fun restore() { scopeForFocus.launch {
-        repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { originFocus?.requestFocus() ?: false }.getOrDefault(false)) return@launch }
+        repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { (if (collection != null) gridRequesters[originKey] else originFocus)?.requestFocus() ?: false }.getOrDefault(false)) return@launch }
     } }
-    LaunchedEffect(model) { model.select(series = preferences.getBoolean("series", false), force = true) }
+    LaunchedEffect(model) { model.resume() }
     DisposableEffect(model) { onDispose { model.stop() } }
-    BackHandler { if (search) { search = false; query = "" } else back() }
-    DiscoveryLibraryScreen(app, DiscoveryLibraryDestination.PROVIDERS, back, select, navigate) {
-        WatchProviderRows(state, model::load, model::leave, query, search, { query = it }, searchFocus,
+    fun closeCollection() {
+        val providerId = collection?.id
+        collection = null
+        scopeForFocus.launch { repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { (allRequesters[providerId] ?: collectionOrigin)?.requestFocus() ?: false }.getOrDefault(false)) return@launch } }
+    }
+    BackHandler { if (collection != null) closeCollection() else if (search) { search = false; query = "" } else back() }
+    DiscoveryLibraryScreen(app, DiscoveryLibraryDestination.PROVIDERS, { if (collection != null) closeCollection() else back() }, select, navigate) {
+        val provider = collection
+        if (provider != null) key(profile, state.region, state.series, provider.id) {
+            WatchProviderCollection(provider, state.region, state.series, state.rows[provider.id] ?: WatchProviderRow(loading = true),
+                load = { more -> model.load(provider.id, more) }, refresh = { model.refreshProvider(provider.id) },
+                close = ::closeCollection, metadataActive = selected == null,
+                open = { card, requester -> originKey = card.key; originFocus = requester; selected = card }, focusRegistry = gridRequesters, cancel = { model.leave(provider.id) })
+        } else pages.SaveableStateProvider("provider-rows") { WatchProviderRows(state, model::load, model::leave, query, search, { query = it }, searchFocus,
             regionFocus, { regions = true }, { search = !search; if (!search) query = "" },
             { series -> preferences.edit().putBoolean("series", series).apply(); model.select(series = series) },
             model::refresh,
-            open = { card, requester -> originFocus = requester; selected = card }, metadataActive = selected == null)
+            open = { card, requester -> originKey = card.key; originFocus = requester; selected = card }, metadataActive = selected == null,
+            viewAll = { provider, requester -> collectionOrigin = requester; collection = provider }, viewAllRequesters = allRequesters) }
     }
     if (regions) {
         WatchRegionDialog(state.regions, state.region, dismiss = { regions = false }, choose = { region ->
@@ -94,7 +122,7 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
 internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) -> Unit, leave: (Int) -> Unit,
     query: String, search: Boolean, changeQuery: (String) -> Unit, searchFocus: FocusRequester,
     regionFocus: FocusRequester, chooseRegion: () -> Unit, toggleSearch: () -> Unit,
-    selectType: (Boolean) -> Unit, retry: () -> Unit, open: (DiscoveryCard, FocusRequester) -> Unit, metadataActive: Boolean = true) {
+    selectType: (Boolean) -> Unit, retry: () -> Unit, open: (DiscoveryCard, FocusRequester) -> Unit, metadataActive: Boolean = true, viewAll: (WatchProvider, FocusRequester) -> Unit = { _, _ -> }, viewAllRequesters: MutableMap<Int, FocusRequester>? = null) {
     val config = LocalConfiguration.current
     val reducedMotion = android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val phone = usesDiscoveryPhoneLayout(config.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(config))
@@ -126,11 +154,15 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
             LaunchedEffect(provider.id, state.region, state.series, state.revision, metadataActive) { if (metadataActive) load(provider.id, false) else leave(provider.id) }
             DisposableEffect(provider.id, state.region, state.series, state.revision) { onDispose { leave(provider.id) } }
             val row = state.rows[provider.id] ?: WatchProviderRow(loading = true)
+            val allFocus = remember(provider.id) { viewAllRequesters?.getOrPut(provider.id) { FocusRequester() } ?: FocusRequester() }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.padding(horizontal = if (phone) 16.dp else 28.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     provider.logo?.let { AsyncImage(it, null, Modifier.size(30.dp)) }
-                    Text(provider.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                    Text(provider.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp,
+                        modifier = Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    DiscoveryAction("View all ${provider.name}", visualLabel = "View all",
+                        modifier = Modifier.focusRequester(allFocus).semantics { contentDescription = "View all ${provider.name}" }) { viewAll(provider, allFocus) }
                 }
                 rowStates.SaveableStateProvider("${state.region}:${state.series}:${provider.id}") {
                     val horizontal = rememberLazyListState()
@@ -151,9 +183,10 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
                         horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.heightIn(min = width * 1.5f + 24.dp)) {
                         itemsIndexed(row.cards, key = { _, card -> card.key }) { index, card ->
                             val requester = remember { FocusRequester() }
+                            val actualFocus = if (pendingPage >= 0 && index == pendingIndex.coerceAtMost(row.cards.lastIndex)) firstNew else requester
                             DiscoveryPosterTile(card.title, card.poster, card.date?.take(4).orEmpty(), width,
-                                modifier = Modifier.focusRequester(if (pendingPage >= 0 && index == pendingIndex.coerceAtMost(row.cards.lastIndex)) firstNew else requester), focusVerticalInset = 4.dp, reduceMotion = reducedMotion,
-                                source = DiscoveryTileSource.TMDB, onClick = { open(card, requester) })
+                                modifier = Modifier.focusRequester(actualFocus), focusVerticalInset = 4.dp, reduceMotion = reducedMotion,
+                                source = DiscoveryTileSource.TMDB, onClick = { open(card, actualFocus) })
                         }
                         if (row.loading && row.cards.isEmpty()) items(3) {
                             Box(Modifier.width(width).padding(vertical = 4.dp).height(width * 1.5f).background(Color(0xFF1C222C), androidx.compose.foundation.shape.RoundedCornerShape(10.dp)))
@@ -186,12 +219,32 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
 @Composable
 private fun WatchProviderFilterField(value: String, change: (String) -> Unit, label: String, modifier: Modifier = Modifier) {
     val keyboard = LocalSoftwareKeyboardController.current
-    OutlinedTextField(value, change, modifier.heightIn(min = 48.dp).onPreviewKeyEvent { event ->
-        if (event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
-            if (event.type == KeyEventType.KeyUp) keyboard?.show()
-            true
-        } else false
-    }, singleLine = true, keyboardOptions = KeyboardOptions(showKeyboardOnFocus = false), label = { Text(label) })
+    val field = remember { FocusRequester() }
+    var editing by remember { mutableStateOf(false) }
+    var imeSeen by remember { mutableStateOf(false) }
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(editing) {
+        if (editing) { imeSeen = false; withFrameNanos { }; runCatching { field.requestFocus() }; keyboard?.show() }
+    }
+    LaunchedEffect(editing, imeVisible) {
+        if (editing && imeVisible) imeSeen = true
+        else if (editing && imeSeen) { editing = false; imeSeen = false }
+    }
+    BackHandler(editing) { editing = false; keyboard?.hide() }
+    OutlinedTextField(value, change, modifier.heightIn(min = 48.dp).focusRequester(field)
+        .onFocusChanged { if (!it.hasFocus && editing) { editing = false; keyboard?.hide() } }
+        .onPreviewKeyEvent { event ->
+            if (!editing && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
+                if (event.type == KeyEventType.KeyUp) editing = true
+                true
+            } else false
+        }.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (waitForUpOrCancellation(pass = PointerEventPass.Initial) != null) editing = true
+            }
+        }, readOnly = !editing, singleLine = true,
+        keyboardOptions = KeyboardOptions(showKeyboardOnFocus = false), label = { Text(label) })
 }
 
 @Composable

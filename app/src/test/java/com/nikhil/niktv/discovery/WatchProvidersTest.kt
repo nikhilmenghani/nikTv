@@ -82,4 +82,28 @@ class WatchProvidersTest {
         scope.cancel()
     }
 
+    @Test fun screenPauseRetainsAllLoadedPagesWithoutAnotherCatalogueRequest() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined); val source = Source()
+        val model = WatchProvidersModel(scope, source, initialSeries = true)
+        model.resume(); model.load(1); model.load(1, true)
+        val loaded = model.state.value.rows[1]!!
+        model.stop(); model.resume(); model.load(1)
+        assertTrue(model.state.value.series)
+        assertEquals(loaded.cards, model.state.value.rows[1]!!.cards)
+        assertEquals(2, model.state.value.rows[1]!!.page)
+        assertEquals(2, source.calls)
+        scope.cancel()
+    }
+    @Test fun refreshingOneProviderDoesNotClearOtherProviders() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined); val source = Source()
+        val model = WatchProvidersModel(scope, source)
+        model.resume(); model.load(1); model.load(2); model.load(1, true)
+        val other = model.state.value.rows[2]
+        model.refreshProvider(1)
+        assertEquals(1, model.state.value.rows[1]!!.page)
+        assertEquals(other, model.state.value.rows[2])
+        assertEquals("IN:false:1:1", source.requests.last())
+        scope.cancel()
+    }
+
 }

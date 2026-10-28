@@ -116,6 +116,12 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
             genres = with(tmdb) { o.discoveryGenreNames() }, adult = o["adult"]?.jsonPrimitive?.booleanOrNull == true,
             originalLanguage = o.string("original_language")) }
     }.filter { it.title.isNotBlank() && it.released() }.take(30)
+    override suspend fun actorInfo(person: DiscoveryPerson): DiscoveryActorInfo {
+        val id = person.id?.takeIf { it > 0 } ?: return DiscoveryActorInfo(person.name, person.portrait)
+        return cached("actor-info-v1:$id", DiscoveryCache.DETAIL_TTL, DiscoveryActorInfo.serializer()) {
+            parseActorInfo(tmdb.discoveryJson("/person/$id"), person)
+        }
+    }
     override suspend fun actorCredits(person: DiscoveryPerson, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> {
         val id = person.id?.takeIf { it > 0 } ?: return emptyList()
         return cached("actor-credits-v1:$id", DiscoveryCache.DETAIL_TTL, ListSerializer(DiscoveryCard.serializer()), stale) {

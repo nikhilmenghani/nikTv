@@ -148,6 +148,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
             catch (_: Exception) { /* Optional title artwork must not block or show a global error. */ }
         }
     }
+    suspend fun actorInfo(person: DiscoveryPerson) = repository.actorInfo(person)
     suspend fun actorCredits(person: DiscoveryPerson, stale: (List<DiscoveryCard>) -> Unit) = repository.actorCredits(person, stale)
     fun openRootDetails(card: DiscoveryCard) { stack.clear(); openDetails(card) }
     fun openDetails(card: DiscoveryCard) { stack.add(card); showDetails(card) }

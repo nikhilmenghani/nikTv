@@ -3,6 +3,8 @@ package com.nikhil.niktv.discovery
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -86,9 +88,12 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                     Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Icon(icon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else Color(0xFFB1B1B9))
-                        if (active || androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 400) Text(destination.title, fontSize = 11.sp, lineHeight = 14.sp,
-                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        BasicText(destination.title, modifier = Modifier.fillMaxWidth(),
+                            style = LocalTextStyle.current.copy(color = if (active) Color.White else Color(0xFFB1B1B9),
+                                fontSize = 11.sp, lineHeight = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium),
+                            maxLines = 1, softWrap = false,
+                            autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 11.sp, stepSize = .5.sp))
                     }
                 }
             }

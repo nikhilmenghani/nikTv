@@ -855,7 +855,7 @@ internal fun DiscoveryPreviewScreen(
     }
     actor?.takeIf { actorOrigin == state.detail?.key }?.let { person ->
         saved.SaveableStateProvider("actor:$profile:${person.id}:$actorOrigin") {
-            DiscoveryActorDialog(person, load = vm::actorCredits, close = ::dismissActor, reduceMotion = reduceMotion, open = { card ->
+            DiscoveryActorDialog(person, load = vm::actorCredits, loadInfo = vm::actorInfo, close = ::dismissActor, reduceMotion = reduceMotion, open = { card ->
                 if (card.key == actorOrigin) dismissActor()
                 else details(card, "actor:${person.id}:${card.key}")
             })

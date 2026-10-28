@@ -321,7 +321,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         if (type != CatalogType.SERIES && related.isEmpty()) null else ({ runCatching { relatedEntry.requestFocus() }.getOrDefault(false) }))
     actor?.takeIf { relatedDetail == null }?.let { person ->
         actorPages.SaveableStateProvider("actor:${person.id}") {
-            DiscoveryActorDialog(person, load = repository::actorCredits,
+            DiscoveryActorDialog(person, load = repository::actorCredits, loadInfo = repository::actorInfo,
                 close = ::restoreActor, reduceMotion = reduceMotion, open = { relatedDetail = it })
         }
     }
