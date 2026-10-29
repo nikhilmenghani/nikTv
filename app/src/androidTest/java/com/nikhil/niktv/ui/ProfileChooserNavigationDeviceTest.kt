@@ -51,7 +51,7 @@ class ProfileChooserNavigationDeviceTest {
                 CompositionLocalProvider(LocalConfiguration provides config) { MaterialTheme {
                     ProfileScreen(profiles.first(), profiles, false, false,
                         { selections.add("settings") }, { fail("Never connect") }, { selections.add(it.name) },
-                        { selections.add("add") }, {}, {}, {})
+                        { selections.add("add") }, {}, {}, {}, sportsAvailable = true)
                 } }
             } }
             await("Fixture Nikhil")

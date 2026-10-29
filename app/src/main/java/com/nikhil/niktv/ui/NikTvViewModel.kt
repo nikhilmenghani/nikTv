@@ -437,7 +437,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // restored only after the viewer deliberately chooses a profile.
         val profiles = store.profiles.first()
         _state.update { it.copy(profiles = profiles, session = null, savedProfile = null,
-            profileEditorOpen = profiles.isEmpty(), restoring = false) }
+            profileEditorOpen = false, restoring = false) }
     }
 
     fun connect(profile: PortalProfile) = task {
@@ -7863,7 +7863,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(app),
             parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(app),
             parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(app),
-            profiles = profiles, savedProfile = store.activeProfile.first(), profileEditorOpen = profiles.isEmpty(), restoring = false,
+            profiles = profiles, savedProfile = store.activeProfile.first(), profileEditorOpen = false, restoring = false,
             favorites = store.favorites.first(), recentlyPlayed = store.recentlyPlayed.first(),
             playbackProgress = store.playbackProgress.first(), playbackEngine = store.playbackEngine.first(),
             seriesStartSeason = store.seriesStartSeason.first(), cacheIntervalMinutes = store.cacheIntervalMinutes.first(),

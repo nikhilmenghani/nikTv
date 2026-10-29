@@ -123,12 +123,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
-internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile?) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit, openOfflineDownloads: () -> Unit) {
+internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile?) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit, openOfflineDownloads: () -> Unit,
+    sportsAvailable: Boolean = com.nikhil.niktv.data.RemoteCredentials.configured(LocalContext.current)) {
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(importBackup)
     }
 
-    if (profiles.isNotEmpty() && !editorOpen) {
+    if (!editorOpen) {
         // PROFILE_CHOOSER_POLISH_V18
         //
         // Keep NikTV red as an accent instead of turning the entire focused
@@ -211,7 +212,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             )
 
             Text(
-                "Choose an IPTV profile",
+                if (profiles.isEmpty()) "Watch videos or add an IPTV profile" else "Choose an IPTV profile",
                 color = Color(0xFF9B9FA8),
                 style = if (compactChooser) {
                     MaterialTheme.typography.bodySmall
@@ -222,7 +223,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
 
             BoxWithConstraints(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
                 val gap = if (compactChooser) 12.dp else 24.dp
-                val tileCount = profiles.size + 5
+                val tileCount = profiles.size + if (sportsAvailable) 6 else 5
                 val capacity = ((maxWidth + gap) / ((if (compactChooser) 148.dp else 180.dp) + gap)).toInt().coerceIn(1, 5)
                 val rowCount = (tileCount + capacity - 1) / capacity
                 val columns = (tileCount + rowCount - 1) / rowCount
@@ -275,12 +276,13 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     icon = Icons.Default.PlayCircle,
                     tileWidth = chooserTileWidth,
                     portraitCardHeight = portraitCardHeight,
-                    compact = compactChooser
+                    compact = compactChooser,
+                    modifier = if (preferredProfileKey == null) Modifier.focusRequester(preferredRequester) else Modifier
                 ) {
                     chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.NikTubeActivity::class.java))
                 }
 
-                ProfileChooserTile(
+                if (sportsAvailable) ProfileChooserTile(
                     title = "Sports",
                     subtitle = "Live events & stream choices",
                     icon = Icons.Default.SportsCricket,
@@ -376,11 +378,12 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
         }
     }
     val keyboard = LocalSoftwareKeyboardController.current
+    BackHandler(onBack = cancelEditor)
     Box(Modifier.fillMaxSize().background(Color(0xFF090909)).statusBarsPadding().imePadding().padding(16.dp), contentAlignment = Alignment.Center) {
         Card(Modifier.widthIn(max = 520.dp).fillMaxHeight(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (profiles.isNotEmpty()) IconButton(onClick = cancelEditor) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to profiles") }
+                    IconButton(onClick = cancelEditor) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to profiles") }
                     Column { Text(if (saved == null) "Add profile" else "Edit ${saved.name}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Credentials stay local to this profile", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -409,7 +412,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                 val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     NikTvPrimaryActionButton(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) { Text(if (saved == null) "Add profile" else "Save profile") }
-                    if (saved == null) NikTvSecondaryActionButton(onClick = { keyboard?.hide(); openSettings(null) }, modifier = Modifier.weight(1f)) { Text("Skip Profile") }
+                    if (saved == null) NikTvSecondaryActionButton(onClick = { keyboard?.hide(); cancelEditor() }, modifier = Modifier.weight(1f)) { Text("Cancel") }
                 }
                 NikTvSecondaryActionButton(
                     onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },

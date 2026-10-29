@@ -60,7 +60,9 @@ internal object SportsCatalogue {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val dateFormat = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss Z", Locale.ROOT)
 
-    fun document(body: String): JsonElement {
+    fun document(body: String): JsonElement = document(body, com.nikhil.niktv.data.RemoteCredentials::get)
+
+    internal fun document(body: String, credential: (String) -> String): JsonElement {
         val text = body.trim().removePrefix("\uFEFF")
         runCatching { json.parseToJsonElement(text) }.getOrNull()?.let {
             if (it is JsonArray || it is JsonObject) return it
@@ -68,11 +70,14 @@ internal object SportsCatalogue {
         val bytes = try { Base64.getMimeDecoder().decode(text) } catch (_: IllegalArgumentException) {
             throw SportsException("The sports service returned an unreadable response.")
         }
-        val decoders = listOf<() -> ByteArray>(
+        val decoders = mutableListOf<() -> ByteArray>(
             { decodeSalted(bytes) },
-            { aes(bytes, "3hHzxYAgSGI8/ham".toByteArray(), "UqCvkvjecEIz842V".toByteArray()) },
-            { aes(bytes, "MqeYGCT4AYKoHKrT".toByteArray(), "oHKrTQuPx8zl8oJ+".toByteArray()) },
         )
+        for (index in 1..2) {
+            val key = credential("NIKTV_CRICFY_AES_KEY_$index").toByteArray(Charsets.UTF_8)
+            val iv = credential("NIKTV_CRICFY_AES_IV_$index").toByteArray(Charsets.UTF_8)
+            if (key.size in setOf(16, 24, 32) && iv.size == 16) decoders.add { aes(bytes, key, iv) }
+        }
         for (decode in decoders) {
             runCatching { json.parseToJsonElement(decode().toString(Charsets.UTF_8)) }.getOrNull()?.let {
                 if (it is JsonArray || it is JsonObject) return it

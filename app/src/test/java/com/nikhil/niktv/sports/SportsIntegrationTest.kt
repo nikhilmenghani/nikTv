@@ -55,16 +55,22 @@ class SportsIntegrationTest {
     private val events = """[{"id":"1","title":"Team A vs Team B","slug":"team-a-v-team-b","publish":"1","eventInfo":{"teamA":"Team A","teamB":"Team B","eventCat":"Cricket","eventType":"Test","startTime":"2026/10/27 08:30:00 +0000","endTime":"2026/10/27 17:30:00 +0000"},"formats":[{"title":"Source one"}]}]"""
     private val config = """{"parameters":{"cric_api2":{"defaultValue":{"value":"https://sports.example.test/"}}}}"""
 
-    @Test fun decodesCapturedConfigurationResponse() {
+    @Test fun capturedEncryptedConfigurationRequiresProvisionedKeys() {
         val captured = "x5zP0EQZkobSJcRCQg8LFP8+u22YAugW6iQukO6qtWdst8o08kd0StKccDKbeQQXsd8j2oARxErGzFkrvZz184VensDkoSw/e8xn3onXeGzAl1UfGuBZLfRrH1NUL/OtPVHLPPXlz8rQpqW0g6EeXow4I6rnH4OInnLQMhDLf6BTT8b2WU71YvqnI3/PDH6qdScQn1uKke40X/lZ0wgpWkV8qlS0AiA6iVEbO66r5OQ="
-        assertEquals("https://cftkhffmgf147.top/", SportsCatalogue.baseUrl(captured))
+        try { SportsCatalogue.document(captured) { "" }; fail("No compiled credential fallback is allowed") }
+        catch (_: SportsException) { }
+        assertEquals("https://sports.example.test/", SportsCatalogue.baseUrl(config))
     }
 
     @Test fun catalogueDecryptsBothLegacyEnvelopesAndUsesUtcSchedule() {
-        for ((key, iv) in listOf("3hHzxYAgSGI8/ham" to "UqCvkvjecEIz842V", "MqeYGCT4AYKoHKrT" to "oHKrTQuPx8zl8oJ+")) {
+        for (index in 1..2) {
+            val key = "fixture-key-1234"
+            val iv = "fixture-iv-12345"
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key.toByteArray(), "AES"), IvParameterSpec(iv.toByteArray()))
-            val event = SportsCatalogue.events(Base64.getEncoder().encodeToString(cipher.doFinal(events.toByteArray()))).single()
+            val configured = mapOf("NIKTV_CRICFY_AES_KEY_$index" to key, "NIKTV_CRICFY_AES_IV_$index" to iv)
+            val decrypted = SportsCatalogue.document(Base64.getEncoder().encodeToString(cipher.doFinal(events.toByteArray()))) { configured[it].orEmpty() }
+            val event = SportsCatalogue.events(decrypted.toString()).single()
             assertEquals("team-a-v-team-b", event.slug)
             assertEquals(SportsStatus.UPCOMING, event.status(Instant.parse("2026-10-27T08:29:59Z")))
             assertEquals(SportsStatus.LIVE, event.status(Instant.parse("2026-10-27T08:30:00Z")))
