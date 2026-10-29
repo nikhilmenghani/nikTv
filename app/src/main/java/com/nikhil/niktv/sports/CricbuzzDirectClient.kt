@@ -16,8 +16,12 @@ internal class CricbuzzDirectClient(
     },
     private val now: () -> Long = System::currentTimeMillis,
 ) {
+    var region: String = "CA"
+        set(value) { require(value in setOf("CA", "IN")); field = value }
+    var appVersion: String = "16.11.01"
+        set(value) { require(value in setOf("16.11.01", "6.16.04")); field = value }
     val configured get() = credentials().configured
-    val cacheIdentity get() = credentials().cacheIdentity
+    val cacheIdentity get() = credentials().cacheIdentity + ":" + region + ":" + appVersion
     private var regionCheckedAt: Long? = null
     private var regionIdentity = ""
     private var clockOffset = 0L
@@ -42,7 +46,7 @@ internal class CricbuzzDirectClient(
         }
         if (regionIdentity != cacheIdentity || regionCheckedAt?.let { now() - it !in 0 until 900_000 } != false) {
             val geo = Json.parseToJsonElement(request("/a/infra/v1/geo-location", json = true).toString(Charsets.UTF_8)).jsonObject
-            if (!geo.text("country").equals("CA", true)) throw SportsException("Cricbuzz has not made the Canadian catalogue available on this connection.")
+            // geo reports the connection country; CB-Loc separately selects the requested catalogue.
             regionIdentity = cacheIdentity; regionCheckedAt = now()
         }
     }
@@ -88,9 +92,9 @@ internal class CricbuzzDirectClient(
     private suspend fun request(path: String, json: Boolean = false): ByteArray {
         val url = "https://api.cricbuzz.com$path"
         suspend fun send(): ByteArray {
-            val config = credentials()
+            val config = credentials().let { CricbuzzCredentials(it.authKey, it.mode, appVersion) }
             val headers = mapOf("Accept" to if (json) "application/json" else "application/x-protobuf",
-                "CB-Loc" to "CA", "CB-TZ" to SimpleDateFormat("Z", Locale.US).format(Date(now())),
+                "CB-Loc" to region, "CB-TZ" to SimpleDateFormat("Z", Locale.US).format(Date(now())),
                 "CB-AppVer" to config.appVersion, "cb-src" to "playstore",
                 "Authentication" to CricbuzzAuthentication.header(url, config, now(), clockOffset))
             return transport.get(url, headers)

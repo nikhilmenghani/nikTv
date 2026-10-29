@@ -58,6 +58,8 @@ internal fun CricketHighlightsScreen(onClose: () -> Unit, selectTab: (SportsTab)
     vm: CricketHighlightsViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val preferences = remember(context) { context.applicationContext.getSharedPreferences("cricket_video_region", android.content.Context.MODE_PRIVATE) }
+    LaunchedEffect(Unit) { vm.selectAppVersion(preferences.getString("app_version", "16.11.01").takeIf { it in setOf("16.11.01", "6.16.04") } ?: "16.11.01"); vm.selectRegion(preferences.getString("region", "CA").takeIf { it in setOf("CA", "IN") } ?: "CA") }
     val scope = rememberCoroutineScope()
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
@@ -99,16 +101,18 @@ internal fun CricketHighlightsScreen(onClose: () -> Unit, selectTab: (SportsTab)
         SportsPlayer(playing, state.selected?.title.orEmpty(), vm::stopPlayback,
             sourceAttemptId = state.attempt, onRetryFresh = vm::retryPlayback,
             onTerminalFailure = { vm.playbackFailed(state.attempt) })
-    } else browseState.SaveableStateProvider("cricket-browse") { CricketHighlightsContent(state, onClose, selectTab, vm::refresh, vm::play, vm::retryPlayback, vm::stopPlayback,
+    } else browseState.SaveableStateProvider("cricket-browse:${state.region}:${state.appVersion}") { CricketHighlightsContent(state, onClose, selectTab, vm::refresh, vm::play, vm::retryPlayback, vm::stopPlayback,
         importConfiguration = { import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
-        selectCollection = vm::selectCollection, loadMore = vm::loadMore) }
+        selectCollection = vm::selectCollection, loadMore = vm::loadMore,
+        selectRegion = { region -> preferences.edit().putString("region", region).apply(); vm.selectRegion(region) },
+        selectAppVersion = { version -> preferences.edit().putString("app_version", version).apply(); vm.selectAppVersion(version) }) }
 }
 
 @Composable
 internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: () -> Unit,
     selectTab: (SportsTab) -> Unit, refresh: () -> Unit, play: (String) -> Unit,
     retryPlayback: () -> Unit = {}, dismissPlayback: () -> Unit = {}, importConfiguration: () -> Unit = {},
-    selectCollection: (Int?) -> Unit = {}, loadMore: () -> Unit = {}) {
+    selectCollection: (Int?) -> Unit = {}, loadMore: () -> Unit = {}, selectRegion: (String) -> Unit = {}, selectAppVersion: (String) -> Unit = {}) {
     val compact = LocalConfiguration.current.screenWidthDp < 700
     val header = remember { FocusRequester() }
     val entry = remember { FocusRequester() }
@@ -117,6 +121,8 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val scroll = rememberLazyGridState()
     var query by rememberSaveable { mutableStateOf("") }
+    var versionPicker by remember { mutableStateOf(false) }
+    var regionPicker by remember { mutableStateOf(false) }
     var searchVisible by rememberSaveable { mutableStateOf(false) }
     var lastFocusKey by rememberSaveable { mutableStateOf<String?>(null) }
     var previousCollection by rememberSaveable { mutableStateOf(state.collectionId) }
@@ -164,8 +170,11 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
                 }
             }
         }
+        DiscoveryAction("Version: ${state.appVersion}", onClick = { versionPicker = true })
+        DiscoveryAction("Region: " + if (state.region == "IN") "India" else "Canada",
+            onClick = { regionPicker = true })
         if (!state.configured) {
-            SportsEmpty("Connect Cricbuzz", "Import your Cricbuzz API configuration to load Canadian videos directly.")
+            SportsEmpty("Connect Cricbuzz", "Import your Cricbuzz API configuration to load videos directly.")
             NikTvSecondaryActionButton(importConfiguration) { Text("Import Cricbuzz configuration") }
         }
         if (state.loading) SportsLoading("Loading cricket videos")
@@ -195,6 +204,21 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
             }
         }
     }
+    if (versionPicker) AlertDialog(onDismissRequest = { versionPicker = false },
+        title = { Text("Cricbuzz API version") }, text = {
+            Column { listOf("16.11.01", "6.16.04").forEach { version ->
+                DiscoveryAction(version, selected = state.appVersion == version, onClick = { versionPicker = false; selectAppVersion(version) })
+            } }
+        }, confirmButton = { TextButton(onClick = { versionPicker = false }) { Text("Close") } })
+    if (regionPicker) AlertDialog(onDismissRequest = { regionPicker = false },
+        title = { Text("Video region") }, text = {
+            Column {
+                listOf("CA" to "Canada", "IN" to "India").forEach { (code, title) ->
+                    DiscoveryAction(title, selected = state.region == code, onClick = { regionPicker = false; selectRegion(code) })
+                }
+                Text("Selects the catalogue. Playback availability may also depend on your connection.")
+            }
+        }, confirmButton = { TextButton(onClick = { regionPicker = false }) { Text("Close") } })
     if (state.selected != null && state.error != null) AlertDialog(onDismissRequest = dismissPlayback,
         containerColor = SportsSurface, title = { Text("Highlight unavailable") }, text = { Text(state.error) },
         confirmButton = { TextButton(onClick = retryPlayback) { Text("Refresh and retry") } },

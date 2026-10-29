@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 internal data class CricketHighlightsState(
+    val region: String = "CA",
+    val appVersion: String = "16.11.01",
     val videos: List<CricketHighlight> = emptyList(),
     val collections: List<CricketVideoCollection> = emptyList(),
     val sections: List<CricketVideoSection> = emptyList(),
@@ -56,6 +58,24 @@ internal class CricketHighlightsViewModel(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutable.update { it.copy(loading = false, error = message(failure)) } }
         }
+    }
+
+    fun selectAppVersion(version: String) {
+        if (version == mutable.value.appVersion) return
+        catalogueJob?.cancel()
+        stopPlayback()
+        repository.appVersion = version
+        mutable.update { CricketHighlightsState(region = it.region, appVersion = version) }
+        refresh()
+    }
+
+    fun selectRegion(region: String) {
+        if (region == mutable.value.region) return
+        catalogueJob?.cancel()
+        stopPlayback()
+        repository.region = region
+        mutable.update { CricketHighlightsState(region = region, appVersion = mutable.value.appVersion) }
+        refresh()
     }
 
     fun selectCollection(id: Int?) {

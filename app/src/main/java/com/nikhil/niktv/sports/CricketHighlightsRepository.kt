@@ -77,6 +77,12 @@ internal class CricketHighlightsRepository(
     private val now: () -> Long = System::currentTimeMillis,
     private val direct: CricbuzzDirectClient = CricbuzzDirectClient(transport),
 ) {
+    var appVersion: String
+        get() = direct.appVersion
+        set(value) { direct.appVersion = value; cached = null; nextCursor = null }
+    var region: String
+        get() = direct.region
+        set(value) { direct.region = value; cached = null; nextCursor = null }
     val configured get() = direct.configured || connection().configured
     val collections get() = if (direct.configured) direct.collections else emptyList()
     val sections get() = if (direct.configured) direct.sections else emptyList()

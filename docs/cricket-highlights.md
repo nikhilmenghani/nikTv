@@ -14,7 +14,11 @@ NIKTV_CRICBUZZ_APP_VERSION=6.16.04
 
 The import is stored encrypted with Android Keystore and overrides synced Cricbuzz values on that device. No GitHub connection or provider endpoint is needed. The APK contains the signing implementation, but no signing secret, account token or captured media session. The signing configuration must be provisioned separately; importing a replacement updates it without rebuilding the APK. The debug-only `files/local_cricket_configuration_import` path supports local `adb run-as` provisioning and deletes the plaintext file after consumption.
 
-NikTV first signs `GET /a/infra/v1/geo-location` and requires a Canadian response. It signs the Home and video catalogue requests with `Accept: application/x-protobuf`, `CB-Loc: CA`, numeric `CB-TZ`, `CB-AppVer` and `cb-src: playstore`. The app's region decision is respected; setting a header alone does not establish a Canadian connection. Region checks are cached for 15 minutes and catalogue results for two minutes. Every outgoing API request receives a fresh timestamped signature. Redirects are rejected and API authentication is never sent to artwork or media hosts.
+NikTV first signs `GET /a/infra/v1/geo-location` and records the detected connection country. The requested catalogue is selected separately by the Region tile. It signs the Home and video catalogue requests with `Accept: application/x-protobuf`, `CB-Loc: CA`, numeric `CB-TZ`, `CB-AppVer` and `cb-src: playstore`. The app's region decision is respected; setting a header alone does not establish a Canadian connection. Region checks are cached for 15 minutes and catalogue results for two minutes. Every outgoing API request receives a fresh timestamped signature. Redirects are rejected and API authentication is never sent to artwork or media hosts.
+
+## Region selection
+
+The **Region: Canada** tile opens a Canada/India picker. Canada (`CA`) is the default. The choice is stored per device and supplies `CB-Loc` on catalogue and playback-resolution API calls. Switching region clears the previous catalogue, collection and page-location caches and returns to the category landing page. Browse state is kept separately for each region. This does not change the public IP or guarantee media availability from another country.
 
 ## Latest Videos and series
 
@@ -90,3 +94,5 @@ The envelope may instead contain `catalogueBase64` with the original Home protob
 ## Validation
 
 `CricbuzzAuthenticationTest` checks independently generated HMAC vectors, rotation, host restriction, Canadian geo checking, bounded clock retries, cancellation, fresh direct Home playback, API credential isolation and propagation of media-server rejections. `CricketHighlightsTest` covers fresh playback resolution, promo rejection and bounded catalogue parsing. `CricbuzzVideoCatalogueTest` covers Latest Videos and series decoding, explicit free clips, duplicate handling, pagination termination, collection routing and original-cursor playback refresh. `CricketHighlightsDeviceTest` exercises remote/touch navigation, horizontal/vertical category navigation, View all, Load more, Back and readable failures. `CricbuzzDirectDeviceTest` is an opt-in live Canadian catalogue and encrypted-configuration check in the isolated regression package (`-e cricbuzzLive true`). See [verification/cricket-highlights.md](verification/cricket-highlights.md) for actual results and remaining limits.
+
+The Highlights version tile selects `CB-AppVer` (`16.11.01` by default, or `6.16.04`). The choice is saved per device and refreshes the catalogue; it overrides the imported app-version value for direct requests.

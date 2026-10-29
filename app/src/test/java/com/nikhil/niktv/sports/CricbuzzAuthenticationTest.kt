@@ -53,13 +53,19 @@ class CricbuzzAuthenticationTest {
         assertTrue(calls.all { it.second["CB-Loc"] == "CA" && "Bearer" !in it.second.values.joinToString() })
     }
 
-    @Test fun outsideCanadaIsRejectedBeforeLoadingTheCanadianFeed() = runBlocking {
-        var calls = 0
-        val direct = CricbuzzDirectClient(CricketHighlightsTransport { _, _ -> calls++; """{"country":"US"}""".toByteArray() },
-            { CricbuzzCredentials(key) }, { now })
-        try { direct.featured(); fail("Region must be respected") }
-        catch (error: SportsException) { assertTrue(error.message.orEmpty().contains("Canadian")) }
-        assertEquals(1, calls)
+    @Test fun selectedRegionControlsHeadersAndInvalidatesCatalogueIdentity() = runBlocking {
+        val regions = mutableListOf<String>()
+        val direct = CricbuzzDirectClient(CricketHighlightsTransport { target, headers ->
+            regions += headers.getValue("CB-Loc")
+            if (target.endsWith("geo-location")) """{"country":"CA"}""".toByteArray() else home()
+        }, { CricbuzzCredentials(key) }, { now })
+        assertEquals("CA", direct.region)
+        val canada = direct.cacheIdentity
+        direct.featured()
+        direct.region = "IN"
+        assertNotEquals(canada, direct.cacheIdentity)
+        direct.featured()
+        assertEquals(listOf("CA", "CA", "IN", "IN"), regions)
     }
 
     @Test fun trustedServerClockSkewIsCorrectedOnce() = runBlocking {
@@ -126,6 +132,22 @@ class CricbuzzAuthenticationTest {
             fail("A media-server rejection must propagate")
         } catch (_: CricketAccessDenied) { }
         assertEquals(1, mediaRequests)
+    }
+
+    @Test fun selectedVersionControlsHeaderAndInvalidatesCatalogueIdentity() = runBlocking {
+        val versions = mutableListOf<String?>()
+        val direct = CricbuzzDirectClient(CricketHighlightsTransport { url, headers ->
+            versions += headers["CB-AppVer"]
+            if (url.endsWith("geo-location")) """{"country":"CA"}""".toByteArray() else home()
+        }, { CricbuzzCredentials(key) }, { now })
+        val initial = direct.cacheIdentity
+        direct.featured()
+        assertTrue(versions.all { it == "16.11.01" })
+        versions.clear()
+        direct.appVersion = "6.16.04"
+        assertNotEquals(initial, direct.cacheIdentity)
+        direct.featured()
+        assertTrue(versions.isNotEmpty() && versions.all { it == "6.16.04" })
     }
 
     private fun variable(value: Long): ByteArray {
