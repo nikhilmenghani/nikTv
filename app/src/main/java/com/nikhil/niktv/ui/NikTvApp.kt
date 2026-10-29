@@ -680,6 +680,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                   }
                   PlayerScreen(
                     media = playback,
+                    onVideoFrameRendered = { vm.observeLivePlayback(playback, failed = false) },
+                    onTerminalPlaybackFailure = { vm.observeLivePlayback(playback, failed = true) },
                     onBack = vm::closePlayer,
                     onRetry = { vm.retryPlayback(it, playback) },
                     onReauthenticate = if (playback.offlinePlayback || playback.alternateSource != null) null else

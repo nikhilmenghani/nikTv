@@ -134,6 +134,9 @@ internal fun ModernFavoritesScreen(
     val configuration = LocalConfiguration.current
     val isTv = context.isModernTileTv(configuration)
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()
+    val availability = rememberIptvAvailability(profileKey)
+    val availabilityFocus = remember(profileKey) { FocusRequester() }
+    val availabilityScope = rememberCoroutineScope()
     val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
         LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val entryFocusRequester = remember(profileKey) { FocusRequester() }
@@ -144,7 +147,8 @@ internal fun ModernFavoritesScreen(
     val discoveryCards = discoveryChrome &&
         !com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
     val groups = FavoriteKind.entries.mapNotNull { kind ->
-        state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
+        state.favorites.filter { it.kind == kind && (kind != FavoriteKind.CHANNEL ||
+            availability.filter.includes(availability.flags[it.media.id])) }.takeIf { it.isNotEmpty() }?.let { kind to it }
     }
     val firstFavoriteKey = groups.firstOrNull()?.second?.firstOrNull()?.key
     LaunchedEffect(remoteNavigationActive, firstFavoriteKey) {
@@ -182,12 +186,15 @@ internal fun ModernFavoritesScreen(
             else ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings,
                 backModifier = if (firstFavoriteKey == null) Modifier.focusRequester(entryFocusRequester) else Modifier)
         }
+        if (state.favorites.any { it.kind == FavoriteKind.CHANNEL }) item("channel-availability", span = { GridItemSpan(maxLineSpan) }) {
+            IptvAvailabilityControl(availability, Modifier.padding(horizontal = 12.dp).focusRequester(availabilityFocus))
+        }
         if (groups.isEmpty()) item("favorites-empty", span = { GridItemSpan(maxLineSpan) }) {
             Box(Modifier.fillMaxWidth().height(360.dp)
                 .then(if (discoveryChrome) Modifier.focusRequester(entryFocusRequester).focusable() else Modifier), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.FavoriteBorder, null, Modifier.size(48.dp), tint = Color.Gray)
-                    Text("No favorites yet", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    Text(if (state.favorites.isNotEmpty()) "No favorites match this availability filter" else "No favorites yet", style = MaterialTheme.typography.titleMedium, color = Color.White)
                     Text("Press and hold any media item to add it here", color = Color.Gray)
                 }
             }
@@ -212,7 +219,10 @@ internal fun ModernFavoritesScreen(
                         open = { openFavorite(favorite) },
                         remove = { toggleFavorite(favorite) },
                         modifier = if (favorite.key == firstFavoriteKey) Modifier.focusRequester(entryFocusRequester) else Modifier,
-                        discoveryState = state.takeIf { discoveryCards }, refreshLiveProgramme = refreshLiveProgramme
+                        discoveryState = state.takeIf { discoveryCards || kind == FavoriteKind.CHANNEL }, refreshLiveProgramme = refreshLiveProgramme,
+                        onChannelAvailabilityChanged = { if (availability.filter != IptvAvailabilityFilter.ALL) availabilityScope.launch {
+                            gridState.scrollToItem(0); withFrameNanos { }; runCatching { availabilityFocus.requestFocus() }
+                        } }
                     )
                 }
             }
@@ -228,7 +238,8 @@ internal fun ModernFavoriteCard(
     remove: () -> Unit,
     modifier: Modifier = Modifier,
     discoveryState: NikTvState? = null,
-    refreshLiveProgramme: (MediaItem) -> Unit = {}
+    refreshLiveProgramme: (MediaItem) -> Unit = {},
+    onChannelAvailabilityChanged: () -> Unit = {}
 ) {
     var removalConfirmationOpen by rememberSaveable(favorite.key) {
         mutableStateOf(false)
@@ -275,6 +286,8 @@ internal fun ModernFavoriteCard(
             while (true) { delay(30_000L); value = System.currentTimeMillis() }
         }
         ModernLiveChannelTile(item, { refreshLiveProgramme(item) },
+            availabilityProfile = profile,
+            onAvailabilityChanged = onChannelAvailabilityChanged,
             xtream = discoveryState.savedProfile?.portalType == PortalType.XTREAM,
             categoryTitle = favorite.categoryTitle.orEmpty(), guideNow = now,
             programmeLoading = item.id in discoveryState.liveGuideLoadingIds,

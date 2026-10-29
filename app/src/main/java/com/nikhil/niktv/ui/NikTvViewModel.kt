@@ -225,6 +225,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     internal var categoryMetadataLookup: suspend (PortalSession, CatalogType, Boolean) -> List<Category> = { session, type, background -> portal.categories(session, type, background) }
     private val _state = MutableStateFlow(NikTvState(discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(application), parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(application), parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(application)))
     val state: StateFlow<NikTvState> = _state.asStateFlow()
+    private val channelAvailability = IptvAvailabilityStore(application)
+    internal fun observeLivePlayback(playback: PlayingMedia, failed: Boolean) {
+        val current = _state.value
+        val profile = current.session?.profile?.cacheKey() ?: current.savedProfile?.cacheKey().orEmpty()
+        channelAvailability.observe(profile, current.nowPlaying, playback, failed)
+    }
     private var allFavorites: List<FavoriteItem> = emptyList()
     private var allRecentlyPlayed: List<RecentItem> = emptyList()
     private var categoryFilterApplyInProgress = false

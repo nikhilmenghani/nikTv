@@ -662,6 +662,7 @@ internal fun PlayerQueueOverlay(
     onVisibleChannels: (List<MediaItem>) -> Unit = {},
     liveCategoryTitle: String = "",
     liveXtream: Boolean = false,
+    availabilityProfile: String = "",
     hasMore: Boolean = false,
     loadingMore: Boolean = false,
     onLoadMore: () -> Boolean = { false },
@@ -671,6 +672,7 @@ internal fun PlayerQueueOverlay(
     onSelect: (MediaItem, Int) -> Unit
 ) {
     BackHandler(onBack = onDismiss)
+    val availability = rememberIptvAvailability(availabilityProfile)
 
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -1118,6 +1120,7 @@ internal fun PlayerQueueOverlay(
         if (liveChannelQueue && !tvQueueGrid && !listQueue) {
             ModernLiveChannelTile(
                 item = item,
+                availabilityProfile = availabilityProfile,
                 onRefreshProgramme = { onRefreshProgramme?.invoke(item) },
                 xtream = liveXtream,
                 categoryTitle = liveCategoryTitle,
@@ -1195,13 +1198,13 @@ internal fun PlayerQueueOverlay(
                         Color.White
                     )
                 } else {
-                    androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF35383F))
+                    androidx.compose.foundation.BorderStroke(1.dp, if (item.id in availability.flags) IptvAvailabilityAmber else Color(0xFF35383F))
                 },
                 shape = cardShape
             ) {
                 if (tvQueueGrid || listQueue) {
                     CompactPlayerQueueContent(item, current, liveChannelQueue, liveCategoryTitle, liveXtream,
-                        guideNow, item.id in favoriteIds, item.id in pinnedIds)
+                        guideNow, item.id in favoriteIds, item.id in pinnedIds, availability.flags[item.id])
                 } else PlayerMediaTileContent(item = item, current = current, isTv = tvQueueGrid)
 
             }
@@ -1217,6 +1220,8 @@ internal fun PlayerQueueOverlay(
                     dismiss = { favoriteMenuItemId = null },
                     toggleFavorite = { onToggleFavorite?.invoke(item) },
                     clear = null,
+                    availabilityFlag = availability.flags[item.id],
+                    toggleAvailability = if (availabilityProfile.isBlank() || !liveChannelQueue) null else ({ availability.toggle(item.id) }),
                     isPinned = item.id in pinnedIds,
                     togglePin = onTogglePin?.let { pin -> { pin(item) } },
                     refreshProgramme = onRefreshProgramme?.let { refresh -> { refresh(item) } },

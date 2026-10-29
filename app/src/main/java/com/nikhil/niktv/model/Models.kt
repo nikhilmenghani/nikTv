@@ -464,5 +464,6 @@ data class PlaybackQueueFilter(
     val fixedIds: Set<String>? = null,
     val pinnedIds: List<String>? = null,
     val selectedOrdinal: Int = 0,
-    val contextId: String? = null
+    val contextId: String? = null,
+    val excludedIds: Set<String> = emptySet()
 )

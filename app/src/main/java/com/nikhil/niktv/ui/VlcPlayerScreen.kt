@@ -150,6 +150,7 @@ internal fun VlcPlayerScreen(
     onChooseAlternateSource: ((Long, () -> Long) -> Unit)? = null,
     alternateSourceChooserOpen: Boolean = false,
     onVideoFrameRendered: () -> Unit = {},
+    onTerminalPlaybackFailure: (() -> Unit)? = null,
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
     offlineDownloadInProgress: Boolean = false,
@@ -902,6 +903,17 @@ internal fun VlcPlayerScreen(
         }
     }
 
+    if (onTerminalPlaybackFailure != null) {
+        val lifecycleState by playbackLifecycleOwner.lifecycle.currentStateFlow.collectAsState()
+        var reported by remember(player, media.playbackAttemptId) { mutableStateOf(false) }
+        LaunchedEffect(player, media.playbackAttemptId, error, playbackRequested, lifecycleState) {
+            if (!reported && error != null && playbackRequested &&
+                lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                reported = true
+                onTerminalPlaybackFailure()
+            }
+        }
+    }
     LaunchedEffect(player, media.progressKey) {
         var lastProgressSave = android.os.SystemClock.elapsedRealtime()
         val resume = VlcResumeSeekPolicy(pendingInitialResumePosition)
@@ -2147,6 +2159,7 @@ PlayerChromeIconButton(
             onRefreshProgramme = if (media.catalogType == CatalogType.LIVE_TV) onRefreshQueueProgramme else null,
             onVisibleChannels = onVisibleQueueChannels,
             liveCategoryTitle = liveQueueCategoryTitle,
+            availabilityProfile = media.profileKey.takeIf { media.catalogType == CatalogType.LIVE_TV && media.alternateSource == null }.orEmpty(),
             liveXtream = liveQueueXtream,
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,

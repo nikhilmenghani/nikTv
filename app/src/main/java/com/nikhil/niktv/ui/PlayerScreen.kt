@@ -347,7 +347,8 @@ fun PlayerScreen(
     onReauthenticate: ((Long) -> Unit)? = null,
     reauthenticating: Boolean = false,
     onVideoFrameRendered: () -> Unit = {},
-    onVideoFramesRendered: ((Int) -> Unit)? = null
+    onVideoFramesRendered: ((Int) -> Unit)? = null,
+    onTerminalPlaybackFailure: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val introSettings = rememberIntroSkipSettings(media)
@@ -462,6 +463,7 @@ fun PlayerScreen(
             onChooseAlternateSource = onChooseAlternateSource,
             alternateSourceChooserOpen = alternateSourceChooserOpen,
             onVideoFrameRendered = onVideoFrameRendered,
+            onTerminalPlaybackFailure = onTerminalPlaybackFailure,
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
             offlineDownloadInProgress = offlineDownloadInProgress,
@@ -1483,6 +1485,22 @@ fun PlayerScreen(
                 break
             }
             delay(250L)
+        }
+    }
+    // Observe only the final failure after the existing authorization/decoder/live recovery paths.
+    if (onTerminalPlaybackFailure != null) {
+        val lifecycleState by playbackLifecycleOwner.lifecycle.currentStateFlow.collectAsState()
+        var reported by remember(player, media.playbackAttemptId) { mutableStateOf(false) }
+        LaunchedEffect(player, media.playbackAttemptId, playbackError, startupTimedOut, playbackRequested,
+            decoderRecoveryInProgress, lifecycleState) {
+            val authorizationPending = media.authorizationRetryCount == 0 &&
+                playbackError?.startsWith("Stream authorization expired.") == true
+            if (!reported && (playbackError != null || startupTimedOut) && !authorizationPending &&
+                !decoderRecoveryInProgress && (playbackRequested || startupTimedOut) &&
+                lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                reported = true
+                onTerminalPlaybackFailure()
+            }
         }
     }
     /*
@@ -2802,6 +2820,7 @@ PlayerChromeIconButton(
             onRefreshProgramme = if (media.catalogType == CatalogType.LIVE_TV) onRefreshQueueProgramme else null,
             onVisibleChannels = onVisibleQueueChannels,
             liveCategoryTitle = liveQueueCategoryTitle,
+            availabilityProfile = media.profileKey.takeIf { media.catalogType == CatalogType.LIVE_TV && media.alternateSource == null }.orEmpty(),
             liveXtream = liveQueueXtream,
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,

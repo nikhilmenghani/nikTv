@@ -21,7 +21,7 @@ import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
 @Composable
 internal fun CompactPlayerQueueContent(
     item: MediaItem, current: Boolean, live: Boolean, category: String, xtream: Boolean,
-    now: Long, favorite: Boolean, pinned: Boolean
+    now: Long, favorite: Boolean, pinned: Boolean, availabilityFlag: IptvChannelFlag? = null
 ) {
     val title = remember(item.title, category, xtream) { liveTvTilePresentation(item.title, category, xtream) }
     val programme = if (live) item.currentLiveProgramme(now)?.takeUnless { isMissingLiveProgrammeTitle(it.title) } else null
@@ -37,6 +37,7 @@ internal fun CompactPlayerQueueContent(
                 fontWeight = FontWeight.SemiBold, maxLines = if (programme == null) 2 else 1, overflow = TextOverflow.Ellipsis)
             if (pinned) Icon(Icons.Default.PushPin, "Pinned", Modifier.size(14.dp), tint = Color.LightGray)
             if (favorite) Icon(Icons.Default.Favorite, "Favorite", Modifier.size(14.dp), tint = Color(0xFFFF727A))
+            availabilityFlag?.let { Icon(Icons.Default.Flag, it.label, Modifier.size(14.dp), tint = IptvAvailabilityAmber) }
             title.quality?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Color.LightGray) }
         }
         programme?.let {
