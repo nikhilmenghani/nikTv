@@ -36,8 +36,9 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(lifecycle, state.selected?.key, state.playing != null) {
+    LaunchedEffect(lifecycle, state.selected?.key, state.playing != null, state.tab) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            if (state.tab == SportsTab.HIGHLIGHTS) return@repeatOnLifecycle
             var lastCheck = 0L
             while (true) {
                 now = Instant.now()
@@ -45,6 +46,10 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
                 delay(if (state.selected == null && state.tab == SportsTab.EVENTS) 1_000 else 30_000)
             }
         }
+    }
+    if (state.tab == SportsTab.HIGHLIGHTS) {
+        CricketHighlightsScreen(onClose = onClose, selectTab = vm::selectTab)
+        return
     }
     val playing = state.playing
     if (playing != null) {

@@ -89,7 +89,9 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
                 decoderRecoveries = 0; decoderSession = java.util.UUID.randomUUID().toString(); attempt++
             }
         },
-        onPlaybackAuthorizationFailure = { authorizationRetries++; attempt++ },
+        onPlaybackAuthorizationFailure = {
+            if (!stream.isLive && onRetryFresh != null) onRetryFresh() else { authorizationRetries++; attempt++ }
+        },
         onPlayPrevious = { sportsAdjacentStream(navigationIndex, -1, queue.size)?.let { onSelectStream?.invoke(it) } },
         onPlayNext = { sportsAdjacentStream(navigationIndex, 1, queue.size)?.let { onSelectStream?.invoke(it) } },
         onPlayQueueItem = { _, index -> if (index in queue.indices) onSelectStream?.invoke(index) },
@@ -127,14 +129,14 @@ internal fun SportsStream.playbackDrm(): PlaybackStreamDrm? {
 }
 
 internal fun SportsStream.asPlayingMedia(title: String): PlayingMedia {
-    val identity = java.security.MessageDigest.getInstance("SHA-256").digest(link.toByteArray())
+    val identity = java.security.MessageDigest.getInstance("SHA-256").digest(contentId.ifBlank { link }.toByteArray())
         .take(12).joinToString("") { "%02x".format(it) }
     val headers = if (headers.keys.any { it.equals("User-Agent", true) }) headers else headers + ("User-Agent" to SPORTS_USER_AGENT)
     val path = link.substringBefore('?').lowercase(java.util.Locale.ROOT)
     return PlayingMedia(com.nikhil.niktv.model.MediaItem("sports:$identity", title.ifBlank { this.title }, null, null),
-        link, CatalogType.LIVE_TV, progressKey = "sports:$identity", directFullscreen = true, streamRequestHeaders = headers,
+        link, if (isLive) CatalogType.LIVE_TV else CatalogType.MOVIES, progressKey = "sports:$identity", directFullscreen = true, streamRequestHeaders = headers,
         playbackFormat = when { path.endsWith(".mpd") -> "DASH"; path.endsWith(".m3u8") -> "HLS"; else -> "" },
-        streamDrm = playbackDrm(), allowLiveWindowSeeking = true)
+        streamDrm = playbackDrm(), allowLiveWindowSeeking = isLive)
 }
 
 internal fun sportsClearKeyResponse(value: String): ByteArray {

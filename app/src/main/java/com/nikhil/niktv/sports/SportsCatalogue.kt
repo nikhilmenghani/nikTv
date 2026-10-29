@@ -52,6 +52,8 @@ internal data class SportsStream(
     val drmLicense: String = "",
     val geo: String = "ALL",
     val webLink: String = "",
+    val isLive: Boolean = true,
+    val contentId: String = "",
 )
 
 internal object SportsCatalogue {

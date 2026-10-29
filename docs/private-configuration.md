@@ -22,7 +22,14 @@ NIKTV_XTREAM_PASSWORD
 NIKTV_TMDB_API_KEY
 NIKTV_TMDB_READ_ACCESS_TOKEN
 OPEN_SUBTITLES_KEY
+NIKTV_CRICKET_HIGHLIGHTS_URL
+NIKTV_CRICKET_HIGHLIGHTS_TOKEN
+NIKTV_CRICBUZZ_AUTH_KEY
+NIKTV_CRICBUZZ_AUTH_MODE
+NIKTV_CRICBUZZ_APP_VERSION
 G_TOKEN
 ```
+
+For direct Canadian highlights, **Sports → Highlights → Cricbuzz configuration** also imports a local JSON or text file with the `NIKTV_CRICBUZZ_*` keys. This configuration is encrypted with Android Keystore and takes precedence over synced Cricbuzz values on that device. It does not require GitHub or a separate provider endpoint. See [cricket-highlights.md](cricket-highlights.md) for API signing and playback checks. Provider keys and signed video URLs must stay out of source code and APK assets.
 
 The IPTV profile values appear in Settings → Profiles after a successful sync. `G_TOKEN` is optional; the GitHub backup screen can also accept a token entered directly on the device. The app keeps the last successful cache when GitHub is unavailable. A `G_TOKEN` GitHub Actions secret is available only during a workflow run; it cannot be used by an installed app without copying it into the APK. Keep the token out of APK assets. Rotate any credentials previously embedded in published APKs.

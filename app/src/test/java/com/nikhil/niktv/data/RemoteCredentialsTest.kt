@@ -13,11 +13,21 @@ class RemoteCredentialsTest {
             NIKGAPPS_CLIENT_SECRET=unrelated-secret
             export NIKTV_TMDB_API_KEY="tmdb-value"
             NIKTV_XTREAM_PASSWORD='iptv-value'
+            NIKTV_CRICKET_HIGHLIGHTS_URL=https://provider.example.test/featured
+            NIKTV_CRICKET_HIGHLIGHTS_TOKEN=fixture-provider-token
+            NIKTV_CRICBUZZ_AUTH_KEY=fixture-api-key
+            NIKTV_CRICBUZZ_AUTH_MODE=AK
+            NIKTV_CRICBUZZ_APP_VERSION=6.16.04
             """.trimIndent()
         )
 
         assertEquals("tmdb-value", parsed["NIKTV_TMDB_API_KEY"])
         assertEquals("iptv-value", parsed["NIKTV_XTREAM_PASSWORD"])
+        assertEquals("https://provider.example.test/featured", parsed["NIKTV_CRICKET_HIGHLIGHTS_URL"])
+        assertEquals("fixture-provider-token", parsed["NIKTV_CRICKET_HIGHLIGHTS_TOKEN"])
+        assertEquals("fixture-api-key", parsed["NIKTV_CRICBUZZ_AUTH_KEY"])
+        assertEquals("AK", parsed["NIKTV_CRICBUZZ_AUTH_MODE"])
+        assertEquals("6.16.04", parsed["NIKTV_CRICBUZZ_APP_VERSION"])
         assertFalse(parsed.containsKey("NIKGAPPS_CLIENT_SECRET"))
     }
 }

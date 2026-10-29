@@ -6,7 +6,7 @@ import java.util.Locale
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-internal enum class SportsTab(val title: String) { EVENTS("Live Events"), CHANNELS("Sports"), CATEGORIES("Categories") }
+internal enum class SportsTab(val title: String) { EVENTS("Live Events"), CHANNELS("Sports"), CATEGORIES("Categories"), HIGHLIGHTS("Highlights") }
 
 @Serializable
 internal data class SportsFormat(val title: String, val webLink: String = "", val geo: String = "ALL")

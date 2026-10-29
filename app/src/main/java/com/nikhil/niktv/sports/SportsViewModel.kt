@@ -152,6 +152,10 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
     fun dismissLibraryError() { mutable.update { it.copy(libraryError = null) } }
 
     fun refresh(force: Boolean = true) {
+        if (mutable.value.tab == SportsTab.HIGHLIGHTS) {
+            mutable.update { it.copy(loading = false, error = null) }
+            return
+        }
         val selected = mutable.value.selected
         if (selected != null) { openChannel(selected, mutable.value.event); return }
         if (mutable.value.favouritesOnly) { mutable.update { it.copy(favourites = library.favourites(), error = null, loading = false) }; return }

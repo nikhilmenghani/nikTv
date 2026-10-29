@@ -284,7 +284,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
 }
 
 /** Exact row/column movement, including targets virtualized outside the viewport. */
-@Composable private fun <T> SportsGrid(rows: List<T>, key: (T) -> String, scroll: LazyGridState, minWidth: Int,
+@Composable internal fun <T> SportsGrid(rows: List<T>, key: (T) -> String, scroll: LazyGridState, minWidth: Int,
     modifier: Modifier, above: FocusRequester, below: FocusRequester? = null, entry: FocusRequester? = null,
     requester: (Int) -> FocusRequester, tile: @Composable (T, Int, Modifier) -> Unit) {
     val scope = rememberCoroutineScope()

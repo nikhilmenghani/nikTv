@@ -50,7 +50,8 @@ object RemoteCredentials {
         }
         importLocalDebugToken(context)
         importEmbeddedDebugToken(context)
-        values = parseKnownValues(decrypt(prefs.getString("cached_values", null)))
+        values = parseKnownValues(decrypt(prefs.getString("cached_values", null))) + localCricketValues(context)
+        importLocalDebugCricketConfiguration(context)
         lastUpdatedAt = prefs.getLong("updated_at", 0L)
     }
 
@@ -85,6 +86,32 @@ object RemoteCredentials {
     }
 
     fun get(name: String): String = values[name].orEmpty().trim()
+
+    /** Explicitly imported API configuration stays device-local and encrypted. */
+    fun saveLocalCricketConfiguration(context: Context, raw: String) {
+        require(raw.toByteArray().size <= 65_536) { "The Cricbuzz configuration file is too large." }
+        val local = parseKnownValues(raw).filterKeys { it in CRICKET_KEYS }
+        require(local["NIKTV_CRICBUZZ_AUTH_KEY"].orEmpty().isNotBlank()) { "The file does not contain a Cricbuzz API configuration." }
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.edit().putString("local_cricket_values", encrypt(JSONObject(local).toString())).commit()
+        values = parseKnownValues(decrypt(prefs.getString("cached_values", null))) + local
+    }
+
+    private fun localCricketValues(context: Context): Map<String, String> = parseKnownValues(decrypt(
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("local_cricket_values", null)
+    )).filterKeys { it in CRICKET_KEYS }
+
+    private fun importLocalDebugCricketConfiguration(context: Context) {
+        if (!BuildConfig.DEBUG) return
+        val file = context.applicationContext.filesDir.resolve("local_cricket_configuration_import")
+        if (!file.isFile) return
+        try {
+            require(file.length() <= 65_536)
+            saveLocalCricketConfiguration(context, file.readText(Charsets.UTF_8))
+        } catch (_: Exception) {
+            Log.w("NikTvLocalCredentials", "Could not import Cricbuzz configuration")
+        } finally { file.delete() }
+    }
 
     fun configured(context: Context): Boolean =
         token(context).isNotBlank() && owner(context).isNotBlank() &&
@@ -206,7 +233,7 @@ object RemoteCredentials {
             .putString("cached_values", encrypt(JSONObject(parsed).toString()))
             .putLong("updated_at", now)
             .apply()
-        values = parsed
+        values = parsed + localCricketValues(app)
         lastUpdatedAt = now
         true
     }
@@ -278,7 +305,10 @@ object RemoteCredentials {
         "NIKTV_DEFAULT_SERIAL_NUMBER", "NIKTV_XTREAM_PROFILE_NAME", "NIKTV_XTREAM_PORTAL_URL",
         "NIKTV_XTREAM_USERNAME", "NIKTV_XTREAM_PASSWORD", "NIKTV_TMDB_API_KEY",
         "NIKTV_TMDB_READ_ACCESS_TOKEN", "OPEN_SUBTITLES_KEY", "G_TOKEN",
+        "NIKTV_CRICKET_HIGHLIGHTS_URL", "NIKTV_CRICKET_HIGHLIGHTS_TOKEN",
+        "NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION",
     )
+    private val CRICKET_KEYS = KNOWN_KEYS.filter { it.startsWith("NIKTV_CRICBUZZ_") }.toSet()
     private val KEY_PATTERN = Regex("[A-Za-z_][A-Za-z0-9_]*")
     private val REPOSITORY_PATTERN = Regex("[A-Za-z0-9_.-]+")
 }
