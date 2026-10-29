@@ -1,26 +1,67 @@
 package com.nikhil.niktv.sports
 
-/** Bounded reader for the Home -> VideoList -> VideoAdWrapper -> VideoItem fields. */
+internal data class CricketVideoCollection(val id: Int, val title: String)
+internal data class CricketVideoPage(val videos: List<CricketHighlight>, val nextCursor: String?)
+internal data class CricketVideoSection(val id: Int?, val title: String, val videos: List<CricketHighlight>)
+
+/** Bounded readers for Home, VideoList and VideoCollectionsDetail's declared wrapper fields. */
 internal object CricketHomeProtobuf {
     fun parse(bytes: ByteArray): List<CricketHighlight> {
         val root = message(bytes)
         // HomePageStories.videoList (3), featuredVideoLists (10). Unknown news/ad fields are skipped.
         return (root.blobs(3) + root.blobs(10)).flatMap { list ->
             message(list).blobs(1).mapNotNull { wrapper ->
-                message(wrapper).blobs(1).firstOrNull()?.let { video(message(it)) }
+                message(wrapper).blobs(1).firstOrNull()?.let { video(message(it), highlightsOnly = true) }
             }
         }
     }
 
-    private fun video(item: Message): CricketHighlight? {
+    fun latest(bytes: ByteArray): CricketVideoPage = page(message(bytes).blobs(1))
+
+    fun collections(bytes: ByteArray): List<CricketVideoCollection> = collectionMessages(message(bytes)).mapNotNull { item ->
+        val id = item.number(1)?.takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: return@mapNotNull null
+        val title = item.text(2).trim().takeIf { it.isNotEmpty() && it.length <= 300 } ?: return@mapNotNull null
+        CricketVideoCollection(id, title)
+    }.distinctBy { it.id }.take(100)
+
+    fun sections(bytes: ByteArray): List<CricketVideoSection> = collectionMessages(message(bytes)).mapNotNull { item ->
+        val id = item.number(1)?.takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: return@mapNotNull null
+        val title = item.text(2).trim().takeIf { it.isNotEmpty() && it.length <= 300 } ?: return@mapNotNull null
+        CricketVideoSection(id, title, page(item.blobs(6)).videos)
+    }.distinctBy { it.id }.take(100)
+
+    fun collectionPage(bytes: ByteArray): CricketVideoPage {
+        val root = message(bytes)
+        return page(root.blobs(7) + collectionMessages(root).flatMap { it.blobs(6) })
+    }
+
+    private fun collectionMessages(root: Message): List<Message> = root.blobs(1).mapNotNull { wrapper ->
+        message(wrapper).blobs(1).firstOrNull()?.let(::message)
+    }
+
+    private fun page(wrappers: List<ByteArray>): CricketVideoPage {
+        val items = wrappers.mapNotNull { wrapper -> message(wrapper).blobs(1).firstOrNull()?.let(::message) }
+        val rows = items.mapNotNull { video(it, highlightsOnly = false) }.distinctBy { it.id }.take(500)
+        // pt is the publish timestamp of the last returned video, not its numeric video ID.
+        val cursor = items.lastOrNull()?.number(4)?.takeIf { it > 0 }?.toString()
+        return CricketVideoPage(rows, cursor.takeIf { items.isNotEmpty() })
+    }
+
+    private fun video(item: Message, highlightsOnly: Boolean): CricketHighlight? {
         val id = item.text(1)
         val title = item.text(2).trim()
+        val type = item.text(18).trim()
         if (!validCricketId(id) || title.isEmpty() || title.length > 500 || item.number(8) == 1L ||
-            !item.text(18).equals("Highlights", true)) return null
+            type.equals("MatchStream", true) || (highlightsOnly && !type.equals("Highlights", true))) return null
         val image = item.text(22).takeIf(::cricketHttpsUrl) ?: item.text(6).takeIf { it.matches(Regex("[0-9]{1,20}")) }
-            ?.let { "https://static.cricbuzz.com/a/img/v1/i1/c$it/i.jpg" }.orEmpty()
+            ?.let { "https://static.cricbuzz.com/a/img/v1/1280x720/i1/c$it/i.jpg" }.orEmpty()
+        val premium = item.text(17).takeIf(::cricketHttpsUrl).orEmpty()
+        val standard = item.text(14).takeIf(::cricketHttpsUrl).orEmpty()
+        // Explicitly free clips use videoUrl as their actual asset; it is not a fallback for a missing premium URL.
+        val freeAsset = premium.isBlank() && item.number(20) == 1L
         return CricketHighlight(id, title, item.text(10), image,
-            item.text(17).takeIf(::cricketHttpsUrl).orEmpty(), item.text(14).takeIf(::cricketHttpsUrl).orEmpty())
+            premium.ifBlank { standard.takeIf { freeAsset }.orEmpty() },
+            standard.takeUnless { freeAsset }.orEmpty(), type = type.ifBlank { "Video" })
     }
 
     private data class Message(val blobs: Map<Int, List<ByteArray>>, val numbers: Map<Int, Long>) {

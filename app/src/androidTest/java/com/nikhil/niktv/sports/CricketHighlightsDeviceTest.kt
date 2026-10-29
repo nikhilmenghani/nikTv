@@ -51,33 +51,62 @@ class CricketHighlightsDeviceTest {
         return activity
     }
 
-    @Test fun featuredGridUsesExplicitPlaybackAndSupportsRemoteNavigation() {
+    @Test fun categoryRowsSupportHorizontalAndVerticalRemoteNavigation() {
         val activity = host()
         var played = ""
         var refreshed = 0
-        val videos = (1..40).map { CricketHighlight("$it", "Fixture highlight $it", "24:27") }
+        val featured = (1..8).map { CricketHighlight("$it", "Fixture highlight $it", "24:27") }
+        val series = (21..28).map { CricketHighlight("$it", "Series clip $it", "3:36") }
         try {
             ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
-                CricketHighlightsContent(CricketHighlightsState(videos = videos, configured = true), {}, {}, { refreshed++ }, { played = it })
+                CricketHighlightsContent(CricketHighlightsState(videos = featured, configured = true,
+                    sections = listOf(CricketVideoSection(null, "Featured highlights", featured),
+                        CricketVideoSection(656, "India tour of New Zealand", series))), {}, {}, { refreshed++ }, { played = it })
             } } }
-            await("Highlight screen displayed") { find("Cricket highlights") != null }
+            await("Video rows displayed") { find("Videos") != null }
             ins.waitForIdleSync()
             ins.setInTouchMode(false)
             await("Highlights tab focused") { focused("Highlights") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("First row entered") { focused("Fixture highlight 1") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Horizontal tile navigation") { focused("Fixture highlight 2") }
             assertEquals("", played)
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("First highlight focused") { focused("Fixture highlight 1") }
+            await("Moves to the same position in the next category") { focused("Series clip 22") }
             assertEquals("", played)
-            val width = activity.resources.configuration.screenWidthDp
-            val columns = ((width - (if (width < 700) 28 else 48) + 10) / ((if (width < 700) 240 else 280) + 10)).coerceAtLeast(1)
-            key(if (columns > 1) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Next highlight focused") { focused("Fixture highlight 2") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("OK explicitly selects the stable video ID") { played == "2" }
+            await("OK explicitly selects the video") { played == "22" }
             click("Refresh highlights")
             await("Refresh action") { refreshed == 1 }
-            assertNotNull(find("Featured in Canada"))
-            assertNotNull(find("24:27 · Highlights"))
+            assertNotNull(find("3:36 · Highlights"))
+        } finally { activity.finish() }
+    }
+
+    @Test fun viewAllOpensCategoryGridAndLoadMoreThenReturnsToRows() {
+        val activity = host()
+        var collection: Int? = null
+        var more = 0
+        val clip = CricketHighlight("1", "Fixture batting clip", "3:36", type = "Top Knocks")
+        val state = mutableStateOf(CricketHighlightsState(configured = true, hasMore = true,
+            collections = listOf(CricketVideoCollection(1, "Latest Videos")), videos = listOf(clip),
+            sections = listOf(CricketVideoSection(1, "Latest Videos", listOf(clip)))))
+        try {
+            ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                CricketHighlightsContent(state.value, {}, {}, {}, {}, selectCollection = {
+                    collection = it; state.value = state.value.copy(collectionId = it)
+                }, loadMore = { more++ })
+            } } }
+            await("Latest Videos category displayed") { find("View all Latest Videos") != null }
+            assertNull(collection)
+            assertEquals(0, more)
+            click("View all Latest Videos")
+            await("Full category opens") { collection == 1 && find("Load more videos") != null }
+            assertNotNull(find("3:36 · Top Knocks"))
+            click("Load more videos")
+            await("Pagination explicitly requested") { more == 1 }
+            click("Back")
+            await("Returns to category rows") { collection == null && find("View all Latest Videos") != null }
         } finally { activity.finish() }
     }
 

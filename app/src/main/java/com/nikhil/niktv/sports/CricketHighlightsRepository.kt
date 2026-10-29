@@ -78,29 +78,51 @@ internal class CricketHighlightsRepository(
     private val direct: CricbuzzDirectClient = CricbuzzDirectClient(transport),
 ) {
     val configured get() = direct.configured || connection().configured
+    val collections get() = if (direct.configured) direct.collections else emptyList()
+    val sections get() = if (direct.configured) direct.sections else emptyList()
+    val hasMore get() = nextCursor != null
     private val mutex = Mutex()
     private var cached: List<CricketHighlight>? = null
     private var cachedAt = 0L
     private var cachedConnection = "" to ""
+    private var nextCursor: String? = null
+    private var collectionId: Int? = null
 
-    suspend fun featured(refresh: Boolean = false): List<CricketHighlight> = mutex.withLock {
+    suspend fun featured(refresh: Boolean = false, collectionId: Int? = null): List<CricketHighlight> = mutex.withLock {
         val source = connection()
         if (!configured) throw SportsException("Import your Cricbuzz configuration to connect the Canadian catalogue.")
         val identity = if (direct.configured) "cricbuzz-direct" to direct.cacheIdentity else source.url to source.token
-        cached?.takeIf { !refresh && cachedConnection == identity && now() - cachedAt in 0 until 120_000 }?.let { return@withLock it }
-        val result = if (direct.configured) direct.featured() else {
+        cached?.takeIf { !refresh && this.collectionId == collectionId && cachedConnection == identity && now() - cachedAt in 0 until 120_000 }?.let { return@withLock it }
+        val result = if (direct.configured) {
+            val page = direct.browse(collectionId, refreshCollections = refresh)
+            nextCursor = page.nextCursor
+            page.videos
+        } else {
+            nextCursor = null
             val url = source.url.toHttpUrlOrNull()!!.newBuilder().setQueryParameter("country", "CA").build().toString()
             val headers = mapOf("Accept" to "application/json, application/x-protobuf", "CB-Loc" to "CA") +
                 if (source.token.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer ${source.token}")
             CricketHighlightsCatalogue.parse(transport.get(url, headers))
         }
-        cached = result; cachedAt = now(); cachedConnection = identity
+        cached = result; cachedAt = now(); cachedConnection = identity; this.collectionId = collectionId
+        result
+    }
+
+    suspend fun loadMore(): List<CricketHighlight> = mutex.withLock {
+        val existing = cached.orEmpty()
+        val cursor = nextCursor ?: return@withLock existing
+        if (!direct.configured || existing.size >= 500) { nextCursor = null; return@withLock existing }
+        val page = direct.browse(collectionId, cursor)
+        val result = mergeCricketVideos(existing, page.videos)
+        // Stop on an empty/repeated page, repeated cursor, or the bounded catalogue limit.
+        nextCursor = page.nextCursor.takeIf { it != cursor && result.size > existing.size && result.size < 500 }
+        cached = result; cachedAt = now()
         result
     }
 
     /** Re-fetch by stable identity on every play/retry; never query a signed-out detail URL. */
     suspend fun fullStream(id: String): SportsStream {
-        val item = featured(refresh = true).firstOrNull { it.id == id }
+        val item = if (direct.configured) direct.resolve(id) else featured(refresh = true).firstOrNull { it.id == id }
             ?: throw SportsException("This highlight is no longer featured. Refresh the catalogue.")
         val stream = item.fullStream()
         val master = transport.get(stream.link, stream.headers).toString(Charsets.UTF_8)

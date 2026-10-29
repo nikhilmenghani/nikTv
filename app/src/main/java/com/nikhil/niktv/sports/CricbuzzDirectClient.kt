@@ -21,16 +21,68 @@ internal class CricbuzzDirectClient(
     private var regionCheckedAt: Long? = null
     private var regionIdentity = ""
     private var clockOffset = 0L
+    private var collectionsCheckedAt: Long? = null
+    var collections: List<CricketVideoCollection> = emptyList()
+        private set
+    private var collectionSections: List<CricketVideoSection> = emptyList()
+    var sections: List<CricketVideoSection> = emptyList()
+        private set
+    private data class Location(val collectionId: Int?, val cursor: String?)
+    private val locations = linkedMapOf<String, Location>()
 
     suspend fun featured(): List<CricketHighlight> {
+        checkCanada()
+        return CricketHomeProtobuf.parse(request("/a/home/v1/index")).distinctBy { it.id }.take(500)
+    }
+
+    private suspend fun checkCanada() {
         if (!configured) throw SportsException("Import your Cricbuzz API configuration to connect the Canadian catalogue.")
+        if (regionIdentity != cacheIdentity) {
+            locations.clear(); collections = emptyList(); collectionSections = emptyList(); sections = emptyList(); collectionsCheckedAt = null
+        }
         if (regionIdentity != cacheIdentity || regionCheckedAt?.let { now() - it !in 0 until 900_000 } != false) {
             val geo = Json.parseToJsonElement(request("/a/infra/v1/geo-location", json = true).toString(Charsets.UTF_8)).jsonObject
             if (!geo.text("country").equals("CA", true)) throw SportsException("Cricbuzz has not made the Canadian catalogue available on this connection.")
             regionIdentity = cacheIdentity; regionCheckedAt = now()
         }
-        // The catalogue's signed media URLs are preserved; a signed-out detail response is never substituted.
-        return CricketHomeProtobuf.parse(request("/a/home/v1/index")).distinctBy { it.id }.take(500)
+    }
+
+    suspend fun browse(collectionId: Int? = null, cursor: String? = null, refreshCollections: Boolean = false): CricketVideoPage {
+        checkCanada()
+        if (refreshCollections || collectionsCheckedAt?.let { now() - it in 0 until 900_000 } != true) {
+            collectionSections = CricketHomeProtobuf.sections(request("/a/videos/v1/collection/videoIndex"))
+            collections = collectionSections.map { CricketVideoCollection(it.id!!, it.title) }
+            collectionsCheckedAt = now()
+        }
+        val page = page(collectionId, cursor)
+        val home = if (collectionId == null && cursor == null) featured() else emptyList()
+        val rows = mergeCricketVideos(home, page.videos)
+        page.videos.forEach { locations.putIfAbsent(it.id, Location(collectionId, cursor)) }
+        collectionSections.forEach { section -> section.videos.forEach { locations.putIfAbsent(it.id, Location(section.id, null)) } }
+        if (collectionId == null && cursor == null) {
+            sections = listOf(CricketVideoSection(null, "Featured highlights", home)) + collectionSections.map {
+                if (it.id == 1) it.copy(videos = page.videos) else it
+            }
+            if (sections.none { it.id == 1 }) sections = sections + CricketVideoSection(1, "Latest Videos", page.videos)
+        }
+        while (locations.size > 500) locations.remove(locations.keys.first())
+        return page.copy(videos = rows)
+    }
+
+    /** Resolve older pages/series at their original cursor; never replace them with signed-out detail URLs. */
+    suspend fun resolve(id: String): CricketHighlight {
+        featured().firstOrNull { it.id == id }?.let { return it }
+        val location = locations[id] ?: Location(null, null)
+        return page(location.collectionId, location.cursor).videos.firstOrNull { it.id == id }
+            ?: throw SportsException("This video is no longer available in this listing. Refresh the catalogue.")
+    }
+
+    private suspend fun page(collectionId: Int?, cursor: String?): CricketVideoPage {
+        require(collectionId == null || collectionId > 0)
+        require(cursor == null || cursor.matches(Regex("[0-9]{1,19}")))
+        val path = if (collectionId == null) "/a/videos/v1/index" else "/a/videos/v1/collection/detail/$collectionId"
+        val bytes = request(path + cursor?.let { "?pt=$it" }.orEmpty())
+        return if (collectionId == null) CricketHomeProtobuf.latest(bytes) else CricketHomeProtobuf.collectionPage(bytes)
     }
 
     private suspend fun request(path: String, json: Boolean = false): ByteArray {

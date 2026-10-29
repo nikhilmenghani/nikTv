@@ -11,6 +11,11 @@ import kotlinx.coroutines.launch
 
 internal data class CricketHighlightsState(
     val videos: List<CricketHighlight> = emptyList(),
+    val collections: List<CricketVideoCollection> = emptyList(),
+    val sections: List<CricketVideoSection> = emptyList(),
+    val collectionId: Int? = null,
+    val hasMore: Boolean = false,
+    val loadingMore: Boolean = false,
     val configured: Boolean = false,
     val loading: Boolean = false,
     val error: String? = null,
@@ -40,22 +45,43 @@ internal class CricketHighlightsViewModel(
     fun refresh() {
         catalogueJob?.cancel()
         val configured = repository.configured
-        mutable.update { it.copy(configured = configured, loading = configured, error = null) }
+        val collectionId = mutable.value.collectionId
+        mutable.update { it.copy(configured = configured, loading = configured, loadingMore = false, hasMore = false, error = null) }
         if (!configured) { mutable.update { it.copy(videos = emptyList()) }; return }
         catalogueJob = viewModelScope.launch {
             try {
-                val videos = repository.featured(refresh = true)
+                val videos = repository.featured(refresh = true, collectionId = collectionId)
                 checkedAt = System.currentTimeMillis()
-                mutable.update { it.copy(videos = videos, loading = false) }
+                mutable.update { it.copy(videos = videos, sections = repository.sections, collections = repository.collections, hasMore = repository.hasMore, loading = false) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutable.update { it.copy(loading = false, error = message(failure)) } }
+        }
+    }
+
+    fun selectCollection(id: Int?) {
+        if (id == mutable.value.collectionId) return
+        stopPlayback()
+        mutable.update { it.copy(collectionId = id, videos = emptyList()) }
+        refresh()
+    }
+
+    fun loadMore() {
+        if (!mutable.value.hasMore || mutable.value.loading || mutable.value.loadingMore) return
+        mutable.update { it.copy(loadingMore = true, error = null) }
+        catalogueJob = viewModelScope.launch {
+            try {
+                val videos = repository.loadMore()
+                mutable.update { it.copy(videos = videos, hasMore = repository.hasMore, loadingMore = false) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { mutable.update { it.copy(loadingMore = false, error = message(failure)) } }
         }
     }
 
     fun configurationFailed() { mutable.update { it.copy(error = "Could not import the Cricbuzz configuration. Choose a valid configuration file and retry.") } }
 
     fun play(id: String) {
-        val selected = mutable.value.videos.firstOrNull { it.id == id } ?: return
+        val selected = mutable.value.videos.firstOrNull { it.id == id }
+            ?: mutable.value.sections.asSequence().flatMap { it.videos.asSequence() }.firstOrNull { it.id == id } ?: return
         playbackJob?.cancel()
         val current = ++generation
         mutable.update { it.copy(selected = selected, preparingId = id, playing = null, error = null, attempt = current) }

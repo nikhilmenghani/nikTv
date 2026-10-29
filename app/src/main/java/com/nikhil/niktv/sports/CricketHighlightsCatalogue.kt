@@ -12,6 +12,7 @@ internal data class CricketHighlight(
     val fullUrl: String = "",
     val previewUrl: String = "",
     val headers: Map<String, String> = emptyMap(),
+    val type: String = "Highlights",
 ) {
     fun fullStream(): SportsStream {
         if (!cricketHttpsUrl(fullUrl) || cricketAsset(fullUrl) == cricketAsset(previewUrl))
@@ -63,7 +64,7 @@ internal object CricketHighlightsCatalogue {
             if (!validCricketId(id) || title.isEmpty() || title.length > 500 || item["isLive"]?.jsonPrimitive?.booleanOrNull == true)
                 return@mapNotNull null
             val type = item.text("videoType")
-            if (type.isNotEmpty() && !type.equals("Highlights", true)) return@mapNotNull null
+            if (type.equals("MatchStream", true)) return@mapNotNull null
             val headers = (item["headers"] as? JsonObject).orEmpty().mapNotNull { (key, value) ->
                 val content = (value as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
                 if (key.lowercase(java.util.Locale.ROOT) !in setOf("user-agent", "referer", "origin", "authorization", "cookie") ||
@@ -72,9 +73,18 @@ internal object CricketHighlightsCatalogue {
             CricketHighlight(id, title, item.text("durationStr"), item.text("imageUrl").takeIf(::cricketHttpsUrl).orEmpty(),
                 item.text("premiumVideoUrl").takeIf(::cricketHttpsUrl).orEmpty(),
                 item.text("videoUrl").takeIf(::cricketHttpsUrl).orEmpty(),
-                headers)
+                headers, type.ifBlank { "Highlights" })
         }
     }
 }
 
 internal fun validCricketId(value: String) = value.matches(Regex("[A-Za-z0-9_-]{1,100}"))
+
+internal fun mergeCricketVideos(primary: List<CricketHighlight>, secondary: List<CricketHighlight>): List<CricketHighlight> {
+    val rows = linkedMapOf<String, CricketHighlight>()
+    (primary + secondary).forEach { video ->
+        val existing = rows[video.id]
+        if (existing == null || (existing.fullUrl.isBlank() && video.fullUrl.isNotBlank())) rows[video.id] = video
+    }
+    return rows.values.take(500)
+}

@@ -27,9 +27,18 @@ class CricbuzzDirectDeviceTest {
         assertTrue("Configuration must be encrypted at rest", stored.isNotBlank() && !stored.contains(key))
         val direct = CricbuzzDirectClient(CricketHighlightsHttpTransport())
         assertTrue(direct.configured)
-        val videos = direct.featured()
+        val repository = CricketHighlightsRepository(direct = direct)
+        val videos = repository.featured()
         assertTrue("Live Canadian featured highlights", videos.isNotEmpty())
         assertTrue("Full and preview addresses remain distinct", videos.any { it.fullUrl.isNotBlank() && it.fullUrl != it.previewUrl })
+        assertTrue("Latest clips are included", videos.any { it.type != "Highlights" })
+        assertTrue("Series collections are discovered", repository.collections.any { it.id != 1 })
+        assertTrue("Latest videos can load another page", repository.hasMore)
+        val expanded = repository.loadMore()
+        assertTrue("Pagination adds older videos", expanded.size > videos.size)
+        assertEquals("Stable IDs remain unique", expanded.size, expanded.map { it.id }.distinct().size)
+        val series = repository.collections.first { it.id != 1 }
+        assertTrue("Series-specific videos load", repository.featured(collectionId = series.id).isNotEmpty())
         val activity = ins.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
         try {
