@@ -36,9 +36,11 @@ class SportsUiDeviceTest {
         return walk(instrumentation.uiAutomation.rootInActiveWindow)
     }
     private fun click(text: String) {
-        var node = find(text)
-        repeat(8) { if (node?.isClickable != true) node = node?.parent }
-        assertTrue("Reachable action: $text", node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+        await("Reachable action: $text") {
+            var node = find(text)
+            repeat(8) { if (node?.isClickable != true) node = node?.parent }
+            node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        }
     }
     private fun focused(text: String): Boolean {
         var node = find(text)
@@ -49,11 +51,85 @@ class SportsUiDeviceTest {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
         instrumentation.setInTouchMode(false)
-        return instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
+        val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
+        await("Fixture window is ready") { activity.hasWindowFocus() }
+        return activity
     }
 
-    @Test fun heldFiltersSaveDefaultsWithoutSelectingThePopupOnRelease() {
+    private fun assertNavigationPosition(activity: SportsFixtureHostActivity) {
+        val phone = activity.resources.configuration.smallestScreenWidthDp < 600
+        val bounds = Rect().also { requireNotNull(find("Live Events")).getBoundsInScreen(it) }
+        val height = activity.resources.displayMetrics.heightPixels
+        assertTrue("Phone navigation is at the bottom; tablet navigation stays in the header",
+            if (phone) bounds.centerY() > height * .75 else bounds.centerY() < height * .3)
+        listOf("Sports", "Categories", "Highlights").forEach { assertNotNull("Destination: $it", find(it)) }
+    }
+
+    private fun screenshot(name: String) {
+        instrumentation.waitForIdleSync()
+        val file = java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "$name.png")
+        val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+        try { file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        finally { bitmap.recycle() }
+    }
+
+    @Test fun sharedHeaderKeepsPhoneTitlesOnOneLineAndActionsReachableOnEveryTab() {
+        val activity = host()
+        val tab = mutableStateOf(SportsTab.CATEGORIES)
+        var refreshes = 0
+        var configurationImports = 0
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                if (tab.value == SportsTab.HIGHLIGHTS) CricketHighlightsContent(
+                    CricketHighlightsState(configured = true), {}, { tab.value = it }, { refreshes++ }, {},
+                    importConfiguration = { configurationImports++ })
+                else SportsBrowseContent(SportsState(tab = tab.value, loading = false), Instant.now(),
+                    "All sports", {}, "Now & next", {}, "", {}, {}, { refreshes++ }, {}, {},
+                    selectTab = { tab.value = it })
+            } } }
+            for (destination in SportsTab.entries) {
+                instrumentation.runOnMainSync { tab.value = destination }
+                instrumentation.waitForIdleSync()
+                await("Shared overflow entry on $destination") {
+                    find("Sports options") != null && (activity.resources.configuration.smallestScreenWidthDp >= 600 ||
+                        find("Sports page title")?.text?.toString() == if (destination == SportsTab.HIGHLIGHTS) "Highlights" else "Sports")
+                }
+                if (activity.resources.configuration.smallestScreenWidthDp < 600) {
+                    val title = requireNotNull(find("Sports page title"))
+                    assertEquals(if (destination == SportsTab.HIGHLIGHTS) "Highlights" else "Sports", title.text?.toString())
+                    val titleBounds = Rect().also(title::getBoundsInScreen)
+                    val backBounds = Rect().also(requireNotNull(find("Back"))::getBoundsInScreen)
+                    val density = activity.resources.displayMetrics.density
+                    assertTrue("Title has room for a complete word on $destination", titleBounds.width() > 100 * density)
+                    assertTrue("Title stays on one line on $destination", titleBounds.height() < 40 * density)
+                    assertTrue("Title fits between Back and Options", titleBounds.left >= backBounds.right)
+                }
+                screenshot("sports-header-${destination.name.lowercase()}")
+                click("Sports options")
+                val refreshLabel = if (destination == SportsTab.HIGHLIGHTS) "Refresh highlights" else "Refresh sports"
+                await("Actions remain reachable on $destination") { find(refreshLabel) != null }
+                assertNotNull(find(if (destination == SportsTab.HIGHLIGHTS) "Search highlights" else "Search sports"))
+                if (destination == SportsTab.CATEGORIES) {
+                    assertNotNull(find("Favourites"))
+                    click("Add playlist")
+                    await("Playlist action opens its dialog") { find("Playlist name") != null }
+                    click("Cancel")
+                    click("Sports options")
+                }
+                if (destination == SportsTab.HIGHLIGHTS) {
+                    click("Cricbuzz configuration")
+                    await("Configuration action remains connected") { configurationImports == 1 }
+                    click("Sports options")
+                }
+                val previous = refreshes
+                click(refreshLabel)
+                await("Menu action executes and dismisses on $destination") { refreshes == previous + 1 && find(refreshLabel) == null }
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test fun eventDropdownSavesSelectionAndCategoryRowsSurviveReopening() {
         val activity = host()
         val context = instrumentation.targetContext
         val prefs = SportsBrowsePreferences(context)
@@ -61,41 +137,80 @@ class SportsUiDeviceTest {
         val now = Instant.parse("2026-10-27T10:00:00Z")
         val event = SportsEvent("1", "Cricket fixture", "fixture", "Cricket", "Fixture", "", "A", "B",
             now.minusSeconds(60), now.plusSeconds(3600), emptyList())
-        var saves = 0
+        val football = event.copy(id = "2", slug = "football", title = "Football fixture", sport = "Football")
+        val upcoming = event.copy(id = "3", slug = "upcoming", title = "Upcoming fixture", start = now.plusSeconds(7200), end = now.plusSeconds(10800))
         try {
-            instrumentation.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
-                var defaults by remember { mutableStateOf(SportsBrowseDefaults()) }
-                var sport by remember { mutableStateOf("All sports") }
-                var status by remember { mutableStateOf("Now & next") }
-                SportsBrowseContent(SportsState(events = listOf(event), loading = false), now,
-                    sport, { sport = it }, status, { status = it }, "", {}, {}, {}, {}, {},
-                    defaults = defaults,
-                    saveDefaultSport = { prefs.setSport(it); defaults = prefs.read(); sport = it; saves++ },
-                    saveDefaultStatus = { prefs.setStatus(it); defaults = prefs.read(); status = it; saves++ })
-            } } }
-            fun hold(label: String) {
-                await("Filter is available") { find(label) != null }
-                var node = find(label)
-                repeat(8) { if (node?.isFocusable != true) node = node?.parent }
-                assertTrue(node?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
-                instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER))
-                SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 100L)
-                instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER))
-                await("Long press opens default menu") { find("Set as default") != null }
+            prefs.setStatus("Now & next")
+            fun render() {
+                instrumentation.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                    var status by remember { mutableStateOf(prefs.read().status) }
+                    SportsBrowseContent(SportsState(events = listOf(event, football, upcoming), loading = false), now,
+                        "All sports", {}, status, { status = it }, "", {}, {}, {}, {}, {},
+                        saveDefaultStatus = { prefs.setStatus(it) })
+                } } }
             }
-            hold("Live")
-            assertEquals("Release must not activate popup action", 0, saves)
-            await("Default action is focused") { focused("Set as default") }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Live saved") { saves == 1 && find("Set as default") == null }
-            await("Focus returns to held filter") { focused("Live") }
-            hold("Cricket")
-            assertEquals(1, saves)
-            click("Set as default")
-            await("Cricket saved") { saves == 2 && find("Set as default") == null }
-            assertEquals(SportsBrowseDefaults("Cricket", "Live"), SportsBrowsePreferences(context).read())
+            render()
+            await("Category rows render") { find("All sports") != null && find("Cricket") != null }
+            assertNavigationPosition(activity)
+            screenshot("sports-live-events")
+            click("Live events: Now & next")
+            await("Status dropdown opens") { find("Live") != null }
+            click("Live")
+            await("Live selection applies") { find("Live events: Live") != null && find("2 events") != null }
+            assertEquals("Live", SportsBrowsePreferences(context).read().status)
+            instrumentation.runOnMainSync { activity.setContent {} }
+            render()
+            await("Reload restores saved selection") { find("Live events: Live") != null && find("2 events") != null }
+            click("Live events: Live")
+            await("Upcoming option available") { find("Upcoming") != null }
+            click("Upcoming")
+            await("Upcoming selection filters the rows") { find("1 event") != null && find("Upcoming fixture") != null && find("Football fixture") == null }
         } finally {
             prefs.setSport(previous.sport); prefs.setStatus(previous.status)
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    @Test fun highlightsDropdownsSaveIndependentlyAndKeepCategoryNavigation() {
+        val activity = host()
+        val prefs = CricketBrowsePreferences(instrumentation.targetContext)
+        val previous = prefs.read()
+        val videos = listOf(CricketHighlight("one", "India vs New Zealand highlights", "12:30"),
+            CricketHighlight("two", "Australia vs England highlights", "10:15"))
+        var picked: String? = null
+        var selectedCollection: Int? = null
+        try {
+            prefs.setVersion("16.11.01"); prefs.setRegion("CA")
+            fun render() { instrumentation.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                var defaults by remember { mutableStateOf(prefs.read()) }
+                CricketHighlightsContent(CricketHighlightsState(configured = true, videos = videos,
+                    appVersion = defaults.version, region = defaults.region,
+                    sections = listOf(CricketVideoSection(7, "Match highlights", videos), CricketVideoSection(8, "Interviews", videos))),
+                    {}, {}, {}, { picked = it }, selectCollection = { selectedCollection = it },
+                    selectRegion = { prefs.setRegion(it); defaults = prefs.read() },
+                    selectAppVersion = { prefs.setVersion(it); defaults = prefs.read() })
+            } } } }
+            render()
+            await("Highlights row is visible") { find("Match highlights") != null && find(videos[0].title) != null }
+            assertNavigationPosition(activity)
+            screenshot("sports-highlights")
+            click("Version: 16.11.01")
+            await("Version dropdown opens") { find("6.16.04") != null }
+            click("6.16.04")
+            await("Version updates") { find("Version: 6.16.04") != null }
+            click("Region: Canada")
+            await("Region dropdown opens") { find("India") != null }
+            click("India")
+            await("Region updates") { find("Region: India") != null }
+            instrumentation.runOnMainSync { activity.setContent {} }
+            render()
+            await("Both selections restore") { find("Region: India") != null && find("Version: 6.16.04") != null }
+            assertEquals(CricketBrowseDefaults("6.16.04", "IN"), CricketBrowsePreferences(instrumentation.targetContext).read())
+            click("View all Match highlights")
+            assertEquals(7, selectedCollection)
+            assertNull("Browsing does not play video", picked)
+        } finally {
+            prefs.setVersion(previous.version); prefs.setRegion(previous.region)
             instrumentation.runOnMainSync { activity.finish() }
         }
     }
@@ -123,9 +238,9 @@ class SportsUiDeviceTest {
             await("Catalogue renders with the selected tab focused") { focused("Live Events") && find("India vs New Zealand") != null }
             assertTrue("Browsing Sports keeps the display awake", activity.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
             assertEquals(-1, picked)
+            click("Sports options")
             click("Search sports")
             await("Search opens on explicit activation") { find("Find a team or event") != null }
-            val root = instrumentation.uiAutomation.rootInActiveWindow
             fun editable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
                 if (node.isEditable) return node
@@ -133,7 +248,9 @@ class SportsUiDeviceTest {
                 return null
             }
             val args = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "India") }
-            assertTrue(requireNotNull(editable(root)).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
+            await("Search field accepts input after the options menu closes") {
+                editable(instrumentation.uiAutomation.rootInActiveWindow)?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args) == true
+            }
             await("Search is local and filters events") { find("1 event") != null && find("United vs City") == null }
             click("Close sports search")
             click("India vs New Zealand")

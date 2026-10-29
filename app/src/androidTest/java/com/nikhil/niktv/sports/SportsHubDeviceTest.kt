@@ -38,9 +38,17 @@ class SportsHubDeviceTest {
         return walk(ins.uiAutomation.rootInActiveWindow)
     }
     private fun focused(label: String): Boolean {
-        var n = find(label)
-        repeat(8) { if (n?.isFocused == true) return true; n = n?.parent }
-        return false
+        if (android.os.Build.VERSION.SDK_INT >= 33) ins.uiAutomation.clearCache()
+        fun walk(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            if (node.contentDescription?.toString() == label || node.text?.toString()?.lineSequence()?.any { it == label } == true) {
+                var ancestor: AccessibilityNodeInfo? = node
+                repeat(8) { if (ancestor?.isFocused == true) return true; ancestor = ancestor?.parent }
+            }
+            for (i in 0 until node.childCount) if (walk(node.getChild(i))) return true
+            return false
+        }
+        return walk(ins.uiAutomation.rootInActiveWindow)
     }
     private fun click(label: String) {
         var n = find(label)

@@ -13,6 +13,19 @@ import org.junit.Test
 class SportsHubCatalogueTest {
     private val category = SportsCategory("provider", "Provider", link = "https://playlist.example.test/list")
 
+    @Test fun categoryRowsKeepAllEventsAndSeparateSportsWithoutEmptyOrDuplicateCategories() {
+        val cricket = SportsEvent("1", "Cricket match", "cricket", "Cricket", "League", "", "A", "B", null, null, emptyList())
+        val football = cricket.copy(id = "2", title = "Football match", slug = "football", sport = "Football")
+        val sections = sportsEventSections(listOf(cricket, football), listOf(
+            SportsEventFilter("all", "All"), SportsEventFilter("cricket", "Cricket"),
+            SportsEventFilter("duplicate", "CRICKET"), SportsEventFilter("empty", "Tennis")))
+        assertEquals(listOf("All sports", "Cricket", "Football"), sections.map { it.title })
+        assertEquals(listOf("cricket", "football"), sections[0].events.map { it.slug })
+        assertEquals(listOf(cricket), sections[1].events)
+        assertEquals(listOf(football), sections[2].events)
+        assertTrue(sportsEventSections(emptyList(), emptyList()).isEmpty())
+    }
+
     @Test fun categorySentinelsUseBuiltInPathsAndNetworkLinksStayExternal() {
         val rows = SportsCatalogue.categories("""[{"id":1,"title":"Kids","catLink":"N"},{"id":2,"title":"ISLAMIC TV","catLink":"null"},{"id":3,"title":"Movies","catLink":"ok"},{"id":4,"title":"Provider","catLink":"https://playlist.example.test/list?token=fixture"}]""")
         assertEquals(listOf(false, false, false, true), rows.map { it.isPlaylist })

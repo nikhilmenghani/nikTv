@@ -12,7 +12,6 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Key
@@ -58,11 +57,11 @@ internal fun CricketHighlightsScreen(onClose: () -> Unit, selectTab: (SportsTab)
     vm: CricketHighlightsViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val preferences = remember(context) { context.applicationContext.getSharedPreferences("cricket_video_region", android.content.Context.MODE_PRIVATE) }
+    val preferences = remember(context) { CricketBrowsePreferences(context) }
     LaunchedEffect(RemoteCredentials.values) {
-        vm.selectAppVersion(preferences.getString("app_version", null)
-            .takeIf { it in setOf("16.11.01", "6.16.04") } ?: defaultCricketAppVersion())
-        vm.selectRegion(preferences.getString("region", "CA").takeIf { it in setOf("CA", "IN") } ?: "CA")
+        val defaults = preferences.read()
+        vm.selectAppVersion(defaults.version)
+        vm.selectRegion(defaults.region)
         if (state.playing == null && state.preparingId == null) vm.refresh()
     }
     val scope = rememberCoroutineScope()
@@ -109,8 +108,8 @@ internal fun CricketHighlightsScreen(onClose: () -> Unit, selectTab: (SportsTab)
     } else browseState.SaveableStateProvider("cricket-browse:${state.region}:${state.appVersion}") { CricketHighlightsContent(state, onClose, selectTab, vm::refresh, vm::play, vm::retryPlayback, vm::stopPlayback,
         importConfiguration = { import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
         selectCollection = vm::selectCollection, loadMore = vm::loadMore,
-        selectRegion = { region -> preferences.edit().putString("region", region).apply(); vm.selectRegion(region) },
-        selectAppVersion = { version -> preferences.edit().putString("app_version", version).apply(); vm.selectAppVersion(version) }) }
+        selectRegion = { region -> preferences.setRegion(region); vm.selectRegion(region) },
+        selectAppVersion = { version -> preferences.setVersion(version); vm.selectAppVersion(version) }) }
 }
 
 @Composable
@@ -118,16 +117,17 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
     selectTab: (SportsTab) -> Unit, refresh: () -> Unit, play: (String) -> Unit,
     retryPlayback: () -> Unit = {}, dismissPlayback: () -> Unit = {}, importConfiguration: () -> Unit = {},
     selectCollection: (Int?) -> Unit = {}, loadMore: () -> Unit = {}, selectRegion: (String) -> Unit = {}, selectAppVersion: (String) -> Unit = {}) {
-    val compact = LocalConfiguration.current.screenWidthDp < 700
-    val header = remember { FocusRequester() }
+    val compact = sportsPhoneLayout()
+    val tabFocus = remember { SportsTab.entries.associateWith { FocusRequester() } }
+    val header = tabFocus.getValue(SportsTab.HIGHLIGHTS)
     val entry = remember { FocusRequester() }
     val search = remember { FocusRequester() }
     val more = remember { FocusRequester() }
+    val backFocus = remember { FocusRequester() }
+    val menuFocus = remember { FocusRequester() }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val scroll = rememberLazyGridState()
     var query by rememberSaveable { mutableStateOf("") }
-    var versionPicker by remember { mutableStateOf(false) }
-    var regionPicker by remember { mutableStateOf(false) }
     var searchVisible by rememberSaveable { mutableStateOf(false) }
     var lastFocusKey by rememberSaveable { mutableStateOf<String?>(null) }
     var previousCollection by rememberSaveable { mutableStateOf(state.collectionId) }
@@ -146,38 +146,40 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
     val validFocus = if (state.collectionId == null) sections.any { row -> row.videos.any { "${row.id}:${it.id}" == lastFocusKey } }
         else visible.any { "grid:${it.id}" == lastFocusKey }
     val initial = lastFocusKey?.takeIf { validFocus }?.let { requesters.getOrPut(it) { FocusRequester() } } ?: header
-    Column(Modifier.fillMaxSize().background(Color(0xFF242424)).windowInsetsPadding(WindowInsets.safeDrawing)
-        .initialFocusEntry(initial).padding(horizontal = if (compact) 10.dp else 24.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Surface(Modifier.fillMaxWidth().padding(top = 8.dp), shape = SportsShape, color = Color(0xFF202020), contentColor = Color.White) {
-            Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
-                        onClick = { if (state.collectionId != null) selectCollection(null) else onClose() })
-                    Text(state.collections.firstOrNull { it.id == state.collectionId }?.title ?: "Videos",
-                        Modifier.weight(1f), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    DiscoveryAction("Cricbuzz configuration", Icons.Default.Key, iconOnly = true, onClick = importConfiguration)
-                    if (state.configured) DiscoveryAction("Search highlights", Icons.Default.Search, iconOnly = true,
-                        onClick = { searchVisible = !searchVisible; if (!searchVisible) query = "" })
-                    DiscoveryAction("Refresh highlights", Icons.Default.Refresh, iconOnly = true, onClick = refresh)
-                }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    SportsTab.entries.forEach { tab ->
-                        DiscoveryAction(tab.title, selected = tab == SportsTab.HIGHLIGHTS,
-                            modifier = (if (tab == SportsTab.HIGHLIGHTS) Modifier.focusRequester(header) else Modifier)
-                                .onPreviewKeyEvent {
-                                    if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown &&
-                                        (visible.isNotEmpty() || sections.isNotEmpty())) {
-                                        runCatching { entry.requestFocus() }; true
-                                    } else false
-                                }, onClick = { selectTab(tab) })
-                    }
+    Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
+        .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp)) {
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val title = state.collections.firstOrNull { it.id == state.collectionId }?.title ?: "Highlights"
+        val headerActions = buildList {
+            if (state.configured) add(SportsHeaderAction("Search highlights", Icons.Default.Search, searchVisible) {
+                searchVisible = !searchVisible; if (!searchVisible) query = ""
+            })
+            add(SportsHeaderAction("Refresh highlights", Icons.Default.Refresh, onClick = refresh))
+            add(SportsHeaderAction("Cricbuzz configuration", Icons.Default.Key, onClick = importConfiguration))
+        }
+        SportsHeader(title, { if (state.collectionId != null) selectCollection(null) else onClose() },
+            headerActions, backFocus, menuFocus) { modifier ->
+            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                SportsTab.entries.forEach { tab ->
+                    DiscoveryAction(tab.title, selected = tab == SportsTab.HIGHLIGHTS,
+                        modifier = Modifier.focusRequester(tabFocus.getValue(tab))
+                            .onPreviewKeyEvent {
+                                if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown &&
+                                    (visible.isNotEmpty() || sections.isNotEmpty())) {
+                                    runCatching { entry.requestFocus() }; true
+                                } else false
+                            }, onClick = { selectTab(tab) })
                 }
             }
         }
-        DiscoveryAction("Version: ${state.appVersion}", onClick = { versionPicker = true })
-        DiscoveryAction("Region: " + if (state.region == "IN") "India" else "Canada",
-            onClick = { regionPicker = true })
+        if (!compact && state.collectionId != null) Text(title, color = Color.White,
+            style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SportsDropdown("Version", state.appVersion, listOf("16.11.01", "6.16.04").map { it to it },
+                selectAppVersion, Modifier.weight(1f))
+            SportsDropdown("Region", if (state.region == "IN") "India" else "Canada",
+                listOf("CA" to "Canada", "IN" to "India"), selectRegion, Modifier.weight(1f))
+        }
         if (!state.configured) {
             SportsEmpty("Connect Cricbuzz", "Import your Cricbuzz API configuration to load videos directly.")
             NikTvSecondaryActionButton(importConfiguration) { Text("Import Cricbuzz configuration") }
@@ -204,26 +206,14 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
                     }, state.preparingId == null, compact) { lastFocusKey = "grid:${video.id}"; play(video.id) }
                 }
                 if (state.hasMore) NikTvSecondaryActionButton(loadMore, modifier = Modifier.focusRequester(more), enabled = !state.loadingMore) {
-                    Text(if (state.loadingMore) "Loading more videosâ€¦" else "Load more videos")
+                    Text(if (state.loadingMore) "Loading more videos…" else "Load more videos")
                 }
             }
         }
+      }
+      if (compact) SportsBottomNavigation(SportsTab.HIGHLIGHTS, selectTab, tabFocus,
+          content = entry.takeIf { state.configured && (visible.isNotEmpty() || sections.isNotEmpty()) })
     }
-    if (versionPicker) AlertDialog(onDismissRequest = { versionPicker = false },
-        title = { Text("Cricbuzz API version") }, text = {
-            Column { listOf("16.11.01", "6.16.04").forEach { version ->
-                DiscoveryAction(version, selected = state.appVersion == version, onClick = { versionPicker = false; selectAppVersion(version) })
-            } }
-        }, confirmButton = { TextButton(onClick = { versionPicker = false }) { Text("Close") } })
-    if (regionPicker) AlertDialog(onDismissRequest = { regionPicker = false },
-        title = { Text("Video region") }, text = {
-            Column {
-                listOf("CA" to "Canada", "IN" to "India").forEach { (code, title) ->
-                    DiscoveryAction(title, selected = state.region == code, onClick = { regionPicker = false; selectRegion(code) })
-                }
-                Text("Selects the catalogue. Playback availability may also depend on your connection.")
-            }
-        }, confirmButton = { TextButton(onClick = { regionPicker = false }) { Text("Close") } })
     if (state.selected != null && state.error != null) AlertDialog(onDismissRequest = dismissPlayback,
         containerColor = SportsSurface, title = { Text("Highlight unavailable") }, text = { Text(state.error) },
         confirmButton = { TextButton(onClick = retryPlayback) { Text("Refresh and retry") } },
@@ -258,8 +248,8 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
             val horizontal = rowStates.getOrPut(section.id) { restored }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(section.title.uppercase(), Modifier.weight(1f), color = Color.White,
-                        style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(section.title, Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (section.id != null) DiscoveryAction("View all ${section.title}", Icons.Default.ChevronRight,
                         visualLabel = "View all", modifier = Modifier.semantics { contentDescription = "View all ${section.title}" },
                         onClick = { selectCollection(section.id) })
@@ -268,7 +258,7 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
                     horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
                     itemsIndexed(section.videos, key = { _, video -> video.id }) { index, video ->
                         val key = "${section.id}:${video.id}"
-                        val tileModifier = Modifier.width(if (compact) 212.dp else 280.dp)
+                        val tileModifier = Modifier.width(if (compact) 268.dp else 300.dp)
                             .then(if (rowIndex == 0 && index == 0) Modifier.focusRequester(entry) else Modifier)
                             .focusRequester(requesters.getOrPut(key) { FocusRequester() })
                             .onFocusChanged { if (it.isFocused) onFocused(key) }
@@ -303,7 +293,7 @@ private fun CricketHighlightTile(video: CricketHighlight, preparing: Boolean, mo
             if (video.duration.isNotBlank()) Surface(Modifier.align(Alignment.TopEnd).padding(6.dp), color = Color(0xBB000000),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)) {
                 Text(video.duration, Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                    .semantics { contentDescription = "${video.duration} Â· ${video.type}" },
+                    .semantics { contentDescription = "${video.duration} · ${video.type}" },
                     color = Color.White, style = MaterialTheme.typography.labelSmall)
             }
             Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically,

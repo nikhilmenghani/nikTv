@@ -18,13 +18,14 @@ class CricketHighlightsDeviceTest {
     private val ins get() = InstrumentationRegistry.getInstrumentation()
     private fun find(label: String): AccessibilityNodeInfo? {
         if (android.os.Build.VERSION.SDK_INT >= 33) ins.uiAutomation.clearCache()
-        fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        fun walk(node: AccessibilityNodeInfo?, descriptionsOnly: Boolean): AccessibilityNodeInfo? {
             if (node == null) return null
-            if (node.contentDescription?.toString() == label || node.text?.toString()?.lineSequence()?.any { it == label } == true) return node
-            for (index in 0 until node.childCount) walk(node.getChild(index))?.let { return it }
+            if (node.contentDescription?.toString() == label || (!descriptionsOnly && node.text?.toString()?.lineSequence()?.any { it == label } == true)) return node
+            for (index in 0 until node.childCount) walk(node.getChild(index), descriptionsOnly)?.let { return it }
             return null
         }
-        return walk(ins.uiAutomation.rootInActiveWindow)
+        val root = ins.uiAutomation.rootInActiveWindow
+        return walk(root, true) ?: walk(root, false)
     }
     private fun await(label: String, check: () -> Boolean) {
         val until = SystemClock.uptimeMillis() + 10_000
@@ -37,9 +38,11 @@ class CricketHighlightsDeviceTest {
         return false
     }
     private fun click(label: String) {
-        var node = find(label)
-        repeat(8) { if (node?.isClickable != true) node = node?.parent }
-        assertTrue("Clickable $label", node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+        await("Clickable $label") {
+            var node = find(label)
+            repeat(8) { if (node?.isClickable != true) node = node?.parent }
+            node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        }
     }
     private fun key(value: Int) { ins.sendKeyDownUpSync(value); Thread.sleep(140) }
     private fun host(): SportsFixtureHostActivity {
@@ -63,7 +66,7 @@ class CricketHighlightsDeviceTest {
                     sections = listOf(CricketVideoSection(null, "Featured highlights", featured),
                         CricketVideoSection(656, "India tour of New Zealand", series))), {}, {}, { refreshed++ }, { played = it })
             } } }
-            await("Video rows displayed") { find("Videos") != null }
+            await("Video rows displayed") { find("Fixture highlight 1") != null }
             ins.waitForIdleSync()
             ins.setInTouchMode(false)
             await("Highlights tab focused") { focused("Highlights") }
@@ -77,9 +80,10 @@ class CricketHighlightsDeviceTest {
             assertEquals("", played)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("OK explicitly selects the video") { played == "22" }
+            await("Selected category keeps its duration metadata") { find("3:36 · Highlights") != null }
+            click("Sports options")
             click("Refresh highlights")
             await("Refresh action") { refreshed == 1 }
-            assertNotNull(find("3:36 · Highlights"))
         } finally { activity.finish() }
     }
 

@@ -3362,40 +3362,44 @@ internal fun TmdbCredentialSettingsSection() {
                 placeholder = if (RemoteCredentials.configured(context)) "••••••••••••  Saved token" else null,
                 password = true
             )
-            NikTvSecondaryActionButton(
-                onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    val pasted = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }
-                        ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
-                    if (pasted.isBlank()) {
-                        message = "Clipboard is empty. Copy the token on this device, then try again."
-                    } else {
-                        tokenInput = pasted
-                        message = "Token pasted. Select Save and sync to store it securely."
-                    }
-                },
-                enabled = !syncing
-            ) { Text("Paste token") }
-            NikTvSecondaryActionButton(
-                onClick = {
-                    syncing = true
-                    message = null
-                    scope.launch {
-                        try {
-                            RemoteCredentials.saveConnection(context, tokenInput, owner, repository, filePath)
-                            paired = true
-                            tokenInput = ""
-                            RemoteCredentials.refresh(context, force = true)
-                            message = "Configuration synced. Open Profiles in Settings to enable the preconfigured profiles."
-                        } catch (failure: Exception) {
-                            message = failure.message ?: "Could not sync configuration"
-                        } finally {
-                            syncing = false
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                NikTvSecondaryActionButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val pasted = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                        if (pasted.isBlank()) {
+                            message = "Clipboard is empty. Copy the token on this device, then try again."
+                        } else {
+                            tokenInput = pasted
+                            message = "Token pasted. Select Save and sync to store it securely."
                         }
-                    }
-                },
-                enabled = !syncing
-            ) { Text(if (syncing) "Syncing…" else "Save and sync") }
+                    },
+                    enabled = !syncing
+                ) { Text("Paste token") }
+                NikTvSecondaryActionButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        syncing = true
+                        message = null
+                        scope.launch {
+                            try {
+                                RemoteCredentials.saveConnection(context, tokenInput, owner, repository, filePath)
+                                paired = true
+                                tokenInput = ""
+                                RemoteCredentials.refresh(context, force = true)
+                                message = "Configuration synced. Open Profiles in Settings to enable the preconfigured profiles."
+                            } catch (failure: Exception) {
+                                message = failure.message ?: "Could not sync configuration"
+                            } finally {
+                                syncing = false
+                            }
+                        }
+                    },
+                    enabled = !syncing
+                ) { Text(if (syncing) "Syncing…" else "Save and sync") }
+            }
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             Text(
                 if (updatedAt > 0L) "Last sync: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(updatedAt))}"

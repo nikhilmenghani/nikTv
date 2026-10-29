@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,13 +20,11 @@ import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.*
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.nikhil.niktv.R
 import com.nikhil.niktv.discovery.DiscoveryAction
 import com.nikhil.niktv.ui.*
 import java.time.Instant
@@ -51,11 +48,11 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     addPlaylist: (String, String) -> Unit = { _, _ -> }, importPlaylist: (android.net.Uri, String) -> Unit = { _, _ -> },
     removePlaylist: (SportsCategory) -> Unit = {}, dismissLibraryError: () -> Unit = {},
     toggleChannelFlag: (SportsChannel) -> Unit = {}, setAvailabilityFilter: (SportsAvailabilityFilter) -> Unit = {}) {
-    val compact = LocalConfiguration.current.screenWidthDp < 700
+    val compact = sportsPhoneLayout()
     val scope = rememberCoroutineScope()
     val tabFocus = remember { SportsTab.entries.associateWith { FocusRequester() } }
     val backFocus = remember { FocusRequester() }
-    val searchAction = remember { FocusRequester() }
+    val optionsAction = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     val firstFilter = remember { FocusRequester() }
     val gridEntry = remember { FocusRequester() }
@@ -80,7 +77,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val originFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     fun restore(requester: FocusRequester?) { scope.launch { withFrameNanos { }; requester?.let { runCatching { it.requestFocus() } } } }
-    fun closeSearch() { editing = false; searchOpen = false; setQuery(""); keyboard?.hide(); restore(searchAction) }
+    fun closeSearch() { editing = false; searchOpen = false; setQuery(""); keyboard?.hide(); restore(optionsAction) }
     BackHandler(searchOpen && selected == null) { closeSearch() }
     LaunchedEffect(searchOpen) { if (searchOpen) { withFrameNanos { }; runCatching { searchFocus.requestFocus() }; if (editing) keyboard?.show() } }
     LaunchedEffect(state.collection?.id, state.importing, state.libraryError) {
@@ -92,46 +89,44 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             state.tab == SportsTab.CHANNELS -> state.channels.map { it.key }
             else -> (state.categories + state.customPlaylists).map { it.id } }
     val showsAvailability = selected == null && (state.tab != SportsTab.CATEGORIES || state.collection != null || state.favouritesOnly)
-    val restoreOrigin = state.restoreBrowseFocus && lastTile != null && lastTile in availableKeys &&
-        (!showsAvailability || state.availabilityFilter.includes(state.channelFlags[lastTile]))
+    val originKey = if (state.tab == SportsTab.EVENTS) lastTile?.substringAfterLast(':') else lastTile
+    val restoreOrigin = state.restoreBrowseFocus && originKey != null && originKey in availableKeys &&
+        (!showsAvailability || state.availabilityFilter.includes(state.channelFlags[originKey]))
     val initial = if (selected != null) sourceFocus.getOrNull(lastSource ?: 0) ?: backFocus else if (restoreOrigin) originFocus else headerFocus
     fun tileRequester(key: String): FocusRequester = if (restoreOrigin && key == lastTile) originFocus else tileFocus.getOrPut(key) { FocusRequester() }
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
-        .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Surface(Modifier.fillMaxWidth().padding(top = 10.dp), shape = SportsShape, color = SportsSurface, contentColor = Color.White) {
-            Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                @Composable fun tabs(modifier: Modifier) {
-                    Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        SportsTab.entries.forEach { tab ->
-                            DiscoveryAction(tab.title, selected = state.tab == tab,
-                                modifier = Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
-                                    val target = when { selected != null -> sourceFocus.firstOrNull() ?: backFocus
-                                        state.tab == SportsTab.EVENTS && !state.favouritesOnly -> firstFilter
-                                        showsAvailability && state.availabilityFilter != SportsAvailabilityFilter.ALL &&
-                                            availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) } -> availabilityAction
-                                        hasGroups -> groupAction
-                                        else -> gridEntry }
-                                    runCatching { target.requestFocus() }; true
-                                }, onClick = { keyboard?.hide(); selectTab(tab) })
-                        }
-                    }
+        .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp)) {
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val headerActions = buildList {
+            if (selected == null) add(SportsHeaderAction("Search sports", Icons.Default.Search, searchOpen) {
+                if (searchOpen) closeSearch() else { editing = true; searchOpen = true }
+            })
+            val favourite = selected != null && state.favourites.any { it.key == selected.key }
+            add(SportsHeaderAction(if (selected == null) "Favourites" else if (favourite) "Remove favourite" else "Add favourite",
+                if (selected == null || favourite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                selected == null && state.favouritesOnly) {
+                if (selected == null) toggleFavourites() else toggleFavourite(selected)
+            })
+            if (state.tab == SportsTab.CATEGORIES && selected == null) add(SportsHeaderAction("Add playlist", Icons.Default.PlaylistAdd) {
+                dismissLibraryError(); addOpen = true
+            })
+            add(SportsHeaderAction("Refresh sports", Icons.Default.Refresh, onClick = refresh))
+        }
+        SportsHeader("Sports", back, headerActions, backFocus, optionsAction) { modifier ->
+            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                SportsTab.entries.forEach { tab ->
+                    DiscoveryAction(tab.title, selected = state.tab == tab,
+                        modifier = Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+                            val target = when { selected != null -> sourceFocus.firstOrNull() ?: backFocus
+                                state.tab == SportsTab.EVENTS && !state.favouritesOnly -> firstFilter
+                                showsAvailability && state.availabilityFilter != SportsAvailabilityFilter.ALL &&
+                                    availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) } -> availabilityAction
+                                hasGroups -> groupAction
+                                else -> gridEntry }
+                            runCatching { target.requestFocus() }; true
+                        }, onClick = { keyboard?.hide(); selectTab(tab) })
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.size(42.dp).graphicsLayer { scaleX = 1.6f; scaleY = 1.6f })
-                    DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, modifier = Modifier.focusRequester(backFocus), onClick = back)
-                    if (!compact) tabs(Modifier.weight(1f)) else Text("Sports", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                    if (selected == null) DiscoveryAction("Search sports", Icons.Default.Search, iconOnly = true, selected = searchOpen,
-                        modifier = Modifier.focusRequester(searchAction)) { if (searchOpen) closeSearch() else { editing = true; searchOpen = true } }
-                    DiscoveryAction(if (selected == null) "Favourites" else if (state.favourites.any { it.key == selected.key }) "Remove favourite" else "Add favourite",
-                        if (selected == null || state.favourites.any { it.key == selected.key }) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        iconOnly = true, selected = selected == null && state.favouritesOnly) {
-                        if (selected == null) toggleFavourites() else toggleFavourite(selected)
-                    }
-                    if (state.tab == SportsTab.CATEGORIES && selected == null) DiscoveryAction("Add playlist", Icons.Default.PlaylistAdd, iconOnly = true) { dismissLibraryError(); addOpen = true }
-                    DiscoveryAction("Refresh sports", Icons.Default.Refresh, iconOnly = true, onClick = refresh)
-                }
-                if (compact) tabs(Modifier.fillMaxWidth())
             }
         }
         if (selected != null) {
@@ -177,7 +172,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                     .clickable { editing = true; keyboard?.show() })
             }
             val activeQuery = query.takeIf { searchOpen }.orEmpty()
-            if (showsAvailability) DiscoveryAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag,
+            if (showsAvailability && (state.tab != SportsTab.EVENTS || state.favouritesOnly)) DiscoveryAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag,
                 selected = state.availabilityFilter != SportsAvailabilityFilter.ALL,
                 modifier = Modifier.focusRequester(availabilityAction).onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown)) {
@@ -187,34 +182,27 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                     } else false
                 }) { availabilityOpen = true }
             if (state.tab == SportsTab.EVENTS && !state.favouritesOnly) {
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SPORTS_STATUS_FILTERS.forEach { label ->
-                        val count = state.events.count { sportsEventMatches(it, sport, label, activeQuery, now) && state.availabilityFilter.includes(state.channelFlags[it.slug]) }
-                        SportsFilterAction(label, "$label ($count)", status == label, defaults.status == label,
-                            if (status == label) Modifier.focusRequester(firstFilter) else Modifier,
-                            select = { setStatus(label) }, saveDefault = { saveDefaultStatus(label) }, resetDefault = { saveDefaultStatus("Now & next") })
-                    }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SportsDropdown("Live events", status, SPORTS_STATUS_FILTERS.map { it to it },
+                        select = { setStatus(it); saveDefaultStatus(it) }, modifier = Modifier.weight(1f).focusRequester(firstFilter))
+                    DiscoveryAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag, iconOnly = compact,
+                        selected = state.availabilityFilter != SportsAvailabilityFilter.ALL,
+                        modifier = Modifier.focusRequester(availabilityAction)) { availabilityOpen = true }
                 }
                 val filters = remember(state.events, state.filters, defaults.sport) {
                     if (state.filters.isNotEmpty()) listOf(SportsEventFilter("all", "All sports")) + state.filters.filterNot { it.title.equals("All", true) }
                     else (listOf("All sports", defaults.sport) + state.events.map { it.sport }.filter(String::isNotBlank).sorted()).distinct().map { SportsEventFilter(it, it) }
                 }
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    filters.forEach { filter ->
-                        val count = state.events.count { sportsEventMatches(it, filter.title, status, activeQuery, now) && state.availabilityFilter.includes(state.channelFlags[it.slug]) }
-                        SportsFilterAction(filter.title, "${filter.title} ($count)", sport == filter.title, defaults.sport == filter.title,
-                            select = { setSport(filter.title) }, saveDefault = { saveDefaultSport(filter.title) }, resetDefault = { saveDefaultSport("All sports") }, image = filter.image)
-                    }
-                }
-                val visible = remember(state.events, sport, status, activeQuery, now.epochSecond, state.channelFlags, state.availabilityFilter) {
-                    state.events.filter { sportsEventMatches(it, sport, status, activeQuery, now) && state.availabilityFilter.includes(state.channelFlags[it.slug]) }
+                val visible = remember(state.events, status, activeQuery, now.epochSecond, state.channelFlags, state.availabilityFilter) {
+                    state.events.filter { sportsEventMatches(it, "All sports", status, activeQuery, now) && state.availabilityFilter.includes(state.channelFlags[it.slug]) }
                         .sortedWith(compareByDescending<SportsEvent> { it.isHot }.thenBy { if (it.status(now) == SportsStatus.LIVE) 0 else 1 }.thenBy { it.start })
                 }
+                val sections = remember(visible, filters) { sportsEventSections(visible, filters) }
                 SportsBrowseStatus(state, visible.size, "event", refresh)
-                SportsGrid(visible, { it.slug }, eventsScroll, if (compact) 230 else 280, Modifier.weight(1f), firstFilter,
-                    entry = gridEntry, requester = { index -> tileRequester(visible[index].slug) }) { event, _, modifier ->
+                SportsEventRows(sections, Modifier.weight(1f), compact, firstFilter,
+                    entry = gridEntry, requester = { tileRequester(it) }) { event, rowKey, modifier ->
                     SportsEventTile(event, now, state.favourites.any { it.key == event.slug }, modifier,
-                        click = { lastTile = event.slug; open(event) }, menu = { contextItem = event.asChannel(); restoreTile = tileRequester(event.slug) }, flag = state.channelFlags[event.slug])
+                        click = { lastTile = rowKey; open(event) }, menu = { contextItem = event.asChannel(); restoreTile = tileRequester(rowKey) }, flag = state.channelFlags[event.slug])
                 }
             } else if (state.tab == SportsTab.CATEGORIES && state.collection == null && !state.favouritesOnly) {
                 val categories = remember(state.categories, state.customPlaylists, activeQuery) {
@@ -248,6 +236,11 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 if (groupsOpen) SportsGroupDialog(groups, group, { group = it; groupsOpen = false; restore(groupAction) }, { groupsOpen = false; restore(groupAction) })
             }
         }
+      }
+      if (compact) SportsBottomNavigation(state.tab, { keyboard?.hide(); selectTab(it) }, tabFocus,
+          content = if (selected != null) sourceFocus.firstOrNull() ?: backFocus
+              else if (state.tab == SportsTab.EVENTS && !state.favouritesOnly) firstFilter
+              else if (availableKeys.isNotEmpty()) gridEntry else optionsAction)
     }
     contextItem?.let { item -> SportsItemDialog(item, state.favourites.any { it.key == item.key },
         toggle = { toggleFavourite(item); contextItem = null; restore(restoreTile) }, close = { contextItem = null; restore(restoreTile) },
@@ -328,30 +321,6 @@ internal fun sportsGridTarget(index: Int, columns: Int, count: Int, key: Key): I
     Key.DirectionLeft -> if (index % columns > 0) index - 1 else index
     Key.DirectionRight -> if (index % columns < columns - 1 && index + 1 < count) index + 1 else index
     else -> index
-}
-
-@Composable private fun SportsFilterAction(label: String, display: String, selected: Boolean, isDefault: Boolean, modifier: Modifier = Modifier,
-    select: () -> Unit, saveDefault: () -> Unit, resetDefault: () -> Unit, image: String = "") {
-    val origin = remember { FocusRequester() }; val first = remember { FocusRequester() }; val scope = rememberCoroutineScope()
-    var focused by remember { mutableStateOf(false) }; var menu by remember { mutableStateOf(false) }
-    fun close() { menu = false; scope.launch { withFrameNanos { }; runCatching { origin.requestFocus() } } }
-    Surface(modifier.focusRequester(origin).onFocusChanged { focused = it.isFocused }.semantics { contentDescription = label }
-        .remoteCombinedClickable(onClick = select, onLongClick = { menu = true }).heightIn(min = 40.dp), shape = SportsShape,
-        color = if (selected) MaterialTheme.colorScheme.primary else SportsSurface, contentColor = Color.White,
-        border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58))) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (image.isNotBlank()) SportsLogo(image, label, Modifier.size(22.dp))
-            Text(display, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            if (isDefault) Icon(Icons.Default.Star, "Default filter", Modifier.size(13.dp))
-        }
-    }
-    if (menu) AlertDialog(onDismissRequest = ::close, containerColor = SportsSurface, shape = SportsShape,
-        modifier = Modifier.initialFocusEntry(first), title = { Text(label) }, text = { Text("Choose the filter to use whenever Live Events opens.") },
-        confirmButton = { NikTvPrimaryActionButton({ saveDefault(); close() }, Modifier.focusRequester(first)) { Text("Set as default") } },
-        dismissButton = { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (isDefault) NikTvSecondaryActionButton({ resetDefault(); close() }) { Text("Reset default") }
-            NikTvSecondaryActionButton(::close) { Text("Close") }
-        } })
 }
 
 @Composable internal fun SportsLoading(label: String) {
