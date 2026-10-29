@@ -18,7 +18,7 @@ internal class CricbuzzDirectClient(
 ) {
     var region: String = "CA"
         set(value) { require(value in setOf("CA", "IN")); field = value }
-    var appVersion: String = "16.11.01"
+    var appVersion: String = defaultCricketAppVersion()
         set(value) { require(value in setOf("16.11.01", "6.16.04")); field = value }
     val configured get() = credentials().configured
     val cacheIdentity get() = credentials().cacheIdentity + ":" + region + ":" + appVersion
@@ -110,3 +110,6 @@ internal class CricbuzzDirectClient(
         }
     }
 }
+
+internal fun defaultCricketAppVersion(): String = RemoteCredentials.get("NIKTV_CRICBUZZ_APP_VERSION")
+    .takeIf { it in setOf("16.11.01", "6.16.04") } ?: "16.11.01"

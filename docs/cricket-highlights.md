@@ -4,15 +4,19 @@
 
 ## Direct configuration
 
-Import a local JSON/text configuration with **Sports → Highlights → Cricbuzz configuration**, or supply these keys through the existing encrypted private configuration:
+Add these keys to the private GitHub `.env` used by NikTV’s existing credential sync. Once the device has its GitHub connection, Highlights loads automatically without a separate configuration import:
 
 ```properties
 NIKTV_CRICBUZZ_AUTH_KEY=<runtime API signing key>
 NIKTV_CRICBUZZ_AUTH_MODE=AK
-NIKTV_CRICBUZZ_APP_VERSION=6.16.04
+NIKTV_CRICBUZZ_APP_VERSION=16.11.01
 ```
 
-The import is stored encrypted with Android Keystore and overrides synced Cricbuzz values on that device. No GitHub connection or provider endpoint is needed. The APK contains the signing implementation, but no signing secret, account token or captured media session. The signing configuration must be provisioned separately; importing a replacement updates it without rebuilding the APK. The debug-only `files/local_cricket_configuration_import` path supports local `adb run-as` provisioning and deletes the plaintext file after consumption.
+Synced values are cached encrypted with Android Keystore, using the same startup and daily refresh as IPTV credentials. Nonblank GitHub values take precedence over older manual Cricbuzz imports. Local debug APKs also embed these three values from `gradle.properties` as fallbacks, so local installs can load Highlights before the first GitHub sync. CI and release builds leave those build fields empty and use device credentials. Set `-PskipLocalCricketConfiguration=true` to omit the local fallback from debug builds.
+
+The optional JSON/text import and debug-only `files/local_cricket_configuration_import` remain available for manual provisioning; the latter deletes the plaintext file after consumption. Imported values are encrypted and used when GitHub does not supply them. The APK contains no captured media session. Local debug APKs containing the Gradle fallback do contain the supplied API key.
+
+The version selector uses the configured `NIKTV_CRICBUZZ_APP_VERSION` when it is one of the supported versions, otherwise `16.11.01`. An explicit device selection overrides this default.
 
 NikTV first signs `GET /a/infra/v1/geo-location` and records the detected connection country. The requested catalogue is selected separately by the Region tile. It signs the Home and video catalogue requests with `Accept: application/x-protobuf`, `CB-Loc: CA`, numeric `CB-TZ`, `CB-AppVer` and `cb-src: playstore`. The app's region decision is respected; setting a header alone does not establish a Canadian connection. Region checks are cached for 15 minutes and catalogue results for two minutes. Every outgoing API request receives a fresh timestamped signature. Redirects are rejected and API authentication is never sent to artwork or media hosts.
 
@@ -95,4 +99,4 @@ The envelope may instead contain `catalogueBase64` with the original Home protob
 
 `CricbuzzAuthenticationTest` checks independently generated HMAC vectors, rotation, host restriction, Canadian geo checking, bounded clock retries, cancellation, fresh direct Home playback, API credential isolation and propagation of media-server rejections. `CricketHighlightsTest` covers fresh playback resolution, promo rejection and bounded catalogue parsing. `CricbuzzVideoCatalogueTest` covers Latest Videos and series decoding, explicit free clips, duplicate handling, pagination termination, collection routing and original-cursor playback refresh. `CricketHighlightsDeviceTest` exercises remote/touch navigation, horizontal/vertical category navigation, View all, Load more, Back and readable failures. `CricbuzzDirectDeviceTest` is an opt-in live Canadian catalogue and encrypted-configuration check in the isolated regression package (`-e cricbuzzLive true`). See [verification/cricket-highlights.md](verification/cricket-highlights.md) for actual results and remaining limits.
 
-The Highlights version tile selects `CB-AppVer` (`16.11.01` by default, or `6.16.04`). The choice is saved per device and refreshes the catalogue; it overrides the imported app-version value for direct requests.
+The Highlights version tile selects `CB-AppVer` (`16.11.01` or `6.16.04`). The choice is saved per device and refreshes the catalogue; an explicit selection overrides the configured app-version value for direct requests.

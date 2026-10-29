@@ -59,7 +59,12 @@ internal fun CricketHighlightsScreen(onClose: () -> Unit, selectTab: (SportsTab)
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val preferences = remember(context) { context.applicationContext.getSharedPreferences("cricket_video_region", android.content.Context.MODE_PRIVATE) }
-    LaunchedEffect(Unit) { vm.selectAppVersion(preferences.getString("app_version", "16.11.01").takeIf { it in setOf("16.11.01", "6.16.04") } ?: "16.11.01"); vm.selectRegion(preferences.getString("region", "CA").takeIf { it in setOf("CA", "IN") } ?: "CA") }
+    LaunchedEffect(RemoteCredentials.values) {
+        vm.selectAppVersion(preferences.getString("app_version", null)
+            .takeIf { it in setOf("16.11.01", "6.16.04") } ?: defaultCricketAppVersion())
+        vm.selectRegion(preferences.getString("region", "CA").takeIf { it in setOf("CA", "IN") } ?: "CA")
+        if (state.playing == null && state.preparingId == null) vm.refresh()
+    }
     val scope = rememberCoroutineScope()
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
@@ -199,7 +204,7 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
                     }, state.preparingId == null, compact) { lastFocusKey = "grid:${video.id}"; play(video.id) }
                 }
                 if (state.hasMore) NikTvSecondaryActionButton(loadMore, modifier = Modifier.focusRequester(more), enabled = !state.loadingMore) {
-                    Text(if (state.loadingMore) "Loading more videos…" else "Load more videos")
+                    Text(if (state.loadingMore) "Loading more videosâ€¦" else "Load more videos")
                 }
             }
         }
@@ -298,7 +303,7 @@ private fun CricketHighlightTile(video: CricketHighlight, preparing: Boolean, mo
             if (video.duration.isNotBlank()) Surface(Modifier.align(Alignment.TopEnd).padding(6.dp), color = Color(0xBB000000),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)) {
                 Text(video.duration, Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                    .semantics { contentDescription = "${video.duration} · ${video.type}" },
+                    .semantics { contentDescription = "${video.duration} Â· ${video.type}" },
                     color = Color.White, style = MaterialTheme.typography.labelSmall)
             }
             Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically,

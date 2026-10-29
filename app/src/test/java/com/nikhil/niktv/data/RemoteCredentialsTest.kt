@@ -30,4 +30,17 @@ class RemoteCredentialsTest {
         assertEquals("6.16.04", parsed["NIKTV_CRICBUZZ_APP_VERSION"])
         assertFalse(parsed.containsKey("NIKGAPPS_CLIENT_SECRET"))
     }
+    @Test fun syncedCricketValuesReplaceOldImportAndEmbeddedValuesRemainFallbacks() {
+        val key = "NIKTV_CRICBUZZ_AUTH_KEY"
+        val mode = "NIKTV_CRICBUZZ_AUTH_MODE"
+        val version = "NIKTV_CRICBUZZ_APP_VERSION"
+        val embedded = mapOf(key to "local-build", mode to "AK", version to "16.11.01")
+        val imported = mapOf(key to "old-import")
+        assertEquals("github-key", RemoteCredentials.mergeCredentialValues(embedded, imported,
+            mapOf(key to "github-key"))[key])
+        assertEquals(embedded, RemoteCredentials.mergeCredentialValues(embedded, emptyMap(), emptyMap()))
+        assertEquals("local-build", RemoteCredentials.mergeCredentialValues(embedded, emptyMap(), mapOf(key to ""))[key])
+        assertEquals("AK", RemoteCredentials.mergeCredentialValues(embedded, imported, mapOf(key to "github-key"))[mode])
+        assertEquals(emptyMap<String, String>(), RemoteCredentials.mergeCredentialValues(emptyMap(), emptyMap(), emptyMap()))
+    }
 }

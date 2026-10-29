@@ -11,7 +11,7 @@ import kotlinx.coroutines.launch
 
 internal data class CricketHighlightsState(
     val region: String = "CA",
-    val appVersion: String = "16.11.01",
+    val appVersion: String = defaultCricketAppVersion(),
     val videos: List<CricketHighlight> = emptyList(),
     val collections: List<CricketVideoCollection> = emptyList(),
     val sections: List<CricketVideoSection> = emptyList(),

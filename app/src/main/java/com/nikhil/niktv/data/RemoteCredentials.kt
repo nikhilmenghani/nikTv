@@ -50,7 +50,7 @@ object RemoteCredentials {
         }
         importLocalDebugToken(context)
         importEmbeddedDebugToken(context)
-        values = parseKnownValues(decrypt(prefs.getString("cached_values", null))) + localCricketValues(context)
+        values = effectiveValues(context, parseKnownValues(decrypt(prefs.getString("cached_values", null))))
         importLocalDebugCricketConfiguration(context)
         lastUpdatedAt = prefs.getLong("updated_at", 0L)
     }
@@ -94,8 +94,23 @@ object RemoteCredentials {
         require(local["NIKTV_CRICBUZZ_AUTH_KEY"].orEmpty().isNotBlank()) { "The file does not contain a Cricbuzz API configuration." }
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit().putString("local_cricket_values", encrypt(JSONObject(local).toString())).commit()
-        values = parseKnownValues(decrypt(prefs.getString("cached_values", null))) + local
+        values = effectiveValues(context, parseKnownValues(decrypt(prefs.getString("cached_values", null))))
     }
+
+    private fun effectiveValues(context: Context, remote: Map<String, String>): Map<String, String> {
+        val embedded = if (BuildConfig.DEBUG) mapOf(
+            "NIKTV_CRICBUZZ_AUTH_KEY" to BuildConfig.NIKTV_CRICBUZZ_AUTH_KEY,
+            "NIKTV_CRICBUZZ_AUTH_MODE" to BuildConfig.NIKTV_CRICBUZZ_AUTH_MODE,
+            "NIKTV_CRICBUZZ_APP_VERSION" to BuildConfig.NIKTV_CRICBUZZ_APP_VERSION,
+        ) else emptyMap()
+        return mergeCredentialValues(embedded, localCricketValues(context), remote)
+    }
+
+    /** Synced nonblank values replace legacy imports; local builds work before the first sync. */
+    internal fun mergeCredentialValues(embedded: Map<String, String>, local: Map<String, String>,
+                                       remote: Map<String, String>): Map<String, String> =
+        embedded.filterValues { it.isNotBlank() } + local.filterValues { it.isNotBlank() } +
+            remote.filterValues { it.isNotBlank() }
 
     private fun localCricketValues(context: Context): Map<String, String> = parseKnownValues(decrypt(
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("local_cricket_values", null)
@@ -162,8 +177,8 @@ object RemoteCredentials {
                 backup.path, manuallyEntered = backup.administrator)
             val known = backup.values.filterKeys { it in KNOWN_KEYS }
             prefs.edit().putString("cached_values", encrypt(JSONObject(known).toString())).commit()
-            values = known
-        } else values = emptyMap()
+            values = effectiveValues(context, known)
+        } else values = effectiveValues(context, emptyMap())
         lastUpdatedAt = 0L
     }
 
@@ -233,7 +248,7 @@ object RemoteCredentials {
             .putString("cached_values", encrypt(JSONObject(parsed).toString()))
             .putLong("updated_at", now)
             .apply()
-        values = parsed + localCricketValues(app)
+        values = effectiveValues(app, parsed)
         lastUpdatedAt = now
         true
     }

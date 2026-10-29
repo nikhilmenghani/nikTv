@@ -129,6 +129,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "LOCAL_GITHUB_TOKEN", "\"\"")
+        listOf("NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION").forEach {
+            buildConfigField("String", it, "\"\"")
+        }
         buildConfigField("String", "NIKTUBE_BOTGUARD_API_KEY",
             providers.environmentVariable("NIKTUBE_BOTGUARD_API_KEY")
                 .orElse(providers.gradleProperty("NIKTUBE_BOTGUARD_API_KEY"))
@@ -172,6 +175,14 @@ android {
                     ?: ""
             } else ""
             buildConfigField("String", "LOCAL_GITHUB_TOKEN", localToken.asBuildConfigString())
+            // Local debug builds use Gradle values as a fallback; CI APKs fetch them from GitHub.
+            listOf("NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION").forEach { name ->
+                val value = if (!providers.environmentVariable("GITHUB_ACTIONS").orNull.equals("true", ignoreCase = true) &&
+                    !providers.gradleProperty("skipLocalCricketConfiguration").orNull.equals("true", ignoreCase = true)) {
+                    providers.gradleProperty(name).orElse("").get()
+                } else ""
+                buildConfigField("String", name, value.asBuildConfigString())
+            }
             applicationIdSuffix = if (providers.gradleProperty("regressionBuild").orNull == "true") ".regression" else ".debug"
             versionNameSuffix = "-dev"
             manifestPlaceholders["appLabel"] = "NikTV Dev"
