@@ -1,0 +1,5436 @@
+{
+  "audit_date": "2026-10-28",
+  "reference_app": "com.cricfytv.sports 7.3 (53)",
+  "apk_sha256": "d5b7a8cf16a9966a58d25841b1a108b7dba445fcd409ee932933b98f81d2de0d",
+  "niktv_head": "91d27511",
+  "categories": [
+    {
+      "id": "1",
+      "title": "Sports",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/sports.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 57,
+      "groups": ""
+    },
+    {
+      "id": "3",
+      "title": "India",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/india.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 11,
+      "groups": ""
+    },
+    {
+      "id": "4",
+      "title": "News",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/news.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 7,
+      "groups": ""
+    },
+    {
+      "id": "5",
+      "title": "Kolkata",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/kolkata.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 11,
+      "groups": ""
+    },
+    {
+      "id": "6",
+      "title": "Discovery",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/discovery.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 8,
+      "groups": ""
+    },
+    {
+      "id": "7",
+      "title": "Pakistan",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/pakistan.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 1,
+      "groups": ""
+    },
+    {
+      "id": "8",
+      "title": "Bangla",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/bangla.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 25,
+      "groups": ""
+    },
+    {
+      "id": "9",
+      "title": "Kids",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/kids.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 10,
+      "groups": ""
+    },
+    {
+      "id": "12",
+      "title": "Musics",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/musics.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 4,
+      "groups": ""
+    },
+    {
+      "id": "13",
+      "title": "TATA PLAY",
+      "route": "external playlist",
+      "endpoint_or_host": "hotstarlive.delta-cloud.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "14",
+      "title": "HOTSTAR",
+      "route": "external playlist",
+      "endpoint_or_host": "hotstarlive.nebula-core.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "15",
+      "title": "TATAPLAY BD",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk-playlist.site",
+      "http": 403,
+      "response_format": "HTTP error",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "18",
+      "title": "FANCODE IND",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "empty M3U",
+      "entries": 0,
+      "groups": 0
+    },
+    {
+      "id": "19",
+      "title": "SONYLIV",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "empty M3U",
+      "entries": 0,
+      "groups": 0
+    },
+    {
+      "id": "22",
+      "title": "JIO IND",
+      "route": "external playlist",
+      "endpoint_or_host": "jiotv.byte-vault.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "29",
+      "title": "SONY IN",
+      "route": "external playlist",
+      "endpoint_or_host": "sonyliv.logic-lane.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "31",
+      "title": "VZY TV",
+      "route": "external playlist",
+      "endpoint_or_host": "digital-jhs.data-vortex.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "48",
+      "title": "SUN DIRECT",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 136,
+      "groups": 1
+    },
+    {
+      "id": "70",
+      "title": "VOOT BD",
+      "route": "external playlist",
+      "endpoint_or_host": "pastebin.com",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 31,
+      "groups": 0
+    },
+    {
+      "id": "71",
+      "title": "VOOT IND",
+      "route": "external playlist",
+      "endpoint_or_host": "jiocinema-live.cloud-hatchh.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "85",
+      "title": "SUN NXT",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 33,
+      "groups": 1
+    },
+    {
+      "id": "92",
+      "title": "DISTRO TV",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "106",
+      "title": "JIOTV+",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "empty M3U",
+      "entries": 0,
+      "groups": 0
+    },
+    {
+      "id": "110",
+      "title": "JIOLIVE IND",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 404,
+      "response_format": "HTTP error",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "111",
+      "title": "ISLAMIC TV",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/islamic-tv.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 2,
+      "groups": ""
+    },
+    {
+      "id": "114",
+      "title": "TAPMAD PK",
+      "route": "external playlist",
+      "endpoint_or_host": "tv.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "117",
+      "title": "ZEE5 IN",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk.short.gy",
+      "http": 403,
+      "response_format": "HTTP error",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "126",
+      "title": "WORLD TV",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk-playlist.site",
+      "http": 200,
+      "response_format": "JSON error response",
+      "entries": 0,
+      "groups": ""
+    },
+    {
+      "id": "129",
+      "title": "AYNA",
+      "route": "external playlist",
+      "endpoint_or_host": "playlist-cricfy.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "130",
+      "title": "JIO CINEMA IND",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 41,
+      "groups": 7
+    },
+    {
+      "id": "131",
+      "title": "DISH TV",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 42,
+      "groups": 8
+    },
+    {
+      "id": "132",
+      "title": "SHOOQ PK",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 42,
+      "groups": 9
+    },
+    {
+      "id": "133",
+      "title": "SAMSUNG TV",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 162,
+      "groups": 0
+    },
+    {
+      "id": "134",
+      "title": "JAGOBD",
+      "route": "external playlist",
+      "endpoint_or_host": "tv.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "135",
+      "title": "JADOO",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk-playlist.site",
+      "http": 200,
+      "response_format": "JSON error response",
+      "entries": 0,
+      "groups": ""
+    },
+    {
+      "id": "136",
+      "title": "PISHOW",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "146",
+      "title": "CRICHD",
+      "route": "external playlist",
+      "endpoint_or_host": "tv.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "150",
+      "title": "ZAP SPORTS",
+      "route": "external playlist",
+      "endpoint_or_host": "tv.noobon.top",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 116,
+      "groups": 1
+    },
+    {
+      "id": "151",
+      "title": "Pirates TV",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 404,
+      "response_format": "HTTP error",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "152",
+      "title": "YUPPTV",
+      "route": "external playlist",
+      "endpoint_or_host": "tv.noobon.top",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 274,
+      "groups": 11
+    },
+    {
+      "id": "153",
+      "title": "DANGAL TV",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "157",
+      "title": "PRIME X SONYLIV",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "empty M3U",
+      "entries": 0,
+      "groups": 0
+    },
+    {
+      "id": "158",
+      "title": "BIGBOSS 24 X 7",
+      "route": "external playlist",
+      "endpoint_or_host": "dehkho24h.alpha-circuit.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "159",
+      "title": "JIOTV+ S2",
+      "route": "external playlist",
+      "endpoint_or_host": "jiotvplus.byte-vault.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "163",
+      "title": "JIOHOTSTAR",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "empty M3U",
+      "entries": 0,
+      "groups": 0
+    },
+    {
+      "id": "164",
+      "title": "JIOTV+ S3",
+      "route": "external playlist",
+      "endpoint_or_host": "jiotv.edge-nexus.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "165",
+      "title": "ICC TV",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "empty M3U",
+      "entries": 0,
+      "groups": 0
+    },
+    {
+      "id": "166",
+      "title": "PRIME LIVE",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 1,
+      "groups": 1
+    },
+    {
+      "id": "167",
+      "title": "Movies",
+      "route": "built-in catalogue",
+      "endpoint_or_host": "categories/movies.txt",
+      "http": 200,
+      "response_format": "catalogue",
+      "entries": 12,
+      "groups": ""
+    },
+    {
+      "id": "170",
+      "title": "JIO BD",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk-playlist.site",
+      "http": 200,
+      "response_format": "JSON error response",
+      "entries": 0,
+      "groups": ""
+    },
+    {
+      "id": "173",
+      "title": "World Sport",
+      "route": "external playlist",
+      "endpoint_or_host": "tv.xmasterbd.sbs",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "175",
+      "title": "RUN TV",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 46,
+      "groups": 7
+    },
+    {
+      "id": "176",
+      "title": "WAVES OTT",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 78,
+      "groups": 6
+    },
+    {
+      "id": "177",
+      "title": "JIO IND2",
+      "route": "external playlist",
+      "endpoint_or_host": "playlist-cricfy.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "178",
+      "title": "JIOTV+ S4",
+      "route": "external playlist",
+      "endpoint_or_host": "jiotvplus.iron-shield.workers.dev",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "179",
+      "title": "LGTV IND",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 404,
+      "response_format": "HTTP error",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "180",
+      "title": "TOFFEE BD",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 75,
+      "groups": 13
+    },
+    {
+      "id": "181",
+      "title": "ZEE5 IN 2",
+      "route": "external playlist",
+      "endpoint_or_host": "alex4528.site",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 70,
+      "groups": 6
+    },
+    {
+      "id": "182",
+      "title": "SONY BD",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk-playlist.site",
+      "http": 200,
+      "response_format": "JSON error response",
+      "entries": 0,
+      "groups": ""
+    },
+    {
+      "id": "183",
+      "title": "AYNA 2",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk-playlist.site",
+      "http": 200,
+      "response_format": "JSON error response",
+      "entries": 0,
+      "groups": ""
+    },
+    {
+      "id": "184",
+      "title": "DARK TV",
+      "route": "external playlist",
+      "endpoint_or_host": "ranapk-playlist.site",
+      "http": 200,
+      "response_format": "JSON error response",
+      "entries": 0,
+      "groups": ""
+    },
+    {
+      "id": "185",
+      "title": "AKASH",
+      "route": "external playlist",
+      "endpoint_or_host": "playlist-cricfy.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "186",
+      "title": "FREE TV",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "189",
+      "title": "ZEE5 LIVE",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "empty M3U",
+      "entries": 0,
+      "groups": 0
+    },
+    {
+      "id": "190",
+      "title": "FREE SPORTS",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "194",
+      "title": "IZZI GO",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "195",
+      "title": "WATCHO",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "196",
+      "title": "BDIX TV",
+      "route": "external playlist",
+      "endpoint_or_host": "tv.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "198",
+      "title": "SUN NXT 2",
+      "route": "external playlist",
+      "endpoint_or_host": "gist.githubusercontent.com",
+      "http": 200,
+      "response_format": "opaque or legacy encrypted response",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "199",
+      "title": "INDIA TV 2",
+      "route": "external playlist",
+      "endpoint_or_host": "iptv-org.github.io",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 369,
+      "groups": 29
+    },
+    {
+      "id": "202",
+      "title": "TAPMAD BD",
+      "route": "external playlist",
+      "endpoint_or_host": "s1.noobon.top",
+      "http": 200,
+      "response_format": "HTML",
+      "entries": "",
+      "groups": ""
+    },
+    {
+      "id": "203",
+      "title": "WORLD TV 2",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 3974,
+      "groups": 52
+    },
+    {
+      "id": "204",
+      "title": "INDIA TV",
+      "route": "external playlist",
+      "endpoint_or_host": "raw.githubusercontent.com",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 114,
+      "groups": 10
+    },
+    {
+      "id": "205",
+      "title": "SKY SPORTS",
+      "route": "external playlist",
+      "endpoint_or_host": "baila-lentoo.pages.dev",
+      "http": 200,
+      "response_format": "M3U",
+      "entries": 63,
+      "groups": 0
+    }
+  ],
+  "event_filters": [
+    {
+      "id": 1,
+      "title": "All"
+    },
+    {
+      "id": 2,
+      "title": "Cricket"
+    },
+    {
+      "id": 3,
+      "title": "Football"
+    },
+    {
+      "id": 4,
+      "title": "Boxing"
+    },
+    {
+      "id": 5,
+      "title": "Basketball"
+    },
+    {
+      "id": 6,
+      "title": "Baseball"
+    },
+    {
+      "id": 7,
+      "title": "Orioles"
+    },
+    {
+      "id": 9,
+      "title": "Motorsport"
+    },
+    {
+      "id": 10,
+      "title": "KRK"
+    },
+    {
+      "id": 13,
+      "title": "Tennis"
+    },
+    {
+      "id": 14,
+      "title": "Rugby"
+    },
+    {
+      "id": 15,
+      "title": "Aussie Rules"
+    },
+    {
+      "id": 16,
+      "title": "American Football"
+    },
+    {
+      "id": 17,
+      "title": "Ice Hockey"
+    }
+  ],
+  "preview_detail_mismatches": [
+    {
+      "category": "live-events.txt.decoded.json",
+      "slug": "new-zealand-vs-india",
+      "preview": 11,
+      "detail": 10,
+      "titles_differ": true
+    }
+  ],
+  "summary": {
+    "channel_documents": 193,
+    "stream_choices": 636,
+    "types": {
+      "0": 463,
+      "7": 173
+    },
+    "event_types": {
+      "0": 111,
+      "7": 46
+    },
+    "stream_fields": [
+      "id",
+      "title",
+      "link",
+      "api",
+      "type",
+      "webLink",
+      "geo"
+    ],
+    "detail_fields": {
+      "streamUrls": 193,
+      "related": 193,
+      "prevChannel": 192,
+      "nextChannel": 190,
+      "id": 58,
+      "slug": 64,
+      "geo": 39
+    }
+  },
+  "channels": [
+    {
+      "slug": "9x",
+      "streams": 7,
+      "types": {
+        "0": 7
+      },
+      "related": 3,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "9x",
+      "category": "Musics",
+      "preview_format_titles": [
+        "9XM",
+        "Saga Haryanvi",
+        "Ptc Music",
+        "Joo Music",
+        "9X Jhakass",
+        "9X Tahsan",
+        "9X Jalwa"
+      ],
+      "detail_source_titles": [
+        "9XM",
+        "Saga Haryanvi",
+        "Ptc Music",
+        "Joo Music",
+        "9X Jhakass",
+        "9X Tahsan",
+        "9X Jalwa"
+      ]
+    },
+    {
+      "slug": "abpnews",
+      "streams": 7,
+      "types": {
+        "0": 7
+      },
+      "related": 6,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "abpnews",
+      "category": "News",
+      "preview_format_titles": [
+        "Bengali",
+        "Hindi",
+        "Ganga",
+        "Sanjha",
+        "Majha",
+        "Asmita",
+        "R Plus Bangla"
+      ],
+      "detail_source_titles": [
+        "Bengali",
+        "Hindi",
+        "Ganga",
+        "Sanjha",
+        "Majha",
+        "Asmita",
+        "R Plus Bangla"
+      ]
+    },
+    {
+      "slug": "adelaide-united-vs-lion-city-sailors",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Adelaide United vs Lion City Sailors",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "adsports",
+      "streams": 2,
+      "types": {
+        "7": 1,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "adsports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Premium 1 - AQ",
+        "Premium 2 - AQ"
+      ],
+      "detail_source_titles": [
+        "Premium 1 - AQ",
+        "Premium 2 - AQ"
+      ]
+    },
+    {
+      "slug": "afghanistan-vs-zimbabwe",
+      "streams": 4,
+      "types": {
+        "7": 2,
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Afghanistan vs Zimbabwe",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "WILLOW - AQ",
+        "WILLOW - ALT",
+        "TAPMAD - AQ",
+        "FANCODE - IN "
+      ],
+      "detail_source_titles": [
+        "WILLOW - AQ",
+        "WILLOW - ALT",
+        "TAPMAD - AQ",
+        "FANCODE - IN "
+      ]
+    },
+    {
+      "slug": "ajtaknews",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 6,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "ajtaknews",
+      "category": "News",
+      "preview_format_titles": [
+        "Hindi"
+      ],
+      "detail_source_titles": [
+        "Hindi"
+      ]
+    },
+    {
+      "slug": "akash-ath",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "akash ath",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "aljazeera",
+      "streams": 14,
+      "types": {
+        "0": 14
+      },
+      "related": 6,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "aljazeera",
+      "category": "News",
+      "preview_format_titles": [
+        "Al Jazeera HD",
+        "CNA - AQ",
+        "CNN - Indonesia",
+        "Africa News",
+        "DW",
+        "Fox News",
+        "RT News",
+        "CNN News",
+        "Sky News",
+        "Arirang",
+        "America",
+        "CNBC 18",
+        "ABC NEWS",
+        "BBC NEWS"
+      ],
+      "detail_source_titles": [
+        "Al Jazeera HD",
+        "CNA - AQ",
+        "CNN - Indonesia",
+        "Africa News",
+        "DW",
+        "Fox News",
+        "RT News",
+        "CNN News",
+        "Sky News",
+        "Arirang",
+        "America",
+        "CNBC 18",
+        "ABC NEWS",
+        "BBC NEWS"
+      ]
+    },
+    {
+      "slug": "and-tv",
+      "streams": 5,
+      "types": {
+        "0": 2,
+        "7": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "And TV",
+      "category": "India",
+      "preview_format_titles": [
+        "AND TV",
+        "Zee Telugu",
+        "Zee Kannada",
+        "Zee Tamil",
+        "AndFlix"
+      ],
+      "detail_source_titles": [
+        "AND TV",
+        "Zee Telugu",
+        "Zee Kannada",
+        "Zee Tamil",
+        "AndFlix"
+      ]
+    },
+    {
+      "slug": "andpictures",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "andpictures",
+      "category": "Movies",
+      "preview_format_titles": [
+        "SD"
+      ],
+      "detail_source_titles": [
+        "SD"
+      ]
+    },
+    {
+      "slug": "animalplanet",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "animalplanet",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "Hindi"
+      ],
+      "detail_source_titles": [
+        "Hindi"
+      ]
+    },
+    {
+      "slug": "arsenal-vs-benfica",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Arsenal vs Benfica",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "asports-pakistan-",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "asports pakistan",
+      "category": "Sports",
+      "preview_format_titles": [
+        "A SPORTS - HD"
+      ],
+      "detail_source_titles": [
+        "A SPORTS - HD"
+      ]
+    },
+    {
+      "slug": "astro-cricket-",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "astro cricket",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "atlanta-hawks-vs-miami-heat",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Atlanta Hawks vs Miami Heat",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "atn-bangla",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "atn bangla",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Atn Bangla",
+        "Atn News"
+      ],
+      "detail_source_titles": [
+        "Atn Bangla",
+        "Atn News"
+      ]
+    },
+    {
+      "slug": "bahia-vs-sao-paulo",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Bahia vs Sao Paulo",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "bangla-tv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "bangla tv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Bangla TV"
+      ],
+      "detail_source_titles": [
+        "Bangla TV"
+      ]
+    },
+    {
+      "slug": "bangla-vision",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "bangla vision",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "bangladesh-vs-west-indies",
+      "streams": 7,
+      "types": {
+        "7": 2,
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Bangladesh vs West Indies",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "FANCODE - AQ",
+        "TAPMAD - AQ",
+        "RABBITHOLE - AQ",
+        "FANCODE HD",
+        "TAPMAD HD",
+        "T SPORTS HD",
+        "FANCODE - IN"
+      ],
+      "detail_source_titles": [
+        "FANCODE - AQ",
+        "TAPMAD - AQ",
+        "RABBITHOLE - AQ",
+        "FANCODE HD",
+        "TAPMAD HD",
+        "T SPORTS HD",
+        "FANCODE - IN"
+      ]
+    },
+    {
+      "slug": "bayer-04-leverkusen-vs-1-fc-nurnberg",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Bayer 04 Leverkusen vs 1. FC Nurnberg",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy FAST ",
+        "LOW SERVER "
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy FAST ",
+        "LOW SERVER "
+      ]
+    },
+    {
+      "slug": "bbcearth",
+      "streams": 6,
+      "types": {
+        "0": 6
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "bbcearth",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "ADVENTURE FI",
+        "ADVENTURE GB",
+        "ADVENTURE IE",
+        "HD",
+        "AQ",
+        "IND IP"
+      ],
+      "detail_source_titles": [
+        "ADVENTURE FI",
+        "ADVENTURE GB",
+        "ADVENTURE IE",
+        "HD",
+        "AQ",
+        "IND IP"
+      ]
+    },
+    {
+      "slug": "bein-sports",
+      "streams": 7,
+      "types": {
+        "7": 5,
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "bein sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "beIN Sports 1 - AQ",
+        "beIN Sports 2 - AQ",
+        "beIN Sports 3 - AQ",
+        "beIN Sports 1 AU - AQ",
+        "beIN Sports 2 AU - AQ",
+        "beIN Sports Xtra",
+        "beIN ENGLISH 1"
+      ],
+      "detail_source_titles": [
+        "beIN Sports 1 - AQ",
+        "beIN Sports 2 - AQ",
+        "beIN Sports 3 - AQ",
+        "beIN Sports 1 AU - AQ",
+        "beIN Sports 2 AU - AQ",
+        "beIN Sports Xtra",
+        "beIN ENGLISH 1"
+      ]
+    },
+    {
+      "slug": "bek",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "BEK",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "biggboss",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "biggboss",
+      "category": "India",
+      "preview_format_titles": [
+        "Hindi",
+        "English",
+        "Tamil"
+      ],
+      "detail_source_titles": [
+        "Hindi",
+        "English",
+        "Tamil"
+      ]
+    },
+    {
+      "slug": "bournemouth-vs-aston-villa",
+      "streams": 6,
+      "types": {
+        "7": 1,
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Bournemouth vs Aston Villa",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CBS SPORTS - AQ",
+        "DAZN SPORTS HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "CBS SPORTS - AQ",
+        "DAZN SPORTS HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "brisbane-heat-women-vs-sydney-sixers-women",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Brisbane Heat Women vs Sydney Sixers Women",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "btv",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "btv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "BTV",
+        "BTV NEWS",
+        "BTV CTG"
+      ],
+      "detail_source_titles": [
+        "BTV",
+        "BTV NEWS",
+        "BTV CTG"
+      ]
+    },
+    {
+      "slug": "cazetv",
+      "streams": 4,
+      "types": {
+        "7": 3,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "cazetv",
+      "category": "Sports",
+      "preview_format_titles": [
+        "CazÃ© TV - AQ (Event 1)",
+        "CazÃ© TV - AQ (Event 2)",
+        "CazÃ© TV - AQ (Event 3)",
+        "CazÃ© TV BR - AQ"
+      ],
+      "detail_source_titles": [
+        "CazÃ© TV - AQ (Event 1)",
+        "CazÃ© TV - AQ (Event 2)",
+        "CazÃ© TV - AQ (Event 3)",
+        "CazÃ© TV BR - AQ"
+      ]
+    },
+    {
+      "slug": "cbssports",
+      "streams": 3,
+      "types": {
+        "7": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "cbssports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "CBS NETWORK",
+        "CBS Golazo",
+        "CBS Station Broadcasting"
+      ],
+      "detail_source_titles": [
+        "CBS NETWORK",
+        "CBS Golazo",
+        "CBS Station Broadcasting"
+      ]
+    },
+    {
+      "slug": "channel-i",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "channel i",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 2"
+      ],
+      "detail_source_titles": [
+        "Link 2"
+      ]
+    },
+    {
+      "slug": "channel24",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "channel24",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "hd"
+      ],
+      "detail_source_titles": [
+        "hd"
+      ]
+    },
+    {
+      "slug": "channel4",
+      "streams": 5,
+      "types": {
+        "7": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "channel4",
+      "category": "Sports",
+      "preview_format_titles": [
+        "C4",
+        "E4",
+        "M4",
+        "F4",
+        "4S"
+      ],
+      "detail_source_titles": [
+        "C4",
+        "E4",
+        "M4",
+        "F4",
+        "4S"
+      ]
+    },
+    {
+      "slug": "channel9",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "channel9",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "chicago-bulls-vs-new-york-knicks",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Chicago Bulls vs New York Knicks",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "cnkids",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "cnkids",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Hindi",
+        "AQ"
+      ],
+      "detail_source_titles": [
+        "Hindi",
+        "AQ"
+      ]
+    },
+    {
+      "slug": "colors-bangla",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "colors bangla",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "SD"
+      ],
+      "detail_source_titles": [
+        "SD"
+      ]
+    },
+    {
+      "slug": "colorscineplexx",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "colorscineplexx",
+      "category": "Movies",
+      "preview_format_titles": [
+        "Colors Cineplex"
+      ],
+      "detail_source_titles": [
+        "Colors Cineplex"
+      ]
+    },
+    {
+      "slug": "combate-global",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "COMBATE GLOBAL",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "cosmotesport",
+      "streams": 9,
+      "types": {
+        "0": 9
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "cosmotesport",
+      "category": "Sports",
+      "preview_format_titles": [
+        "COSMOTE 1",
+        "COSMOTE 2",
+        "COSMOTE 3",
+        "COSMOTE 4",
+        "COSMOTE 5",
+        "COSMOTE 6",
+        "COSMOTE 7",
+        "COSMOTE 8",
+        "COSMOTE 9"
+      ],
+      "detail_source_titles": [
+        "COSMOTE 1",
+        "COSMOTE 2",
+        "COSMOTE 3",
+        "COSMOTE 4",
+        "COSMOTE 5",
+        "COSMOTE 6",
+        "COSMOTE 7",
+        "COSMOTE 8",
+        "COSMOTE 9"
+      ]
+    },
+    {
+      "slug": "cricbuzz",
+      "streams": 2,
+      "types": {
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "cricbuz",
+      "category": "Sports",
+      "preview_format_titles": [
+        "CricBuzz 1 - IND IP",
+        "CricBuzz 2 - IND IP"
+      ],
+      "detail_source_titles": [
+        "CricBuzz 1 - IND IP",
+        "CricBuzz 2 - IND IP"
+      ]
+    },
+    {
+      "slug": "ct-sport",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "CTSport",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "dallas-mavericks-vs-oklahoma-city-thunder",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Dallas Mavericks vs Oklahoma City Thunder",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "dangal-tv",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "dangal tv",
+      "category": "India",
+      "preview_format_titles": [
+        "DANGAL1",
+        "DANGAL2",
+        "NAZARA"
+      ],
+      "detail_source_titles": [
+        "DANGAL1",
+        "DANGAL2",
+        "NAZARA"
+      ]
+    },
+    {
+      "slug": "dbcnews",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "dbcnews",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "hd"
+      ],
+      "detail_source_titles": [
+        "hd"
+      ]
+    },
+    {
+      "slug": "dd-sports",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "dd sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "link 1"
+      ],
+      "detail_source_titles": [
+        "link 1"
+      ]
+    },
+    {
+      "slug": "ddnational",
+      "streams": 7,
+      "types": {
+        "0": 7
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "ddnational",
+      "category": "India",
+      "preview_format_titles": [
+        "DD NATIONAL",
+        "DD BHARATI",
+        "HARE KRISNA",
+        "SANSKAR 1",
+        "SANSKAR 2",
+        "SANSKAR 3",
+        "DD TAMIL"
+      ],
+      "detail_source_titles": [
+        "DD NATIONAL",
+        "DD BHARATI",
+        "HARE KRISNA",
+        "SANSKAR 1",
+        "SANSKAR 2",
+        "SANSKAR 3",
+        "DD TAMIL"
+      ]
+    },
+    {
+      "slug": "deepto-tv",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "deepto tv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "HD",
+        "AQ"
+      ],
+      "detail_source_titles": [
+        "HD",
+        "AQ"
+      ]
+    },
+    {
+      "slug": "deshtv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "deshtv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "detroit-pistons-vs-charlotte-hornets",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Detroit Pistons vs Charlotte Hornets",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "discovery",
+      "streams": 5,
+      "types": {
+        "7": 1,
+        "0": 4
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "discovery",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "Hindi",
+        "Discovery H&H",
+        "Discovery Uk",
+        "History",
+        "SD"
+      ],
+      "detail_source_titles": [
+        "Hindi",
+        "Discovery H&H",
+        "Discovery Uk",
+        "History",
+        "SD"
+      ]
+    },
+    {
+      "slug": "discoverykids",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "discoverykids",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu"
+      ],
+      "detail_source_titles": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu"
+      ]
+    },
+    {
+      "slug": "disney",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "disney",
+      "category": "Kids",
+      "preview_format_titles": [
+        "4K",
+        "HD",
+        "JR",
+        "XD"
+      ],
+      "detail_source_titles": [
+        "4K",
+        "HD",
+        "JR",
+        "XD"
+      ]
+    },
+    {
+      "slug": "dmax",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "dmax",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "Dmax"
+      ],
+      "detail_source_titles": [
+        "Dmax"
+      ]
+    },
+    {
+      "slug": "draftkings-network",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "DRAFTKINGS NETWORK",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "dsports",
+      "streams": 3,
+      "types": {
+        "7": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "dsports",
+      "category": "Sports",
+      "preview_format_titles": [
+        " D SPORTS 1",
+        "D SPORTS 2",
+        "D SPORTS +"
+      ],
+      "detail_source_titles": [
+        " D SPORTS 1",
+        "D SPORTS 2",
+        "D SPORTS +"
+      ]
+    },
+    {
+      "slug": "dubaisports",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "dubaisports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "BAHRAIN SPORTS 1",
+        "BAHRAIN SPORTS 2",
+        "OMAN SPORTS"
+      ],
+      "detail_source_titles": [
+        "BAHRAIN SPORTS 1",
+        "BAHRAIN SPORTS 2",
+        "OMAN SPORTS"
+      ]
+    },
+    {
+      "slug": "duronto",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "duronto",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 2"
+      ],
+      "detail_source_titles": [
+        "Link 2"
+      ]
+    },
+    {
+      "slug": "ekattor",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "ekattor",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "ekushey-tv",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "ekushey",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1",
+        "Link 2"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "Link 2"
+      ]
+    },
+    {
+      "slug": "enter10movie",
+      "streams": 2,
+      "types": {
+        "7": 1,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "enter10movie",
+      "category": "Movies",
+      "preview_format_titles": [
+        "Enter10 Movie",
+        "Movies Now"
+      ],
+      "detail_source_titles": [
+        "Enter10 Movie",
+        "Movies Now"
+      ]
+    },
+    {
+      "slug": "entertain-bangla",
+      "streams": 5,
+      "types": {
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "entertain bangla",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "Link 1",
+        "Link 2",
+        "Link 3",
+        "Link 4",
+        "Link 5"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "Link 2",
+        "Link 3",
+        "Link 4",
+        "Link 5"
+      ]
+    },
+    {
+      "slug": "epic-tv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "epic tv",
+      "category": "India",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "euro-sports",
+      "streams": 2,
+      "types": {
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "euro sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "EURO ES 1 - AQ",
+        "EURO ES 2 - AQ"
+      ],
+      "detail_source_titles": [
+        "EURO ES 1 - AQ",
+        "EURO ES 2 - AQ"
+      ]
+    },
+    {
+      "slug": "fancode-",
+      "streams": 6,
+      "types": {
+        "7": 6
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "fancode ",
+      "category": "Sports",
+      "preview_format_titles": [
+        "FANCODE 1 - HD",
+        "FANCODE 2 - HD",
+        "FC 1 - AQ",
+        "FC 2 - AQ",
+        "FC 1 - HD",
+        "FC 2 - HD"
+      ],
+      "detail_source_titles": [
+        "FANCODE 1 - HD",
+        "FANCODE 2 - HD",
+        "FC 1 - AQ",
+        "FC 2 - AQ",
+        "FC 1 - HD",
+        "FC 2 - HD"
+      ]
+    },
+    {
+      "slug": "fc-bayern-munchen-vs-1-fc-magdeburg",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "FC Bayern Munchen vs 1. FC Magdeburg",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy FAST ",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy FAST ",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "fluminense-vs-internacional",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Fluminense vs Internacional",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "foodfood",
+      "streams": 3,
+      "types": {
+        "0": 2,
+        "7": 1
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "foodfoodg",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "Hindi 1",
+        "English 1",
+        "Cocina"
+      ],
+      "detail_source_titles": [
+        "Hindi 1",
+        "English 1",
+        "Cocina"
+      ]
+    },
+    {
+      "slug": "formula-1",
+      "streams": 9,
+      "types": {
+        "7": 3,
+        "0": 6
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Formula 1",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "TSN SPORTS - AQ",
+        "FANCODE - AQ",
+        "SporTV BR - AQ",
+        "CRICFy LIVE ",
+        "SPORTSCAST - AQ",
+        "SKY SPORTS F1",
+        "RUSSIA FEED",
+        "HD SERVER ",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "TSN SPORTS - AQ",
+        "FANCODE - AQ",
+        "SporTV BR - AQ",
+        "CRICFy LIVE ",
+        "SPORTSCAST - AQ",
+        "SKY SPORTS F1",
+        "RUSSIA FEED",
+        "HD SERVER ",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "formula",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "formula",
+      "category": "Sports",
+      "preview_format_titles": [
+        "F1"
+      ],
+      "detail_source_titles": [
+        "F1"
+      ]
+    },
+    {
+      "slug": "fox-cricket-",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "fox cricket ",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "foxsports",
+      "streams": 5,
+      "types": {
+        "7": 4,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "foxsports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "FOX SPORTS 1",
+        "FOX SPORTS 2",
+        "FOX SPORTS 3",
+        "FOX SPORTS 4",
+        "HD1"
+      ],
+      "detail_source_titles": [
+        "FOX SPORTS 1",
+        "FOX SPORTS 2",
+        "FOX SPORTS 3",
+        "FOX SPORTS 4",
+        "HD1"
+      ]
+    },
+    {
+      "slug": "fubosports",
+      "streams": 3,
+      "types": {
+        "7": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Fubosports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Fubo 1",
+        "Fubo 2",
+        "Fubo 3"
+      ],
+      "detail_source_titles": [
+        "Fubo 1",
+        "Fubo 2",
+        "Fubo 3"
+      ]
+    },
+    {
+      "slug": "fulham-vs-crystal-palace",
+      "streams": 5,
+      "types": {
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Fulham vs Crystal Palace",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "PARAMOUNT+ HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "PARAMOUNT+ HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "genoa-vs-juventus",
+      "streams": 5,
+      "types": {
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Genoa vs Juventus",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "FUBO SPORTS HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "FUBO SPORTS HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "geotv",
+      "streams": 9,
+      "types": {
+        "0": 9
+      },
+      "related": 0,
+      "relatedPlaylist": 0,
+      "has_next": false,
+      "has_prev": false,
+      "title": "geotvv",
+      "category": "Pakistan",
+      "preview_format_titles": [
+        "GEO TV",
+        "HUM TV WORLD",
+        "GEO KAHANI",
+        "GEO TEZ",
+        "ARY DIGITAL",
+        "PTV HOME",
+        "HUM SITARY",
+        "HUM TV",
+        "HUM AQ"
+      ],
+      "detail_source_titles": [
+        "GEO TV",
+        "HUM TV WORLD",
+        "GEO KAHANI",
+        "GEO TEZ",
+        "ARY DIGITAL",
+        "PTV HOME",
+        "HUM SITARY",
+        "HUM TV",
+        "HUM AQ"
+      ]
+    },
+    {
+      "slug": "gtv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "gtvv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "gubbare",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "gubbare",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Gubbare"
+      ],
+      "detail_source_titles": [
+        "Gubbare"
+      ]
+    },
+    {
+      "slug": "hannover-96-vs-1-fc-kaiserslautern",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Hannover 96 vs 1. FC Kaiserslautern",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "hbo",
+      "streams": 9,
+      "types": {
+        "7": 7,
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "HBO",
+      "category": "Movies",
+      "preview_format_titles": [
+        "HBO",
+        "WALKING",
+        "HR2",
+        "AMC",
+        "AMC+",
+        "CINEMAX",
+        "AXN",
+        "CINEMA WORLD",
+        "WARNER TV"
+      ],
+      "detail_source_titles": [
+        "HBO",
+        "WALKING",
+        "HR2",
+        "AMC",
+        "AMC+",
+        "CINEMAX",
+        "AXN",
+        "CINEMA WORLD",
+        "WARNER TV"
+      ]
+    },
+    {
+      "slug": "holstein-kiel-vs-tsg-hoffenheim",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Holstein Kiel vs TSG Hoffenheim",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "LOW SERVER "
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "LOW SERVER "
+      ]
+    },
+    {
+      "slug": "hungamakids",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "hungamakids",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Hindi",
+        "Hindi 2"
+      ],
+      "detail_source_titles": [
+        "Hindi",
+        "Hindi 2"
+      ]
+    },
+    {
+      "slug": "independent",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "independent",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "indiatoday",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 6,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "indiatoday",
+      "category": "News",
+      "preview_format_titles": [
+        "English",
+        "Hindi"
+      ],
+      "detail_source_titles": [
+        "English",
+        "Hindi"
+      ]
+    },
+    {
+      "slug": "indiatv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 6,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "indiatv",
+      "category": "News",
+      "preview_format_titles": [
+        "Hindi"
+      ],
+      "detail_source_titles": [
+        "Hindi"
+      ]
+    },
+    {
+      "slug": "iqrabangla",
+      "streams": 6,
+      "types": {
+        "0": 6
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "iqrabangla",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Quran TV",
+        "Live Hajj",
+        "Peace Bangla",
+        "Peace Urdu",
+        "Peace English",
+        "Madani Bangla"
+      ],
+      "detail_source_titles": [
+        "Quran TV",
+        "Live Hajj",
+        "Peace Bangla",
+        "Peace Urdu",
+        "Peace English",
+        "Madani Bangla"
+      ]
+    },
+    {
+      "slug": "jalshamovie",
+      "streams": 7,
+      "types": {
+        "0": 7
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "StarJalshamovies",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "Amar Bangla Digital",
+        "Bangla+",
+        "Amar Bangla",
+        "SANANDA",
+        "Mon Tv",
+        "Jalsha Movie",
+        "TARA TV"
+      ],
+      "detail_source_titles": [
+        "Amar Bangla Digital",
+        "Bangla+",
+        "Amar Bangla",
+        "SANANDA",
+        "Mon Tv",
+        "Jalsha Movie",
+        "TARA TV"
+      ]
+    },
+    {
+      "slug": "jamunatv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "jamunatv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "HD"
+      ],
+      "detail_source_titles": [
+        "HD"
+      ]
+    },
+    {
+      "slug": "jojsports",
+      "streams": 2,
+      "types": {
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "jojsports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "JOJ Sports 1 - AQ",
+        "JOJ Sports 2 - AQ"
+      ],
+      "detail_source_titles": [
+        "JOJ Sports 1 - AQ",
+        "JOJ Sports 2 - AQ"
+      ]
+    },
+    {
+      "slug": "khusbobangla",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "khusbobangla",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "hd"
+      ],
+      "detail_source_titles": [
+        "hd"
+      ]
+    },
+    {
+      "slug": "laliga-sports",
+      "streams": 5,
+      "types": {
+        "7": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "laliga",
+      "category": "Sports",
+      "preview_format_titles": [
+        "LALIGA1 HYP FHD",
+        "LaLiga2 Hyp FHD",
+        "FANCODE FHD",
+        "SKY LaLiga FHD",
+        "CazÃ©TV FHD"
+      ],
+      "detail_source_titles": [
+        "LALIGA1 HYP FHD",
+        "LaLiga2 Hyp FHD",
+        "FANCODE FHD",
+        "SKY LaLiga FHD",
+        "CazÃ©TV FHD"
+      ]
+    },
+    {
+      "slug": "liverpool-fc-vs-chelsea",
+      "streams": 6,
+      "types": {
+        "7": 2,
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Liverpool FC vs Chelsea",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "beIN ENGLISH - AQ",
+        "FANCODE - AQ",
+        "DAZN SPORTS HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "beIN ENGLISH - AQ",
+        "FANCODE - AQ",
+        "DAZN SPORTS HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "los-angeles-clippers-vs-los-angeles-lakers",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Los Angeles Clippers vs Los Angeles Lakers",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "maasranga",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "maasranga",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1",
+        "Link 2"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "Link 2"
+      ]
+    },
+    {
+      "slug": "manchester-city-vs-brighton-hove-albion",
+      "streams": 7,
+      "types": {
+        "7": 2,
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Manchester City vs Brighton Hove Albion",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "beIN ENGLISH - AQ",
+        "FANCODE - AQ",
+        "MONO MAX HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "beIN ENGLISH - AQ",
+        "FANCODE - AQ",
+        "MONO MAX HD",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "manoranjantv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "manoranjantvv",
+      "category": "Movies",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "masti-music",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 3,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "masti music",
+      "category": "Musics",
+      "preview_format_titles": [
+        "HD1",
+        "HD2"
+      ],
+      "detail_source_titles": [
+        "HD1",
+        "HD2"
+      ]
+    },
+    {
+      "slug": "mbc",
+      "streams": 5,
+      "types": {
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "mbc",
+      "category": "Movies",
+      "preview_format_titles": [
+        "MBC",
+        "MBC HIN",
+        "MBC DRAMA",
+        "MTV",
+        "MBC 5"
+      ],
+      "detail_source_titles": [
+        "MBC",
+        "MBC HIN",
+        "MBC DRAMA",
+        "MTV",
+        "MBC 5"
+      ]
+    },
+    {
+      "slug": "melbourne-renegades-women-vs-sydney-thunder-women",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Melbourne Renegades Women vs Sydney Thunder Women",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "WILLOW - AQ"
+      ],
+      "detail_source_titles": [
+        "WILLOW - AQ"
+      ]
+    },
+    {
+      "slug": "melbourne-stars-women-vs-hobart-hurricanes-women",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Melbourne Stars Women vs Hobart Hurricanes Women",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "WILLOW FHD"
+      ],
+      "detail_source_titles": [
+        "WILLOW FHD"
+      ]
+    },
+    {
+      "slug": "milwaukee-brewers-vs-tampa-bay-rays",
+      "streams": 3,
+      "types": {
+        "7": 2,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Milwaukee Brewers vs Tampa Bay Rays",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "TNT SPORTS - AQ",
+        "FOX DEPORTES - AQ",
+        "HD QUALITY"
+      ],
+      "detail_source_titles": [
+        "TNT SPORTS - AQ",
+        "FOX DEPORTES - AQ",
+        "HD QUALITY"
+      ]
+    },
+    {
+      "slug": "milwaukee-bucks-vs-houston-rockets",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Milwaukee Bucks vs Houston Rockets",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "minnesota-timberwolves-vs-golden-state-warriors",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Minnesota Timberwolves vs Golden State Warriors",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "monza-vs-ssc-napoli",
+      "streams": 5,
+      "types": {
+        "7": 1,
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Monza vs SSC Napoli",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "TNT SPORTS - AQ",
+        "CRICFy LIVE",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "TNT SPORTS - AQ",
+        "CRICFy LIVE",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "motogp",
+      "streams": 6,
+      "types": {
+        "7": 4,
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Motogp",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "TNT SPORTS - AQ",
+        "FANCODE - AQ",
+        "MotoGP - AQ",
+        "HD SERVER ",
+        "SPOTV - AQ",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "TNT SPORTS - AQ",
+        "FANCODE - AQ",
+        "MotoGP - AQ",
+        "HD SERVER ",
+        "SPOTV - AQ",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "movie-bangla",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "movie bangla",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 2",
+        "Link 3",
+        "Link 4"
+      ],
+      "detail_source_titles": [
+        "Link 2",
+        "Link 3",
+        "Link 4"
+      ]
+    },
+    {
+      "slug": "musicindia",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 3,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "musicindia",
+      "category": "Musics",
+      "preview_format_titles": [
+        "HD1",
+        "HD2"
+      ],
+      "detail_source_titles": [
+        "HD1",
+        "HD2"
+      ]
+    },
+    {
+      "slug": "nagoriktv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "nagoriktv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "national-geo-graphics",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "national geo graphics",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "National Geo Graphic",
+        "History",
+        "Discovery",
+        "Wild"
+      ],
+      "detail_source_titles": [
+        "National Geo Graphic",
+        "History",
+        "Discovery",
+        "Wild"
+      ]
+    },
+    {
+      "slug": "nba",
+      "streams": 3,
+      "types": {
+        "7": 2,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "nba",
+      "category": "Sports",
+      "preview_format_titles": [
+        "NBA - AQ",
+        "NBA - AQ (2)",
+        "MLB - HD"
+      ],
+      "detail_source_titles": [
+        "NBA - AQ",
+        "NBA - AQ (2)",
+        "MLB - HD"
+      ]
+    },
+    {
+      "slug": "nbcsports",
+      "streams": 4,
+      "types": {
+        "0": 2,
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "nbcsportss",
+      "category": "Sports",
+      "preview_format_titles": [
+        "NBC NEWS NOW",
+        "CNBC - AQ",
+        "NBC Sports Now",
+        "NBC Universo - AQ"
+      ],
+      "detail_source_titles": [
+        "NBC NEWS NOW",
+        "CNBC - AQ",
+        "NBC Sports Now",
+        "NBC Universo - AQ"
+      ]
+    },
+    {
+      "slug": "new-orleans-pelicans-vs-denver-nuggets",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "New Orleans Pelicans vs Denver Nuggets",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "new-zealand-vs-india",
+      "streams": 10,
+      "types": {
+        "7": 4,
+        "0": 6
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "New Zealand vs India",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "WILLOW - AQ",
+        "PRIME ENG - AQ",
+        "TNT SPORTS - AQ",
+        "PRIME HINDI - AQ",
+        "WILLOW - ALT",
+        "TAPMAD - AQ",
+        "SonyLiv - English",
+        "SonyLiv - Hindi",
+        "SonyLiv - TAM",
+        "SonyLiv - TEL",
+        "SonyLiv - KAN"
+      ],
+      "detail_source_titles": [
+        "WILLOW - AQ",
+        "PRIME VIDEO - AQ",
+        "TNT SPORTS - AQ",
+        "WILLOW - ALT",
+        "TAPMAD - AQ",
+        "SonyLiv - English",
+        "SonyLiv - Hindi",
+        "SonyLiv - TAM",
+        "SonyLiv - TEL",
+        "SonyLiv - KAN"
+      ]
+    },
+    {
+      "slug": "news18",
+      "streams": 13,
+      "types": {
+        "0": 13
+      },
+      "related": 6,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "news18",
+      "category": "News",
+      "preview_format_titles": [
+        "Hindi",
+        "Bangla",
+        "Gujarati",
+        "Kannada",
+        "Kerala",
+        "Odia",
+        "Rajasthan",
+        "Urdu",
+        "Assam",
+        "Tamil",
+        "Uttar Pradesh",
+        "Punjab",
+        "Bihar"
+      ],
+      "detail_source_titles": [
+        "Hindi",
+        "Bangla",
+        "Gujarati",
+        "Kannada",
+        "Kerala",
+        "Odia",
+        "Rajasthan",
+        "Urdu",
+        "Assam",
+        "Tamil",
+        "Uttar Pradesh",
+        "Punjab",
+        "Bihar"
+      ]
+    },
+    {
+      "slug": "news24",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "newss24",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "newsworldindia",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 6,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "newsworldindia",
+      "category": "News",
+      "preview_format_titles": [
+        "News Nation"
+      ],
+      "detail_source_titles": [
+        "News Nation"
+      ]
+    },
+    {
+      "slug": "nick",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "nick",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Nick",
+        "Nick HD",
+        "JR"
+      ],
+      "detail_source_titles": [
+        "Nick",
+        "Nick HD",
+        "JR"
+      ]
+    },
+    {
+      "slug": "novasports",
+      "streams": 2,
+      "types": {
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "novasports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Nova Sport AQ1",
+        "Nova Sport AQ2"
+      ],
+      "detail_source_titles": [
+        "Nova Sport AQ1",
+        "Nova Sport AQ2"
+      ]
+    },
+    {
+      "slug": "npl-nepal-premier-league",
+      "streams": 3,
+      "types": {
+        "0": 2,
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "NPL Nepal Premier League",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "STAR SPORTS - AQ",
+        "FANCODE - AQ",
+        "FANCODE - IN"
+      ],
+      "detail_source_titles": [
+        "STAR SPORTS - AQ",
+        "FANCODE - AQ",
+        "FANCODE - IN"
+      ]
+    },
+    {
+      "slug": "ntv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "ntv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "ol-lyonnes-vs-inter",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "OL Lyonnes vs Inter",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "LOW SERVER "
+      ],
+      "detail_source_titles": [
+        "LOW SERVER "
+      ]
+    },
+    {
+      "slug": "pac-12-insider",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "PAC 12 INSIDER",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "pakistan-vs-sri-lanka",
+      "streams": 6,
+      "types": {
+        "7": 2,
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Pakistan vs Sri Lanka",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "WILLOW - AQ",
+        "WILLOW - ALT",
+        "TAPMAD - AQ ",
+        "PTV SPORTS HD",
+        "TAPMAD HD",
+        "T SPORTS HD"
+      ],
+      "detail_source_titles": [
+        "WILLOW - AQ",
+        "WILLOW - ALT",
+        "TAPMAD - AQ ",
+        "PTV SPORTS HD",
+        "TAPMAD HD",
+        "T SPORTS HD"
+      ]
+    },
+    {
+      "slug": "peacetv",
+      "streams": 9,
+      "types": {
+        "0": 9
+      },
+      "related": 1,
+      "relatedPlaylist": 0,
+      "has_next": false,
+      "has_prev": true,
+      "title": "peacetvv",
+      "category": "ISLAMIC TV",
+      "preview_format_titles": [
+        "Bangla",
+        "Urdu",
+        "English",
+        "Karbala",
+        "Madani",
+        "MTA6",
+        "MTA7",
+        "Ilm TV",
+        "Islamic TV"
+      ],
+      "detail_source_titles": [
+        "Bangla",
+        "Urdu",
+        "English",
+        "Karbala",
+        "Madani",
+        "MTA6",
+        "MTA7",
+        "Ilm TV",
+        "Islamic TV"
+      ]
+    },
+    {
+      "slug": "pogo",
+      "streams": 3,
+      "types": {
+        "0": 2,
+        "7": 1
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "pogo",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Link 1",
+        "POGO - IND IP",
+        "HD"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "POGO - IND IP",
+        "HD"
+      ]
+    },
+    {
+      "slug": "premiersports",
+      "streams": 4,
+      "types": {
+        "7": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "premiersports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "PREMIER SPORTS 1 - AQ",
+        "PREMIER SPORTS 2 - AQ",
+        "Premier Sports 1 - AQ (2)",
+        "Premier Sports 2 - AQ (2)"
+      ],
+      "detail_source_titles": [
+        "PREMIER SPORTS 1 - AQ",
+        "PREMIER SPORTS 2 - AQ",
+        "Premier Sports 1 - AQ (2)",
+        "Premier Sports 2 - AQ (2)"
+      ]
+    },
+    {
+      "slug": "ptv-sports-",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "PTV Sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "PTV HD",
+        "PTV SD"
+      ],
+      "detail_source_titles": [
+        "PTV HD",
+        "PTV SD"
+      ]
+    },
+    {
+      "slug": "punjabi",
+      "streams": 13,
+      "types": {
+        "0": 13
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Punjabi",
+      "category": "India",
+      "preview_format_titles": [
+        "PTC PUNJABI",
+        "PTC NEWS",
+        "PTC GOLD",
+        "PTC SIMRAN",
+        "PTC DHOL",
+        "PTC CHAKDE",
+        "PTC MUSIC",
+        "PITAARA",
+        "DESI CHANNEL",
+        "9X TASHAN",
+        "7X MUSIC",
+        "ONLY MUSIC",
+        "BALLE BALLE"
+      ],
+      "detail_source_titles": [
+        "PTC PUNJABI",
+        "PTC NEWS",
+        "PTC GOLD",
+        "PTC SIMRAN",
+        "PTC DHOL",
+        "PTC CHAKDE",
+        "PTC MUSIC",
+        "PITAARA",
+        "DESI CHANNEL",
+        "9X TASHAN",
+        "7X MUSIC",
+        "ONLY MUSIC",
+        "BALLE BALLE"
+      ]
+    },
+    {
+      "slug": "qurantv",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 1,
+      "relatedPlaylist": 0,
+      "has_next": false,
+      "has_prev": true,
+      "title": "qurantv",
+      "category": "ISLAMIC TV",
+      "preview_format_titles": [
+        "Al Quran",
+        "Islam"
+      ],
+      "detail_source_titles": [
+        "Al Quran",
+        "Islam"
+      ]
+    },
+    {
+      "slug": "rally-tv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "RALLY TV",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "red-bull-bragantino-vs-chapecoense",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Red Bull Bragantino vs Chapecoense",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "redbull",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Redbull",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "remo-vs-botafogo",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Remo vs Botafogo",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "rongeentv",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "rongeentv",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Link 1",
+        "Link 2"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "Link 2"
+      ]
+    },
+    {
+      "slug": "ryz-sports",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "RYZ SPORTS",
+      "category": "Sports",
+      "preview_format_titles": [
+        "RYZ SPORTS"
+      ],
+      "detail_source_titles": [
+        "RYZ SPORTS"
+      ]
+    },
+    {
+      "slug": "sangeetbangla",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sangeetbangla",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "sangsad-tv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sangsad tv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "santos-vs-palmeiras",
+      "streams": 3,
+      "types": {
+        "7": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Santos vs Palmeiras",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "PREMIER SPORTS - AQ",
+        "PREMIERE BR - AQ",
+        "SportDigital FussBall"
+      ],
+      "detail_source_titles": [
+        "PREMIER SPORTS - AQ",
+        "PREMIERE BR - AQ",
+        "SportDigital FussBall"
+      ]
+    },
+    {
+      "slug": "satv",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "satv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "HD"
+      ],
+      "detail_source_titles": [
+        "HD"
+      ]
+    },
+    {
+      "slug": "sky-cricket-",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sky cricket",
+      "category": "Sports",
+      "preview_format_titles": [
+        "HD1"
+      ],
+      "detail_source_titles": [
+        "HD1"
+      ]
+    },
+    {
+      "slug": "skysports",
+      "streams": 15,
+      "types": {
+        "7": 15
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "skysports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Sky Sports 1 - AQ",
+        "Sky Sports 2 - AQ",
+        "Sky Sports LaLiga - AQ",
+        "Sky Sports Bundesliga - AQ",
+        "Sky Sports F1 - AQ",
+        "Sky Las Estrellas - AQ",
+        "Telenovelas",
+        "Event 1 - AQ",
+        "Event 2 - AQ",
+        "Event 3 - AQ",
+        "Event 4 - AQ",
+        "Event 5 - AQ",
+        "Event 6 - AQ",
+        "Event 7 - AQ",
+        "Event 8 - AQ"
+      ],
+      "detail_source_titles": [
+        "Sky Sports 1 - AQ",
+        "Sky Sports 2 - AQ",
+        "Sky Sports LaLiga - AQ",
+        "Sky Sports Bundesliga - AQ",
+        "Sky Sports F1 - AQ",
+        "Sky Las Estrellas - AQ",
+        "Telenovelas",
+        "Event 1 - AQ",
+        "Event 2 - AQ",
+        "Event 3 - AQ",
+        "Event 4 - AQ",
+        "Event 5 - AQ",
+        "Event 6 - AQ",
+        "Event 7 - AQ",
+        "Event 8 - AQ"
+      ]
+    },
+    {
+      "slug": "smackdown",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Smack Down",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE",
+        "WWE LIVE - AQ",
+        "SD SERVER"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE",
+        "WWE LIVE - AQ",
+        "SD SERVER"
+      ]
+    },
+    {
+      "slug": "somoytv",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "somoytv",
+      "category": "Bangla",
+      "preview_format_titles": [
+        "Link 1",
+        "Link 2"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "Link 2"
+      ]
+    },
+    {
+      "slug": "sonic",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sonic",
+      "category": "Kids",
+      "preview_format_titles": [
+        "IND IP"
+      ],
+      "detail_source_titles": [
+        "IND IP"
+      ]
+    },
+    {
+      "slug": "sony-aath",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sony aath",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "HD"
+      ],
+      "detail_source_titles": [
+        "HD"
+      ]
+    },
+    {
+      "slug": "sony-tv",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Sony TV",
+      "category": "India",
+      "preview_format_titles": [
+        "HD",
+        "SD",
+        "LQ"
+      ],
+      "detail_source_titles": [
+        "HD",
+        "SD",
+        "LQ"
+      ]
+    },
+    {
+      "slug": "sonymax",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sonymax",
+      "category": "Movies",
+      "preview_format_titles": [
+        "SONY MAX - IND IP",
+        "SONY WAH - IND IP",
+        "SONY MAX 2 - IND IP",
+        "HD"
+      ],
+      "detail_source_titles": [
+        "SONY MAX - IND IP",
+        "SONY WAH - IND IP",
+        "SONY MAX 2 - IND IP",
+        "HD"
+      ]
+    },
+    {
+      "slug": "sonypix",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sonypixx",
+      "category": "Movies",
+      "preview_format_titles": [
+        "PIX - HD",
+        "PIX - IND",
+        "HD",
+        "AQ"
+      ],
+      "detail_source_titles": [
+        "PIX - HD",
+        "PIX - IND",
+        "HD",
+        "AQ"
+      ]
+    },
+    {
+      "slug": "sonysports",
+      "streams": 8,
+      "types": {
+        "0": 8
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sony sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "SONY SPORTS 1",
+        "SONY SPORTS 2",
+        "SONY SPORTS 5",
+        "AQ1",
+        "AQ2",
+        "AQ3",
+        "AQ4",
+        "AQ5"
+      ],
+      "detail_source_titles": [
+        "SONY SPORTS 1",
+        "SONY SPORTS 2",
+        "SONY SPORTS 5",
+        "AQ1",
+        "AQ2",
+        "AQ3",
+        "AQ4",
+        "AQ5"
+      ]
+    },
+    {
+      "slug": "south-africa-vs-australiaa",
+      "streams": 9,
+      "types": {
+        "7": 5,
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "South Africa vs Australia",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "WILLOW - AQ",
+        "FANCODE - AQ",
+        "SKY CRICKET - AQ",
+        "WILLOW - ALT",
+        "EUROSPORTS - AQ",
+        "FOX CRICKET HD",
+        "A SPORTS HD",
+        "FANCODE - LQ",
+        "FANCODE - IN"
+      ],
+      "detail_source_titles": [
+        "WILLOW - AQ",
+        "FANCODE - AQ",
+        "SKY CRICKET - AQ",
+        "WILLOW - ALT",
+        "EUROSPORTS - AQ",
+        "FOX CRICKET HD",
+        "A SPORTS HD",
+        "FANCODE - LQ",
+        "FANCODE - IN"
+      ]
+    },
+    {
+      "slug": "sportdigital",
+      "streams": 3,
+      "types": {
+        "0": 1,
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "SPORTDIGITAL",
+      "category": "Sports",
+      "preview_format_titles": [
+        "SPORTDIGITAL FREE",
+        "HD1",
+        "HD2"
+      ],
+      "detail_source_titles": [
+        "SPORTDIGITAL FREE",
+        "HD1",
+        "HD2"
+      ]
+    },
+    {
+      "slug": "sportitalia",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sport italia",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "sporttvnew",
+      "streams": 3,
+      "types": {
+        "7": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sporttvnew",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Sport TV 1 - AQ",
+        "Sport TV 1 - AQ (2)",
+        "Sport TV 2 - AQ"
+      ],
+      "detail_source_titles": [
+        "Sport TV 1 - AQ",
+        "Sport TV 1 - AQ (2)",
+        "Sport TV 2 - AQ"
+      ]
+    },
+    {
+      "slug": "sportv",
+      "streams": 2,
+      "types": {
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sportvv",
+      "category": "Sports",
+      "preview_format_titles": [
+        "SporTV - AQ1",
+        "SporTV - AQ2"
+      ],
+      "detail_source_titles": [
+        "SporTV - AQ1",
+        "SporTV - AQ2"
+      ]
+    },
+    {
+      "slug": "spotv",
+      "streams": 2,
+      "types": {
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "spotv",
+      "category": "Sports",
+      "preview_format_titles": [
+        "SPOTV 1 - AQ",
+        "SPOTV 2 - AQ"
+      ],
+      "detail_source_titles": [
+        "SPOTV 1 - AQ",
+        "SPOTV 2 - AQ"
+      ]
+    },
+    {
+      "slug": "sri-lanka-vs-england",
+      "streams": 5,
+      "types": {
+        "7": 2,
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Sri Lanka vs England",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "WILLOW - AQ",
+        "SKY CRICKET - AQ",
+        "WILLOW - ALT",
+        "PTV SPORTS HD",
+        "TAPMAD - AQ"
+      ],
+      "detail_source_titles": [
+        "WILLOW - AQ",
+        "SKY CRICKET - AQ",
+        "WILLOW - ALT",
+        "PTV SPORTS HD",
+        "TAPMAD - AQ"
+      ]
+    },
+    {
+      "slug": "star-jalsha",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "star jalshaa",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "AQ1",
+        "HD2",
+        "HD3"
+      ],
+      "detail_source_titles": [
+        "AQ1",
+        "HD2",
+        "HD3"
+      ]
+    },
+    {
+      "slug": "star-sports-",
+      "streams": 5,
+      "types": {
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "star sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "HD1",
+        "HD2",
+        "HD3",
+        "HD4",
+        "HD5"
+      ],
+      "detail_source_titles": [
+        "HD1",
+        "HD2",
+        "HD3",
+        "HD4",
+        "HD5"
+      ]
+    },
+    {
+      "slug": "starbharat",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "starbharat",
+      "category": "India",
+      "preview_format_titles": [
+        " S Bharat 4k"
+      ],
+      "detail_source_titles": [
+        " S Bharat 4k"
+      ]
+    },
+    {
+      "slug": "stargold",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "stargold",
+      "category": "Movies",
+      "preview_format_titles": [
+        "STAR GOLD -HD",
+        "HD",
+        "SD",
+        "ST"
+      ],
+      "detail_source_titles": [
+        "STAR GOLD -HD",
+        "HD",
+        "SD",
+        "ST"
+      ]
+    },
+    {
+      "slug": "starmovies",
+      "streams": 7,
+      "types": {
+        "0": 5,
+        "7": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "starmovies",
+      "category": "Movies",
+      "preview_format_titles": [
+        "Link 1",
+        "Link 2",
+        "Link 3",
+        "HD",
+        "SD",
+        "Movies Now 1",
+        "&FLIX"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "Link 2",
+        "Link 3",
+        "HD",
+        "SD",
+        "Movies Now 1",
+        "&FLIX"
+      ]
+    },
+    {
+      "slug": "starplus",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "starplus",
+      "category": "India",
+      "preview_format_titles": [
+        "HD",
+        "SD"
+      ],
+      "detail_source_titles": [
+        "HD",
+        "SD"
+      ]
+    },
+    {
+      "slug": "starvijay",
+      "streams": 2,
+      "types": {
+        "7": 1,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "starvijay",
+      "category": "India",
+      "preview_format_titles": [
+        "STAR VIJAY - IN",
+        "HD"
+      ],
+      "detail_source_titles": [
+        "STAR VIJAY - IN",
+        "HD"
+      ]
+    },
+    {
+      "slug": "starzplay",
+      "streams": 3,
+      "types": {
+        "7": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "starzplay",
+      "category": "Sports",
+      "preview_format_titles": [
+        "StarzPlay 1",
+        "StarzPlay 2",
+        "StarzPlay 3"
+      ],
+      "detail_source_titles": [
+        "StarzPlay 1",
+        "StarzPlay 2",
+        "StarzPlay 3"
+      ]
+    },
+    {
+      "slug": "strongman-champions-league",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "STRONGMAN CHAMPIONS LEAGUE",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "sun-bangla",
+      "streams": 2,
+      "types": {
+        "7": 1,
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "sun bangla",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "AQ",
+        "HD"
+      ],
+      "detail_source_titles": [
+        "AQ",
+        "HD"
+      ]
+    },
+    {
+      "slug": "sunderland-vs-brentford",
+      "streams": 5,
+      "types": {
+        "0": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Sunderland vs Brentford",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "DAZN SPORTS HD ",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ],
+      "detail_source_titles": [
+        "DAZN SPORTS HD ",
+        "CRICFy LIVE ",
+        "HD SERVER ",
+        "CRICFy HD",
+        "LOW SERVER"
+      ]
+    },
+    {
+      "slug": "suntv",
+      "streams": 27,
+      "types": {
+        "7": 9,
+        "0": 18
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "suntv",
+      "category": "India",
+      "preview_format_titles": [
+        "SUN TV - IND IP ",
+        "ADITYA - IND IP ",
+        "IMAYAM TV",
+        "Kalaingar TV",
+        "Siripoli",
+        "Isaiaruvi",
+        "Murasu",
+        "Puthiya",
+        "Polimer News",
+        "Zee news tamil",
+        "Thanthi",
+        "Vasantham",
+        "24 News",
+        "Janam News",
+        "Janama news auto",
+        "Sakshi news",
+        "Angel TV",
+        "Kalaignar Murasu",
+        "Mazhavil Manorama (malayalam)",
+        "Thanthi one",
+        "Aditiya - IND IP",
+        "Sun Music - IND",
+        "Astro Vaanavil - IND",
+        "Sun Life",
+        "Sun TV",
+        "Udaya TV",
+        "Gemini TV"
+      ],
+      "detail_source_titles": [
+        "SUN TV - IND IP ",
+        "ADITYA - IND IP ",
+        "IMAYAM TV",
+        "Kalaingar TV",
+        "Siripoli",
+        "Isaiaruvi",
+        "Murasu",
+        "Puthiya",
+        "Polimer News",
+        "Zee news tamil",
+        "Thanthi",
+        "Vasantham",
+        "24 News",
+        "Janam News",
+        "Janama news auto",
+        "Sakshi news",
+        "Angel TV",
+        "Kalaignar Murasu",
+        "Mazhavil Manorama (malayalam)",
+        "Thanthi one",
+        "Aditiya - IND IP",
+        "Sun Music - IND",
+        "Astro Vaanavil - IND",
+        "Sun Life",
+        "Sun TV",
+        "Udaya TV",
+        "Gemini TV"
+      ]
+    },
+    {
+      "slug": "tap-sport",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Tap Sport",
+      "category": "Sports",
+      "preview_format_titles": [
+        "AQ"
+      ],
+      "detail_source_titles": [
+        "AQ"
+      ]
+    },
+    {
+      "slug": "telemundo",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "telemundo",
+      "category": "Sports",
+      "preview_format_titles": [
+        "AQ1",
+        "AQ2"
+      ],
+      "detail_source_titles": [
+        "AQ1",
+        "AQ2"
+      ]
+    },
+    {
+      "slug": "tennis",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tennis",
+      "category": "Sports",
+      "preview_format_titles": [
+        "TENNIS CHANNEL",
+        "TENNIS PLUS",
+        "TRAC SPORTS"
+      ],
+      "detail_source_titles": [
+        "TENNIS CHANNEL",
+        "TENNIS PLUS",
+        "TRAC SPORTS"
+      ]
+    },
+    {
+      "slug": "tensports",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tensports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "PK SPORTS",
+        "TEN CRICKET"
+      ],
+      "detail_source_titles": [
+        "PK SPORTS",
+        "TEN CRICKET"
+      ]
+    },
+    {
+      "slug": "tlc",
+      "streams": 6,
+      "types": {
+        "0": 6
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tlc",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "Hindi",
+        "English",
+        "Discovery Turbo",
+        "Trvl",
+        "TLC",
+        "Circle"
+      ],
+      "detail_source_titles": [
+        "Hindi",
+        "English",
+        "Discovery Turbo",
+        "Trvl",
+        "TLC",
+        "Circle"
+      ]
+    },
+    {
+      "slug": "tntsports1",
+      "streams": 5,
+      "types": {
+        "7": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tntsports1",
+      "category": "Sports",
+      "preview_format_titles": [
+        "TNT 1 - AQ",
+        "TNT 2 - AQ",
+        "TNT 3 - AQ",
+        "TNT 4 - AQ",
+        "TNT MX - AQ"
+      ],
+      "detail_source_titles": [
+        "TNT 1 - AQ",
+        "TNT 2 - AQ",
+        "TNT 3 - AQ",
+        "TNT 4 - AQ",
+        "TNT MX - AQ"
+      ]
+    },
+    {
+      "slug": "toronto-raptors-vs-orlando-magic",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Toronto Raptors vs Orlando Magic",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "travelxp",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 7,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "travelxp",
+      "category": "Discovery",
+      "preview_format_titles": [
+        "Link 1",
+        "Link 2",
+        "Link 3"
+      ],
+      "detail_source_titles": [
+        "Link 1",
+        "Link 2",
+        "Link 3"
+      ]
+    },
+    {
+      "slug": "tsn-sports",
+      "streams": 5,
+      "types": {
+        "7": 5
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tsn sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "TSN AQ1",
+        "TSN AQ2",
+        "TSN AQ3",
+        "TSN AQ4",
+        "TSN AQ5"
+      ],
+      "detail_source_titles": [
+        "TSN AQ1",
+        "TSN AQ2",
+        "TSN AQ3",
+        "TSN AQ4",
+        "TSN AQ5"
+      ]
+    },
+    {
+      "slug": "tsportss",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "t sportss",
+      "category": "Sports",
+      "preview_format_titles": [
+        "HD1",
+        "HD2"
+      ],
+      "detail_source_titles": [
+        "HD1",
+        "HD2"
+      ]
+    },
+    {
+      "slug": "tudn",
+      "streams": 1,
+      "types": {
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tudn",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "tv9bangla",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tv9bangla",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "TV 9",
+        "CN BANGLA",
+        "Somoy",
+        "24Ghanta"
+      ],
+      "detail_source_titles": [
+        "TV 9",
+        "CN BANGLA",
+        "Somoy",
+        "24Ghanta"
+      ]
+    },
+    {
+      "slug": "tyc-sports",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "tyc sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Link 1"
+      ],
+      "detail_source_titles": [
+        "Link 1"
+      ]
+    },
+    {
+      "slug": "ufc-live",
+      "streams": 12,
+      "types": {
+        "7": 6,
+        "0": 6
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "UFC LIVE",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "PARAMOUNT+ - AQ",
+        "PARAMOUNT+ ES",
+        "PARAMOUNT+ POR",
+        "PARAMOUNT+ HD",
+        "TNT SPORTS - AQ",
+        "UFC LIVE - AQ",
+        "CRICFy LIVE",
+        "CRICFy FAST ",
+        "HD SERVER",
+        "LOW SERVER",
+        "SportsNet - AQ",
+        "UFC TV - AQ"
+      ],
+      "detail_source_titles": [
+        "PARAMOUNT+ - AQ",
+        "PARAMOUNT+ ES",
+        "PARAMOUNT+ POR",
+        "PARAMOUNT+ HD",
+        "TNT SPORTS - AQ",
+        "UFC LIVE - AQ",
+        "CRICFy LIVE",
+        "CRICFy FAST ",
+        "HD SERVER",
+        "LOW SERVER",
+        "SportsNet - AQ",
+        "UFC TV - AQ"
+      ]
+    },
+    {
+      "slug": "unbeaten",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "UNBEATEN",
+      "category": "Sports",
+      "preview_format_titles": [
+        "Server 1"
+      ],
+      "detail_source_titles": [
+        "Server 1"
+      ]
+    },
+    {
+      "slug": "united-8-sports",
+      "streams": 2,
+      "types": {
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "united 8 sports",
+      "category": "Sports",
+      "preview_format_titles": [
+        "HD1",
+        "HD2"
+      ],
+      "detail_source_titles": [
+        "HD1",
+        "HD2"
+      ]
+    },
+    {
+      "slug": "utah-jazz-vs-san-antonio-spurs",
+      "streams": 1,
+      "types": {
+        "0": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "Utah Jazz vs San Antonio Spurs",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE"
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE"
+      ]
+    },
+    {
+      "slug": "willow-",
+      "streams": 4,
+      "types": {
+        "7": 2,
+        "0": 2
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "willow",
+      "category": "Sports",
+      "preview_format_titles": [
+        "WILLOW - HD",
+        "INDIA IP",
+        "WILLOW - AQ",
+        "WILLOW EX"
+      ],
+      "detail_source_titles": [
+        "WILLOW - HD",
+        "INDIA IP",
+        "WILLOW - AQ",
+        "WILLOW EX"
+      ]
+    },
+    {
+      "slug": "wwe-raw",
+      "streams": 4,
+      "types": {
+        "0": 4
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "WWE Raw",
+      "category": "Live Events",
+      "preview_format_titles": [
+        "CRICFy LIVE",
+        "HD SERVER",
+        "CRICFy HD",
+        "SD SERVER "
+      ],
+      "detail_source_titles": [
+        "CRICFy LIVE",
+        "HD SERVER",
+        "CRICFy HD",
+        "SD SERVER "
+      ]
+    },
+    {
+      "slug": "wwe",
+      "streams": 2,
+      "types": {
+        "0": 1,
+        "7": 1
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "wwe",
+      "category": "Sports",
+      "preview_format_titles": [
+        "WWE - HD",
+        "MLIVE"
+      ],
+      "detail_source_titles": [
+        "WWE - HD",
+        "MLIVE"
+      ]
+    },
+    {
+      "slug": "zeebangla",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "zee bangla",
+      "category": "Kolkata",
+      "preview_format_titles": [
+        "SD",
+        "HD",
+        "LQ"
+      ],
+      "detail_source_titles": [
+        "SD",
+        "HD",
+        "LQ"
+      ]
+    },
+    {
+      "slug": "zeebollywood",
+      "streams": 9,
+      "types": {
+        "0": 9
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "zeebollywood",
+      "category": "Movies",
+      "preview_format_titles": [
+        "Zee Bollywood",
+        "Bollywood",
+        "Bollywood Prime",
+        "Zee Aflan",
+        "Bollywood Classic",
+        "Bollywood Classic HD",
+        "Bollywood HD",
+        "Zee alwan",
+        "Drama"
+      ],
+      "detail_source_titles": [
+        "Zee Bollywood",
+        "Bollywood",
+        "Bollywood Prime",
+        "Zee Aflan",
+        "Bollywood Classic",
+        "Bollywood Classic HD",
+        "Bollywood HD",
+        "Zee alwan",
+        "Drama"
+      ]
+    },
+    {
+      "slug": "zeecinema",
+      "streams": 3,
+      "types": {
+        "0": 3
+      },
+      "related": 10,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "zeecinema",
+      "category": "Movies",
+      "preview_format_titles": [
+        "Zee Cinema HD",
+        "Bhojpuri",
+        "Zee Telugu"
+      ],
+      "detail_source_titles": [
+        "Zee Cinema HD",
+        "Bhojpuri",
+        "Zee Telugu"
+      ]
+    },
+    {
+      "slug": "zoom",
+      "streams": 2,
+      "types": {
+        "0": 1,
+        "7": 1
+      },
+      "related": 3,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "zoom",
+      "category": "Musics",
+      "preview_format_titles": [
+        "Zoom",
+        "Zing"
+      ],
+      "detail_source_titles": [
+        "Zoom",
+        "Zing"
+      ]
+    },
+    {
+      "slug": "zoomookids",
+      "streams": 7,
+      "types": {
+        "0": 7
+      },
+      "related": 9,
+      "relatedPlaylist": 0,
+      "has_next": true,
+      "has_prev": true,
+      "title": "zoomookidss",
+      "category": "Kids",
+      "preview_format_titles": [
+        "Moonbug",
+        "Spacetoon",
+        "K1",
+        "K2",
+        "K3",
+        "K4",
+        "K5"
+      ],
+      "detail_source_titles": [
+        "Moonbug",
+        "Spacetoon",
+        "K1",
+        "K2",
+        "K3",
+        "K4",
+        "K5"
+      ]
+    }
+  ]
+}

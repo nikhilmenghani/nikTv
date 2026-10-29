@@ -68,24 +68,70 @@ internal class SportsRepository(
     private var configuredCountry = ""
     private data class CachedEvents(val time: Long, val country: String, val events: List<SportsEvent>)
     private var cachedEvents: CachedEvents? = null
+    private data class CachedBody(val at: Long, val body: String)
+    private val bodies = java.util.Collections.synchronizedMap(object : LinkedHashMap<String, CachedBody>(16, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedBody>?) = size > 16
+    })
 
     suspend fun events(refresh: Boolean = false): List<SportsEvent> {
         val region = sportsCountry(country())
         cachedEvents?.takeIf { !refresh && it.country == region && now() - it.time in 0 until 120_000 }?.let { return it.events }
-        val result = SportsCatalogue.events(catalogue("categories/live-events.txt", refresh)).filter { sportsGeoAvailable(it.geo, region) }
+        val result = SportsCatalogue.events(catalogue("categories/live-events.txt", refresh)).filter { sportsGeoAvailable(it.geo, region) }.map { event ->
+            val formats = event.formats.filter { sportsGeoAvailable(it.geo, region) }
+            event.copy(formats = formats, choices = formats.map { it.title })
+        }
         cachedEvents = CachedEvents(now(), region, result)
         return result
     }
 
     suspend fun streams(slug: String): List<SportsStream> {
-        require(slug.matches(Regex("[A-Za-z0-9_-]{1,200}")))
-        val streams = SportsCatalogue.streams(catalogue("channels/${slug.lowercase(java.util.Locale.ROOT)}.txt"))
+        return detail(slug).streams
+    }
+
+    suspend fun detail(slug: String): SportsChannelDetail {
+        require(sportsSlug(slug))
+        val detail = SportsCatalogue.detail(catalogue("channels/${slug.lowercase(java.util.Locale.ROOT)}.txt"))
         val region = sportsCountry(country())
-        val available = streams.filter { sportsGeoAvailable(it.geo, region) }.map { stream ->
+        if (!sportsGeoAvailable(detail.geo, region)) throw SportsException("This channel is not available in your region.")
+        val available = detail.streams.filter { sportsGeoAvailable(it.geo, region) }.map { stream ->
             if (stream.headers.keys.any { it.equals("User-Agent", true) }) stream else stream.copy(headers = stream.headers + ("User-Agent" to config.userAgent))
         }
-        if (streams.isNotEmpty() && available.isEmpty()) throw SportsException("No streams are available for your region${region.takeIf(String::isNotBlank)?.let { " ($it)" }.orEmpty()}.")
-        return available
+        if (detail.streams.isNotEmpty() && available.isEmpty()) throw SportsException("No streams are available for your region${region.takeIf(String::isNotBlank)?.let { " ($it)" }.orEmpty()}.")
+        return detail.copy(streams = available, related = detail.related.filter { sportsGeoAvailable(it.geo, region) })
+    }
+
+    suspend fun categories(refresh: Boolean = false): List<SportsCategory> = SportsCatalogue.categories(cachedCatalogue("cats.txt", refresh))
+        .filter { sportsGeoAvailable(it.geo, country()) }
+
+    suspend fun eventFilters(refresh: Boolean = false): List<SportsEventFilter> = SportsCatalogue.filters(cachedCatalogue("eventCats.txt", refresh))
+
+    suspend fun channels(category: SportsCategory = SportsCategory("sports", "Sports"), refresh: Boolean = false): List<SportsChannel> {
+        if (!sportsGeoAvailable(category.geo, country())) throw SportsException("This category is not available in your region.")
+        val body = if (category.isPlaylist) {
+            configure(false)
+            if (!sportsNetworkUrl(category.link)) throw SportsException("This playlist address is unsupported.")
+            val key = "external:${sportsCountry(country())}:${config.userAgent}:${category.link}"
+            cachedBody(key, refresh) {
+                val body = transport.get(category.link, mapOf("User-Agent" to config.userAgent)).body
+                withContext(Dispatchers.Default) { SportsPlaylist.parse(body, category) }
+                body
+            }
+        } else cachedCatalogue(category.path, refresh)
+        return withContext(Dispatchers.Default) {
+            (if (category.isPlaylist) SportsPlaylist.parse(body, category) else SportsCatalogue.channels(body))
+                .filter { sportsGeoAvailable(it.geo, country()) }
+                .map { channel -> channel.copy(formats = channel.formats.filter { sportsGeoAvailable(it.geo, country()) }) }
+        }
+    }
+
+    private suspend fun cachedCatalogue(path: String, refresh: Boolean): String {
+        configure(refresh)
+        return cachedBody("${sportsCountry(country())}:${config.primary}:${config.userAgent}:$path", refresh) { catalogue(path) }
+    }
+
+    private suspend fun cachedBody(key: String, refresh: Boolean, fetch: suspend () -> String): String {
+        bodies[key]?.takeIf { !refresh && now() - it.at in 0 until 120_000 }?.let { return it.body }
+        return fetch().also { bodies[key] = CachedBody(now(), it) }
     }
 
     private suspend fun catalogue(path: String, refresh: Boolean = false): String {

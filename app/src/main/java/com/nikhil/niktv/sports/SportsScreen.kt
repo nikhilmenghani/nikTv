@@ -25,10 +25,7 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
     var defaults by remember { mutableStateOf(browsePreferences.read()) }
     var sport by rememberSaveable { mutableStateOf(defaults.sport) }
     var status by rememberSaveable { mutableStateOf(defaults.status) }
-    var search by rememberSaveable { mutableStateOf("") }
-    var lastSource by rememberSaveable(state.event?.slug) { mutableStateOf<Int?>(null) }
-    val eventsScroll = rememberLazyGridState()
-    val streamsScroll = key(state.event?.slug) { rememberLazyGridState() }
+    var lastSource by rememberSaveable(state.selected?.key) { mutableStateOf<Int?>(null) }
     val pages = rememberSaveableStateHolder()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var now by remember { mutableStateOf(Instant.now()) }
@@ -39,15 +36,21 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(lifecycle, state.event?.slug, state.playing != null) {
+    LaunchedEffect(lifecycle, state.selected?.key, state.playing != null) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) { now = Instant.now(); vm.refreshIfStale(); delay(30_000) }
+            var lastCheck = 0L
+            while (true) {
+                now = Instant.now()
+                if (now.toEpochMilli() - lastCheck >= 30_000) { vm.refreshIfStale(); lastCheck = now.toEpochMilli() }
+                delay(if (state.selected == null && state.tab == SportsTab.EVENTS) 1_000 else 30_000)
+            }
         }
     }
     val playing = state.playing
     if (playing != null) {
         val committedAttemptId = state.playback.attemptId
-        SportsPlayer(playing, state.event?.title.orEmpty(), onBack = { vm.back() },
+        SportsPlayer(playing, state.selected?.title.orEmpty(), onBack = { vm.back() },
+            onVideoFrameRendered = { vm.playbackRendered(committedAttemptId) },
             streams = state.streams, selectedIndex = state.playingIndex ?: -1,
             navigationIndex = state.resolving ?: state.playingIndex ?: -1,
             onSelectStream = { lastSource = it; vm.play(it) },
@@ -57,16 +60,22 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
         if (state.resolving != null) androidx.compose.foundation.layout.Box(
             androidx.compose.ui.Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.TopCenter
         ) { androidx.compose.material3.LinearProgressIndicator(androidx.compose.ui.Modifier.fillMaxWidth()) }
-        state.streamError?.let { error -> androidx.compose.material3.AlertDialog(
-            onDismissRequest = vm::dismissStreamError, title = { androidx.compose.material3.Text("Unable to switch stream") },
-            text = { androidx.compose.material3.Text(error) },
-            confirmButton = { com.nikhil.niktv.ui.NikTvActionButton("Close", onClick = vm::dismissStreamError) }) }
+        state.streamError?.let { error -> SportsPlaybackErrorDialog(error,
+            exhausted = error.startsWith("The available sources could not play."),
+            retry = vm::retryPlayback, choose = { vm.back() }, close = vm::dismissStreamError) }
         return
     }
-    pages.SaveableStateProvider(state.event?.slug?.let { "event:$it" } ?: "catalogue") { SportsBrowseContent(state, now, sport, { sport = it }, status, { status = it }, search, { search = it },
-        back, { state.event?.let(vm::open) ?: vm.refresh() }, vm::open,
-        { lastSource = it; vm.play(it) }, eventsScroll, streamsScroll, lastSource,
+    pages.SaveableStateProvider(state.route) {
+        var search by rememberSaveable { mutableStateOf("") }
+        SportsBrowseContent(state, now, sport, { sport = it }, status, { status = it }, search, { search = it },
+        back, { vm.refresh() }, vm::open,
+        { lastSource = it; vm.play(it) }, lastSource = lastSource,
         defaults = defaults,
         saveDefaultSport = { browsePreferences.setSport(it); defaults = browsePreferences.read(); sport = it },
-        saveDefaultStatus = { browsePreferences.setStatus(it); defaults = browsePreferences.read(); status = it }) }
+        saveDefaultStatus = { browsePreferences.setStatus(it); defaults = browsePreferences.read(); status = it },
+        selectTab = vm::selectTab, openCategory = vm::openCategory, openChannel = vm::openChannel,
+        toggleFavourite = vm::toggleFavourite, toggleFavourites = vm::toggleFavourites, adjacentChannel = vm::adjacentChannel,
+        addPlaylist = vm::addPlaylist, importPlaylist = vm::importPlaylist, removePlaylist = vm::removePlaylist,
+        dismissLibraryError = vm::dismissLibraryError,
+        toggleChannelFlag = vm::toggleChannelFlag, setAvailabilityFilter = vm::setAvailabilityFilter) }
 }

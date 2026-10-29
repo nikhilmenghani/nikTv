@@ -1,0 +1,75 @@
+id,title,route,endpoint_or_host,http,response_format,entries,groups
+1,Sports,built-in catalogue,categories/sports.txt,200,catalogue,57,
+3,India,built-in catalogue,categories/india.txt,200,catalogue,11,
+4,News,built-in catalogue,categories/news.txt,200,catalogue,7,
+5,Kolkata,built-in catalogue,categories/kolkata.txt,200,catalogue,11,
+6,Discovery,built-in catalogue,categories/discovery.txt,200,catalogue,8,
+7,Pakistan,built-in catalogue,categories/pakistan.txt,200,catalogue,1,
+8,Bangla,built-in catalogue,categories/bangla.txt,200,catalogue,25,
+9,Kids,built-in catalogue,categories/kids.txt,200,catalogue,10,
+12,Musics,built-in catalogue,categories/musics.txt,200,catalogue,4,
+13,TATA PLAY,external playlist,hotstarlive.delta-cloud.workers.dev,200,HTML,,
+14,HOTSTAR,external playlist,hotstarlive.nebula-core.workers.dev,200,HTML,,
+15,TATAPLAY BD,external playlist,ranapk-playlist.site,403,HTTP error,,
+18,FANCODE IND,external playlist,raw.githubusercontent.com,200,empty M3U,0,0
+19,SONYLIV,external playlist,raw.githubusercontent.com,200,empty M3U,0,0
+22,JIO IND,external playlist,jiotv.byte-vault.workers.dev,200,HTML,,
+29,SONY IN,external playlist,sonyliv.logic-lane.workers.dev,200,HTML,,
+31,VZY TV,external playlist,digital-jhs.data-vortex.workers.dev,200,HTML,,
+48,SUN DIRECT,external playlist,alex4528.site,200,M3U,136,1
+70,VOOT BD,external playlist,pastebin.com,200,M3U,31,0
+71,VOOT IND,external playlist,jiocinema-live.cloud-hatchh.workers.dev,200,HTML,,
+85,SUN NXT,external playlist,raw.githubusercontent.com,200,M3U,33,1
+92,DISTRO TV,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+106,JIOTV+,external playlist,alex4528.site,200,empty M3U,0,0
+110,JIOLIVE IND,external playlist,raw.githubusercontent.com,404,HTTP error,,
+111,ISLAMIC TV,built-in catalogue,categories/islamic-tv.txt,200,catalogue,2,
+114,TAPMAD PK,external playlist,tv.noobon.top,200,HTML,,
+117,ZEE5 IN,external playlist,ranapk.short.gy,403,HTTP error,,
+126,WORLD TV,external playlist,ranapk-playlist.site,200,JSON error response,0,
+129,AYNA,external playlist,playlist-cricfy.noobon.top,200,HTML,,
+130,JIO CINEMA IND,external playlist,alex4528.site,200,M3U,41,7
+131,DISH TV,external playlist,alex4528.site,200,M3U,42,8
+132,SHOOQ PK,external playlist,alex4528.site,200,M3U,42,9
+133,SAMSUNG TV,external playlist,alex4528.site,200,M3U,162,0
+134,JAGOBD,external playlist,tv.noobon.top,200,HTML,,
+135,JADOO,external playlist,ranapk-playlist.site,200,JSON error response,0,
+136,PISHOW,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+146,CRICHD,external playlist,tv.noobon.top,200,HTML,,
+150,ZAP SPORTS,external playlist,tv.noobon.top,200,M3U,116,1
+151,Pirates TV,external playlist,raw.githubusercontent.com,404,HTTP error,,
+152,YUPPTV,external playlist,tv.noobon.top,200,M3U,274,11
+153,DANGAL TV,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+157,PRIME X SONYLIV,external playlist,raw.githubusercontent.com,200,empty M3U,0,0
+158,BIGBOSS 24 X 7,external playlist,dehkho24h.alpha-circuit.workers.dev,200,HTML,,
+159,JIOTV+ S2,external playlist,jiotvplus.byte-vault.workers.dev,200,HTML,,
+163,JIOHOTSTAR,external playlist,alex4528.site,200,empty M3U,0,0
+164,JIOTV+ S3,external playlist,jiotv.edge-nexus.workers.dev,200,HTML,,
+165,ICC TV,external playlist,raw.githubusercontent.com,200,empty M3U,0,0
+166,PRIME LIVE,external playlist,raw.githubusercontent.com,200,M3U,1,1
+167,Movies,built-in catalogue,categories/movies.txt,200,catalogue,12,
+170,JIO BD,external playlist,ranapk-playlist.site,200,JSON error response,0,
+173,World Sport,external playlist,tv.xmasterbd.sbs,200,HTML,,
+175,RUN TV,external playlist,alex4528.site,200,M3U,46,7
+176,WAVES OTT,external playlist,alex4528.site,200,M3U,78,6
+177,JIO IND2,external playlist,playlist-cricfy.noobon.top,200,HTML,,
+178,JIOTV+ S4,external playlist,jiotvplus.iron-shield.workers.dev,200,HTML,,
+179,LGTV IND,external playlist,raw.githubusercontent.com,404,HTTP error,,
+180,TOFFEE BD,external playlist,raw.githubusercontent.com,200,M3U,75,13
+181,ZEE5 IN 2,external playlist,alex4528.site,200,M3U,70,6
+182,SONY BD,external playlist,ranapk-playlist.site,200,JSON error response,0,
+183,AYNA 2,external playlist,ranapk-playlist.site,200,JSON error response,0,
+184,DARK TV,external playlist,ranapk-playlist.site,200,JSON error response,0,
+185,AKASH,external playlist,playlist-cricfy.noobon.top,200,HTML,,
+186,FREE TV,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+189,ZEE5 LIVE,external playlist,raw.githubusercontent.com,200,empty M3U,0,0
+190,FREE SPORTS,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+194,IZZI GO,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+195,WATCHO,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+196,BDIX TV,external playlist,tv.noobon.top,200,HTML,,
+198,SUN NXT 2,external playlist,gist.githubusercontent.com,200,opaque or legacy encrypted response,,
+199,INDIA TV 2,external playlist,iptv-org.github.io,200,M3U,369,29
+202,TAPMAD BD,external playlist,s1.noobon.top,200,HTML,,
+203,WORLD TV 2,external playlist,raw.githubusercontent.com,200,M3U,3974,52
+204,INDIA TV,external playlist,raw.githubusercontent.com,200,M3U,114,10
+205,SKY SPORTS,external playlist,baila-lentoo.pages.dev,200,M3U,63,0

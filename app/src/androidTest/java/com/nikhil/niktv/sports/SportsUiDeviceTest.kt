@@ -120,7 +120,7 @@ class SportsUiDeviceTest {
                         streams = listOf(SportsStream("https://fixture.invalid/english", "English commentary"),
                             SportsStream("https://fixture.invalid/hindi", "Hindi commentary"))) }, play = { picked = it; model.value = model.value.copy(resolving = it) })
             } } }
-            await("Catalogue renders with a stable header focus") { focused("Back") && find("India vs New Zealand") != null }
+            await("Catalogue renders with the selected tab focused") { focused("Live Events") && find("India vs New Zealand") != null }
             assertTrue("Browsing Sports keeps the display awake", activity.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
             assertEquals(-1, picked)
             click("Search sports")

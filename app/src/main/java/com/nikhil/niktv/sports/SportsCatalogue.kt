@@ -11,6 +11,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlinx.serialization.json.*
+import kotlinx.serialization.Serializable
 
 internal data class SportsEvent(
     val id: String,
@@ -25,6 +26,11 @@ internal data class SportsEvent(
     val end: Instant?,
     val choices: List<String>,
     val geo: String = "ALL",
+    val teamAFlag: String = "",
+    val teamBFlag: String = "",
+    val eventName: String = "",
+    val isHot: Boolean = false,
+    val formats: List<SportsFormat> = emptyList(),
 ) {
     fun status(now: Instant): SportsStatus = when {
         start == null || end == null || end < start -> SportsStatus.UNKNOWN
@@ -35,6 +41,7 @@ internal data class SportsEvent(
 }
 
 internal enum class SportsStatus(val label: String) { LIVE("Live"), UPCOMING("Upcoming"), FINISHED("Finished"), UNKNOWN("Schedule unavailable") }
+@Serializable
 internal data class SportsStream(
     val link: String,
     val title: String,
@@ -44,6 +51,7 @@ internal data class SportsStream(
     val drmType: String = "",
     val drmLicense: String = "",
     val geo: String = "ALL",
+    val webLink: String = "",
 )
 
 internal object SportsCatalogue {
@@ -82,7 +90,9 @@ internal object SportsCatalogue {
                 info.text("eventType").ifBlank { info.text("eventName") },
                 info.text("eventLogo").ifBlank { o.text("image") }, info.text("teamA"), info.text("teamB"),
                 time(info.text("startTime")), time(info.text("endTime")),
-                (o["formats"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.text("title")?.takeIf(String::isNotBlank) }, o.text("geo").ifBlank { "ALL" })
+                formats(o).map { it.title }, o.text("geo").ifBlank { "ALL" },
+                info.text("teamAFlag"), info.text("teamBFlag"), info.text("eventName"),
+                info.text("isHot") in setOf("1", "true"), formats(o))
         }.distinctBy { it.slug }
     }
 
@@ -96,9 +106,49 @@ internal object SportsCatalogue {
             SportsStream(link, o.text("title").ifBlank { "Stream" }, o.text("type").toIntOrNull() ?: 0,
                 o.text("api"), (o["headers"] as? JsonObject).orEmpty().mapNotNull { (key, value) ->
                     (value as? JsonPrimitive)?.contentOrNull?.let { key to it }
-                }.toMap(), o.text("drmType"), o.text("drmLicense"), o.text("geo").ifBlank { "ALL" })
+                }.toMap(), o.text("drmType"), o.text("drmLicense"), o.text("geo").ifBlank { "ALL" }, o.text("webLink"))
         }
     }
+
+    fun categories(body: String): List<SportsCategory> = array(body, "The categories are unavailable.").mapNotNull { row ->
+        val o = row as? JsonObject ?: return@mapNotNull null
+        val title = o.text("title").takeIf(String::isNotBlank) ?: return@mapNotNull null
+        val raw = o.text("catLink")
+        val link = raw.takeIf(::sportsNetworkUrl).orEmpty()
+        SportsCategory(o.text("id").ifBlank { title }, title, o.text("image"), link, o.text("geo").ifBlank { "ALL" })
+    }.distinctBy { it.id }
+
+    fun filters(body: String): List<SportsEventFilter> = array(body, "The sport filters are unavailable.").mapNotNull { row ->
+        val o = row as? JsonObject ?: return@mapNotNull null
+        val title = o.text("title").takeIf(String::isNotBlank) ?: return@mapNotNull null
+        SportsEventFilter(o.text("id").ifBlank { title }, title, o.text("image"))
+    }.distinctBy { it.id }
+
+    fun channels(body: String): List<SportsChannel> = channelRows(array(body, "The channels are unavailable."))
+
+    private fun channelRows(rows: JsonArray): List<SportsChannel> = rows.mapNotNull { row ->
+        val o = row as? JsonObject ?: return@mapNotNull null
+        if (o.text("publish") in setOf("0", "false")) return@mapNotNull null
+        val slug = o.text("slug").takeIf(::sportsSlug) ?: return@mapNotNull null
+        SportsChannel(o.text("id").ifBlank { slug }, o.text("title").trim().ifBlank { slug }, slug,
+            o.text("cat"), o.text("image"), formats(o), o.text("geo").ifBlank { "ALL" })
+    }.distinctBy { it.key }
+
+    fun detail(body: String): SportsChannelDetail {
+        val root = document(body)
+        val o = root as? JsonObject
+        return SportsChannelDetail(streams(body),
+            (o?.get("related") as? JsonArray)?.let(::channelRows).orEmpty(),
+            o?.text("prevChannel")?.takeIf(::sportsSlug), o?.text("nextChannel")?.takeIf(::sportsSlug),
+            o?.text("geo").orEmpty().ifBlank { "ALL" }, o?.text("header").orEmpty(), o?.text("body").orEmpty())
+    }
+
+    private fun formats(o: JsonObject): List<SportsFormat> = (o["formats"] as? JsonArray).orEmpty().mapNotNull { row ->
+        val item = row as? JsonObject ?: return@mapNotNull null
+        item.text("title").takeIf(String::isNotBlank)?.let { SportsFormat(it, item.text("webLink"), item.text("geo").ifBlank { "ALL" }) }
+    }
+
+    private fun array(body: String, error: String): JsonArray = document(body) as? JsonArray ?: throw SportsException(error)
 
     fun baseUrl(body: String): String {
         return sportsConfiguration(body, "").primary
