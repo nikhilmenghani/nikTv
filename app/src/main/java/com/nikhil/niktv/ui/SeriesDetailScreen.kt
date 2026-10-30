@@ -158,7 +158,11 @@ internal fun ModernSeriesDetailScreen(
     var handledPlaybackReturnFocusId by remember(series.id) { mutableStateOf<String?>(null) }
     // Playback return is an entry event. Keep its target even if a background
     // state update clears the shared marker before the episode list is ready.
-    val entryPlaybackReturnFocusId = remember(series.id) { state.playbackReturnFocusId }
+    val rememberedPlaybackReturnFocusId = remember(series.id) { state.playbackReturnFocusId }
+    val watchedEntryEpisode = state.recentlyPlayed.firstOrNull { it.profileKey == state.session?.profile?.cacheKey() && it.kind == FavoriteKind.SERIES &&
+        (it.media.id == series.id || it.series?.id == series.id) }?.lastPlayed
+    val entryPlaybackReturnFocusId = state.playbackReturnFocusId ?: rememberedPlaybackReturnFocusId ?:
+        watchedEntryEpisode?.id.takeIf { !initialEpisodeFocusComplete }
     var moreActionsExpanded by remember { mutableStateOf(false) }
     var expandedPanel by rememberSaveable(state.savedProfile?.cacheKey(), series.id) { mutableStateOf<SeriesDetailPanel?>(null) }
     val castButtonRequester = remember(series.id) { FocusRequester() }
@@ -224,6 +228,7 @@ internal fun ModernSeriesDetailScreen(
     var episodeMove by remember { mutableStateOf<Job?>(null) }
 
     fun closeEpisodeSearch() {
+        searchQuery = ""
         episodeTextEditing = false
         expandedPanel = null
         keyboardController?.hide()
@@ -261,7 +266,7 @@ internal fun ModernSeriesDetailScreen(
             }
         }
     }
-    // Retain typed text for reopening, but a hidden search must not silently filter episodes.
+    // Closing search clears its query; hidden search never filters episodes.
     val activeSearchQuery = searchQuery.takeIf { expandedPanel == SeriesDetailPanel.SEARCH }.orEmpty()
 
     val isFavorite = remember(state.favorites, series) {
@@ -329,6 +334,17 @@ internal fun ModernSeriesDetailScreen(
 
     val progressByEpisode = remember(state.playbackProgress, state.items, profile, series.id) {
         state.items.associate { episode -> episode.id to seriesEpisodeProgress(state.playbackProgress, profile, series, episode) }
+    }
+    var resumeLookupStarted by rememberSaveable(profile, series.id) { mutableStateOf(false) }
+    LaunchedEffect(state.loading, state.selectedSeriesSeason, state.items, watchedEntryEpisode?.id) {
+        val episode = watchedEntryEpisode ?: return@LaunchedEffect
+        val season = episode.seasonNumber ?: episode.title.seasonNumberFromTitle()
+        if (!initialEpisodeFocusComplete && !resumeLookupStarted && !state.loading &&
+            season == state.selectedSeriesSeason && state.items.isNotEmpty() &&
+            state.items.none { it.id == episode.id } && state.episodeHasMore) {
+            val number = episode.episodeNumber ?: episode.title.episodeNumberFromTitle()
+            if (number != null && goToEpisode != null) { resumeLookupStarted = true; goToEpisode(number) }
+        }
     }
     val recentEpisode = remember(state.recentlyPlayed, progressByEpisode, state.items, series.id) {
         val recent = state.recentlyPlayed.firstOrNull { it.kind == FavoriteKind.SERIES &&
@@ -445,7 +461,8 @@ internal fun ModernSeriesDetailScreen(
     }
     val entryFocusTarget = seriesEpisodeEntryFocusTarget(
         episodeIds = episodeIds,
-        loading = state.loading,
+        loading = state.loading || (pendingPlaybackReturnId != null && pendingPlaybackReturnId !in episodeIds &&
+            state.episodeHasMore && !resumeLookupStarted),
         returningEpisodeId = pendingPlaybackReturnId,
         initialEntryPending = !initialEpisodeFocusComplete
     )
@@ -466,6 +483,7 @@ internal fun ModernSeriesDetailScreen(
             }
             return@LaunchedEffect
         }
+        if (destination?.running == true) return@LaunchedEffect
         val target = entryFocusTarget ?: return@LaunchedEffect
         if (target is SeriesEpisodeEntryFocus.Episode && pendingPlaybackReturnId == null && focusedEpisodeId != null) {
             // Do not steal a selection the user reached before the entry effect ran.
@@ -494,6 +512,13 @@ internal fun ModernSeriesDetailScreen(
                 }
                 entryEpisodeRequester
             }
+        }
+        if (!remoteNavigationActive && target is SeriesEpisodeEntryFocus.Episode) {
+            // Touch restores scroll position, not keyboard focus. A failed focus request
+            // must not leave an entry action alive to close a later user-opened search.
+            initialEpisodeFocusComplete = true
+            handledPlaybackReturnFocusId = pendingPlaybackReturnId
+            return@LaunchedEffect
         }
         repeat(6) { attempt ->
             withFrameNanos { }
@@ -721,7 +746,15 @@ internal fun ModernSeriesDetailScreen(
                         },
                         listView = episodeListView, onListView = { episodeListView = it },
                         searchOpen = expandedPanel == SeriesDetailPanel.SEARCH,
-                        onSearch = { if (expandedPanel == SeriesDetailPanel.SEARCH) closeEpisodeSearch() else expandedPanel = SeriesDetailPanel.SEARCH },
+                        onSearch = {
+                            // Explicit interaction supersedes an unfinished automatic entry restore.
+                            episodeMove?.cancel()
+                            wideFocusCoordinator.cancel()
+                            initialEpisodeFocusComplete = true
+                            handledPlaybackReturnFocusId = entryPlaybackReturnFocusId
+                            if (expandedPanel == SeriesDetailPanel.SEARCH) closeEpisodeSearch()
+                            else expandedPanel = SeriesDetailPanel.SEARCH
+                        },
                         searchRequester = toolbarRequester, sortRequester = sortRequester, layoutRequester = layoutRequester,
                         onSortApplied = {
                             if (!episodeSortDescending && state.episodeHasMore && goToEpisode != null) goToEpisode(null)
@@ -735,6 +768,7 @@ internal fun ModernSeriesDetailScreen(
                                         episodeScrollReset++
                                     },
                                     close = ::closeEpisodeSearch,
+                                    clear = { searchQuery = ""; episodeScrollReset++ },
                                     readOnly = episodeIsTv && !episodeTextEditing,
                                     modifier = Modifier.fillMaxWidth().focusRequester(episodeSearchRequester)
                                         .onPreviewKeyEvent { event ->
@@ -997,6 +1031,14 @@ internal fun ModernEpisodeCard(
     wideList: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val overlayFocusManager = LocalFocusManager.current
+    val overlayKeyboard = LocalSoftwareKeyboardController.current
+    fun releaseSearchEditingFocus() {
+        // A touch-opened episode dialog must not restore an offscreen text caret.
+        // BasicTextField otherwise reveals that caret again when the window regains focus.
+        overlayFocusManager.clearFocus(force = true)
+        overlayKeyboard?.hide()
+    }
     var focused by remember { mutableStateOf(false) }
     var episodeActionsExpanded by remember(episode.id) { mutableStateOf(false) }
     var descriptionDialogOpen by remember(episode.id) { mutableStateOf(false) }
@@ -1060,7 +1102,7 @@ internal fun ModernEpisodeCard(
         remaining = episodeRemainingLabel(progress), resume = isCurrentResume,
         listView = wideList, overview = episodeDescription,
         modifier = Modifier.fillMaxWidth().focusRequester(episodeFocusRequester),
-        onClick = onClick, onLongClick = { episodeActionsExpanded = true })
+        onClick = onClick, onLongClick = { releaseSearchEditingFocus(); episodeActionsExpanded = true })
     else Surface(
         shape = RoundedCornerShape(12.dp),
         color = when {
@@ -1080,7 +1122,7 @@ internal fun ModernEpisodeCard(
             .remoteCombinedClickable(
                 interactionSource = episodeInteractionSource,
                 onClick = onClick,
-                onLongClick = { episodeActionsExpanded = true }
+                onLongClick = { releaseSearchEditingFocus(); episodeActionsExpanded = true }
             )
     ) {
         Column {
@@ -1181,7 +1223,7 @@ internal fun ModernEpisodeCard(
         }
         if (mobileLayout && !episodeDescription.isNullOrBlank()) {
             Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) {
-                InlineEpisodeDescription(episodeDescription) { descriptionDialogOpen = true }
+                InlineEpisodeDescription(episodeDescription) { releaseSearchEditingFocus(); descriptionDialogOpen = true }
             }
         }
         }
@@ -1235,6 +1277,7 @@ internal fun ModernEpisodeCard(
                 leadingIcon = { Icon(Icons.Default.Info, null) },
                 onClick = {
                     episodeActionsExpanded = false
+                    releaseSearchEditingFocus()
                     descriptionDialogOpen = true
                 }
             )

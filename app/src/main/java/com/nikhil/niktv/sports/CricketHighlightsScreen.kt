@@ -227,20 +227,38 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
     val vertical = rememberLazyListState()
     val rowStates = remember { mutableMapOf<Int?, LazyListState>() }
     val scope = rememberCoroutineScope()
-    var movement by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    fun focus(row: Int, index: Int) {
-        movement?.cancel()
-        movement = scope.launch {
-            if (row < 0) { runCatching { header.requestFocus() }; return@launch }
-            val section = sections.getOrNull(row) ?: return@launch
-            val target = index.coerceIn(0, section.videos.lastIndex)
-            vertical.scrollToItem(row)
-            val horizontal = rowStates.getOrPut(section.id) { LazyListState() }
-            horizontal.scrollToItem(target)
+    val coordinator = remember(scope) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(scope) }
+    var sideways by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    DisposableEffect(coordinator) { onDispose { sideways?.cancel(); coordinator.cancel() } }
+    fun focus(row: Int, index: Int, verticalMove: Boolean) {
+        sideways?.cancel()
+        if (row < 0) { coordinator.cancel(); runCatching { header.requestFocus() }; return }
+        val section = sections.getOrNull(row) ?: return
+        val target = index.coerceIn(0, section.videos.lastIndex)
+        val horizontal = rowStates.getOrPut(section.id) { LazyListState() }
+        val transfer: suspend () -> Boolean = {
+            val item = horizontal.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }
+            // Do not align every visible tile to the leading edge on Left/Right.
+            if (item == null) horizontal.scrollToItem(target)
             withFrameNanos { }
-            runCatching { requesters.getOrPut("${section.id}:${section.videos[target].id}") { FocusRequester() }.requestFocus() }
+            val visible = horizontal.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }
+            if (visible != null) {
+                val layout = horizontal.layoutInfo
+                val distance = com.nikhil.niktv.ui.tileFocusScrollDistance(
+                    visible.offset.toFloat() - layout.beforeContentPadding,
+                    visible.size.toFloat() + layout.beforeContentPadding + layout.afterContentPadding,
+                    layout.viewportEndOffset.toFloat())
+                if (distance != 0f) horizontal.scroll { scrollBy(distance) }
+            }
+            runCatching { requesters.getOrPut("${section.id}:${section.videos[target].id}") { FocusRequester() }.requestFocus() }.getOrDefault(false)
+        }
+        if (verticalMove) coordinator.move(vertical, row, reduceMotion = false, focus = transfer)
+        else {
+            coordinator.cancel()
+            sideways = scope.launch { coordinator.withAutomaticRevealSuppressed { transfer() } }
         }
     }
+    com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(coordinator) {
     LazyColumn(modifier.fillMaxWidth(), state = vertical, verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(bottom = 18.dp)) {
         itemsIndexed(sections, key = { _, row -> row.id?.toString() ?: "featured" }) { rowIndex, section ->
@@ -264,10 +282,10 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
                             .onFocusChanged { if (it.isFocused) onFocused(key) }
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                    Key.DirectionRight -> { if (index < section.videos.lastIndex) focus(rowIndex, index + 1); true }
-                                    Key.DirectionLeft -> { if (index > 0) focus(rowIndex, index - 1); true }
-                                    Key.DirectionDown -> { focus(rowIndex + 1, index); true }
-                                    Key.DirectionUp -> { focus(rowIndex - 1, index); true }
+                                    Key.DirectionRight -> { if (index < section.videos.lastIndex) focus(rowIndex, index + 1, false); true }
+                                    Key.DirectionLeft -> { if (index > 0) focus(rowIndex, index - 1, false); true }
+                                    Key.DirectionDown -> { focus(rowIndex + 1, index, true); true }
+                                    Key.DirectionUp -> { focus(rowIndex - 1, index, true); true }
                                     else -> false
                                 }
                             }
@@ -278,6 +296,7 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
                 }
             }
         }
+    }
     }
 }
 

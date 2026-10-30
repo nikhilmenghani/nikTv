@@ -83,7 +83,8 @@ internal object SportsCatalogue {
                 if (it is JsonArray || it is JsonObject) return it
             }
         }
-        throw SportsException("The sports service response format has changed.")
+        if (decoders.size == 1) throw SportsException("Sports decryption configuration is missing. Sync private configuration in Settings, then retry.")
+        throw SportsException("The sports response could not be decoded. Refresh private configuration and retry.")
     }
 
     fun events(body: String): List<SportsEvent> {

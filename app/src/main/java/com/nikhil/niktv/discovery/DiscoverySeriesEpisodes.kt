@@ -70,6 +70,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         onDispose { entryJob?.cancel() }
     }
     fun closeSearch() {
+        query = ""
         searchImeWasVisible = false; searchOpen = false; keyboard?.hide()
         scope.launch { withFrameNanos { }; runCatching { toolbarSearch.requestFocus() } }
     }
@@ -142,6 +143,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             beforeAction = { searchImeWasVisible = false; keyboard?.hide() },
             searchField = {
                 SeriesEpisodeSearchField(query, { query = it; scrollReset++ }, ::closeSearch,
+                    clear = { query = ""; scrollReset++ },
                     options = KeyboardOptions(imeAction = ImeAction.Search),
                     actions = KeyboardActions(onSearch = { searchImeWasVisible = false; keyboard?.hide() }))
             }, modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp).onPreviewKeyEvent { event ->

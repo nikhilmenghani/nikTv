@@ -34,6 +34,7 @@ import javax.crypto.spec.GCMParameterSpec
 object RemoteCredentials {
     private const val PREFS = "github_remote_credentials"
     private const val KEY_ALIAS = "niktv_github_remote_credentials_v1"
+    private const val CREDENTIAL_SCHEMA = 2 // Includes remotely configured Cricfy decryption keys.
     private const val REFRESH_MILLIS = 24 * 60 * 60 * 1000L
     private val mutex = Mutex()
     private val http = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
@@ -220,10 +221,10 @@ object RemoteCredentials {
         val app = context.applicationContext
         if (!configured(app)) return@withLock false
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (!force && System.currentTimeMillis() - prefs.getLong("attempted_at", 0L) < REFRESH_MILLIS) {
+        if (!force && prefs.getInt("credential_schema", 0) == CREDENTIAL_SCHEMA && System.currentTimeMillis() - prefs.getLong("attempted_at", 0L) < REFRESH_MILLIS) {
             return@withLock false
         }
-        prefs.edit().putLong("attempted_at", System.currentTimeMillis()).apply()
+        prefs.edit().putLong("attempted_at", System.currentTimeMillis()).putInt("credential_schema", CREDENTIAL_SCHEMA).apply()
         val token = token(app)
         val owner = owner(app)
         val repo = repository(app)

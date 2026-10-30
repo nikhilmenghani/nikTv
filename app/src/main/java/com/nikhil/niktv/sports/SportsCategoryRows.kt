@@ -31,19 +31,38 @@ internal fun SportsEventRows(sections: List<SportsEventSection>, modifier: Modif
     val vertical = rememberLazyListState()
     val horizontalStates = remember { mutableMapOf<String, LazyListState>() }
     val scope = rememberCoroutineScope()
-    var movement by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    fun focus(row: Int, index: Int) {
-        movement?.cancel()
-        movement = scope.launch {
-            if (row < 0) { runCatching { above.requestFocus() }; return@launch }
-            val section = sections.getOrNull(row) ?: return@launch
-            val target = index.coerceIn(0, section.events.lastIndex)
-            vertical.scrollToItem(row)
-            horizontalStates.getOrPut(section.title) { LazyListState() }.scrollToItem(target)
+    val coordinator = remember(scope) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(scope) }
+    var sideways by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    DisposableEffect(coordinator) { onDispose { sideways?.cancel(); coordinator.cancel() } }
+    fun focus(row: Int, index: Int, verticalMove: Boolean) {
+        sideways?.cancel()
+        if (row < 0) { coordinator.cancel(); runCatching { above.requestFocus() }; return }
+        val section = sections.getOrNull(row) ?: return
+        val target = index.coerceIn(0, section.events.lastIndex)
+        val horizontal = horizontalStates.getOrPut(section.title) { LazyListState() }
+        val transfer: suspend () -> Boolean = {
+            val item = horizontal.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }
+            // Do not align every visible tile to the leading edge on Left/Right.
+            if (item == null) horizontal.scrollToItem(target)
             withFrameNanos { }
-            runCatching { requester("${section.title}:${section.events[target].slug}").requestFocus() }
+            val visible = horizontal.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }
+            if (visible != null) {
+                val layout = horizontal.layoutInfo
+                val distance = com.nikhil.niktv.ui.tileFocusScrollDistance(
+                    visible.offset.toFloat() - layout.beforeContentPadding,
+                    visible.size.toFloat() + layout.beforeContentPadding + layout.afterContentPadding,
+                    layout.viewportEndOffset.toFloat())
+                if (distance != 0f) horizontal.scroll { scrollBy(distance) }
+            }
+            runCatching { requester("${section.title}:${section.events[target].slug}").requestFocus() }.getOrDefault(false)
+        }
+        if (verticalMove) coordinator.move(vertical, row, reduceMotion = false, focus = transfer)
+        else {
+            coordinator.cancel()
+            sideways = scope.launch { coordinator.withAutomaticRevealSuppressed { transfer() } }
         }
     }
+    com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(coordinator) {
     LazyColumn(modifier.fillMaxWidth(), state = vertical, verticalArrangement = Arrangement.spacedBy(20.dp),
         contentPadding = PaddingValues(bottom = 18.dp)) {
         itemsIndexed(sections, key = { _, section -> section.title }) { row, section ->
@@ -59,10 +78,10 @@ internal fun SportsEventRows(sections: List<SportsEventSection>, modifier: Modif
                             .focusRequester(requester("${section.title}:${event.slug}"))
                             .onPreviewKeyEvent {
                                 if (it.type != KeyEventType.KeyDown) false else when (it.key) {
-                                    Key.DirectionUp -> { focus(row - 1, index); true }
-                                    Key.DirectionDown -> { focus(row + 1, index); true }
-                                    Key.DirectionLeft -> { if (index > 0) focus(row, index - 1); true }
-                                    Key.DirectionRight -> { if (index < section.events.lastIndex) focus(row, index + 1); true }
+                                    Key.DirectionUp -> { focus(row - 1, index, true); true }
+                                    Key.DirectionDown -> { focus(row + 1, index, true); true }
+                                    Key.DirectionLeft -> { if (index > 0) focus(row, index - 1, false); true }
+                                    Key.DirectionRight -> { if (index < section.events.lastIndex) focus(row, index + 1, false); true }
                                     else -> false
                                 }
                             }
@@ -71,5 +90,6 @@ internal fun SportsEventRows(sections: List<SportsEventSection>, modifier: Modif
                 }
             }
         }
+    }
     }
 }

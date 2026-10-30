@@ -3497,9 +3497,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profileKey = session.profile.cacheKey()
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
-        // An explicit selection applies while navigating seasons. On a fresh series open,
-        // honor the configured first/latest preference instead of an older remembered season.
-        val desired = requestedSeason
+        // Explicit browsing wins; fresh entry resumes this profile's watched season,
+        // rather than whichever season was most recently cached in the background.
+        val lastEpisode = _state.value.recentlyPlayed.firstOrNull {
+            it.profileKey == profileKey && it.kind == FavoriteKind.SERIES &&
+                (it.media.id == series.id || it.series?.id == series.id)
+        }?.lastPlayed
+        val desired = requestedSeason ?: lastEpisode?.let { it.seasonNumber ?: it.title.seasonNumberFromTitle() }
+        if (requestedSeason == null && desired != null) _state.update { it.copy(selectedSeriesSeason = desired) }
         val cached = episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
                 cache.metadataVersion == EPISODE_METADATA_VERSION &&

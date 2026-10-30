@@ -165,6 +165,11 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
         catalogueJob = viewModelScope.launch {
             mutable.update { it.copy(loading = true, error = null) }
             try {
+                // Await any first-run/schema-upgrade sync before decoding encrypted catalogues.
+                // Existing configurations retain the shared daily request throttle.
+                try { com.nikhil.niktv.data.RemoteCredentials.refresh(getApplication()) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Cached credentials may still be usable offline. */ }
                 val result = when {
                     origin.collection != null -> origin.copy(collectionChannels = collectionChannels(origin.collection, force))
                     origin.tab == SportsTab.EVENTS -> {

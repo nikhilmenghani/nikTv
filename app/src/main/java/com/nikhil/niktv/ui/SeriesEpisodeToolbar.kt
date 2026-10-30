@@ -269,7 +269,8 @@ internal fun SeriesSeasonSidebar(seasons: List<Int>, selected: Int?, counts: Map
 internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, close: () -> Unit,
     modifier: Modifier = Modifier, readOnly: Boolean = false,
     options: KeyboardOptions = KeyboardOptions.Default, actions: KeyboardActions = KeyboardActions.Default,
-    placeholder: String = "Search episodes…", closeLabel: String = "Close episode search") {
+    placeholder: String = "Search episodes…", closeLabel: String = "Close episode search",
+    clear: (() -> Unit)? = null) {
     var focused by remember { mutableStateOf(false) }
     Surface(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp), color = Color(0xFF171B23),
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58))) {
@@ -284,7 +285,9 @@ internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, c
                         if (value.isEmpty()) Text(placeholder, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                         input()
                     }
-                    IconButton(close, Modifier.size(32.dp)) { Icon(Icons.Default.Close, closeLabel, Modifier.size(18.dp)) }
+                    IconButton(clear ?: close, Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, if (clear != null) "Clear episode search" else closeLabel, Modifier.size(18.dp))
+                    }
                 }
             })
         }
