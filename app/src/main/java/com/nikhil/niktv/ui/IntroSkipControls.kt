@@ -5,6 +5,8 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -48,6 +50,7 @@ internal class IntroSkipSettings(val target: IntroTarget?, private val store: In
     var editorOpen by mutableStateOf(false); private set
     var startText by mutableStateOf("0:00")
     var endText by mutableStateOf("0:00")
+    var autoSkip by mutableStateOf(false)
     var editScope by mutableStateOf(IntroScope.EPISODE)
     private var draftStarted = false
     private var writeJob: Job? = null
@@ -64,6 +67,7 @@ internal class IntroSkipSettings(val target: IntroTarget?, private val store: In
         if (!loaded) return
         if (!draftStarted) {
             val saved = timings.effective
+            autoSkip = saved?.autoSkip ?: false
             startText = introTime(saved?.startMillis ?: 0)
             endText = introTime(saved?.endMillis ?: position)
             editScope = if (timings.episode != null || item.seasonKey == null) IntroScope.EPISODE else IntroScope.SEASON
@@ -81,7 +85,7 @@ internal class IntroSkipSettings(val target: IntroTarget?, private val store: In
         writeJob = scope.launch {
             try {
                 val updated = withContext(Dispatchers.IO) {
-                    store.save(item, selectedScope, range)
+                    store.save(item, selectedScope, range?.copy(autoSkip = autoSkip))
                     store.read(item)
                 }
                 timings = updated
@@ -144,12 +148,20 @@ internal fun IntroTimingDialog(settings: IntroSkipSettings, durationMillis: Long
                 if (target.seasonKey != null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PlayerVisualChoiceButton(target.episodeLabel, settings.editScope == IntroScope.EPISODE,
-                            Modifier.weight(1f), onClick = { settings.editScope = IntroScope.EPISODE })
+                            Modifier.weight(1f), onClick = { settings.editScope = IntroScope.EPISODE; settings.autoSkip = settings.timings.episode?.autoSkip ?: false })
                         PlayerVisualChoiceButton(target.seasonLabel.orEmpty(), settings.editScope == IntroScope.SEASON,
-                            Modifier.weight(1f), onClick = { settings.editScope = IntroScope.SEASON })
+                            Modifier.weight(1f), onClick = { settings.editScope = IntroScope.SEASON; settings.autoSkip = settings.timings.season?.autoSkip ?: false })
                     }
                     Text("Episode overrides take priority over season timings.", style = MaterialTheme.typography.labelSmall)
                 } else Text(target.episodeLabel, style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(10.dp))
+                    .toggleable(settings.autoSkip, enabled = !settings.saving, role = Role.Switch, onValueChange = { settings.autoSkip = it }),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Automatically skip intro", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    SettingsSwitch(settings.autoSkip, null, enabled = !settings.saving)
+                }
+                Text("Saved with this timing. A manual rewind will not skip the intro again during this playback.",
+                    style = MaterialTheme.typography.labelSmall)
                 if (!valid) Text("Enter an end after the start and at least one second before the video ends.",
                     style = MaterialTheme.typography.bodySmall)
                 settings.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }

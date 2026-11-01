@@ -1055,6 +1055,23 @@ fun PlayerScreen(
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isCurrentMediaItemSeekable }
     val introAvailable = introSecondsRemaining != null
+    val watching = rememberWatchingCheck(media)
+    WatchPlayback(watching, isPlaying = { player.isPlaying }, pause = {
+        if (playbackRequested) {
+            playbackRequested = false
+            onPlaybackIntentChanged(false)
+        }
+        player.pause()
+    })
+    val automaticIntro = remember(media.progressKey) { AutoIntroSkipGate() }
+    LaunchedEffect(player, position, duration, introSettings.timings, introSettings.editorOpen, playbackRequested, watching.awaiting) {
+        automaticIntro.target(introSettings.timings.effective, player.currentPosition, player.duration,
+            player.isPlaying && playbackRequested && player.isCurrentMediaItemSeekable, introSettings.editorOpen || watching.awaiting)?.let { end ->
+            player.seekTo(end)
+            position = end
+        }
+    }
+
     val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
     val liveEdgeRecovery = remember(media.progressKey) { LiveStreamRecovery() }
     var liveRefreshPending by remember(player) { mutableStateOf(false) }
@@ -1116,9 +1133,11 @@ fun PlayerScreen(
                     media.catalogType == CatalogType.SERIES && !advancing &&
                     completion.claim(state == Player.STATE_ENDED, playbackRequested, currentNextEpisode != null, autoPlayCancelled)
                 ) {
-                    advancing = true
                     subtitleDialogOpen = false
-                    currentOnPlayNext()
+                    watching.completeEpisode {
+                        advancing = true
+                        currentOnPlayNext()
+                    }
                 }
             }
             override fun onTracksChanged(tracks: Tracks) {
@@ -1434,7 +1453,7 @@ fun PlayerScreen(
         }
     }
     val showAutoPlayPrompt =
-        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable
+        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable && !watching.awaiting
     LaunchedEffect(showAutoPlayPrompt) {
         if (showAutoPlayPrompt) {
             delay(120L)
@@ -1708,6 +1727,7 @@ fun PlayerScreen(
         runCatching { if (controlsVisible) playPauseFocusRequester.requestFocus() else videoSurfaceFocusRequester.requestFocus() }
     }
     BackHandler {
+        watching.interact()
         when {
             programmeGuideOpen -> programmeGuideOpen = false
             moreOptionsOpen -> moreOptionsOpen = false
@@ -1745,6 +1765,7 @@ fun PlayerScreen(
             )
             .playerActivityObserver {
                 dpadInteraction++
+                watching.interact()
             }
             .cricketScoreEntry(cricketScores, !controlsVisible && !queueVisible && !playerOptionsOpen && !inPictureInPicture) { showControlsAndFocusPlayPause() }
             .cricketScoreMovement(cricketScores)
@@ -1885,7 +1906,7 @@ fun PlayerScreen(
                             playerView.player
                                 ?: return@setOnKeyListener false
 
-                        if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
+                        if (keyCode != KeyEvent.KEYCODE_BACK) { dpadInteraction++; watching.interact() }
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER,
                             KeyEvent.KEYCODE_ENTER,
@@ -1978,6 +1999,7 @@ fun PlayerScreen(
                                     return@setOnTouchListener false
                                 }
                                 dpadInteraction++
+                                watching.interact()
                                 lastTouch = Offset(event.x, event.y)
                                 gestureStartY = event.y
                                 // Reserve the outer quarters for level gestures. The
@@ -2188,6 +2210,7 @@ fun PlayerScreen(
                                 ComposeKey.DirectionRight,
                                 ComposeKey.DirectionUp -> {
                                     dpadInteraction++
+                                watching.interact()
                                     showControlsAndFocusPlayPause()
                                     true
                                 }
@@ -2646,6 +2669,7 @@ PlayerChromeIconButton(
                                             hasPlaybackQueue
                                         ) {
                                             dpadInteraction++
+                                watching.interact()
                                             showEpisodeQueue()
                                             true
                                         } else {
@@ -2862,6 +2886,20 @@ PlayerChromeIconButton(
         }
         PlayerOverlayLayer {
         CricketScoreOverlay(cricketScores, visible = !inPictureInPicture)
+        StillWatchingPrompt(watching, onContinue = {
+            val advance = watching.confirm()
+            playbackRequested = true
+            onPlaybackIntentChanged(true)
+            if (advance) { advancing = true; currentOnPlayNext() }
+            else {
+                player.play()
+            }
+        }, onStop = {
+            watching.confirm()
+            autoPlayCancelled = true
+            onBack()
+        })
+
         if (introAvailable && !controlsVisible && (focusMode || embeddedMode) && !queueVisible &&
             !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen && !inPictureInPicture &&
             playbackError == null && !startupTimedOut) IntroSkipButton(skipIntroFocusRequester,
@@ -2871,6 +2909,7 @@ PlayerChromeIconButton(
             modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(24.dp))
         if (introSettings.editorOpen) IntroTimingDialog(introSettings, duration,
             currentPosition = { player.currentPosition.coerceAtLeast(0L) }, onDismiss = {
+                watching.interact()
                 introSettings.close()
                 returnControlFocus = introFocusRequester
             })

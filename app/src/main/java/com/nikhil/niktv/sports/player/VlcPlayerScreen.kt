@@ -603,6 +603,19 @@ internal fun VlcPlayerScreen(
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isSeekable }
     val introAvailable = introSecondsRemaining != null
+    val watching = rememberWatchingCheck(media)
+    WatchPlayback(watching, isPlaying = { player.isPlaying }, pause = {
+        if (playbackRequested || player.isPlaying) focus.request(false)
+    })
+    val automaticIntro = remember(media.progressKey) { AutoIntroSkipGate() }
+    LaunchedEffect(player, position, duration, introSettings.timings, introSettings.editorOpen, playbackRequested, watching.awaiting) {
+        automaticIntro.target(introSettings.timings.effective, player.time, player.length,
+            player.isPlaying && playbackRequested && player.isSeekable && pendingInitialResumePosition == 0L, introSettings.editorOpen || watching.awaiting)?.let { end ->
+            seekMovieTo(end)
+            position = end
+        }
+    }
+
     fun skipIntro() {
         val range = introSettings.timings.effective ?: return
         if (!player.isSeekable || !range.contains(player.time, player.length)) return
@@ -651,7 +664,7 @@ internal fun VlcPlayerScreen(
     val currentShowControls by rememberUpdatedState<() -> Unit> { showControls() }
     val currentSetControlsVisible by rememberUpdatedState<(Boolean) -> Unit> { controlsVisible = it }
     val currentSetControlsFocused by rememberUpdatedState<(Boolean) -> Unit> { controlsFocused = it }
-    val currentRegisterInteraction by rememberUpdatedState<() -> Unit> { dpadInteraction++ }
+    val currentRegisterInteraction by rememberUpdatedState<() -> Unit> { dpadInteraction++; watching.interact() }
     val currentQueueRevealProgress by rememberUpdatedState(queueRevealProgress)
     val currentSetQueueVisible by rememberUpdatedState<(Boolean) -> Unit> { queueVisible = it }
     val currentSetQueueRevealProgress by rememberUpdatedState<(Float) -> Unit> { queueRevealProgress = it }
@@ -771,6 +784,7 @@ internal fun VlcPlayerScreen(
         if (!controlsVisible) extraControlsOpen = false
     }
     BackHandler {
+        watching.interact()
         when {
             programmeGuideOpen -> programmeGuideOpen = false
             moreOptionsOpen -> onMoreOptionsOpenChanged(false)
@@ -853,9 +867,11 @@ internal fun VlcPlayerScreen(
                         completion.claim(true, playbackRequested, currentNextEpisode != null, autoPlayCancelled) &&
                         !advancing
                     ) {
-                        advancing = true
                         subtitleDialogOpen = false
-                        currentPlayNext()
+                        watching.completeEpisode {
+                            advancing = true
+                            currentPlayNext()
+                        }
                     }
                 }
                 MediaPlayer.Event.EncounteredError -> {
@@ -1143,7 +1159,7 @@ internal fun VlcPlayerScreen(
         }
     }
     val showAutoPlayPrompt =
-        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable
+        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable && !watching.awaiting
     LaunchedEffect(showAutoPlayPrompt) {
         if (showAutoPlayPrompt) {
             delay(120L)
@@ -1165,6 +1181,7 @@ internal fun VlcPlayerScreen(
             )
             .playerActivityObserver {
                 dpadInteraction++
+                watching.interact()
             }
             .cricketScoreEntry(cricketScores, !controlsVisible && !queueVisible && !playerOptionsOpen && !inPictureInPicture) { showControls() }
             .cricketScoreMovement(cricketScores)
@@ -2184,6 +2201,20 @@ PlayerChromeIconButton(
         }
         PlayerOverlayLayer {
         CricketScoreOverlay(cricketScores, visible = !inPictureInPicture)
+        StillWatchingPrompt(watching, onContinue = {
+            val advance = watching.confirm()
+            playbackRequested = true
+            onPlaybackIntentChanged(true)
+            if (advance) { advancing = true; currentPlayNext() }
+            else {
+                focus.request(true)
+            }
+        }, onStop = {
+            watching.confirm()
+            autoPlayCancelled = true
+            onBack()
+        })
+
         if (introAvailable && !controlsVisible && (focusMode || embeddedMode) && !queueVisible &&
             !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen && !inPictureInPicture && error == null)
             IntroSkipButton(skipIntroRequester, onSkip = ::skipIntro, onControls = ::showControls,
@@ -2192,6 +2223,7 @@ PlayerChromeIconButton(
                 modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(24.dp))
         if (introSettings.editorOpen) IntroTimingDialog(introSettings, duration,
             currentPosition = { player.time.coerceAtLeast(0L) }, onDismiss = {
+                watching.interact()
                 introSettings.close()
                 returnControlFocus = introRequester
             })

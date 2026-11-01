@@ -4,7 +4,7 @@ import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.PlayingMedia
 import java.security.MessageDigest
 
-internal data class IntroRange(val startMillis: Long, val endMillis: Long) {
+internal data class IntroRange(val startMillis: Long, val endMillis: Long, val autoSkip: Boolean = false) {
     fun validFor(durationMillis: Long): Boolean = startMillis >= 0L && endMillis > startMillis &&
         durationMillis > 1_000L && endMillis <= durationMillis - 1_000L
     fun contains(positionMillis: Long, durationMillis: Long): Boolean =
@@ -76,4 +76,14 @@ internal fun introTime(millis: Long): String {
     val seconds = millis.coerceAtLeast(0L) / 1_000L
     return if (seconds >= 3600) "%d:%02d:%02d".format(java.util.Locale.ROOT, seconds / 3600, seconds / 60 % 60, seconds % 60)
         else "%d:%02d".format(java.util.Locale.ROOT, seconds / 60, seconds % 60)
+}
+
+/** One automatic seek per configured intro and playback session; manual rewind stays under user control. */
+internal class AutoIntroSkipGate {
+    private var handled: IntroRange? = null
+    fun target(range: IntroRange?, position: Long, duration: Long, playing: Boolean, editing: Boolean): Long? {
+        if (range == null || !range.autoSkip || !playing || editing || !range.canOfferSkip(position, duration) || handled == range) return null
+        handled = range
+        return range.endMillis
+    }
 }

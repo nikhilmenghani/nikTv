@@ -94,8 +94,13 @@ class IntroSkipDeviceTest {
     @Test fun mpvCountdownExpiresWithoutPressingSkip() = exercise("MPV", false, false, video = true, passiveExpiry = true)
     @Test fun flowCountdownExpiresWithoutPressingSkip() = exercise("FLOW", false, false, video = true, passiveExpiry = true)
 
+    @Test fun exoAutomaticallySkipsOnlyEnabledTiming() = exercise("MEDIA3", false, true, video = true, automatic = true)
+    @Test fun vlcAutomaticallySkipsOnlyEnabledTiming() = exercise("VLC", false, true, video = true, automatic = true)
+    @Test fun mpvAutomaticallySkipsOnlyEnabledTiming() = exercise("MPV", false, true, video = true, automatic = true)
+    @Test fun flowAutomaticallySkipsOnlyEnabledTiming() = exercise("FLOW", false, true, video = true, automatic = true)
+
     private fun exercise(engine: String, paused: Boolean, touch: Boolean, editor: Boolean = false, video: Boolean = false,
-        passiveExpiry: Boolean = false) {
+        passiveExpiry: Boolean = false, automatic: Boolean = false) {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
         val target = introTarget(fixture())!!
@@ -105,8 +110,8 @@ class IntroSkipDeviceTest {
         val store = IntroTimingStore { preferences }
         store.save(target, IntroScope.EPISODE, null)
         val skipEnd = if (video) 10_000L else 30_000L
-        store.save(target, IntroScope.SEASON, IntroRange(0, skipEnd))
-        assertEquals(IntroRange(0, skipEnd), store.read(target).effective)
+        store.save(target, IntroScope.SEASON, IntroRange(0, skipEnd, automatic))
+        assertEquals(IntroRange(0, skipEnd, automatic), store.read(target).effective)
         val file = File(context.cacheDir, "intro-skip-$engine.${if (video) "mp4" else "wav"}")
         if (video) {
             // Existing generated 20s H.264 fixture: AAC peak/RMS verified -inf (silence).
@@ -131,6 +136,15 @@ class IntroSkipDeviceTest {
             .putExtra("noAdjacentEpisodes", passiveExpiry)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         try {
+            if (automatic) {
+                await("$engine must automatically seek past an enabled intro without a click") {
+                    PlaybackRegressionActivity.progress >= skipEnd && PlaybackRegressionActivity.firstFrames > 0
+                }
+                assertTrue(PlaybackRegressionActivity.requestedPlayback)
+                assertEquals(0, PlaybackRegressionActivity.navigations)
+                assertEquals(0, PlaybackRegressionActivity.retries)
+                return
+            }
             await("$engine must prepare the saved intro overlay") { label("Skip intro") != null }
             if (passiveExpiry) {
                 await("$engine must render the countdown alongside the button") { displayedIntroCountdown() != null && PlaybackRegressionActivity.firstFrames > 0 }
@@ -288,11 +302,16 @@ class IntroSkipDeviceTest {
             instrumentation.runOnMainSync { position.longValue = 50_000L }
             click("Configure intro")
             click("Mark end")
+            click("Automatically skip intro")
             capture("intro-skip-tablet-editor.png")
             touch("Save")
             await("Marked season timing must be saved after closing/reopening draft") {
-                store.read(target).season == IntroRange(10_000, 50_000) && dialog() == null
+                store.read(target).season == IntroRange(10_000, 50_000, true) && dialog() == null
             }
+            click("Configure intro")
+            click("Automatically skip intro")
+            click("Close")
+            assertTrue("Closing without Save must keep the previously saved auto-skip option", store.read(target).season!!.autoSkip)
             instrumentation.runOnMainSync { position.longValue = 20_000L }
             click("Configure intro")
             click("Mark start")
@@ -302,7 +321,7 @@ class IntroSkipDeviceTest {
             click("Configure intro")
             click("Remove saved timing")
             await("Removing override must reveal the untouched season timing") {
-                store.read(target) == IntroTimings(null, IntroRange(10_000, 50_000)) && dialog() == null
+                store.read(target) == IntroTimings(null, IntroRange(10_000, 50_000, true)) && dialog() == null
             }
         } finally {
             instrumentation.runOnMainSync { host.finish() }

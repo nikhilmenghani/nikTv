@@ -703,6 +703,7 @@ internal fun ModernSettingsScreen(
                 { PlayerQueuePreferences.setLayout(context, it) }, "Browse media while the video continues.")
             SettingsPickerRow("Default season", SeriesStartSeason.entries.map { it to if (it == SeriesStartSeason.FIRST) "First season" else "Latest season" },
                 state.seriesStartSeason, setSeriesStartSeason, "Used when a series has no remembered season.")
+            WatchingSettingsContent()
             SettingsLinkRow(SettingsPage.COMPATIBILITY, "Audio recovery")
         }
         SettingsSection("Compatibility") {

@@ -103,4 +103,19 @@ class IntroTimingTest {
         listOf(null, "", "-1,3,0", "3,3,0", "4,3,0", "x,y,z", "2,4").forEach { assertNull(IntroTimingStore.decode(it)) }
         assertEquals(IntroRange(2000, 4000), IntroTimingStore.decode("2000,4000,123"))
     }
+    @Test fun existingTimingsStayManualAndAutoSkipRequiresExplicitOptIn() {
+        assertFalse(IntroTimingStore.decode("0,10000,123")!!.autoSkip)
+        assertFalse(IntroTimingStore.decode("0,10000,false,123")!!.autoSkip)
+        assertTrue(IntroTimingStore.decode("0,10000,true,123")!!.autoSkip)
+        assertNull(IntroTimingStore.decode("0,10000,invalid,123"))
+        val gate = AutoIntroSkipGate()
+        val manual = IntroRange(0, 10000)
+        assertNull(gate.target(manual, 1000, 20000, true, false))
+        val automatic = manual.copy(autoSkip = true)
+        assertNull(gate.target(automatic, 1000, 20000, false, false))
+        assertNull(gate.target(automatic, 1000, 20000, true, true))
+        assertEquals(10000L, gate.target(automatic, 1000, 20000, true, false))
+        assertNull("Rewinding after an automatic skip must not seek again", gate.target(automatic, 1000, 20000, true, false))
+    }
+
 }

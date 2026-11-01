@@ -19,7 +19,7 @@ internal class IntroTimingStore(private val openPreferences: () -> SharedPrefere
             if (range == null) edit.remove(key)
             else {
                 require(range.startMillis >= 0 && range.endMillis > range.startMillis)
-                edit.putString(key, "${range.startMillis},${range.endMillis},${System.currentTimeMillis()}")
+                edit.putString(key, "${range.startMillis},${range.endMillis},${range.autoSkip},${System.currentTimeMillis()}")
                 // Bound retained timing metadata across all profiles; never inspect the media catalogue.
                 preferences.all.filterKeys { it != key }.entries.sortedBy { entry ->
                     (entry.value as? String)?.substringAfterLast(',')?.toLongOrNull() ?: 0L
@@ -34,10 +34,11 @@ internal class IntroTimingStore(private val openPreferences: () -> SharedPrefere
         internal const val MAX_ENTRIES = 500
         internal fun decode(value: String?): IntroRange? {
             val parts = value?.split(',') ?: return null
-            if (parts.size != 3) return null
+            if (parts.size !in 3..4) return null
+            val automatic = if (parts.size == 4) parts[2].toBooleanStrictOrNull() ?: return null else false
             val start = parts[0].toLongOrNull() ?: return null
             val end = parts[1].toLongOrNull() ?: return null
-            return IntroRange(start, end).takeIf { start >= 0 && end > start }
+            return IntroRange(start, end, automatic).takeIf { start >= 0 && end > start }
         }
     }
 }
