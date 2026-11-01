@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -351,6 +352,7 @@ fun PlayerScreen(
     onTerminalPlaybackFailure: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    var playbackSpeed by rememberSaveable(media.progressKey) { mutableFloatStateOf(1f) }
     val introSettings = rememberIntroSkipSettings(media)
     val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
@@ -496,6 +498,8 @@ fun PlayerScreen(
                 sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
             },
             configuredEngine = selectedPlayerChoice,
+            playbackSpeed = playbackSpeed,
+            onPlaybackSpeedChanged = { playbackSpeed = normalizedPlaybackSpeed(it) },
             focusPlayerSwitchOnEnter = restorePlayerSwitchFocus,
             onPlayerSwitchFocusRestored = { restorePlayerSwitchFocus = false }
         )
@@ -558,11 +562,12 @@ fun PlayerScreen(
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var speedPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
+    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
@@ -664,6 +669,7 @@ fun PlayerScreen(
     val introFocusRequester = remember(media.progressKey) { FocusRequester() }
     val skipIntroFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val speedFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
     val sourceFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -720,7 +726,7 @@ fun PlayerScreen(
         }
     }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val pipActivity = activity as? MainActivity
+    val pipActivity = activity as? PlayerPictureInPictureHost
     val pipAvailable = remember(context) {
         android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
@@ -863,6 +869,9 @@ fun PlayerScreen(
         }
     }
     val localPlayer = localLease?.player
+    LaunchedEffect(localPlayer, playbackSpeed) {
+        if (media.catalogType != CatalogType.LIVE_TV) localPlayer?.setPlaybackSpeed(normalizedPlaybackSpeed(playbackSpeed))
+    }
     DisposableEffect(localPlayer, media.playbackAttemptId) {
         val exoPlayer = localPlayer as? ExoPlayer
         if (!com.nikhil.niktv.BuildConfig.DEBUG || exoPlayer == null || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) {
@@ -1213,7 +1222,7 @@ fun PlayerScreen(
                 val authorizationFailure = httpStatus in setOf(401, 403)
 
                 when {
-                    authorizationFailure &&
+                    authorizationFailure && !media.externalPlayback &&
                         media.authorizationRetryCount == 0 -> {
 
                         playbackError =
@@ -1493,7 +1502,7 @@ fun PlayerScreen(
         var reported by remember(player, media.playbackAttemptId) { mutableStateOf(false) }
         LaunchedEffect(player, media.playbackAttemptId, playbackError, startupTimedOut, playbackRequested,
             decoderRecoveryInProgress, lifecycleState) {
-            val authorizationPending = media.authorizationRetryCount == 0 &&
+            val authorizationPending = !media.externalPlayback && media.authorizationRetryCount == 0 &&
                 playbackError?.startsWith("Stream authorization expired.") == true
             if (!reported && (playbackError != null || startupTimedOut) && !authorizationPending &&
                 !decoderRecoveryInProgress && (playbackRequested || startupTimedOut) &&
@@ -2175,7 +2184,7 @@ fun PlayerScreen(
             }
         )
         }
-        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture && !speedPickerVisible) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
@@ -2190,9 +2199,10 @@ fun PlayerScreen(
                     if (introSettings.target != null) add(introFocusRequester)
                     add(subtitleFocusRequester)
                     if (audioTracks.size > 1) add(audioFocusRequester)
-                    if (media.nativeSabr == null && onChooseAlternateSource == null) add(downloadFocusRequester)
+                    if (!media.externalPlayback && media.nativeSabr == null && onChooseAlternateSource == null) add(downloadFocusRequester)
                 }
                 if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) add(refreshFocusRequester)
+                if (media.catalogType != CatalogType.LIVE_TV) add(speedFocusRequester)
                 add(resizeFocusRequester)
                 add(pictureModeFocusRequester)
                 if (media.nativeSabr == null) add(playerSwitchFocusRequester)
@@ -2214,7 +2224,7 @@ fun PlayerScreen(
             val controlRowScrollState = rememberScrollState()
             val playbackDetailLines = buildList {
                 videoDetails.takeIf { it.isNotBlank() }?.let { add(it) }
-                add("${if (media.offlinePlayback) "Offline" else if (onChooseAlternateSource != null) "Alternate source" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
+                add("${if (media.externalPlayback) "Opened video" else if (media.offlinePlayback) "Offline" else if (onChooseAlternateSource != null) "Alternate source" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · ${effectiveEngine.playerEngineLabel()} · Video fit · ${resizeMode.label}")
                 add("Picture · ${activeAppearanceProfile.name} · Controls · ${controlsTimeoutSeconds}s")
             }
@@ -2342,7 +2352,7 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        if (media.catalogType != CatalogType.LIVE_TV && media.nativeSabr == null && onChooseAlternateSource == null) {
+                        if (!media.externalPlayback && media.catalogType != CatalogType.LIVE_TV && media.nativeSabr == null && onChooseAlternateSource == null) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                 contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
@@ -2358,6 +2368,12 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
+                        if (media.catalogType != CatalogType.LIVE_TV) PlayerChromeIconButton(
+                            icon = Icons.Default.Speed, badgeText = playbackSpeedLabel(playbackSpeed),
+                            contentDescription = "Playback speed", onClick = { speedPickerVisible = true },
+                            modifier = Modifier.playerSecondaryFocus(speedFocusRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
+                            onFocused = { controlsFocused = it })
                         PlayerChromeIconButton(
                             icon = when (resizeMode) {
                                 VideoResizeMode.FIT -> Icons.Default.FitScreen
@@ -2885,6 +2901,9 @@ PlayerChromeIconButton(
                 }
             }
         )
+        if (speedPickerVisible) PlaybackSpeedOverlay(playbackSpeed, { playbackSpeed = it }, {
+            speedPickerVisible = false; controlsVisible = true; returnControlFocus = speedFocusRequester
+        })
         if (resizePickerVisible) VideoResizeQuickOverlay(
             preview = resizeMode,
             onPreview = { resizePreview = it },

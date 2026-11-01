@@ -14,7 +14,10 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = android.app.Application::class, manifest = Config.NONE)
 class AlternateSourceResolverTest {
-    private val movie = AlternateSourceTarget("A Sample Film", false, tmdbId = null, year = 2020)
+    // These fixtures exercise the original Unity search/iframe protocol. Auto's
+    // multi-source fan-out is covered independently in AlternateAutoSourceTest.
+    private val movie = AlternateSourceTarget("A Sample Film", false, tmdbId = null, year = 2020,
+        provider = AlternateSourceProvider.STREAMING_UNITY)
     private class Fixture {
         val requests = mutableListOf<AlternateSourceHttpRequest>()
         var clock = 1000L

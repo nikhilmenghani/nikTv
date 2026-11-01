@@ -30,7 +30,8 @@ internal object ProviderTitles {
             if (series) next = next.replace(channel, "")
             for (regex in listOf(firstGroup, lastGroup)) {
                 val match = regex.find(next)
-                if (match != null && metadata.matches(match.groupValues.drop(1).first { it.isNotBlank() }.trim()))
+                val group = match?.groupValues?.drop(1)?.firstOrNull { it.isNotBlank() }?.trim()
+                if (match != null && group != null && metadata.matches(group))
                     next = next.removeRange(match.range).trim()
             }
             next = next.replace(trailingLabel, "").trim()

@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.ui.remoteCombinedClickable
+import com.nikhil.niktv.ui.EpisodeMetadataBadge
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
 /** Shared landscape episode treatment. Provider-specific actions remain with the caller. */
@@ -42,6 +43,8 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
             Box(imageModifier.aspectRatio(16f / 9f).clip(shape).background(Color(0xFF222936)), contentAlignment = Alignment.Center) {
                 if (artwork.isNullOrBlank()) Icon(Icons.Default.Movie, null, tint = Color.Gray)
                 else AsyncImage(thumbnailArtworkUrl(artwork, 342), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                if (resume && !listView) EpisodeMetadataBadge("Last watched", highlighted = true,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
                 progress?.takeIf { it > 0 }?.let {
                     LinearProgressIndicator(progress = { it.coerceIn(0f, 1f) }, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
                         color = Color(0xFFE50925), trackColor = Color(0xFF4B4F58), drawStopIndicator = {})
@@ -52,8 +55,11 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
             verticalAlignment = Alignment.CenterVertically) {
             image(Modifier.width(if (compact) 92.dp else 112.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, color = Color.White, style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    Text(title, Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (resume) EpisodeMetadataBadge("Last watched", highlighted = true)
+                }
                 Text(listOf(label, metadata).filter(String::isNotBlank).joinToString(" · "),
                     color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelMedium)
                 if (!overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),

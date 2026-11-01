@@ -844,6 +844,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,loadSeriesSeason = vm::loadSeriesSeason
                     ,setUseTmdbEpisodeMetadata = vm::setUseTmdbEpisodeMetadata
                     ,refreshTmdbEpisodeCache = vm::forceRefreshTmdbEpisodeCache
+                    ,refreshEpisodeTmdb = vm::refreshEpisodeTmdb
+                    ,dismissEpisodeTmdbRefresh = vm::dismissEpisodeTmdbRefresh
                     ,downloadForOffline = vm::downloadForOffline
                     ,removeOfflineDownload = vm::removeOfflineDownload
                     ,removeAllOfflineDownloads = vm::removeAllOfflineDownloads

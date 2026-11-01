@@ -303,6 +303,70 @@ class AlternatePlaybackDeviceTest {
         assertTrue("$engine failures: ${failures.joinToString()}", failures.isEmpty())
     }
     @Test fun onlyflixMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX)
+    @Test fun sevenMoviesMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.SEVEN_MOVIES)
+    @Test fun sevenMoviesMoviePlaysInVlc() = movyPlayback(PlaybackEngine.VLC, com.nikhil.niktv.data.AlternateSourceProvider.SEVEN_MOVIES)
+    @Test fun sevenMoviesMoviePlaysInFlow() = movyPlayback(PlaybackEngine.FLOW, com.nikhil.niktv.data.AlternateSourceProvider.SEVEN_MOVIES)
+    @Test fun sevenMoviesMoviePlaysInMpv() = movyPlayback(PlaybackEngine.MPV, com.nikhil.niktv.data.AlternateSourceProvider.SEVEN_MOVIES)
+    @Test fun sevenMoviesEpisodePlaysInExo() = sevenMoviesEpisode(PlaybackEngine.MEDIA3)
+    @Test fun sevenMoviesEpisodePlaysInVlc() = sevenMoviesEpisode(PlaybackEngine.VLC)
+    @Test fun sevenMoviesEpisodePlaysInFlow() = sevenMoviesEpisode(PlaybackEngine.FLOW)
+    @Test fun sevenMoviesEpisodePlaysInMpv() = sevenMoviesEpisode(PlaybackEngine.MPV)
+
+    @Test fun abibliMoviePlaysInExo() = abibliPlayback(PlaybackEngine.MEDIA3)
+    @Test fun abibliMoviePlaysInVlc() = abibliPlayback(PlaybackEngine.VLC)
+    @Test fun abibliMoviePlaysInFlow() = abibliPlayback(PlaybackEngine.FLOW)
+    @Test fun abibliMoviePlaysInMpv() = abibliPlayback(PlaybackEngine.MPV)
+    @Test fun abibliEpisodePlaysInExo() = abibliPlayback(PlaybackEngine.MEDIA3, true)
+    @Test fun abibliEpisodePlaysInVlc() = abibliPlayback(PlaybackEngine.VLC, true)
+    @Test fun abibliEpisodePlaysInFlow() = abibliPlayback(PlaybackEngine.FLOW, true)
+    @Test fun abibliEpisodePlaysInMpv() = abibliPlayback(PlaybackEngine.MPV, true)
+
+    private fun abibliPlayback(engine: PlaybackEngine, episode: Boolean = false) = silently {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("publicAlternateNetwork") == "true")
+        if (engine == PlaybackEngine.MPV) org.junit.Assume.assumeTrue(mpvSupportedSdk(android.os.Build.VERSION.SDK_INT))
+        val resolver = com.nikhil.niktv.data.AlternateSourceResolver()
+        LocalHls().use { server ->
+            val item = if (episode) MediaItem("tmdb-series:1396", "Breaking Bad", null, null, externalTmdbId = 1396)
+                else MediaItem("tmdb-movie:1726", "Iron Man", null, null, externalTmdbId = 1726)
+            Harness(engine, server, item, { target ->
+                resolver.resolve(target.copy(provider = com.nikhil.niktv.data.AlternateSourceProvider.ABIBLI))
+            }).use { harness ->
+                harness.start(series = episode, season = 1, episode = 1)
+                harness.sources()
+                val before = harness.position()
+                Thread.sleep(3_000L)
+                assertTrue("$engine Abibli must continue advancing", harness.position() > before + 1_000L)
+                assertTrue("Abibli plays through its session-owned native route", harness.vm.state.value.nowPlaying!!.url.startsWith("http://127.0.0.1:"))
+                assertEquals(if (episode) 1396 else 1726, harness.lookups.single().tmdbId)
+                if (episode) { assertEquals(1, harness.lookups.single().season); assertEquals(1, harness.lookups.single().episode) }
+                click("Close")
+                click("Forward 10 seconds")
+                await("$engine Abibli must seek and resume advancing") { harness.position() > before + 7_000L }
+                harness.verifyIsolation()
+            }
+        }
+    }
+
+    private fun sevenMoviesEpisode(engine: PlaybackEngine) = silently {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("publicAlternateNetwork") == "true")
+        val resolver = com.nikhil.niktv.data.AlternateSourceResolver()
+        LocalHls().use { server ->
+            val series = MediaItem("tmdb-series:1668", "Friends", null, null, externalTmdbId = 1668)
+            Harness(engine, server, series, { target ->
+                resolver.resolve(target.copy(provider = com.nikhil.niktv.data.AlternateSourceProvider.SEVEN_MOVIES))
+            }).use { harness ->
+                harness.start(series = true, season = 1, episode = 1)
+                harness.sources()
+                val before = harness.position()
+                Thread.sleep(3_000L)
+                assertTrue("$engine 7Movies episode must advance", harness.position() > before + 1_000L)
+                assertEquals(1668, harness.lookups.single().tmdbId)
+                assertEquals(1, harness.lookups.single().season)
+                assertEquals(1, harness.lookups.single().episode)
+                harness.verifyIsolation()
+            }
+        }
+    }
     @Test fun onlyflixMoviePlaysInVlc() = movyPlayback(PlaybackEngine.VLC, com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX)
     @Test fun onlyflixMoviePlaysInFlow() = movyPlayback(PlaybackEngine.FLOW, com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX)
     @Test fun onlyflixMoviePlaysInMpv() {

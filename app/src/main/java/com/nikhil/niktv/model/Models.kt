@@ -394,7 +394,9 @@ data class PlayingMedia(
     /** Ephemeral stream licensing; never persisted in history or progress. */
     val streamDrm: PlaybackStreamDrm? = null,
     /** Opt-in provider DVR controls; no local proxy, recording or extra stream. */
-    val allowLiveWindowSeeking: Boolean = false
+    val allowLiveWindowSeeking: Boolean = false,
+    /** A user-opened file/URL, independent of IPTV profiles and history. */
+    val externalPlayback: Boolean = false
 )
 
 class PlaybackStreamDrm(

@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalFocusManager
@@ -148,6 +149,8 @@ internal fun ModernSeriesDetailScreen(
     openTmdbSeries: (TrendingSeries) -> Unit,
     goToEpisode: ((Int?) -> Unit)? = null,
     cancelEpisodeDestination: () -> Unit = {},
+    refreshEpisodeTmdb: (MediaItem) -> Unit = {},
+    dismissEpisodeTmdbRefresh: () -> Unit = {},
 ) {
     val series = state.selectedSeries ?: return
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
@@ -180,6 +183,7 @@ internal fun ModernSeriesDetailScreen(
     var toolbarHeightPx by remember { mutableIntStateOf(0) }
     var paginationAttempt by remember(series.id, state.selectedSeriesSeason) { mutableStateOf<Int?>(null) }
     val profile = state.savedProfile?.cacheKey().orEmpty()
+    val singleMetadataRefresh = state.episodeTmdbRefresh?.takeIf { it.profile == profile && it.series == series.id }
     val navigationTrace = com.nikhil.niktv.discovery.LocalDiscoveryNavigationTrace.current
     val reducedMotion = android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver,
         android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
@@ -200,7 +204,15 @@ internal fun ModernSeriesDetailScreen(
         !episodeIsTv &&
             episodeConfiguration.smallestScreenWidthDp < 600
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
-    val verticalEpisodeLayout = episodeListView && mobileEpisodeLayout
+    // Episodes always own their scroll state; phones keep the compact header in view.
+    val verticalEpisodeLayout = false
+    var contentHeightPx by remember { mutableIntStateOf(0) }
+    var heroHeightPx by remember { mutableIntStateOf(0) }
+    var episodeViewportHeightPx by remember { mutableIntStateOf(0) }
+    var lastEpisodeHeightPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val phoneEpisodeHeight = with(density) { (contentHeightPx - heroHeightPx - toolbarHeightPx).toDp() }
+        .minus(24.dp).coerceAtLeast(96.dp)
     val seasonSidebarRequester = remember(series.id) { FocusRequester() }
     val layoutRequester = remember(series.id) { FocusRequester() }
 
@@ -220,6 +232,18 @@ internal fun ModernSeriesDetailScreen(
         }
     }
     val landscapeRequesters = remember(profile, series.id) { mutableMapOf<String, FocusRequester>() }
+    val metadataResultHost = androidx.compose.ui.platform.LocalView.current
+    if (singleMetadataRefresh?.running == false && singleMetadataRefresh.message != null)
+        FullDescriptionDialog("Episode TMDB details", singleMetadataRefresh.message, dismiss = {
+            dismissEpisodeTmdbRefresh()
+            if (remoteNavigationActive) detailScope.launch {
+                repeat(30) { withFrameNanos { }
+                    if (metadataResultHost.hasWindowFocus() && runCatching {
+                            landscapeRequesters[singleMetadataRefresh.episode]?.requestFocus() == true
+                        }.getOrDefault(false)) return@launch
+                }
+            }
+        })
     val sortRequester = remember(series.id) { FocusRequester() }
     val synopsisRequester = remember(series.id) { FocusRequester() }
     var hasSynopsis by remember(series.id) { mutableStateOf(false) }
@@ -239,6 +263,17 @@ internal fun ModernSeriesDetailScreen(
     }
 
     BackHandler(enabled = expandedPanel == SeriesDetailPanel.SEARCH) { closeEpisodeSearch() }
+    BackHandler(enabled = mobileEpisodeLayout && expandedPanel in listOf(SeriesDetailPanel.CAST, SeriesDetailPanel.RELATED)) {
+        expandedPanel = null
+    }
+    var hadInlineExtras by remember(series.id) { mutableStateOf(false) }
+    LaunchedEffect(expandedPanel) {
+        if (expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED) hadInlineExtras = true
+        else if (mobileEpisodeLayout && hadInlineExtras) {
+            hadInlineExtras = false
+            episodeListState.scrollToItem(0)
+        }
+    }
 
     LaunchedEffect(expandedPanel) {
         if (expandedPanel != SeriesDetailPanel.SEARCH) {
@@ -359,6 +394,7 @@ internal fun ModernSeriesDetailScreen(
     )
     val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) latestEpisode ?: state.items.firstOrNull()
         else state.items.firstOrNull()
+    var pendingWatchedJump by remember(profile, series.id) { mutableStateOf<MediaItem?>(null) }
 
     fun requestEpisodeFocus(revealParent: Boolean, fromStart: Boolean = false, exactId: String? = null) {
         if (filteredEpisodes.isEmpty()) return
@@ -386,11 +422,16 @@ internal fun ModernSeriesDetailScreen(
             val visible = viewport.visibleItemsInfo.firstOrNull { it.index == verticalIndex }
             // Seasons and their episode list share this outer row. Scrolling it
             // during Right fights the sidebar's own focus reveal on short lists.
-            if (forceReveal && verticalEpisodeLayout) episodeListState.scrollToItem(verticalIndex, -toolbarHeightPx)
-            else if (revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
+            if (!mobileEpisodeLayout && forceReveal && verticalEpisodeLayout) episodeListState.scrollToItem(verticalIndex, -toolbarHeightPx)
+            else if (!mobileEpisodeLayout && revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
                 visible.offset + visible.size > viewport.viewportEndOffset))
                 episodeListState.scrollToItem(verticalIndex)
-            if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) episodeRowState.scrollToItem(index)
+            if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) episodeRowState.scrollToItem(
+                if (exactId != null) seriesEpisodeResumeAnchor(index, filteredEpisodes.size) else index)
+            if (exactId != null && index == filteredEpisodes.lastIndex) {
+                repeat(2) { withFrameNanos { } }
+                episodeRowState.scrollToItem(index)
+            }
             repeat(20) { withFrameNanos { }
                 if (runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)) return@launch
             }
@@ -398,6 +439,14 @@ internal fun ModernSeriesDetailScreen(
     }
     val destination = state.episodeDestination?.takeIf { it.series == series.id &&
         it.profile == state.session?.profile?.cacheKey() && it.season == state.selectedSeriesSeason }
+    LaunchedEffect(pendingWatchedJump, state.selectedSeriesSeason, state.loading, state.items) {
+        val watched = pendingWatchedJump ?: return@LaunchedEffect
+        val watchedSeason = watched.seasonNumber ?: watched.title.seasonNumberFromTitle()
+        if (state.loading || (watchedSeason != null && state.selectedSeriesSeason != watchedSeason) || state.items.isEmpty()) return@LaunchedEffect
+        pendingWatchedJump = null
+        if (filteredEpisodes.any { it.id == watched.id }) requestEpisodeFocus(revealParent = true, exactId = watched.id)
+        else (watched.episodeNumber ?: watched.title.episodeNumberFromTitle())?.let { goToEpisode?.invoke(it) }
+    }
     var handledDestination by rememberSaveable(profile, series.id) { mutableStateOf<Long?>(null) }
     val episodeWindow = androidx.compose.ui.platform.LocalView.current
     var destinationHadPopup by remember { mutableStateOf(false) }
@@ -506,8 +555,12 @@ internal fun ModernSeriesDetailScreen(
             }
             is SeriesEpisodeEntryFocus.Episode -> {
                 val listIndex = seriesEpisodeVerticalIndex(target.index, !verticalEpisodeLayout)
-                if (!verticalEpisodeLayout) episodeRowState.scrollToItem(target.index)
-                if (episodeListState.layoutInfo.visibleItemsInfo.none { it.index == listIndex }) {
+                if (!verticalEpisodeLayout) episodeRowState.scrollToItem(seriesEpisodeResumeAnchor(target.index, episodeIds.size))
+                if (!verticalEpisodeLayout && target.index == episodeIds.lastIndex) {
+                    repeat(2) { withFrameNanos { } }
+                    episodeRowState.scrollToItem(target.index)
+                }
+                if (!mobileEpisodeLayout && episodeListState.layoutInfo.visibleItemsInfo.none { it.index == listIndex }) {
                     episodeListState.scrollToItem(listIndex, -toolbarHeightPx)
                 }
                 entryEpisodeRequester
@@ -541,7 +594,8 @@ internal fun ModernSeriesDetailScreen(
                 episodeListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1, state.episodeHasMore,
                 state.loading, activeSearchQuery, episodeListState.isScrollInProgress || episodeListState.firstVisibleItemIndex > 1)
             else shouldLoadMoreLandscapeEpisodes(filteredEpisodes.size, episodeRowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
-                state.episodeHasMore, state.loading, activeSearchQuery, episodeListState.firstVisibleItemIndex > 1 || focusedEpisodeId != null)
+                state.episodeHasMore, state.loading, activeSearchQuery, episodeRowState.isScrollInProgress ||
+                    episodeRowState.firstVisibleItemIndex > 0 || focusedEpisodeId != null)
         }
             .distinctUntilChanged().collect { nearEnd ->
                 if (nearEnd && paginationAttempt != state.episodePage) {
@@ -566,6 +620,7 @@ internal fun ModernSeriesDetailScreen(
                 (!initialEpisodeFocusComplete && state.loading) || entryFocusTarget == SeriesEpisodeEntryFocus.Loading))
     ) {
         com.nikhil.niktv.discovery.ProviderDetailHeader(series, CatalogType.SERIES, state,
+            compactSeries = mobileEpisodeLayout,
             play = { primaryEpisodeToPlay?.let(play) }, close = closeSeries,
             favorite = { toggleFavorite(series) }, isFavorite = isFavorite,
             openTmdbMovie = openTmdbMovie, openTmdbSeries = openTmdbSeries,
@@ -591,7 +646,7 @@ internal fun ModernSeriesDetailScreen(
             down = {
                 if (!mobileEpisodeLayout) { moveWideFocus(SeriesDetailFocus.PLAY, 1) } else detailScope.launch {
                     if (filteredEpisodes.isNotEmpty()) {
-                        episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX, -toolbarHeightPx)
+                        if (!mobileEpisodeLayout) episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX, -toolbarHeightPx)
                         repeat(12) { withFrameNanos { }; if (runCatching { firstEpisodeRequester.requestFocus() }.getOrDefault(false)) return@launch }
                     }
                 }
@@ -600,7 +655,7 @@ internal fun ModernSeriesDetailScreen(
                     if (isWatched) "Following" else "Notify me", if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
                     iconOnly = mobileEpisodeLayout, modifier = Modifier.semantics { selected = isWatched }, onClick = toggleSeriesWatch)
                 Box {
-                    com.nikhil.niktv.discovery.DiscoveryAction("Series options", Icons.Default.MoreHoriz, iconOnly = true) { moreActionsExpanded = true }
+                    com.nikhil.niktv.discovery.DiscoveryAction("Series options", Icons.Default.Settings, iconOnly = true) { moreActionsExpanded = true }
                     DropdownMenu(moreActionsExpanded, { moreActionsExpanded = false }) {
                         NikDropdownMenuItem(text = { Text("Refresh episodes") }, leadingIcon = { Icon(Icons.Default.Refresh, null) },
                             onClick = { moreActionsExpanded = false; refreshCatalog() })
@@ -617,24 +672,19 @@ internal fun ModernSeriesDetailScreen(
             }, layout = { hero, castRow, supplementary, focusCast, focusRelated ->
         val detailsTools: @Composable () -> Unit = {
             if (mobileEpisodeLayout) {
-                var detailsMenuOpen by remember { mutableStateOf(false) }
-                Box {
-                    com.nikhil.niktv.discovery.DiscoveryAction("Details", Icons.Default.MoreHoriz, iconOnly = true,
-                        modifier = Modifier.focusRequester(castButtonRequester).focusRequester(relatedButtonRequester)) { detailsMenuOpen = true }
-                    DropdownMenu(detailsMenuOpen, { detailsMenuOpen = false }) {
-                        if (focusCast != null) NikDropdownMenuItem(
-                            text = { Text(if (expandedPanel == SeriesDetailPanel.CAST) "Hide cast" else "Cast") },
-                            leadingIcon = { Icon(Icons.Default.People, null) }, onClick = {
-                                detailsMenuOpen = false
-                                expandedPanel = if (expandedPanel == SeriesDetailPanel.CAST) null else SeriesDetailPanel.CAST
-                            })
-                        if (focusRelated != null) NikDropdownMenuItem(
-                            text = { Text(if (expandedPanel == SeriesDetailPanel.RELATED) "Hide related" else "Related") },
-                            leadingIcon = { Icon(Icons.Default.Movie, null) }, onClick = {
-                                detailsMenuOpen = false
-                                expandedPanel = if (expandedPanel == SeriesDetailPanel.RELATED) null else SeriesDetailPanel.RELATED
-                            })
-                    }
+                val castExpanded = expandedPanel == SeriesDetailPanel.CAST
+                val relatedExpanded = expandedPanel == SeriesDetailPanel.RELATED
+                com.nikhil.niktv.discovery.DiscoveryAction(if (castExpanded) "Hide cast" else "Cast",
+                    if (castExpanded) Icons.Default.ExpandLess else Icons.Default.People,
+                    selected = castExpanded, iconOnly = true, enabled = focusCast != null,
+                    modifier = Modifier.focusRequester(castButtonRequester).semantics { selected = castExpanded }) {
+                    expandedPanel = if (expandedPanel == SeriesDetailPanel.CAST) null else SeriesDetailPanel.CAST
+                }
+                if (focusRelated != null) com.nikhil.niktv.discovery.DiscoveryAction(if (relatedExpanded) "Hide related" else "Related",
+                    if (relatedExpanded) Icons.Default.ExpandLess else Icons.Default.Movie,
+                    selected = relatedExpanded, iconOnly = true,
+                    modifier = Modifier.focusRequester(relatedButtonRequester).semantics { selected = relatedExpanded }) {
+                    expandedPanel = if (expandedPanel == SeriesDetailPanel.RELATED) null else SeriesDetailPanel.RELATED
                 }
             } else {
                     FlowRow(modifier = if (!mobileEpisodeLayout) Modifier.onPreviewKeyEvent { event ->
@@ -674,13 +724,14 @@ internal fun ModernSeriesDetailScreen(
         }
         }
         val detailsPanel: @Composable () -> Unit = {
-
                 AnimatedContent(expandedPanel, contentAlignment = Alignment.TopStart,
                     transitionSpec = {
                         (fadeIn(tween(if (reducedMotion) 0 else 120)) togetherWith fadeOut(tween(if (reducedMotion) 0 else 90)))
                             .using(SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(if (reducedMotion) 0 else 180, easing = FastOutSlowInEasing) }))
                     }, label = "seriesDetailsPanel") { panel ->
-                    Box(Modifier.fillMaxWidth().onFocusChanged {
+                    Box(Modifier.fillMaxWidth()
+                        .then(if (mobileEpisodeLayout) Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()) else Modifier)
+                        .onFocusChanged {
                         inlinePanelFocused = it.hasFocus
                         if (it.hasFocus) focusedPanel = panel
                     }) {
@@ -692,19 +743,20 @@ internal fun ModernSeriesDetailScreen(
                         }
                     }
                 }
-
         }
         val seriesContent: @Composable () -> Unit = {
         LazyColumn(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
+                .onSizeChanged { contentHeightPx = it.height },
             state = episodeListState,
+            userScrollEnabled = !mobileEpisodeLayout || expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED,
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
             item("series-hero") {
                 CompositionLocalProvider(
                     com.nikhil.niktv.discovery.LocalProviderSynopsisActions provides detailsTools,
                     com.nikhil.niktv.discovery.LocalProviderSynopsisPanel provides detailsPanel
-                ) { hero() }
+                ) { Box(Modifier.onSizeChanged { heroHeightPx = it.height }) { hero() } }
             }
 
             val controls: @Composable LazyItemScope.() -> Unit = {
@@ -761,6 +813,14 @@ internal fun ModernSeriesDetailScreen(
                             else requestEpisodeFocus(revealParent = true, fromStart = true)
                         },
                         onGoToEpisode = goToEpisode?.let { callback -> { number -> callback(number) } },
+                        onLastWatched = (watchedEntryEpisode ?: recentEpisode)?.let { watched -> {
+                            if (expandedPanel == SeriesDetailPanel.SEARCH) closeEpisodeSearch()
+                            initialEpisodeFocusComplete = true
+                            handledPlaybackReturnFocusId = entryPlaybackReturnFocusId
+                            pendingWatchedJump = watched
+                            val season = watched.seasonNumber ?: watched.title.seasonNumberFromTitle()
+                            if (season != null && season != state.selectedSeriesSeason) loadSeriesSeason(season)
+                        } },
                         beforeAction = { episodeTextEditing = false; keyboardController?.hide() },
                         searchField = { SeriesEpisodeSearchField(
                                     value = searchQuery, change = {
@@ -783,7 +843,7 @@ internal fun ModernSeriesDetailScreen(
                                                     keyboardController?.hide()
                                                     detailScope.launch {
                                                         if (filteredEpisodes.isNotEmpty()) {
-                                                            episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX, -toolbarHeightPx)
+                                                            if (!mobileEpisodeLayout) episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX, -toolbarHeightPx)
                                                             repeat(12) { withFrameNanos { }; if (runCatching { firstEpisodeRequester.requestFocus() }.getOrDefault(false)) return@launch }
                                                         }
                                                     }; true
@@ -883,7 +943,10 @@ internal fun ModernSeriesDetailScreen(
                         offlineRevision = state.offlineDownloadRevision,
                         onDownload = { downloadForOffline(episode, CatalogType.SERIES, series) },
                         onRemoveDownload = { removeOfflineDownload(episode, CatalogType.SERIES) },
+                        refreshTmdb = { refreshEpisodeTmdb(episode) },
+                        refreshingTmdb = singleMetadataRefresh?.let { it.episode == episode.id && it.running } == true,
                         modifier = Modifier
+                            .onSizeChanged { if (episode.id == filteredEpisodes.lastOrNull()?.id) lastEpisodeHeightPx = it.height }
                             .then(if (episodeListView) Modifier.fillMaxWidth() else Modifier.width(if (mobileEpisodeLayout) 170.dp else 200.dp))
                             .focusRequester(landscapeRequesters.getOrPut(episode.id) { FocusRequester() })
                             .onPreviewKeyEvent { event ->
@@ -909,14 +972,18 @@ internal fun ModernSeriesDetailScreen(
                 }
                 if (verticalEpisodeLayout) items(filteredEpisodes, key = { it.id }) { episodeCard(it) }
                 else if (episodeListView) item("episode-row") {
-                    Row(Modifier.fillMaxWidth().height((episodeConfiguration.screenHeightDp * .68f).coerceIn(260f, 620f).dp)
-                        .padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        if (availableSeasons.isNotEmpty()) SeriesSeasonSidebar(availableSeasons, selectedSeason,
+                    Row(Modifier.fillMaxWidth().height(if (mobileEpisodeLayout) phoneEpisodeHeight else (episodeConfiguration.screenHeightDp * .68f).coerceIn(260f, 620f).dp)
+                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        if (!mobileEpisodeLayout && availableSeasons.isNotEmpty()) SeriesSeasonSidebar(availableSeasons, selectedSeason,
                             seasonCounts,
                             seasonSidebarRequester, loadSeriesSeason, { requestEpisodeFocus(revealParent = false) },
                             { requestWideFocus(SeriesDetailFocus.SORT) }, Modifier.width(156.dp).fillMaxHeight())
-                        LazyColumn(Modifier.weight(1f).fillMaxHeight(), state = episodeRowState,
-                            contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { episodeViewportHeightPx = it.height }) {
+                        LazyColumn(Modifier.fillMaxSize().padding(end = 6.dp), state = episodeRowState,
+                            contentPadding = PaddingValues(bottom = if (!state.episodeHasMore &&
+                                recentEpisode?.id == filteredEpisodes.lastOrNull()?.id && lastEpisodeHeightPx > 0)
+                                with(density) { (episodeViewportHeightPx - lastEpisodeHeightPx).coerceAtLeast(0).toDp() } else 0.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (filteredEpisodes.isEmpty()) item("episode-status") {
                                 Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
                                     if (state.loading) Column(horizontalAlignment = Alignment.CenterHorizontally,
@@ -933,6 +1000,8 @@ internal fun ModernSeriesDetailScreen(
                                     Text(if (state.episodeLoadingMore) "Loading episodes…" else "Load more episodes")
                                 }
                             }
+                        }
+                        SeriesEpisodeScrollIndicator(episodeRowState, Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                         }
                     }
                 } else item("episode-row") {
@@ -998,6 +1067,22 @@ internal fun ModernSeriesDetailScreen(
 }
 
 @Composable
+private fun SeriesEpisodeScrollIndicator(state: LazyListState, modifier: Modifier = Modifier) {
+    Canvas(modifier.width(3.dp).padding(vertical = 6.dp)) {
+        val info = state.layoutInfo
+        if (info.totalItemsCount <= info.visibleItemsInfo.size || info.visibleItemsInfo.isEmpty()) return@Canvas
+        val first = info.visibleItemsInfo.first()
+        val fraction = (info.visibleItemsInfo.size.toFloat() / info.totalItemsCount).coerceIn(.04f, 1f)
+        val thumbHeight = size.height * fraction
+        val progress = ((first.index + state.firstVisibleItemScrollOffset.toFloat() / first.size.coerceAtLeast(1)) /
+            (info.totalItemsCount - info.visibleItemsInfo.size).coerceAtLeast(1)).coerceIn(0f, 1f)
+        drawRoundRect(Color.White.copy(alpha = .12f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width))
+        drawRoundRect(Color.White.copy(alpha = .6f), topLeft = androidx.compose.ui.geometry.Offset(0f, (size.height - thumbHeight) * progress),
+            size = androidx.compose.ui.geometry.Size(size.width, thumbHeight), cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width))
+    }
+}
+
+@Composable
 private fun SeriesToolbarButton(
     icon: ImageVector,
     label: String,
@@ -1029,6 +1114,8 @@ internal fun ModernEpisodeCard(
     onRemoveDownload: () -> Unit,
     landscapePoster: Boolean = false,
     wideList: Boolean = false,
+    refreshTmdb: (() -> Unit)? = null,
+    refreshingTmdb: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val overlayFocusManager = LocalFocusManager.current
@@ -1096,7 +1183,7 @@ internal fun ModernEpisodeCard(
     Box(modifier = modifier) {
     if (landscapePoster || wideList) com.nikhil.niktv.discovery.DiscoveryEpisodeTile(
         title = episode.displayTitle(series), artwork = imageUrl,
-        label = listOfNotNull("Last watched".takeIf { isCurrentResume }, (episode.seasonNumber ?: episode.title.seasonNumberFromTitle())?.let { "S$it" },
+        label = listOfNotNull((episode.seasonNumber ?: episode.title.seasonNumberFromTitle())?.let { "S$it" },
             (episode.episodeNumber ?: episode.title.episodeNumberFromTitle())?.let { "E$it" }).joinToString(" · "),
         metadata = episode.displayAirDate().orEmpty(), progress = progressFraction,
         remaining = episodeRemainingLabel(progress), resume = isCurrentResume,
@@ -1192,15 +1279,18 @@ internal fun ModernEpisodeCard(
                     epNumber != null -> "EP $epNumber"
                     else -> null
                 }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
                 Text(
                     text = episode.displayTitle(series),
+                    modifier = Modifier.weight(1f),
                     style = if (mobileLayout) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold, color = Color.White,
                     maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
+                if (isCurrentResume) EpisodeMetadataBadge("Last watched", highlighted = true)
+                }
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    if (isCurrentResume) EpisodeMetadataBadge("Last watched", highlighted = true)
                     badge?.let { Text(it, color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelSmall) }
                     episode.displayAirDate()?.let { Text(it, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall) }
                     episodeRemainingLabel(progress)?.let { EpisodeMetadataBadge(it, highlighted = isCurrentResume) }
@@ -1228,12 +1318,18 @@ internal fun ModernEpisodeCard(
         }
         }
     }
+    if (refreshingTmdb) CircularProgressIndicator(Modifier.align(Alignment.TopEnd).padding(8.dp).size(18.dp), strokeWidth = 2.dp)
     DropdownMenu(
         expanded = episodeActionsExpanded,
         onDismissRequest = { episodeActionsExpanded = false },
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        if (refreshTmdb != null) NikDropdownMenuItem(
+            text = { Text(if (refreshingTmdb) "Refreshing TMDB details…" else "Refresh TMDB details") },
+            leadingIcon = { if (refreshingTmdb) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Default.Cached, null) }, enabled = !refreshingTmdb,
+            onClick = { episodeActionsExpanded = false; refreshTmdb() })
         AlternateSourceMenuItem(episode, CatalogType.SERIES,
             dismiss = { episodeActionsExpanded = false }, series = series,
             season = episode.seasonNumber ?: episode.title.seasonNumberFromTitle(),
@@ -1305,7 +1401,7 @@ internal fun ModernEpisodeCard(
 
 
 @Composable
-private fun EpisodeMetadataBadge(text: String, highlighted: Boolean = false, modifier: Modifier = Modifier, muted: Boolean = false) {
+internal fun EpisodeMetadataBadge(text: String, highlighted: Boolean = false, modifier: Modifier = Modifier, muted: Boolean = false) {
     Surface(modifier = modifier, shape = RoundedCornerShape(5.dp),
         color = if (highlighted) Color(0xFF3A2226) else Color(0xFF292D35)) {
         Text(text, Modifier.padding(horizontal = 5.dp, vertical = 1.dp),

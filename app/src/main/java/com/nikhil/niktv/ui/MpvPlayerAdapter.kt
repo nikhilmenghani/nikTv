@@ -35,6 +35,7 @@ internal class MpvPlayerAdapter(
     private val live = media.catalogType == CatalogType.LIVE_TV
     // Native handle and all JNI commands belong to MpvNativePlaybackWorker.
     private var mpv: MPVLib? = null
+    private var externalDescriptor: android.os.ParcelFileDescriptor? = null
     private var nativeHasFile = false
     private var pendingPreparePosition: Long? = null
     @Volatile private var replacementEndExpected = false
@@ -298,6 +299,7 @@ internal class MpvPlayerAdapter(
         abandonFocus()
         return enqueueNative(allowReleased = true) {
             pendingPreparePosition = null
+            try {
             mpv?.let {
                 it.removeObserver(observer)
                 it.removeLogObserver(nativeLogObserver)
@@ -308,7 +310,10 @@ internal class MpvPlayerAdapter(
                 android.util.Log.i("NikTvMpv", "Destroying retiring native handle")
                 it.destroy()
             }
-            mpv = null
+            } finally {
+                mpv = null
+                runCatching { externalDescriptor?.close() }; externalDescriptor = null
+            }
             android.util.Log.i("NikTvMpv", "Native player released on worker")
         }
     }
@@ -420,7 +425,13 @@ internal class MpvPlayerAdapter(
         engine.setPropertyString("start", if (live) liveStartPosition else (resumePosition / 1000.0).toString())
         replacementEndExpected = nativeHasFile
         nativeHasFile = true
-        engine.command(arrayOf("loadfile", selectedItem.localConfiguration!!.uri.toString(), "replace"))
+        val uri = selectedItem.localConfiguration!!.uri
+        val location = if (media.externalPlayback && uri.scheme == "content") {
+            val fd = externalDescriptor ?: (appContext.contentResolver.openFileDescriptor(uri, "r")
+                ?: throw java.io.IOException("File access unavailable")).also { externalDescriptor = it }
+            "fd://${fd.fd}"
+        } else uri.toString()
+        engine.command(arrayOf("loadfile", location, "replace"))
         selectedItem.localConfiguration?.subtitleConfigurations?.firstOrNull()?.uri?.toString()
             ?.let { engine.command(arrayOf("sub-add", it, "select")) }
         engine.setPropertyDouble("sub-delay", subtitleDelayMillis / 1000.0)

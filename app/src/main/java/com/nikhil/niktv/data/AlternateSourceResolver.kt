@@ -14,17 +14,22 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.coroutineScope
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
-enum class AlternateSourceProvider { AUTO, MOVY, CINEJOY, CNO, STREAMING_UNITY, RIVE_VANGUARD, RIVE_PRIMEVIDS, RIVE_CITADEL, ATLANTIC_ATHENA, ONLYFLIX }
+enum class AlternateSourceProvider { AUTO, MOVY, CINEJOY, CNO, STREAMING_UNITY, RIVE_VANGUARD, RIVE_PRIMEVIDS, RIVE_CITADEL, ATLANTIC_ATHENA, ONLYFLIX, SEVEN_MOVIES, ABIBLI }
 internal val nativeSourceProviders = listOf(AlternateSourceProvider.AUTO, AlternateSourceProvider.MOVY,
     AlternateSourceProvider.STREAMING_UNITY, AlternateSourceProvider.ATLANTIC_ATHENA,
-    AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX)
+    AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX,
+    AlternateSourceProvider.SEVEN_MOVIES, AlternateSourceProvider.ABIBLI)
 enum class AlternatePlaybackRoute { NATIVE, VIDY_EMBEDDED, CINEJOY_WEB, CNO_WEB }
 
 @kotlinx.serialization.Serializable
@@ -48,10 +53,12 @@ data class AlternateStream(
     val height: Int? = null,
     val route: AlternatePlaybackRoute = AlternatePlaybackRoute.NATIVE,
     val sourceVariant: String? = null,
+    val abibli: AbibliPlaybackSpec? = null,
 )
 
 /** Injectable transport keeps source parsing deterministic and never requires a provider profile. */
-data class AlternateSourceHttpRequest(val url: String, val headers: Map<String, String>, val maxBytes: Int)
+data class AlternateSourceHttpRequest(val url: String, val headers: Map<String, String>, val maxBytes: Int,
+    val method: String = "GET", val jsonBody: String? = null)
 data class AlternateSourceHttpResponse(val url: String, val code: Int, val body: String)
 enum class AlternateSourceFailure { SOURCE, AUTHORIZATION, CHALLENGE, RATE_LIMIT, PROTECTED_MEDIA, IDENTITY }
 class AlternateSourceException(
@@ -121,16 +128,29 @@ class AlternateSourceResolver(
     private suspend fun lookup(target: AlternateSourceTarget): List<AlternateStream> {
         if (target.provider !in nativeSourceProviders) throw AlternateSourceException("This browser source is no longer supported. Choose a native source.")
         if (target.provider != AlternateSourceProvider.AUTO) return lookupNative(target)
-        // Two independent, bounded lookups. A failed source cannot discard another's results.
+        // At most two bounded source lookups. A failed source cannot discard another's results.
         return coroutineScope {
             val slots = Semaphore(2)
+            val budget = (timeoutMillis - minOf(2_000L, timeoutMillis / 5)).coerceIn(1L, 23_000L)
+            val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budget)
             val providers = listOf(AlternateSourceProvider.MOVY, AlternateSourceProvider.AUTO,
-                AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX)
+                AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL,
+                AlternateSourceProvider.ONLYFLIX, AlternateSourceProvider.SEVEN_MOVIES, AlternateSourceProvider.ABIBLI)
             val searches = providers.map { provider ->
-                async {
+                // Reserve slots in provider priority order, then yield before any
+                // potentially blocking adapter work. IO scheduling must not let
+                // slower fallback groups consume Movy's entire shared deadline.
+                async(start = CoroutineStart.UNDISPATCHED) {
                     slots.withPermit {
+                    yield()
                     try {
-                        withTimeoutOrNull(7_000) { lookupNative(target.copy(provider = provider)) }
+                        // Keep the original six groups' priority and time allowance. A new group
+                        // uses the remaining budget rather than making Auto discard ready results
+                        // at the outer 25-second deadline after four seven-second waves.
+                        val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+                        (if (remaining > 0) withTimeoutOrNull(minOf(7_000L, remaining)) {
+                            lookupNative(target.copy(provider = provider))
+                        } else null)
                             ?.let { it to null } ?: (emptyList<AlternateStream>() to AlternateSourceException("Source lookup timed out.", stage = "source timeout"))
                     } catch (cancelled: CancellationException) { throw cancelled }
                       catch (failure: AlternateSourceException) { emptyList<AlternateStream>() to failure }
@@ -147,6 +167,8 @@ class AlternateSourceResolver(
                         AlternateSourceProvider.RIVE_PRIMEVIDS -> "Rive Primevids"
                         AlternateSourceProvider.RIVE_CITADEL -> "Rive Citadel"
                         AlternateSourceProvider.ONLYFLIX -> "OnlyFlix"
+                        AlternateSourceProvider.SEVEN_MOVIES -> "7Movies"
+                        AlternateSourceProvider.ABIBLI -> "Abibli"
                         else -> provider.name
                     }
                     val failure = result.second
@@ -170,11 +192,11 @@ class AlternateSourceResolver(
 
     private suspend fun lookupNative(target: AlternateSourceTarget): List<AlternateStream> {
         var remainingRequests = 12
-        suspend fun read(url: HttpUrl, headers: Map<String, String> = emptyMap(), maxBytes: Int = MAX_PAGE_BYTES, phase: String = "source"): AlternateSourceHttpResponse {
+        suspend fun read(url: HttpUrl, headers: Map<String, String> = emptyMap(), maxBytes: Int = MAX_PAGE_BYTES, phase: String = "source", method: String = "GET", jsonBody: String? = null): AlternateSourceHttpResponse {
             if (--remainingRequests < 0) throw AlternateSourceException("The source required too many requests.")
             requirePublicHttps(url.toString())
             val response = try {
-                fetch(AlternateSourceHttpRequest(url.toString(), mapOf("User-Agent" to USER_AGENT) + headers, maxBytes))
+                fetch(AlternateSourceHttpRequest(url.toString(), mapOf("User-Agent" to USER_AGENT) + headers, maxBytes, method, jsonBody))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (safe: AlternateSourceException) {
@@ -213,6 +235,16 @@ class AlternateSourceResolver(
         }
         if (target.provider == AlternateSourceProvider.ONLYFLIX) {
             return OnlyFlixSourceResolver { request, phase -> read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase) }.resolve(target)
+        }
+        if (target.provider == AlternateSourceProvider.SEVEN_MOVIES) {
+            return SevenMoviesSourceResolver { request, phase ->
+                read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase, request.method, request.jsonBody)
+            }.resolve(target)
+        }
+        if (target.provider == AlternateSourceProvider.ABIBLI) {
+            return AbibliSourceResolver { request, phase ->
+                read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase, request.method, request.jsonBody)
+            }.resolve(target)
         }
         var preferredIssue: AlternateSourceException? = null
         var preferredEmpty = false
@@ -328,7 +360,7 @@ class AlternateSourceResolver(
     }
 }
 
-private fun normalizedTitle(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
+internal fun normalizedTitle(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
     .lowercase(Locale.ROOT).replace(Regex("""\p{M}+"""), "")
     .replace(Regex("""^(?:the|an|a)\s+"""), "").filter(Char::isLetterOrDigit)
 
@@ -427,16 +459,27 @@ private val alternateHttpClient = OkHttpClient.Builder().followRedirects(false).
     .connectTimeout(5, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).callTimeout(10, TimeUnit.SECONDS).build()
 
 internal suspend fun fetchAlternateSource(request: AlternateSourceHttpRequest): AlternateSourceHttpResponse {
+    if (request.method !in setOf("GET", "POST") ||
+        (request.method == "GET" && request.jsonBody != null) ||
+        (request.method == "POST" && (request.jsonBody == null || request.jsonBody.toByteArray().size > 8192))) {
+        throw AlternateSourceException("The alternate source requested an unsupported operation.")
+    }
     var url = requirePublicHttps(request.url)
     repeat(5) { redirects ->
-        val networkRequest = Request.Builder().url(url).apply { request.headers.forEach { (name, value) -> header(name, value) } }.build()
+        val networkRequest = Request.Builder().url(url).apply {
+            request.headers.forEach { (name, value) -> header(name, value) }
+            if (request.method == "POST") post(request.jsonBody!!.toRequestBody("application/json; charset=utf-8".toMediaType()))
+        }.build()
         val result = alternateHttpClient.newCall(networkRequest).readCancellable { response ->
             if (response.code in 300..399) {
+                // Guest-session POSTs are origin-bound. Do not replay their body or convert
+                // them to a GET when an upstream changes its endpoint.
+                if (request.method == "POST") throw AlternateSourceException("The public source redirected its guest session.", AlternateSourceFailure.AUTHORIZATION)
                 val location = response.header("Location") ?: throw AlternateSourceException("The alternate source returned an invalid redirect.")
                 val next = url.resolve(location) ?: throw AlternateSourceException("The alternate source returned an invalid redirect.")
                 requirePublicHttps(next.toString())
                 val original = requirePublicHttps(request.url)
-                val originScoped = request.headers.keys.any { it.equals("x-player-key", true) } ||
+                val originScoped = request.headers.keys.any { it.equals("x-player-key", true) || it.equals("x-embed-parent", true) || it.equals("x-s5v-client", true) } ||
                     (original.host == "api.wecollege.net" && original.queryParameter("seed") != null)
                 if (originScoped && !sameAlternateOrigin(next, original)) {
                     throw AlternateSourceException("The public source redirected its API request to an unsupported host.", AlternateSourceFailure.AUTHORIZATION)

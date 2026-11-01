@@ -170,6 +170,8 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
                                 AlternateSourceProvider.STREAMING_UNITY -> "Unity"; AlternateSourceProvider.ATLANTIC_ATHENA -> "Athena";
                                 AlternateSourceProvider.RIVE_PRIMEVIDS -> "Primevids"; AlternateSourceProvider.RIVE_CITADEL -> "Citadel";
                                 AlternateSourceProvider.ONLYFLIX -> "OnlyFlix";
+                                AlternateSourceProvider.SEVEN_MOVIES -> "7Movies";
+                                AlternateSourceProvider.ABIBLI -> "Abibli";
                                 else -> error("Browser sources are not selectable") },
                             { if (provider != state.target.provider) search(editedTarget(provider)) }, Modifier.weight(1f),
                             enabled = validInput, chosen = provider == state.target.provider)
@@ -333,6 +335,8 @@ private fun AlternateSourceInput(value: String, change: (String) -> Unit, label:
 internal fun alternateHistoryProvider(selected: AlternateSourceProvider, label: String): AlternateSourceProvider {
     if (selected != AlternateSourceProvider.AUTO) return selected
     return when {
+        label.contains("Abibli", true) -> AlternateSourceProvider.ABIBLI
+        label.contains("7Movies", true) -> AlternateSourceProvider.SEVEN_MOVIES
         label.contains("OnlyFlix", true) -> AlternateSourceProvider.ONLYFLIX
         label.contains("Movy", true) -> AlternateSourceProvider.MOVY
         label.contains("Unity", true) -> AlternateSourceProvider.STREAMING_UNITY

@@ -178,9 +178,12 @@ internal fun VlcPlayerScreen(
     onSelectPlayer: (PlaybackEngine, Long) -> Unit,
     configuredEngine: PlaybackEngine,
     focusPlayerSwitchOnEnter: Boolean = false,
-    onPlayerSwitchFocusRestored: () -> Unit = {}
+    onPlayerSwitchFocusRestored: () -> Unit = {},
+    playbackSpeed: Float = 1f,
+    onPlaybackSpeedChanged: (Float) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val currentPlaybackSpeed by rememberUpdatedState(normalizedPlaybackSpeed(playbackSpeed))
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
         context.isTvLikeDevice(LocalConfiguration.current)
     var extraControlsOpen by remember(media.progressKey) { mutableStateOf(false) }
@@ -268,9 +271,10 @@ internal fun VlcPlayerScreen(
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var speedPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
+    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
@@ -339,6 +343,7 @@ internal fun VlcPlayerScreen(
     val introRequester = remember(media.progressKey) { FocusRequester() }
     val skipIntroRequester = remember(media.progressKey) { FocusRequester() }
     val audioRequester = remember(media.progressKey) { FocusRequester() }
+    val speedRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
     val sourceRequester = remember(media.progressKey) { FocusRequester() }
@@ -770,8 +775,12 @@ internal fun VlcPlayerScreen(
         }
     }
 
+    LaunchedEffect(player, playbackSpeed, playing) {
+        if (playing && media.catalogType != CatalogType.LIVE_TV) player.setRate(currentPlaybackSpeed)
+    }
     LaunchedEffect(player, media.url) {
         var ownsPlaybackSlot = false
+        var externalDescriptor: android.os.ParcelFileDescriptor? = null
         player.setEventListener { event ->
             when (event.type) {
                 MediaPlayer.Event.TimeChanged -> {
@@ -789,6 +798,7 @@ internal fun VlcPlayerScreen(
                 }
                 MediaPlayer.Event.Playing -> {
                     error = null
+                    if (media.catalogType != CatalogType.LIVE_TV) player.setRate(currentPlaybackSpeed)
                     if (!focus.shouldPlay) preparedSession.command { it.pause() }
                     streamWasPlaying = true
                     streamTerminated = false
@@ -850,7 +860,13 @@ internal fun VlcPlayerScreen(
             // preparation on a worker prevents that mutex from freezing Compose
             // input dispatch and triggering an ANR.
             withContext(NativePlaybackWorker.dispatcher) {
-                val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
+                val uri = android.net.Uri.parse(media.url)
+                val vlcMedia = (if (media.externalPlayback && uri.scheme == "content") {
+                    val fd = context.contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw java.io.IOException("File access unavailable")
+                    externalDescriptor = fd
+                    Media(libVlc, fd.fileDescriptor)
+                } else Media(libVlc, uri)).apply {
                     // Prefer device-supported hardware decoders. With force=false,
                     // VLC retains its software decoder fallback and device exclusions.
                     setHWDecoderEnabled(true, false)
@@ -887,7 +903,8 @@ internal fun VlcPlayerScreen(
                     finalTiming.second)
             }
             } finally {
-                if (ownsPlaybackSlot) vlcPlaybackLifecycle.unlock()
+                try { withContext(kotlinx.coroutines.NonCancellable + NativePlaybackWorker.dispatcher) { externalDescriptor?.close() } }
+                finally { if (ownsPlaybackSlot) vlcPlaybackLifecycle.unlock() }
             }
         }
     }
@@ -1526,7 +1543,7 @@ internal fun VlcPlayerScreen(
         )
 
         }
-        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture && !speedPickerVisible) {
             val topDownRequester = if (seekable) progressRequester else playRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseRequester
@@ -1540,9 +1557,10 @@ internal fun VlcPlayerScreen(
                     if (introSettings.target != null) add(introRequester)
                     add(subtitleRequester)
                     if (audioTracks.size > 1) add(audioRequester)
-                    if (onChooseAlternateSource == null) add(downloadRequester)
+                    if (!media.externalPlayback && onChooseAlternateSource == null) add(downloadRequester)
                 }
                 if (media.catalogType == CatalogType.LIVE_TV) add(refreshRequester)
+                if (media.catalogType != CatalogType.LIVE_TV) add(speedRequester)
                 add(resizeRequester)
                 add(pictureModeRequester)
                 add(playerSwitchRequester)
@@ -1563,7 +1581,7 @@ internal fun VlcPlayerScreen(
             }
             val controlRowScrollState = rememberScrollState()
             val playbackDetailLines = buildList {
-                add("${if (media.offlinePlayback) "Offline" else if (onChooseAlternateSource != null) "Alternate source" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
+                add("${if (media.externalPlayback) "Opened video" else if (media.offlinePlayback) "Offline" else if (onChooseAlternateSource != null) "Alternate source" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · VLC · Video fit · ${resizeMode.label}")
                 add("Picture · ${activeAppearanceProfile.name} · Controls · ${controlsTimeoutSeconds}s")
             }
@@ -1692,7 +1710,7 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        if (media.catalogType != CatalogType.LIVE_TV && onChooseAlternateSource == null) {
+                        if (!media.externalPlayback && media.catalogType != CatalogType.LIVE_TV && onChooseAlternateSource == null) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                 contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
@@ -1708,6 +1726,12 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
+                        if (media.catalogType != CatalogType.LIVE_TV) PlayerChromeIconButton(
+                            icon = Icons.Default.Speed, badgeText = playbackSpeedLabel(playbackSpeed),
+                            contentDescription = "Playback speed", onClick = { speedPickerVisible = true },
+                            modifier = Modifier.playerSecondaryFocus(speedRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
+                            onFocused = { controlsFocused = it })
                         PlayerChromeIconButton(
                             icon = when (resizeMode) {
                                 VideoResizeMode.FIT -> Icons.Default.FitScreen
@@ -2219,6 +2243,9 @@ PlayerChromeIconButton(
                 }
             }
         )
+        if (speedPickerVisible) PlaybackSpeedOverlay(playbackSpeed, onPlaybackSpeedChanged, {
+            speedPickerVisible = false; controlsVisible = true; returnControlFocus = speedRequester
+        })
         if (resizePickerVisible) VideoResizeQuickOverlay(
             preview = resizeMode,
             onPreview = { resizePreview = it },

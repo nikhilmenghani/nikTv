@@ -31,10 +31,20 @@ class AlternateServerRowsTest {
         val target = AlternateSourceTarget("Movie", false, tmdbId = 603)
         val rows = alternateServerRows(listOfNotNull(cinejoyWebStream(target), cnoWebStream(target), vidyFallbackStream(target)))
         assertTrue(rows.isEmpty())
-        assertEquals(7, nativeSourceProviders.size)
+        assertEquals(9, nativeSourceProviders.size)
         assertTrue(AlternateSourceProvider.ONLYFLIX in nativeSourceProviders)
+        assertTrue(AlternateSourceProvider.SEVEN_MOVIES in nativeSourceProviders)
+        assertTrue(AlternateSourceProvider.ABIBLI in nativeSourceProviders)
         assertFalse(AlternateSourceProvider.CINEJOY in nativeSourceProviders)
         assertFalse(AlternateSourceProvider.CNO in nativeSourceProviders)
+    }
+    @Test fun autoHistoryRetainsSevenMoviesForFastResumeLookup() {
+        assertEquals(AlternateSourceProvider.SEVEN_MOVIES,
+            alternateHistoryProvider(AlternateSourceProvider.AUTO, "Auto · 7Movies Earth"))
+    }
+    @Test fun autoHistoryRetainsAbibliWithoutPersistingGuestLinks() {
+        assertEquals(AlternateSourceProvider.ABIBLI,
+            alternateHistoryProvider(AlternateSourceProvider.AUTO, "Auto · Abibli"))
     }
     @Test fun cnoUsesExactMovieEpisodeIdentityAndCannotLeaveWatchPage() {
         val target = AlternateSourceTarget("Friends", true, tmdbId = 1668, season = 1, episode = 2)

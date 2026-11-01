@@ -369,6 +369,23 @@ class TmdbClient {
                 .take(6)
         }
 
+    private val episodeSeasonIndexes = object : LinkedHashMap<Int, Pair<Long, List<Int>>>(32, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Pair<Long, List<Int>>>?): Boolean = size > 32
+    }
+
+    /** Tiny public season index; provider season groupings need not use TMDB numbering. */
+    suspend fun episodeSeasons(seriesId: Int): List<Int> = withContext(Dispatchers.IO) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        synchronized(episodeSeasonIndexes) {
+            episodeSeasonIndexes[seriesId]?.takeIf { now - it.first < 6 * 60 * 60_000L }?.second
+        }?.let { return@withContext it }
+        val seasons = execute("/3/tv/$seriesId", emptyMap())["seasons"]?.jsonArray.orEmpty()
+            .mapNotNull { it.jsonObject["season_number"]?.jsonPrimitive?.intOrNull }
+            .distinct().sorted()
+        synchronized(episodeSeasonIndexes) { episodeSeasonIndexes[seriesId] = now to seasons }
+        seasons
+    }
+
     suspend fun seasonEpisodes(seriesId: Int, seasonNumber: Int): List<TmdbEpisode> = withContext(Dispatchers.IO) {
         if (!configured) return@withContext emptyList()
         val root = execute("/3/tv/$seriesId/season/$seasonNumber", emptyMap())

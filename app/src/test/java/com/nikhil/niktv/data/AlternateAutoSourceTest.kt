@@ -26,9 +26,11 @@ class AlternateAutoSourceTest {
         try { resolver.resolve(target); fail("Expected combined Auto failure") }
         catch (failure: AlternateSourceException) {
             val message = failure.message.orEmpty()
-            assertTrue(message.contains("6 source groups"))
+            assertTrue(message.contains("8 source groups"))
             assertTrue(message.contains("Movy: HTTP 500"))
             assertTrue(message.contains("Unity / fallback: HTTP 403"))
+            assertTrue(message.contains("7Movies: HTTP 403"))
+            assertTrue(message.contains("Abibli: HTTP 403"))
             for (name in listOf("Athena", "Rive Primevids", "Rive Citadel", "OnlyFlix"))
                 assertTrue(message.contains("$name: No results"))
             assertFalse(message.contains("do-not-expose"))
@@ -52,5 +54,19 @@ class AlternateAutoSourceTest {
         val work = launch { resolver.resolve(target) }
         started.await(); work.cancelAndJoin()
         assertTrue(stopped.isCompleted)
+    }
+    @Test fun sharedDeadlineRetainsReadyResultsAndCancelsSlowLookups() = runBlocking {
+        val active = java.util.concurrent.atomic.AtomicInteger()
+        val peak = java.util.concurrent.atomic.AtomicInteger()
+        // This adapter runs on real Dispatchers.IO; leave enough wall-clock
+        // headroom for a cold Robolectric/JIT worker before exercising expiry.
+        val resolver = AlternateSourceResolver(timeoutMillis = 3_000, fetch = {
+            val count = active.incrementAndGet()
+            peak.accumulateAndGet(count, ::maxOf)
+            try { awaitCancellation() } finally { active.decrementAndGet() }
+        }, movyLookup = { listOf(stream) })
+        assertEquals(listOf(stream), resolver.resolve(target))
+        assertTrue(peak.get() in 1..2)
+        assertEquals(0, active.get())
     }
 }

@@ -122,7 +122,8 @@ class SeriesEpisodeNavigationDeviceTest {
             }
             await("Playback return restores middle episode, not the old earliest jump") { focused("Paged episode 250") }
             assertTrue("Played episode is visible", label("Paged episode 250")?.isVisibleToUser == true)
-            assertTrue("Played episode is marked as last watched", label("Last watched · S1 · E250")?.isVisibleToUser == true)
+            assertTrue("Played episode is marked as last watched", label("Last watched")?.isVisibleToUser == true)
+            assertTrue("Episode identity remains separate from its watched badge", label("S1 · E250")?.isVisibleToUser == true)
             assertEquals("Returning must reuse all 520 cached episodes", 520, model.value.items.size)
             assertEquals("Returning must not request another bulk load", 1, requests.size)
             fun activate(text: String) {

@@ -7,6 +7,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SeriesDetailPolicyTest {
+    @Test fun resumeAnchorLeavesOneEpisodeAboveTheCurrentOneExceptAtEndpoints() {
+        assertEquals(0, seriesEpisodeResumeAnchor(0, 500))
+        assertEquals(248, seriesEpisodeResumeAnchor(249, 500))
+        assertEquals(499, seriesEpisodeResumeAnchor(499, 500))
+        assertEquals(0, seriesEpisodeResumeAnchor(0, 1))
+        assertEquals(0, seriesEpisodeResumeAnchor(-1, 0))
+    }
     @Test fun descriptionAndExtrasAreOneHeaderRowForVerticalRemoteNavigation() {
         for (hasSynopsis in listOf(true, false)) {
             val row = if (hasSynopsis) SeriesDetailFocus.INFO else SeriesDetailFocus.TOOLS

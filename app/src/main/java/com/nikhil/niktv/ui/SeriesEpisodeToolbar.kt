@@ -38,6 +38,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import kotlin.math.roundToInt
 
 /** One toolbar for both provider and TMDB episodes. Search stays local to the loaded season. */
@@ -60,6 +61,7 @@ internal fun SeriesEpisodeToolbar(
     beforeAction: () -> Unit = {},
     modifier: Modifier = Modifier,
     onGoToEpisode: ((Int) -> Unit)? = null,
+    onLastWatched: (() -> Unit)? = null,
 ) {
     var sortOpen by remember { mutableStateOf(false) }
     var jumpOpen by remember { mutableStateOf(false) }
@@ -70,6 +72,8 @@ internal fun SeriesEpisodeToolbar(
     val host = LocalView.current
     var hadSortPopup by remember { mutableStateOf(false) }
     var sortSelected by remember { mutableStateOf(false) }
+    var lastWatchedSelected by remember { mutableStateOf(false) }
+    val currentLastWatched by rememberUpdatedState(onLastWatched)
     val currentSortApplied by rememberUpdatedState(onSortApplied)
     fun dismissSort() { sortOpen = false }
     LaunchedEffect(sortOpen) {
@@ -86,6 +90,11 @@ internal fun SeriesEpisodeToolbar(
                 withFrameNanos { }
                 if (host.hasWindowFocus()) {
                     if (jumpOpen) return@LaunchedEffect
+                    if (lastWatchedSelected) {
+                        lastWatchedSelected = false
+                        currentLastWatched?.invoke()
+                        return@LaunchedEffect
+                    }
                     if (sortSelected && currentSortApplied != null) {
                         sortSelected = false
                         currentSortApplied?.invoke()
@@ -123,25 +132,36 @@ internal fun SeriesEpisodeToolbar(
                     Modifier.focusRequester(searchRequester), onSearch)
             }
             Box {
-                EpisodeToolbarIcon(if (compact) Icons.Default.MoreHoriz else Icons.AutoMirrored.Filled.Sort,
+                EpisodeToolbarIcon(Icons.AutoMirrored.Filled.Sort,
                     if (compact) "Episode options" else "Sort episodes", sortOpen,
                     Modifier.focusRequester(sortRequester)) { beforeAction(); sortOpen = true }
-                DropdownMenu(sortOpen, ::dismissSort) {
+                DropdownMenu(sortOpen, ::dismissSort, modifier = Modifier.width(if (compact) 228.dp else 244.dp),
+                    containerColor = Color.Transparent, tonalElevation = 0.dp, shadowElevation = 0.dp) {
+                    EpisodeSortMenuGroup {
                     listOf(true to "Latest first", false to "Earliest first").forEach { (descending, label) ->
-                        NikDropdownMenuItem(text = { Text(label) },
+                        EpisodeSortMenuItem(label, if (descending) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                            selected = newestFirst == descending,
                             modifier = if (newestFirst == descending) Modifier.focusRequester(selectedSort) else Modifier,
-                            leadingIcon = if (newestFirst == descending) {{ Icon(Icons.Default.Check, null) }} else null,
                             onClick = { sortSelected = true; onNewestFirst(descending); dismissSort() })
                     }
-                    if (onGoToEpisode != null) NikDropdownMenuItem(text = { Text("Go to episode…") },
-                        leadingIcon = { Icon(Icons.Default.FormatListNumbered, null) },
+                    }
+                    if (onGoToEpisode != null || onLastWatched != null) {
+                    Spacer(Modifier.height(6.dp))
+                    EpisodeSortMenuGroup {
+                    if (onGoToEpisode != null) EpisodeSortMenuItem("Go to episode…", Icons.Default.FormatListNumbered,
                         onClick = { jumpOpen = true; dismissSort() })
+                    if (onLastWatched != null) EpisodeSortMenuItem("Last watched episode", Icons.Default.History,
+                        onClick = { beforeAction(); lastWatchedSelected = true; dismissSort() })
+                    }
+                    }
                     if (compact) {
-                        HorizontalDivider()
+                        Spacer(Modifier.height(6.dp))
+                        EpisodeSortMenuGroup {
                         listOf(true to "List view", false to "Grid view").forEach { (list, label) ->
-                            NikDropdownMenuItem(text = { Text(label) },
-                                leadingIcon = { Icon(if (listView == list) Icons.Default.Check else if (list) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, null) },
+                            EpisodeSortMenuItem(label, if (list) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
+                                selected = listView == list,
                                 onClick = { selectLayout(list); dismissSort() })
+                        }
                         }
                     }
                 }
@@ -176,6 +196,26 @@ internal fun SeriesEpisodeToolbar(
             }
         }
     }
+}
+
+@Composable
+private fun EpisodeSortMenuGroup(content: @Composable ColumnScope.() -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = Color(0xFF24252B),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .08f)), shadowElevation = 6.dp) {
+        Column(Modifier.padding(vertical = 2.dp), content = content)
+    }
+}
+
+@Composable
+private fun EpisodeSortMenuItem(label: String, icon: ImageVector, selected: Boolean = false,
+    modifier: Modifier = Modifier, onClick: () -> Unit) {
+    NikDropdownMenuItem(
+        text = { Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
+        leadingIcon = { Icon(if (selected) Icons.Default.Check else icon, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+        modifier = modifier.padding(horizontal = 2.dp).clip(RoundedCornerShape(9.dp))
+            .background(if (selected) Color(0xFFE50925) else Color.Transparent).semantics { this.selected = selected },
+        onClick = onClick)
 }
 
 @Composable

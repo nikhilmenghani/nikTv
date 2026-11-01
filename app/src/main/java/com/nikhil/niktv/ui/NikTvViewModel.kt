@@ -111,6 +111,7 @@ data class NikTvState(
     val providerMovieDetails: com.nikhil.niktv.discovery.ProviderMovieDetails? = null,
     val useTmdbEpisodeMetadata: Boolean = true,
     val tmdbEpisodeCacheRefreshing: Boolean = false,
+    val episodeTmdbRefresh: EpisodeTmdbRefresh? = null,
     val fullSearchItems: List<MediaItem>? = null,
     val fullSearchLoading: Boolean = false,
     val fullSearchCachedAtMillis: Long? = null,
@@ -242,6 +243,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
     private var episodeDestinationJob: Job? = null
     private var episodePageJob: Job? = null
+    private var episodeMetadataRefreshJob: Job? = null
+    private var episodeMetadataRefreshRequest = 0L
+    private var singleEpisodeMetadataJob: Job? = null
+    private var singleEpisodeMetadataRequest = 0L
     private var episodeDestinationRequest = 0L
     private val episodePageMutex = Mutex()
     internal var episodePageLookup: suspend (PortalSession, MediaItem, Int?, Int, String?) -> EpisodeSeasonResult =
@@ -250,6 +255,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     internal var episodePageEnrichment: suspend (MediaItem, EpisodeSeasonCache) -> Unit =
         { series, cache -> enrichEpisodeCacheFromTmdb(series, cache, force = false) }
+    internal var episodeTmdbSeriesLookup: suspend (MediaItem) -> com.nikhil.niktv.data.TmdbSeries? = { series ->
+        check(tmdb.configured) { "TMDB is not configured" }
+        tmdb.confidentlyMatchSeries(series)
+    }
+    internal var episodeTmdbSeasonLookup: suspend (Int, Int) -> List<com.nikhil.niktv.data.TmdbEpisode> = tmdb::seasonEpisodes
+    internal var episodeTmdbSeasonsLookup: suspend (Int) -> List<Int> = tmdb::episodeSeasons
+    internal var episodeTmdbEpisodeLookup: suspend (Int, Int, Int) -> com.nikhil.niktv.data.TmdbEpisode? = tmdb::episodeMetadata
 
     private fun NikTvState.episodeBrowseKey(): EpisodeBrowseKey? {
         val activeSession = session ?: return null
@@ -3214,34 +3226,48 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         source: EpisodeSeasonCache,
         force: Boolean
     ) {
-        if (!tmdb.configured || source.rawIptvEpisodes().isEmpty()) return
+        if ((!tmdb.configured && !force) || source.rawIptvEpisodes().isEmpty()) return
         val profileKey = source.profileKey
         val mappedId = source.tmdbSeriesId ?: store.tmdbMappings.first().firstOrNull { mapping ->
             mapping.profileKey == profileKey && mapping.type == CatalogType.SERIES && mapping.media.id == series.id
         }?.tmdbId
-        val matchedId = mappedId ?: runCatching {
-            tmdb.confidentlyMatchSeries(series)
+        val matchedId = mappedId ?: if (force) {
+            episodeTmdbSeriesLookup(series)?.id ?: error("No confident TMDB series match was found")
+        } else runCatching {
+            episodeTmdbSeriesLookup(series)
         }.onFailure { Log.w("NikTvEpisodeMetadata", "TMDB series lookup failed", it) }
             .getOrNull()?.id ?: return
 
         val raw = source.rawIptvEpisodes()
         val targets = if (force) raw else raw.filter { it.tmdbEpisodeCacheKey() !in source.tmdbEpisodeKeys }
         if (targets.isEmpty() && !force) return
-        val existing = if (force) emptyMap() else source.episodes.associateBy { it.id }
-        val fetched = if (force) {
-            val seasons = targets.mapNotNull { it.seasonNumber ?: source.season }.distinct()
-            val metadataByNumber = coroutineScope {
+        val existing = source.episodes.associateBy { it.id }
+        val availableSeasons = try { episodeTmdbSeasonsLookup(matchedId) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (force) throw failure
+                Log.w("NikTvEpisodeMetadata", "TMDB season index unavailable; keeping cached details", failure)
+                return
+            }
+        val seasonMapping = targets.map { it.seasonNumber ?: source.season }.distinct()
+            .associateWith { tmdbSeasonForProviderSeason(it, availableSeasons) }
+        val translatedSeason = seasonMapping.any { (provider, canonical) -> canonical != null && provider != canonical }
+        val fetched = try { if (force || translatedSeason) {
+            val seasons = seasonMapping.values.filterNotNull().distinct()
+            val metadataBySeason = coroutineScope {
                 seasons.map { season ->
                     async {
-                        runCatching { tmdb.seasonEpisodes(matchedId, season) }
-                            .getOrDefault(emptyList())
+                        episodeTmdbSeasonLookup(matchedId, season)
                     }
                 }.awaitAll().flatten()
-            }.associateBy { it.seasonNumber to it.episodeNumber }
-            targets.associateWith { episode ->
-                val season = episode.seasonNumber ?: source.season
-                val number = episode.episodeNumber ?: episode.title.episodeOrderFromTitle()
-                if (season == null || number == null) null else metadataByNumber[season to number]
+            }.groupBy { it.seasonNumber }
+            withContext(Dispatchers.Default) {
+                val indexes = metadataBySeason.mapValues { TmdbEpisodeMetadataIndex(it.value) }
+                targets.associateWith { episode ->
+                    val season = seasonMapping[episode.seasonNumber ?: source.season]
+                    val number = episode.episodeNumber ?: episode.title.episodeOrderFromTitle()
+                    indexes[season]?.select(episode.copy(episodeNumber = number))
+                }
             }
         } else {
             targets.chunked(4).flatMap { chunk ->
@@ -3250,7 +3276,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         async {
                             val season = episode.seasonNumber ?: source.season
                             val number = episode.episodeNumber ?: episode.title.episodeOrderFromTitle()
-                            val metadata = if (season != null && number != null) {
+                            val metadata = if (season != null && number != null && season in availableSeasons) {
                                 runCatching { tmdb.episodeMetadata(matchedId, season, number) }
                                     .onFailure { Log.w("NikTvEpisodeMetadata", "TMDB episode lookup failed for S${season}E${number}", it) }
                                     .getOrNull()
@@ -3260,23 +3286,24 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }.awaitAll()
                 }
             }.toMap()
+        } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            if (force) throw failure
+            Log.w("NikTvEpisodeMetadata", "TMDB season details unavailable; keeping cached details", failure)
+            return
         }
-        val enriched = raw.map { episode ->
+        val enriched = withContext(Dispatchers.Default) { raw.map { episode ->
             val metadata = fetched[episode]
             when {
-                metadata != null -> episode.copy(
-                    title = metadata.name ?: episode.title,
-                    logo = metadata.stillUrl ?: episode.logo,
-                    description = metadata.overview ?: episode.description,
-                    seasonNumber = metadata.seasonNumber,
-                    episodeNumber = metadata.episodeNumber,
-                    externalTmdbId = matchedId,
-                    episodeAirDate = metadata.airDate ?: episode.episodeAirDate
-                )
-                !force -> existing[episode.id] ?: episode
-                else -> episode
+                metadata != null -> mergeTmdbEpisodePresentation(episode, existing[episode.id] ?: episode,
+                    metadata, series.title, matchedId)
+                else -> existing[episode.id] ?: episode
             }
-        }
+        } }
+        if (force && fetched.values.none { it != null })
+            error("TMDB returned no matching episode details for this season")
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if (_state.value.session?.profile?.cacheKey() != profileKey) return
         val checkedKeys = if (force) {
             targets.mapTo(mutableSetOf()) { it.tmdbEpisodeCacheKey() }
         } else {
@@ -3286,9 +3313,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val latest = episodeSeasonCaches.firstOrNull { it.key == source.key }
         if (latest != null && (latest.page != source.page || latest.hasMore != source.hasMore ||
                 latest.rawIptvEpisodes().map { it.id } != raw.map { it.id })) return
+        val sourceById = source.episodes.associateBy { it.id }
+        val latestById = latest?.episodes.orEmpty().associateBy { it.id }
+        val reconciled = enriched.map { candidate ->
+            latestById[candidate.id]?.takeIf { it != sourceById[candidate.id] } ?: candidate
+        }
         cacheSeason(
             source.copy(
-                episodes = enriched,
+                episodes = reconciled,
                 iptvEpisodes = raw,
                 tmdbEpisodeKeys = checkedKeys,
                 tmdbSeriesId = matchedId,
@@ -3425,17 +3457,124 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun dismissEpisodeTmdbRefresh() = _state.update { it.copy(episodeTmdbRefresh = null) }
+
+    /** Refresh a single public metadata record; never reload provider episodes or resolve playback. */
+    fun refreshEpisodeTmdb(episode: MediaItem) {
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        val series = snapshot.selectedSeries ?: return
+        if (snapshot.items.none { it.id == episode.id }) return
+        val profile = session.profile.cacheKey()
+        val season = episode.seasonNumber ?: snapshot.selectedSeriesSeason
+        val old = episodeSeasonCaches.firstOrNull { it.profileKey == profile && it.seriesId == series.id && it.season == season }
+            ?: EpisodeSeasonCache(profile, series.id, season, snapshot.availableSeriesSeasons, snapshot.items,
+                snapshot.episodePage, snapshot.episodeHasMore, iptvEpisodes = snapshot.items)
+        val raw = old.rawIptvEpisodes().firstOrNull { it.id == episode.id } ?: return
+        val request = ++singleEpisodeMetadataRequest
+        singleEpisodeMetadataJob?.cancel()
+        val status = EpisodeTmdbRefresh(profile, series.id, episode.id)
+        _state.update { it.copy(episodeTmdbRefresh = status) }
+        fun valid() = request == singleEpisodeMetadataRequest &&
+            _state.value.session?.profile?.cacheKey() == profile && _state.value.selectedSeries?.id == series.id &&
+            _state.value.selectedSeriesSeason == snapshot.selectedSeriesSeason
+        fun result(message: String) {
+            if (valid()) _state.update { it.copy(episodeTmdbRefresh = status.copy(running = false, message = message)) }
+        }
+        singleEpisodeMetadataJob = viewModelScope.launch {
+            try {
+                withTimeout(45_000L) {
+                    val tmdbId = old.tmdbSeriesId ?: store.tmdbMappings.first().firstOrNull {
+                        it.profileKey == profile && it.type == CatalogType.SERIES && it.media.id == series.id
+                    }?.tmdbId ?: episodeTmdbSeriesLookup(series)?.id
+                    if (tmdbId == null) { result("No confident TMDB series match was found. Existing details were kept."); return@withTimeout }
+                    val canonical = tmdbSeasonForProviderSeason(season, episodeTmdbSeasonsLookup(tmdbId))
+                    val number = raw.episodeNumber ?: raw.title.episodeOrderFromTitle()
+                    if (canonical == null || number == null) {
+                        result("This provider episode could not be matched safely to TMDB. Existing details were kept.")
+                        return@withTimeout
+                    }
+                    val metadata = episodeTmdbEpisodeLookup(tmdbId, canonical, number)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!valid()) return@withTimeout
+                    if (metadata == null || metadata.seasonNumber != canonical || metadata.episodeNumber != number) {
+                        result("TMDB did not return a matching episode. Existing details were kept."); return@withTimeout
+                    }
+                    // Pagination or a simultaneous season refresh may have finished while waiting.
+                    // Merge only this episode into the newest cache, never replace its other pages.
+                    val latest = episodeSeasonCaches.firstOrNull { it.key == old.key } ?: old
+                    val latestRaw = latest.rawIptvEpisodes().firstOrNull { it.id == raw.id } ?: return@withTimeout
+                    val merged = latest.episodes.map { existing ->
+                        if (existing.id == raw.id) mergeTmdbEpisodePresentation(latestRaw, existing, metadata, series.title, tmdbId)
+                        else existing
+                    }
+                    cacheSeason(latest.copy(episodes = merged, iptvEpisodes = latest.rawIptvEpisodes(),
+                        tmdbSeriesId = tmdbId, tmdbEpisodeKeys = latest.tmdbEpisodeKeys + raw.tmdbEpisodeCacheKey(),
+                        metadataVersion = EPISODE_METADATA_VERSION))
+                    val before = latest.episodes.first { it.id == raw.id }
+                    val after = merged.first { it.id == raw.id }
+                    result(episodeTmdbRefreshMessage(latestRaw, before, after, metadata, series.title) +
+                        if (!snapshot.useTmdbEpisodeMetadata) " Select Use TMDB episode details to display them." else "")
+                }
+            } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                result("TMDB episode refresh timed out. Existing details were kept. Please retry.")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                result(if (failure.message?.contains("HTTP 404") == true)
+                    "TMDB has no record for this episode yet. Existing details were kept."
+                    else "TMDB could not update this episode. Existing details were kept. Please retry.")
+            } finally {
+                if (request == singleEpisodeMetadataRequest && _state.value.episodeTmdbRefresh?.running == true)
+                    _state.update { it.copy(episodeTmdbRefresh = null) }
+            }
+        }
+    }
+
     fun forceRefreshTmdbEpisodeCache() {
-        val series = _state.value.selectedSeries ?: return
-        val season = _state.value.selectedSeriesSeason
-        viewModelScope.launch {
+        val snapshot = _state.value
+        val series = snapshot.selectedSeries ?: return
+        val profileKey = snapshot.session?.profile?.cacheKey() ?: return
+        val season = snapshot.selectedSeriesSeason
+        val request = ++episodeMetadataRefreshRequest
+        episodeMetadataRefreshJob?.cancel()
+        episodeMetadataRefreshJob = viewModelScope.launch {
             _state.update { it.copy(tmdbEpisodeCacheRefreshing = true) }
             try {
-                val old = episodeSeasonCaches.firstOrNull { it.profileKey == _state.value.session?.profile?.cacheKey() && it.seriesId == series.id && (season == null || it.season == season) }
-                refreshEpisodeCache(series, season, old, forceTmdb = true)
+                withTimeout(90_000L) {
+                    val old = episodeSeasonCaches.firstOrNull { it.profileKey == profileKey && it.seriesId == series.id && (season == null || it.season == season) }
+                    // A TMDB-only action must not depend on provider availability or
+                    // discard already-loaded pages to refresh their presentation.
+                    val source = old ?: EpisodeSeasonCache(profileKey, series.id, season,
+                        snapshot.availableSeriesSeasons, snapshot.items, snapshot.episodePage,
+                        snapshot.episodeHasMore, metadataVersion = EPISODE_METADATA_VERSION,
+                        iptvEpisodes = snapshot.items)
+                    check(source.rawIptvEpisodes().isNotEmpty()) { "Load episodes before fetching TMDB details" }
+                    enrichEpisodeCacheFromTmdb(series, source, force = true)
+                }
+            } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                reportEpisodeRefreshFailure(request, profileKey, series.id, season,
+                    "Episode refresh timed out. Your saved episodes are still available; please retry.")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                Log.w("NikTvEpisodeMetadata", "Episode refresh failed; keeping cached episodes", failure)
+                reportEpisodeRefreshFailure(request, profileKey, series.id, season,
+                    "Could not refresh episodes: ${failure.message ?: "Provider unavailable"}. Please retry.")
             } finally {
-                _state.update { it.copy(tmdbEpisodeCacheRefreshing = false) }
+                if (request == episodeMetadataRefreshRequest)
+                    _state.update { it.copy(tmdbEpisodeCacheRefreshing = false) }
             }
+        }
+    }
+
+    private fun reportEpisodeRefreshFailure(request: Long, profileKey: String, seriesId: String, season: Int?, message: String) {
+        _state.update { current ->
+            if (request == episodeMetadataRefreshRequest && current.session?.profile?.cacheKey() == profileKey &&
+                current.selectedSeries?.id == seriesId && current.selectedSeriesSeason == season)
+                current.copy(error = message)
+            else current
         }
     }
 
@@ -3505,12 +3644,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }?.lastPlayed
         val desired = requestedSeason ?: lastEpisode?.let { it.seasonNumber ?: it.title.seasonNumberFromTitle() }
         if (requestedSeason == null && desired != null) _state.update { it.copy(selectedSeriesSeason = desired) }
-        val cached = episodeSeasonCaches.firstOrNull { cache ->
+        val stored = episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
                 cache.metadataVersion == EPISODE_METADATA_VERSION &&
                 (desired == null || cache.season == desired)
         }
+        val cached = stored?.let { withContext(Dispatchers.Default) { repairEpisodePresentationCache(it, series.title) } }
         if (cached != null && !forceRefresh) {
+            if (cached != stored) cacheSeason(cached)
             publishEpisodeCache(cached)
             cached.season?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
             val now = System.currentTimeMillis()
@@ -6545,7 +6686,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val protected = alternateProtectedMedia(picker.request).copy(title = picker.target.title)
         if (gateAdultAction(protected, picker.request.type) { chooseAlternateStream(id) }) return
         val active = _state.value.nowPlaying
-        if (active?.alternateSource?.target == picker.target && active.alternateSource.selectedId == id && active.url == stream.url) {
+        if (active?.alternateSource?.target == picker.target && active.alternateSource.selectedId == id &&
+            (active.url == stream.url || (stream.abibli?.videoId != null && alternatePlaybackLease?.sourceKey == stream.abibli.videoId))) {
             closeAlternateSources(); return
         }
         val currentKey = alternateProgressKey(picker.profileKey, picker.target)
@@ -6555,9 +6697,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // Playback continues during source lookup. Sample only at the user's
         // final selection, before beginPlaybackRequest closes and releases the
         // supplier, so changing quality does not rewind by the dialog dwell time.
-        val currentPosition = alternatePositionReader?.takeIf {
+        val currentReader = alternatePositionReader?.takeIf {
             it.attemptId == active?.playbackAttemptId && it.progressKey == currentKey && sameActiveTitle
-        }?.let { reader -> runCatching { reader.read().coerceAtLeast(0L) }.getOrNull() }
+        }
+        val currentPosition = currentReader?.let { reader -> runCatching { reader.read().coerceAtLeast(0L) }.getOrNull() }
         val selection = picker.copy(resumePositionMillis = currentPosition ?: picker.resumePositionMillis,
             playWhenReady = active?.playWhenReady?.takeIf { sameActiveTitle } ?: picker.playWhenReady)
         val requestId = beginPlaybackRequest()
@@ -6565,7 +6708,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val current = _state.value.nowPlaying
             val committedSelection = if (sameActiveTitle && current?.playbackAttemptId == active?.playbackAttemptId)
                 selection.copy(playWhenReady = current?.playWhenReady ?: selection.playWhenReady) else selection
-            commitAlternateStream(committedSelection, stream, requestId)
+            commitAlternateStream(committedSelection, stream, requestId, currentReader?.read)
         } }
     }
 
@@ -6625,26 +6768,63 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             seasonNumber = target.season, episodeNumber = target.episode, externalTmdbId = target.tmdbId)
     }
 
-    private fun commitAlternateStream(picker: AlternateSourcePickerState, stream: com.nikhil.niktv.data.AlternateStream, requestId: Long) {
+    private var alternatePlaybackLease: com.nikhil.niktv.data.AlternatePlaybackLease? = null
+    internal var alternatePlaybackPreparation: suspend (com.nikhil.niktv.data.AlternateStream) -> com.nikhil.niktv.data.AlternatePlaybackLease? =
+        { stream -> stream.abibli?.let { com.nikhil.niktv.data.AbibliPlaybackLease.open(it) } }
+    private var alternatePlaybackLeaseWatcher: Job? = null
+    private fun releaseAlternatePlaybackLease() {
+        alternatePlaybackLeaseWatcher?.cancel(); alternatePlaybackLeaseWatcher = null
+        alternatePlaybackLease?.close(); alternatePlaybackLease = null
+    }
+    private fun adoptAlternatePlaybackLease(lease: com.nikhil.niktv.data.AlternatePlaybackLease?) {
+        val previous = alternatePlaybackLease
+        alternatePlaybackLease = lease
+        if (previous !== lease) previous?.close()
+        if (lease != null && alternatePlaybackLeaseWatcher?.isActive != true) {
+            // The ViewModel owns this resource across rotation/PiP/engine changes. It is
+            // released for every transition away, including ordinary IPTV/profile paths.
+            alternatePlaybackLeaseWatcher = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                _state.map { it.nowPlaying?.url }.distinctUntilChanged().collect { url ->
+                    val owned = alternatePlaybackLease
+                    if (owned == null || url != owned.url) {
+                        alternatePlaybackLease = null
+                        owned?.close()
+                        kotlinx.coroutines.currentCoroutineContext()[Job]?.cancel()
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun commitAlternateStream(picker: AlternateSourcePickerState, stream: com.nikhil.niktv.data.AlternateStream, requestId: Long,
+        readLatestPosition: (() -> Long)? = null) {
         if (!latestPlaybackRequest.isCurrent(requestId) || picker.profileKey != alternateProfile()) return
         val target = picker.target
+        val beforePreparation = _state.value.nowPlaying
+        val lease = try { alternatePlaybackPreparation(stream) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { throw com.nikhil.niktv.data.AlternateSourceException("Abibli could not start playback. Retry or choose another source.") }
+        if (!latestPlaybackRequest.isCurrent(requestId) || picker.profileKey != alternateProfile()) { lease?.close(); return }
         val item = alternateEpisodeMedia(picker.request, target)
         val key = alternateProgressKey(picker.profileKey, target)
-        val position = picker.resumePositionMillis ?: _state.value.playbackProgress.firstOrNull { it.key == key }?.positionMillis ?: 0L
+        val active = _state.value.nowPlaying?.takeIf { it.playbackAttemptId == beforePreparation?.playbackAttemptId && it.progressKey == key }
+        val position = active?.let { runCatching { readLatestPosition?.invoke() }.getOrNull() }?.coerceAtLeast(0L)
+            ?: picker.resumePositionMillis ?: _state.value.playbackProgress.firstOrNull { it.key == key }?.positionMillis ?: 0L
         val source = AlternatePlaybackSource(target, picker.streams, stream.id, picker.profileKey)
         liveGuideScheduler.pause()
         channelScheduleJob?.cancel(); playbackQueuePrefetches.cancelUnfinished()
-        _state.update { it.copy(nowPlaying = PlayingMedia(item, stream.url, picker.request.type,
+        _state.update { it.copy(nowPlaying = PlayingMedia(item, lease?.url ?: stream.url, picker.request.type,
             series = alternateSeriesMedia(picker.request, target),
             episodeQueue = listOf(item),
             previousEpisode = target.episode?.takeIf { target.series && it > 1 }?.let { number -> alternateEpisodeMedia(picker.request, target.copy(episode = number - 1)) },
             nextEpisode = target.episode?.takeIf { target.series }?.let { number -> alternateEpisodeMedia(picker.request, target.copy(episode = number + 1)) },
             resumePositionMillis = position, progressKey = key, directFullscreen = true,
-            streamRequestHeaders = stream.headers, playbackFormat = stream.format,
-            playWhenReady = picker.playWhenReady, alternateSource = source, profileKey = picker.profileKey),
+            streamRequestHeaders = if (lease == null) stream.headers else emptyMap(), playbackFormat = stream.format,
+            playWhenReady = active?.playWhenReady ?: picker.playWhenReady, alternateSource = source, profileKey = picker.profileKey),
             error = null, playbackReturnFocusId = if (it.nowPlaying != null)
                 it.playbackReturnFocusId ?: picker.request.item.id else picker.request.item.id,
             playbackQueueScope = null, playbackQueueHasMore = false, playbackQueueLoadingMore = false) }
+        adoptAlternatePlaybackLease(lease)
         val series = alternateSeriesMedia(picker.request, target)
         val recent = RecentItem(if (target.series) FavoriteKind.SERIES else FavoriteKind.MOVIE,
             series ?: item, lastPlayed = item.takeIf { target.series }, profileKey = picker.profileKey,
@@ -7593,6 +7773,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlayer() {
+        releaseAlternatePlaybackLease()
         cinejoyHandoffJob?.cancel(); cinejoyHandoffJob = null
         // A guide can finish into the browse cache after Back; it never starts playback.
         cancelPendingPlayback(cancelGuide = false)
@@ -8020,6 +8201,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        releaseAlternatePlaybackLease()
         portal.close()
         com.nikhil.niktv.data.CatalogPlaybackActivity.playing = false
         super.onCleared()

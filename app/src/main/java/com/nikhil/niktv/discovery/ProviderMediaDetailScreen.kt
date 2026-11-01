@@ -107,6 +107,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     synopsisUp: (() -> Unit)? = null, synopsisDown: (() -> Unit)? = null,
     synopsisAvailable: (Boolean) -> Unit = {},
     seasonCounts: (Map<Int, Int>) -> Unit = {},
+    compactSeries: Boolean = false,
     tools: @Composable RowScope.() -> Unit = {},
     layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
         cast: (() -> Boolean)?, related: (() -> Boolean)?) -> Unit = { hero, castRow, supplementary, _, _ ->
@@ -175,6 +176,13 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val phone = app.discoveryExperienceEnabled && usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
         configuration.screenHeightDp >= configuration.screenWidthDp
     val wideSeries = type == CatalogType.SERIES && (configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration))
+    var compactInfoOpen by remember(item.id) { mutableStateOf(false) }
+    val compactInfoRequester = remember(item.id) { FocusRequester() }
+    if (compactInfoOpen) FullDescriptionDialog(metadata.card.title,
+        metadata.card.overview.orEmpty().ifBlank { "No description is available for this series." }) {
+        compactInfoOpen = false
+        scope.launch { withFrameNanos { }; runCatching { compactInfoRequester.requestFocus() } }
+    }
     val toolbar: @Composable () -> Unit = {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onPreviewKeyEvent { event ->
                 if (wideSeries && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
@@ -196,6 +204,42 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             }
     }
     val hero: @Composable () -> Unit = {
+        if (!wideSeries && compactSeries) {
+            Column(Modifier.fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth()) {
+                Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false) }
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                    0f to Color(0x99090B10), .35f to Color(0x66090B10), 1f to Color(0xFF090B10))))
+                Column(Modifier.fillMaxWidth()) {
+                    toolbar()
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(metadata.card.title, color = Color.White, style = MaterialTheme.typography.titleLarge,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        discoveryDetailMetadata(metadata.card).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
+                            Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true, iconOnly = true,
+                                enabled = playEnabled, modifier = Modifier.focusRequester(playRequester), onClick = play)
+                            DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
+                                if (isFavorite) Icons.Default.Check else Icons.Default.Add, iconOnly = true, onClick = favorite)
+                            DiscoveryTrailerAction(metadata.card, iconOnly = true)
+                            LocalProviderSynopsisActions.current?.invoke()
+                            DiscoveryAction("Series information", Icons.Default.Info, iconOnly = true,
+                                enabled = !metadata.card.overview.isNullOrBlank(),
+                                modifier = Modifier.focusRequester(compactInfoRequester)) { compactInfoOpen = true }
+                        }
+                        progressLabel?.let { Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall) }
+                        progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
+                            modifier = Modifier.fillMaxWidth().height(3.dp), color = Color(0xFFE50925),
+                            trackColor = Color(0xFF343842), drawStopIndicator = {}) }
+                    }
+                }
+            }
+            LocalProviderSynopsisPanel.current?.invoke()
+            }
+        } else {
         Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
             Box(Modifier.fillMaxWidth()) {
             if (!phone) Box(Modifier.matchParentSize()) {
@@ -240,6 +284,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             if (failed) DiscoveryAction("Retry TMDB details", Icons.Default.Refresh, modifier = Modifier.padding(horizontal = 24.dp)) { retry++ }
             if (!loading && !failed && metadata.card.id <= 0) Text("TMDB details were not matched. You can still play this title.",
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp), color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+        }
         }
     }
     val castRow: @Composable () -> Unit = {

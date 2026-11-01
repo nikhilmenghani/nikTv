@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Separate test APK/UID models a file manager issuing a temporary read grant. -->
+        <activity android:name="com.nikhil.niktv.ExternalVideoTestSender" android:exported="true" />
+        <provider android:name="com.nikhil.niktv.ExternalVideoTestProvider"
+            android:authorities="${applicationId}.externalfixture"
+            android:exported="false" android:grantUriPermissions="true" />
+    </application>
+</manifest>

@@ -12,6 +12,14 @@ internal fun mergeSeriesSeasons(known: List<Int>, page: List<Int>, selected: Int
 internal fun needsSeriesSeasonIndexRepair(cache: EpisodeSeasonCache): Boolean =
     !cache.seasonIndexValidated && cache.page > 1 && cache.availableSeasons.size <= 1
 
+/** Leave one neighbouring episode above a resume target; endpoints start at that episode. */
+internal fun seriesEpisodeResumeAnchor(index: Int, count: Int): Int = when {
+    count <= 0 -> 0
+    index <= 0 -> 0
+    index >= count - 1 -> (count - 1).coerceAtLeast(0)
+    else -> index - 1
+}
+
 internal fun formatEpisodeAddedTime(millis: Long): String =
     java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
         .format(java.util.Date(millis))
