@@ -862,7 +862,15 @@ class StalkerPortalClient(private val context: Context) {
             .apply { action?.let { addQueryParameter("action", it) }; categoryId?.let { addQueryParameter("category_id", it) }; seriesId?.let { addQueryParameter("series_id", it) } }
             .build()
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").header("Accept", "application/json").build()
-        http.newCall(request).execute().use { response ->
+        val initialResponse = http.newCall(request).execute()
+        val compatibilityUrl = initialResponse.priorResponse?.let {
+            xtreamInfoPortFallback(url, initialResponse.request.url, initialResponse.code)
+        }
+        val effectiveResponse = if (compatibilityUrl != null) {
+            initialResponse.close()
+            http.newCall(request.newBuilder().url(compatibilityUrl).build()).execute()
+        } else initialResponse
+        effectiveResponse.use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("Xtream server returned HTTP ${response.code}")
             if (body.isBlank()) error("Xtream server returned an empty response")

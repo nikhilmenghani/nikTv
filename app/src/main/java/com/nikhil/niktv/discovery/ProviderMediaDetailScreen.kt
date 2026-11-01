@@ -216,8 +216,14 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             Box(Modifier.fillMaxWidth()) {
                 Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false) }
                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(
-                    0f to Color(0x99090B10), .35f to Color(0x66090B10), 1f to Color(0xFF090B10))))
-                Column(Modifier.fillMaxWidth()) {
+                    0f to Color(0x99090B10), .30f to Color.Transparent, .58f to Color(0x33090B10), 1f to Color(0xFF090B10))))
+                // Reserve artwork above the compact actions, matching the movie detail hero
+                // without making the independently scrolling episode pane disappear.
+                Column(Modifier.fillMaxWidth().heightIn(
+                    min = (configuration.screenHeightDp * .34f).coerceIn(
+                        if (configuration.screenHeightDp >= configuration.screenWidthDp) 240f else 160f,
+                        if (configuration.screenHeightDp >= configuration.screenWidthDp) 320f else 220f).dp),
+                    verticalArrangement = Arrangement.SpaceBetween) {
                     toolbar()
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(metadata.card.title, color = Color.White, style = MaterialTheme.typography.titleLarge,
