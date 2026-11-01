@@ -89,6 +89,10 @@ Regression APK outputs are under `app/build-regression/outputs/apk`; normal Dev 
 
 Build and focused tests pass independently of the existing lint failures; the combined command exits unsuccessfully because lint fails. Reports and logs are retained rather than suppressed.
 
-Final installed APK SHA-256: `41E67E2AB15A97350838566513424F14DC27FD83C31DF5C679B75A17292781C6`. Final-source checks: `home2-final-installed-source-checks.log`; copied JUnit/lint XML: `scroll-experiment-20261101/verification/`. These artifacts remain outside Git. No implementation commit or push was made.
+Initial tablet APK SHA-256: `41E67E2AB15A97350838566513424F14DC27FD83C31DF5C679B75A17292781C6`. Initial-source checks: `home2-final-installed-source-checks.log`; copied JUnit/lint XML: `scroll-experiment-20261101/verification/`. These artifacts remain outside Git. The tablet delivery was subsequently committed as `a9a07452` at the user's request.
 
 Next: a short Perfetto FrameTimeline/SurfaceFlinger/RenderThread/scheduler capture around D-pad transitions; frame-accurate input/focus correlation; matched-content cold/warm repetitions and memory/thermal soak; then Fire TV validation when authorized. The default constrained native-motion preview is now much closer to the SmartTube reference on this tablet, but the full-feature production/Fire TV target remains unproven. Keep the original UI until longer matched-content and TV evidence supports a replacement.
+
+## Physical Fire TV follow-up
+
+The user subsequently authorized physical Fire TV testing. Results and limitations are recorded in [Fire TV Home 2 performance](firetv-home2-performance.md). This follow-up adds an explicit native-to-Compose header focus handoff, native viewport clipping, a return-scroll guard that keeps the restored tile visible, and trial-only provider request scopes matching the category budget. Original screens, full-collection/search selections and persistent filters remain intact. Accessibility automation failures and slower first-pass presentation remain documented rather than called passes.

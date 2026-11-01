@@ -25,3 +25,7 @@ internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int 
     TEXT_ONLY("Text tiles · no artwork", staticArtwork = true, simpleFocus = true, posterArtwork = false),
     LEAN("Lean · 4 rows, 8 tiles, static header", rowLimit = 4, tileLimit = 8, staticArtwork = true, simpleFocus = true, minimalReveal = true),
 }
+
+/** Bound only the trial preview's requests; callers retain the full selection for search/collections. */
+internal fun discoveryTrialProviderScope(categories: List<com.nikhil.niktv.model.Category>, rowLimit: Int): List<com.nikhil.niktv.model.Category> =
+    if (rowLimit >= categories.size) categories else categories.take(rowLimit.coerceAtLeast(0))

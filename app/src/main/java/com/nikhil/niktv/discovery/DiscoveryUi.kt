@@ -126,12 +126,17 @@ internal fun DiscoveryPreviewScreen(
     val playProvider = LocalPlayProviderDiscovery.current
     val downloadProvider = LocalDownloadProviderDiscovery.current
     val providerPageLoader = LocalProviderDiscoveryPageLoader.current
-    val providerSelections = remember(profile, surface, app.categoryFilters, app.rawCategoriesByType, app.browseCachesByType.mapValues { it.value.categories }) {
+    val fullProviderSelections = remember(profile, surface, app.categoryFilters, app.rawCategoriesByType, app.browseCachesByType.mapValues { it.value.categories }) {
         listOf(CatalogType.MOVIES, CatalogType.SERIES)
             .filter { surface != DashboardSurface.HOME && (it == CatalogType.SERIES) == (surface == DashboardSurface.SERIES) }
             .associateWith { type -> providerDiscoveryCategoryRows(
                 app.modernVisibleIptvCategories(type, requireExplicitSelection = surface == DashboardSurface.HOME),
                 implicitSelection = app.categoryFilters["$profile|${type.name}"] == null) }
+    }
+    // The experiment bounds request/cache scope as well as drawing. Full collections
+    // still receive all selected categories, and persistent selections are untouched.
+    val providerSelections = remember(fullProviderSelections, scrollVariant.rowLimit) {
+        fullProviderSelections.mapValues { (_, categories) -> discoveryTrialProviderScope(categories, scrollVariant.rowLimit) }
     }
     val expectedProviderCategories = remember(providerSelections) {
         providerSelections.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
@@ -456,8 +461,8 @@ internal fun DiscoveryPreviewScreen(
     providerCollection?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
         DisposableEffect(Unit) { detailVisibilityChanged(true); onDispose { detailVisibilityChanged(false) } }
         saved.SaveableStateProvider("provider-collection:${type.name}:$providerCollectionCategory:$providerCollectionVisit") {
-            val category = providerSelections[type].orEmpty().firstOrNull { it.id == providerCollectionCategory }
-            ProviderDiscoveryCollectionRoute(type, category?.let { listOf(it) } ?: providerSelections[type].orEmpty(),
+            val category = fullProviderSelections[type].orEmpty().firstOrNull { it.id == providerCollectionCategory }
+            ProviderDiscoveryCollectionRoute(type, category?.let { listOf(it) } ?: fullProviderSelections[type].orEmpty(),
                 category?.title ?: "Your IPTV ${type.title}", app,
                 close = { saved.removeState("provider-collection:${type.name}:$providerCollectionCategory:$providerCollectionVisit"); providerCollection = null; providerCollectionCategory = null }, favorite = toggleFavorite)
         }
@@ -943,7 +948,7 @@ internal fun DiscoveryPreviewScreen(
                                         DiscoveryAction("Choose categories", Icons.Default.Tune) { configureProvider(type) }
                                     }
                                     if (type == CatalogType.LIVE_TV) items(categories, key = { it.id }) { category -> DiscoveryAction(category.title) { openCategory(category) } }
-                                    else if (providerSelections[type].orEmpty().isNotEmpty()) item("search-selected") {
+                                    else if (fullProviderSelections[type].orEmpty().isNotEmpty()) item("search-selected") {
                                         DiscoveryAction("Search selected categories", Icons.Default.Search) { providerCollectionVisit++; providerCollectionCategory = null; providerCollection = type.name }
                                     }
                                 }

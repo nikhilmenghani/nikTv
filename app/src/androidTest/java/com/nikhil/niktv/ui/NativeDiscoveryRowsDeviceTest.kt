@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.ViewConfiguration
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -46,8 +47,11 @@ class NativeDiscoveryRowsDeviceTest {
 
     @Test fun nativeRowsKeepColumnFocusAndSeparateClickFromLongPress() = verifyNativeInput(false)
     @Test fun nativeMotionKeepsColumnFocusAndSeparateClickFromLongPress() = verifyNativeInput(true)
+    // TV remote coverage is separate from the full touch/accessibility contract above.
+    @Test fun nativeRowsRemoteOnlyHeaderAndReturn() = verifyNativeInput(false, remoteOnly = true)
+    @Test fun nativeMotionRemoteOnlyHeaderAndReturn() = verifyNativeInput(true, remoteOnly = true)
 
-    private fun verifyNativeInput(animateFocus: Boolean) {
+    private fun verifyNativeInput(animateFocus: Boolean, remoteOnly: Boolean = false) {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
         val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
@@ -56,6 +60,8 @@ class NativeDiscoveryRowsDeviceTest {
         val header = FocusRequester()
         val ready = AtomicBoolean()
         val headerFocused = AtomicBoolean()
+        val headerOptionsFocused = AtomicBoolean()
+        val headerActions = AtomicInteger()
         val clicks = AtomicInteger()
         val longClicks = AtomicInteger()
         val showRows = mutableStateOf(true)
@@ -89,13 +95,18 @@ class NativeDiscoveryRowsDeviceTest {
                     Surface(Modifier.fillMaxSize()) { Box(Modifier.fillMaxSize()) {
                     SideEffect { ready.set(true) }
                     Column(Modifier.fillMaxSize()) {
-                        Text("Native header", Modifier.fillMaxWidth().height(48.dp).focusRequester(header)
+                        Row(Modifier.fillMaxWidth().height(48.dp)) {
+                        Text("Native header", Modifier.weight(1f).fillMaxHeight().focusRequester(header)
                             .onFocusChanged { headerFocused.set(it.isFocused) }
                             .onPreviewKeyEvent {
                                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) {
                                     entry.requestFocus(); true
                                 } else false
                             }.focusable())
+                        Text("Header options", Modifier.width(120.dp).fillMaxHeight()
+                            .onFocusChanged { headerOptionsFocused.set(it.isFocused) }
+                            .clickable { headerActions.incrementAndGet() })
+                        }
                         val saved = rememberSaveableStateHolder()
                         if (showRows.value) saved.SaveableStateProvider("native") {
                             NativeDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, up = { header.requestFocus() }, animateFocus = animateFocus)
@@ -117,6 +128,20 @@ class NativeDiscoveryRowsDeviceTest {
             await("Up restores the previous row selection") { focused() == "row0:item1" }
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("First row Up returns to the header") { headerFocused.get() }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right while in header moves to header options") { headerOptionsFocused.get() }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Center activates header options instead of a native poster") { headerActions.get() == 1 }
+            assertEquals("Header input must not play native content", 0, clicks.get())
+            assertEquals("Header input must not long-press native content", 0, longClicks.get())
+            var nativeSelection: Any? = null
+            val native = nativeRoot()
+            instrumentation.runOnMainSync {
+                nativeSelection = native?.javaClass?.getDeclaredField("currentFocusId")?.apply { isAccessible = true }?.get(native)
+            }
+            assertEquals("Header navigation must retain the native return selection", "row0:item1", nativeSelection)
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Left returns to the primary header control") { headerFocused.get() }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Reentry restores the native tile") { focused() == "row0:item1" }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -149,6 +174,7 @@ class NativeDiscoveryRowsDeviceTest {
             assertTrue("Queued feed restoration must not steal header focus", headerFocused.get())
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Header Down still restores the native selection") { focused() == "row0:item1" }
+            if (!remoteOnly) {
             fun nativeCard(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
                 if (node.contentDescription?.toString() == "Native episode 0 0, Subtitle") return node
@@ -182,6 +208,9 @@ class NativeDiscoveryRowsDeviceTest {
             instrumentation.setInTouchMode(false)
             instrumentation.runOnMainSync { entry.requestFocus() }
             await("Remote reentry restores the tile selected by touch") { focused() == "row0:item0" }
+            } else {
+                assertEquals("Remote-only coverage retains its pre-touch native selection", "row0:item1", focused())
+            }
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
             val returnTarget = focused()
             assertNotNull(returnTarget)
@@ -194,6 +223,25 @@ class NativeDiscoveryRowsDeviceTest {
             instrumentation.runOnMainSync { entry.requestFocus() }
             try {
                 await("Detail return restores the originating native tile") { focused() == returnTarget }
+                await("Restored native tile is fully visible rather than only logically focused") {
+                    val native = nativeRoot()
+                    var fullyVisible = false
+                    instrumentation.runOnMainSync {
+                        val target = host.currentFocus
+                        if (native != null && target != null && target.tag == returnTarget) {
+                            val viewportLocation = IntArray(2)
+                            val tileLocation = IntArray(2)
+                            native.getLocationOnScreen(viewportLocation)
+                            target.getLocationOnScreen(tileLocation)
+                            val viewport = Rect(viewportLocation[0], viewportLocation[1],
+                                viewportLocation[0] + native.width, viewportLocation[1] + native.height)
+                            val tile = Rect(tileLocation[0], tileLocation[1],
+                                tileLocation[0] + target.width, tileLocation[1] + target.height)
+                            fullyVisible = target.isShown && tile.width() > 0 && tile.height() > 0 && viewport.contains(tile)
+                        }
+                    }
+                    fullyVisible
+                }
             } catch (failure: AssertionError) {
                 var diagnostic = ""
                 instrumentation.runOnMainSync {

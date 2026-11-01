@@ -50,4 +50,22 @@ class DiscoveryScrollExperimentTest {
         assertFalse(a.animateNativeFocus)
         assertTrue(b.animateNativeFocus)
     }
+    @Test fun previewScopeBoundsFiveHundredCategoriesWithoutChangingBackingSelections() {
+        val selected = (1..500).map { number -> com.nikhil.niktv.model.Category(
+            "$number", "Category $number", com.nikhil.niktv.model.CatalogType.SERIES,
+            sourceCategoryIds = listOf("$number-a", "$number-b")) }
+        val control = discoveryTrialProviderScope(selected, DiscoveryScrollVariant.CONTROL.rowLimit)
+        assertSame(selected, control)
+        assertEquals(500, control.size)
+        for (variant in listOf(DiscoveryScrollVariant.NATIVE_ROWS, DiscoveryScrollVariant.NATIVE_MOTION,
+            DiscoveryScrollVariant.FEWER_ROWS, DiscoveryScrollVariant.LEAN)) {
+            val preview = discoveryTrialProviderScope(selected, variant.rowLimit)
+            assertEquals(selected.take(4), preview)
+            assertSame(selected.first(), preview.first())
+            assertEquals(listOf("1-a", "1-b"), preview.first().sourceCategoryIds)
+        }
+        assertEquals(500, selected.size)
+        assertEquals("500", selected.last().id)
+        assertSame(selected, discoveryTrialProviderScope(selected, DiscoveryScrollVariant.FEWER_TILES.rowLimit))
+    }
 }

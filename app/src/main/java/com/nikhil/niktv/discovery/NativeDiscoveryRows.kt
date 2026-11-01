@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.ViewTreeObserver
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
@@ -19,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.viewinterop.AndroidView
@@ -43,11 +45,12 @@ internal data class NativeDiscoveryRow(val id: String, val title: String, val it
 internal fun NativeDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Modifier = Modifier,
     focusEntry: FocusRequester, up: () -> Unit, animateFocus: Boolean = false) {
     val position = rememberSaveable(saver = NativeRowsPosition.Saver) { NativeRowsPosition() }
+    val composeHost = LocalView.current
     AndroidView(factory = { context -> NativeDiscoveryScroll(context).apply {
         restoredFocus = position.focus; restoredTop = position.top
     } }, modifier = modifier.focusRequester(focusEntry), onReset = null,
         onRelease = { it.dispose() }, update = { native ->
-            native.onUp = up
+            native.onUp = { native.releaseFocusToCompose(composeHost, up) }
             native.animateFocus = animateFocus
             native.onPosition = { focus, top -> position.focus = focus; position.top = top }
             native.render(rows)
@@ -85,6 +88,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
     private var signature: List<String> = emptyList()
     private var renderRevision = 0L
     private var parkingRebuild = false
+    private var handingOffToCompose = false
     private val cardRows = mutableListOf<List<View>>()
     private val motionAllowed = Settings.Global.getFloat(context.contentResolver,
         Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
@@ -110,9 +114,32 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         isSmoothScrollingEnabled = true
         setBackgroundColor(Color.rgb(9, 11, 16))
+        // AndroidView does not clip native drawing to its Compose layout bounds.
+        // Keep scrolled cards inside this viewport, below the separate header.
+        outlineProvider = ViewOutlineProvider.BOUNDS
+        clipToOutline = true
         setPadding(dp(18), dp(10), dp(18), dp(24))
         clipToPadding = false
         setOnScrollChangeListener { _, _, y, _, _ -> onPosition(currentFocusId ?: restoredFocus, y) }
+    }
+
+    fun releaseFocusToCompose(composeHost: View, focusHeader: () -> Unit) {
+        val previousPolicy = descendantFocusability
+        val previouslyFocusable = isFocusable
+        handingOffToCompose = true
+        try {
+            // Compose focus and Android's focused View are distinct. Release both
+            // native candidates before requesting the header's Compose focus target.
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            isFocusable = false
+            clearFocus()
+            composeHost.requestFocus()
+            focusHeader()
+        } finally {
+            isFocusable = previouslyFocusable
+            descendantFocusability = previousPolicy
+            handingOffToCompose = false
+        }
     }
 
     override fun onAttachedToWindow() {
@@ -137,7 +164,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
-        if (gainFocus && !parkingRebuild) post {
+        if (gainFocus && !parkingRebuild && !handingOffToCompose) post {
             // A queued bridge-entry request must not replace a descendant already focused.
             if (!isAttachedToWindow || !hasWindowFocus() || !isFocused) return@post
             val saved = currentFocusId ?: restoredFocus
@@ -227,7 +254,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
                             val target = if (focused) 1.025f else 1f
                             animate().scaleX(target).scaleY(target).setDuration(320L).withLayer().start()
                         } else { scaleX = 1f; scaleY = 1f }
-                        if (focused && !(initialFocusPending && restoredFocus != null && identity != restoredFocus)) {
+                        if (focused && !handingOffToCompose && !(initialFocusPending && restoredFocus != null && identity != restoredFocus)) {
                             // Platform attachment may provisionally focus the first child.
                             // It must not erase a saved return target farther down the feed.
                             initialFocusPending = false
@@ -293,7 +320,9 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
         }
         post {
             if (!isAttachedToWindow || revision != renderRevision) return@post
-            scrollTo(0, top)
+            // Focus may already have revealed its tile before this posted callback.
+            // An older saved top must not move that focused tile back offscreen.
+            if (findFocus()?.tag !is String) scrollTo(0, top)
             // Header/popup focus changes after the rebuild always win over restoration.
             if ((hadFocus || initialFocusPending) && hasWindowFocus() && hasFocus()) {
                 val saved = if (initialFocusPending) restoredFocus else currentFocusId ?: restoredFocus
