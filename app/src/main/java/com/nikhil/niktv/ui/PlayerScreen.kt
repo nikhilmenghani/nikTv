@@ -569,7 +569,7 @@ fun PlayerScreen(
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving
+    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
@@ -1567,7 +1567,7 @@ fun PlayerScreen(
                 suppressNextEmbeddedPlayerFocusHandoff = true
                 playerViewRef?.requestFocus()
             } else {
-                runCatching { videoSurfaceFocusRequester.requestFocus() }
+                coroutineScope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
             }
         }
     }
@@ -1683,7 +1683,7 @@ fun PlayerScreen(
                     suppressNextEmbeddedPlayerFocusHandoff = true
                     playerViewRef?.requestFocus()
                 } else {
-                    runCatching { videoSurfaceFocusRequester.requestFocus() }
+                    coroutineScope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
                 }
             }
             // Hide visible controls first; the next Back leaves playback.
@@ -1706,6 +1706,7 @@ fun PlayerScreen(
             .playerActivityObserver {
                 dpadInteraction++
             }
+            .cricketScoreEntry(cricketScores, !controlsVisible && !queueVisible && !playerOptionsOpen && !inPictureInPicture) { showControlsAndFocusPlayPause() }
             .cricketScoreMovement(cricketScores)
             .playerMediaKeys(playbackRequested) { requested ->
                 playbackRequested = requested
@@ -2127,7 +2128,7 @@ fun PlayerScreen(
             !controlsVisible &&
             !queueVisible &&
             !pictureEditorVisible &&
-            !playerOptionsOpen &&
+            (!playerOptionsOpen || cricketScores.badgeHasFocus) &&
             !inPictureInPicture
         ) {
             Box(
@@ -2446,7 +2447,8 @@ PlayerChromeIconButton(
                             icon = Icons.Default.SportsCricket,
                             contentDescription = "Live cricket scores",
                             onClick = { cricketScores.pickerOpen = true },
-                            modifier = Modifier.playerSecondaryFocus(cricketScoreFocusRequester, secondaryActionRequesters,
+                            modifier = Modifier.cricketScoreEntry(cricketScores, true) { showControlsAndFocusPlayPause() }
+                                .playerSecondaryFocus(cricketScoreFocusRequester, secondaryActionRequesters,
                                 extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
                             onFocused = { controlsFocused = it }
                         )
@@ -2857,7 +2859,7 @@ PlayerChromeIconButton(
                 dpadInteraction++
                 controlsVisible = false
                 controlsFocused = false
-                runCatching { videoSurfaceFocusRequester.requestFocus() }
+                coroutineScope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
             },
             onSelect = { item, index ->
                 queueVisible = false

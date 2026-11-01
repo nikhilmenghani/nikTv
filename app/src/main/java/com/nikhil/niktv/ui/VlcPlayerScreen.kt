@@ -275,7 +275,7 @@ internal fun VlcPlayerScreen(
     var speedPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving
+    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
@@ -417,7 +417,8 @@ internal fun VlcPlayerScreen(
     // Construct JNI state asynchronously; the session still owns decoder cleanup
     // before replacement media may acquire the native playback slot.
     var playbackRequested by remember(media.progressKey, media.playbackAttemptId) { mutableStateOf(media.playWhenReady) }
-    val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
+    val liveRecovery = remember(media.progressKey) { LiveStreamRecovery(LiveStreamRecovery.VLC_RETRY_DELAYS_MILLIS) }
+    var channelHasPlayed by remember(media.progressKey) { mutableStateOf(false) }
     var session by remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
         mutableStateOf<VlcPlaybackSession?>(null)
     }
@@ -495,7 +496,7 @@ internal fun VlcPlayerScreen(
         if (refreshPending) return
         if (manual) liveRecovery.reset()
         refreshPending = true
-        modeFeedback = "Refreshing stream..."
+        modeFeedback = if (manual) "Refreshing stream..." else "Reconnecting stream (${liveRecovery.attemptCount}/${liveRecovery.retryLimit})..."
         currentRetry(0L)
     }
     fun requestPlayback(requested: Boolean) {
@@ -695,7 +696,7 @@ internal fun VlcPlayerScreen(
                 suppressNextEmbeddedPlayerFocusHandoff = true
                 videoView?.requestFocus()
             } else {
-                runCatching { videoSurfaceFocusRequester.requestFocus() }
+                scope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
             }
         }
     }
@@ -763,7 +764,7 @@ internal fun VlcPlayerScreen(
                     suppressNextEmbeddedPlayerFocusHandoff = true
                     videoView?.requestFocus()
                 } else {
-                    runCatching { videoSurfaceFocusRequester.requestFocus() }
+                    scope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
                 }
             }
             // Match Media3/ExoPlayer: hide controls before leaving playback.
@@ -803,6 +804,7 @@ internal fun VlcPlayerScreen(
                     if (media.catalogType != CatalogType.LIVE_TV) player.setRate(currentPlaybackSpeed)
                     if (!focus.shouldPlay) preparedSession.command { it.pause() }
                     streamWasPlaying = true
+                    channelHasPlayed = true
                     streamTerminated = false
                     playing = focus.shouldPlay
                     buffering = false
@@ -843,13 +845,16 @@ internal fun VlcPlayerScreen(
                     preparedSession.retireAfterFailure()
                     streamTerminated = true
                     buffering = false
-                    if (media.catalogType == CatalogType.LIVE_TV && streamWasPlaying) {
+                    if (media.catalogType == CatalogType.LIVE_TV && channelHasPlayed && !liveRecovery.exhausted) {
                         // The watchdog shares one budget for errors, EOF and stalls.
                         // Do not treat every post-start transport error as expired authorization.
                         error = null
+                        buffering = true
                     } else {
                         // LibVLC's event has no HTTP status. Do not invent an authorization failure.
-                        error = "VLC could not open this media. Retry or switch player."
+                        error = if (media.catalogType == CatalogType.LIVE_TV && channelHasPlayed && liveRecovery.exhausted)
+                            "The stream is still unavailable after ${liveRecovery.retryLimit} reconnect attempts. Retry or choose another source."
+                        else "VLC could not open this media. Retry or switch player."
                         controlsVisible = true
                     }
                 }
@@ -1014,8 +1019,8 @@ internal fun VlcPlayerScreen(
         } finally { resumeSeekJob?.cancel() }
     }
 
-    // Recover only after successful live playback; startup/auth failures use the
-    // existing error path. The budget survives player recreation for this channel.
+    // Successful playback belongs to the channel, not its current native player.
+    // Replacement-open failures remain in this same bounded recovery burst.
     LaunchedEffect(player) {
         if (media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) return@LaunchedEffect
         while (true) {
@@ -1024,7 +1029,7 @@ internal fun VlcPlayerScreen(
                 androidx.lifecycle.Lifecycle.State.STARTED)
             if (liveRecovery.shouldRecover(
                     android.os.SystemClock.elapsedRealtime(), player.time,
-                    active && playbackRequested && focus.shouldPlay && streamWasPlaying && error == null &&
+                    active && playbackRequested && focus.shouldPlay && channelHasPlayed && error == null &&
                         !authorizationRecoveryRequested && !refreshPending,
                     streamTerminated
                 )) {
@@ -1032,9 +1037,9 @@ internal fun VlcPlayerScreen(
                 streamTerminated = true
                 refreshLiveStream()
             } else if (error == null && liveRecovery.unrecoverable(android.os.SystemClock.elapsedRealtime(),
-                    active && playbackRequested && focus.shouldPlay && streamWasPlaying && !authorizationRecoveryRequested && !refreshPending,
+                    active && playbackRequested && focus.shouldPlay && channelHasPlayed && !authorizationRecoveryRequested && !refreshPending,
                     streamTerminated)) {
-                error = "The live stream stopped. Retry to refresh the stream, or choose another player."
+                error = "The stream is still unavailable after ${liveRecovery.retryLimit} reconnect attempts. Retry or choose another source."
                 controlsVisible = true
             }
         }
@@ -1084,9 +1089,12 @@ internal fun VlcPlayerScreen(
                 preparedSession.retireAfterFailure()
                 preparedSession.command { it.stop() }
                 streamTerminated = true
-                buffering = false
-                error = "The stream did not start within 25 seconds. Retry or switch player."
-                controlsVisible = true
+                val reconnecting = media.catalogType == CatalogType.LIVE_TV && channelHasPlayed && !liveRecovery.exhausted
+                buffering = reconnecting
+                if (!reconnecting) {
+                    error = "The stream did not start within 25 seconds. Retry or switch player."
+                    controlsVisible = true
+                }
                 break
             }
             delay(250L)
@@ -1148,6 +1156,7 @@ internal fun VlcPlayerScreen(
             .playerActivityObserver {
                 dpadInteraction++
             }
+            .cricketScoreEntry(cricketScores, !controlsVisible && !queueVisible && !playerOptionsOpen && !inPictureInPicture) { showControls() }
             .cricketScoreMovement(cricketScores)
             .playerMediaKeys(playbackRequested && !streamTerminated) { requested ->
                 requestPlayback(requested)
@@ -1491,7 +1500,7 @@ internal fun VlcPlayerScreen(
             !controlsVisible &&
             !queueVisible &&
             !pictureEditorVisible &&
-            !playerOptionsOpen &&
+            (!playerOptionsOpen || cricketScores.badgeHasFocus) &&
             !inPictureInPicture
         ) {
             Box(
@@ -1806,7 +1815,8 @@ PlayerChromeIconButton(
                             icon = Icons.Default.SportsCricket,
                             contentDescription = "Live cricket scores",
                             onClick = { cricketScores.pickerOpen = true },
-                            modifier = Modifier.playerSecondaryFocus(cricketScoreRequester, secondaryActionRequesters,
+                            modifier = Modifier.cricketScoreEntry(cricketScores, true) { showControls() }
+                                .playerSecondaryFocus(cricketScoreRequester, secondaryActionRequesters,
                                 extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
@@ -2210,7 +2220,7 @@ PlayerChromeIconButton(
                 dpadInteraction++
                 controlsVisible = false
                 controlsFocused = false
-                runCatching { videoSurfaceFocusRequester.requestFocus() }
+                scope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
             },
             onSelect = { item, index ->
                 queueVisible = false

@@ -54,6 +54,12 @@ class CricketScoreOverlayDeviceTest {
             n?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
         }
     }
+    private fun focused(text: String, prefix: Boolean = false): Boolean {
+        var n = node(text, prefix)
+        repeat(8) { if (n?.isFocused == true) return true; n = n?.parent }
+        return false
+    }
+    private fun key(code: Int) { instrumentation.sendKeyDownUpSync(code); Thread.sleep(180) }
     private fun bounds(): Rect = Rect().also { node("Live cricket score.", true)!!.getBoundsInScreen(it) }
     private fun screenshot(name: String) {
         instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
@@ -217,8 +223,37 @@ class CricketScoreOverlayDeviceTest {
             await("Following and position survive player recreation") { node("Live cricket score.", true) != null }
             assertEquals(remoteX, prefs.getFloat("x", -1f))
             assertEquals(savedY, prefs.getFloat("y", -1f))
-            click("Live cricket score.", true); click("Turn off live scoring")
-            click("Done")
+            // Real remote input must enter the badge even after it has been dragged.
+            showControls(activity)
+            instrumentation.setInTouchMode(false)
+            await("Cricket toolbar accepts focus") {
+                var n = node("Live cricket scores")
+                repeat(8) { if (n?.isFocusable != true) n = n?.parent }
+                n?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true
+            }
+            key(android.view.KeyEvent.KEYCODE_DPAD_UP)
+            await("Up from cricket controls enters floating badge") { focused("Live cricket score.", true) }
+            key(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches expansion") { focused("Expand score badge") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Expansion returns focus to badge") { node("Collapse score badge") != null && focused("Live cricket score.", true) }
+            key(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Commentary is reachable by remote") { focused("Read last-ball commentary") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Refresh is reachable by remote") { focused("Refresh live score") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down returns focus to player") { !focused("Live cricket score.", true) }
+            // Hide playback chrome; Up must enter directly from the video too.
+            key(android.view.KeyEvent.KEYCODE_BACK)
+            Thread.sleep(600) // Let the playback chrome's exit animation release its focus.
+            screenshot("before-video-up-$sports-$engine")
+            key(android.view.KeyEvent.KEYCODE_DPAD_UP)
+            screenshot("after-video-up-$sports-$engine")
+            await("Up from video enters badge") { focused("Live cricket score.", true) }
+            key(android.view.KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Dismiss is reachable by remote") { focused("Dismiss live score badge") }
+            screenshot("remote-dismiss-$sports-$engine")
+            key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
             await("Turning off hides badge") { node("Live cricket score.", true) == null }
             Thread.sleep(300)
             val stoppedAt = polls.get(); Thread.sleep(1_500)

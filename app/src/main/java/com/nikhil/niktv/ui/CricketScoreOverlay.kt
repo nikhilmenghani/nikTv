@@ -37,6 +37,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
@@ -61,6 +63,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nikhil.niktv.sports.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 internal data class CricketBadgePosition(val x: Float = .95f, val y: Float = .08f) {
@@ -75,6 +78,16 @@ internal val LocalCricketLiveScoresRepository = staticCompositionLocalOf<Cricket
 internal data class CricketScoreReading(val id: String, val title: String, val text: String, val score: CricketLiveScore?)
 
 internal class CricketScoreController(context: Context) {
+    internal val badgeFocus = FocusRequester()
+    internal val toggleFocus = FocusRequester()
+    internal val commentaryFocus = FocusRequester()
+    internal val refreshFocus = FocusRequester()
+    internal val closeFocus = FocusRequester()
+    internal val readingCloseFocus = FocusRequester()
+    internal val readingBodyFocus = FocusRequester()
+    internal var returnToPlayer: (() -> Unit)? = null
+    internal var focusRequest by mutableIntStateOf(0)
+    var badgeHasFocus by mutableStateOf(false)
     internal var movementWidth = 0f
     internal var movementHeight = 0f
     internal val movementStep = context.resources.displayMetrics.density * 18f
@@ -110,8 +123,11 @@ internal class CricketScoreController(context: Context) {
         refresh++
     }
     fun stop() {
+        val returnFocus = returnToPlayer.takeIf { badgeHasFocus && !pickerOpen }
         selected = null; score = null; scoreError = null; reading = null; readingRefreshRequested = false; moving = false
+        badgeHasFocus = false
         preferences.edit().remove("match").apply()
+        returnFocus?.invoke()
     }
     fun savePosition() { position = position.safe(); preferences.edit().putFloat("x", position.x).putFloat("y", position.y).apply() }
     fun resetPosition() { position = CricketBadgePosition(); savePosition() }
@@ -120,9 +136,17 @@ internal class CricketScoreController(context: Context) {
         val latest = score ?: return
         val ball = latest.lastDelivery ?: return
         reading = CricketScoreReading(ball.id, "Last ball · ${ball.over}", ball.description.ifBlank { "Commentary is not available for this delivery yet." }, latest)
+        if (badgeHasFocus) focusBadge()
     }
-    fun showHighlight(event: CricketScoreEvent) { reading = CricketScoreReading(event.id, event.title, event.detail, score) }
-    fun dismissReading() { reading = null; readingRefreshRequested = false }
+    fun showHighlight(event: CricketScoreEvent) {
+        reading = CricketScoreReading(event.id, event.title, event.detail, score)
+        if (badgeHasFocus) focusBadge()
+    }
+    fun dismissReading() { reading = null; readingRefreshRequested = false; if (badgeHasFocus) focusBadge() }
+    fun focusBadge(returnFocus: (() -> Unit)? = null) {
+        if (returnFocus != null) returnToPlayer = returnFocus
+        focusRequest++
+    }
     fun refreshTile() { readingRefreshRequested = reading != null; refresh++ }
     fun refreshFailed() { readingRefreshRequested = false }
     fun receivedScore(latest: CricketLiveScore, highlights: List<CricketScoreEvent>) {
@@ -130,6 +154,16 @@ internal class CricketScoreController(context: Context) {
         if (readingRefreshRequested) { readingRefreshRequested = false; showCommentary() }
         else if (reading == null) highlights.lastOrNull()?.let(::showHighlight)
     }
+}
+
+/** Up enters the overlay independently of where the user has dragged it. */
+internal fun Modifier.cricketScoreEntry(controller: CricketScoreController, enabled: Boolean,
+    returnToPlayer: () -> Unit): Modifier = onPreviewKeyEvent { event ->
+    if (enabled && controller.selected != null && !controller.moving &&
+        event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+        controller.focusBadge(returnToPlayer)
+        true
+    } else false
 }
 
 /** Movement owns directional input before either a native video surface or playback controls. */
@@ -203,7 +237,9 @@ internal fun rememberCricketScoreController(): CricketScoreController {
 internal fun CricketScoreOverlay(controller: CricketScoreController, visible: Boolean = true) {
     val selected = controller.selected
     val density = LocalDensity.current
-    val badgeFocus = remember { FocusRequester() }
+    val badgeFocus = controller.badgeFocus
+    val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
+    var bodyFocused by remember { mutableStateOf(false) }
     val badgeInteraction = remember { MutableInteractionSource() }
     val badgePressed by badgeInteraction.collectIsPressedAsState()
     var badgeSize by remember { mutableStateOf(IntSize.Zero) }
@@ -214,9 +250,18 @@ internal fun CricketScoreOverlay(controller: CricketScoreController, visible: Bo
     LaunchedEffect(controller.moving) {
         if (controller.moving) { delay(100); runCatching { badgeFocus.requestFocus() } }
     }
+    LaunchedEffect(controller.focusRequest, visible) {
+        if (controller.focusRequest > 0 && selected != null && visible) {
+            inputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+            withFrameNanos { }
+            runCatching { badgeFocus.requestFocus() }
+        }
+    }
     BackHandler(controller.moving) { controller.moving = false; controller.savePosition() }
     BackHandler(controller.reading != null && !controller.pickerOpen && !controller.moving) { controller.dismissReading() }
+    BackHandler(controller.badgeHasFocus && controller.reading == null && !controller.pickerOpen && !controller.moving) { controller.returnToPlayer?.invoke() }
     if (selected != null && visible) BoxWithConstraints(Modifier.fillMaxSize().zIndex(5f)) {
+        DisposableEffect(controller) { onDispose { controller.badgeHasFocus = false } }
         val inset = with(density) { 12.dp.toPx() }
         val travelX = (constraints.maxWidth - badgeSize.width - inset * 2).coerceAtLeast(0f)
         val travelY = (constraints.maxHeight - badgeSize.height - inset * 2).coerceAtLeast(0f)
@@ -238,12 +283,24 @@ internal fun CricketScoreOverlay(controller: CricketScoreController, visible: Bo
             modifier = Modifier.offset { IntOffset((inset + position.x * travelX).roundToInt(), (inset + position.y * travelY).roundToInt()) }
                 .widthIn(max = (maxWidth - 24.dp).coerceAtMost(if (reading != null) 380.dp else if (detailed) 244.dp else 300.dp))
                 .onSizeChanged { badgeSize = it }
-                .border(if (controller.moving) 2.dp else 1.dp,
-                    Brush.linearGradient(listOf(Color.White.copy(alpha = if (badgePressed) .6f else .32f),
+                .border(if (controller.moving || controller.badgeHasFocus) 2.dp else 1.dp,
+                    Brush.linearGradient(listOf(Color.White.copy(alpha = if (badgePressed || controller.badgeHasFocus) .9f else .32f),
                         accent.copy(alpha = if (badgePressed) .6f else .38f), Color.White.copy(alpha = .08f))), badgeShape)
                 .focusRequester(badgeFocus)
+                .onFocusChanged { bodyFocused = it.isFocused; controller.badgeHasFocus = it.hasFocus }
                 .onPreviewKeyEvent { key ->
-                    if (!controller.moving || key.type != KeyEventType.KeyDown) false else {
+                    if (key.type != KeyEventType.KeyDown) false else if (!controller.moving && bodyFocused) {
+                        when (key.key) {
+                            Key.DirectionRight -> runCatching {
+                                (if (detailed && reading == null && score?.lastDelivery != null) controller.commentaryFocus
+                                else if (detailed) controller.refreshFocus else controller.toggleFocus).requestFocus()
+                            }.getOrDefault(false)
+                            Key.DirectionLeft -> runCatching { controller.closeFocus.requestFocus() }.getOrDefault(false)
+                            Key.DirectionDown, Key.DirectionUp -> { controller.returnToPlayer?.invoke(); true }
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { controller.pickerOpen = true; true }
+                            else -> false
+                        }
+                    } else if (!controller.moving) false else {
                         val step = with(density) { 18.dp.toPx() }
                         when (key.key) {
                             Key.DirectionLeft -> controller.position = controller.position.move(-step, 0f, travelX, travelY)
@@ -256,7 +313,7 @@ internal fun CricketScoreOverlay(controller: CricketScoreController, visible: Bo
                         true
                     }
                 }
-                .focusable(enabled = controller.moving)
+                .focusable()
                 .pointerInput(controller) {
                     detectDragGestures(onDragEnd = controller::savePosition, onDragCancel = controller::savePosition) { change, drag ->
                         change.consume()
@@ -289,19 +346,23 @@ internal fun CricketScoreOverlay(controller: CricketScoreController, visible: Bo
                         current?.let { Text(it.overs, fontSize = 10.sp, lineHeight = 13.sp, color = Color.White.copy(alpha = .65f), maxLines = 1) }
                         score?.lastDelivery?.let { CricketLastBall(it, stale, compact = true) }
                         CricketBadgeToggle(controller, detailed)
+                        CricketBadgeClose(controller)
                     }
                 } else {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box(Modifier.size(5.dp).background(accent, androidx.compose.foundation.shape.CircleShape))
                     Text(if (score?.complete == true) "FINAL" else if (stale) "RECONNECTING" else "LIVE", color = accent, fontSize = 9.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold)
                     Text(selected.title, Modifier.weight(1f), color = Color.White.copy(alpha = .7f), fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (reading == null) IconButton(onClick = controller::showCommentary, enabled = score?.lastDelivery != null, modifier = Modifier.size(28.dp)) {
+                    if (reading == null) IconButton(onClick = controller::showCommentary, enabled = score?.lastDelivery != null,
+                        modifier = Modifier.cricketBadgeAction(controller, controller.commentaryFocus, controller.badgeFocus, controller.refreshFocus)) {
                         Icon(Icons.Default.ChatBubbleOutline, "Read last-ball commentary", Modifier.size(15.dp))
                     }
-                    IconButton(onClick = controller::refreshTile, modifier = Modifier.size(28.dp)) {
+                    IconButton(onClick = controller::refreshTile, modifier = Modifier.cricketBadgeAction(controller, controller.refreshFocus,
+                        if (reading == null && score?.lastDelivery != null) controller.commentaryFocus else controller.badgeFocus, controller.toggleFocus)) {
                         Icon(Icons.Default.Refresh, if (reading != null) "Refresh commentary" else "Refresh live score", Modifier.size(15.dp))
                     }
                     CricketBadgeToggle(controller, detailed)
+                    CricketBadgeClose(controller)
                 }
                 if (innings.isEmpty()) Text(if (stale) "Score unavailable" else "Connecting to score…", fontSize = 12.sp, lineHeight = 16.sp)
                 else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -334,12 +395,27 @@ internal fun CricketScoreOverlay(controller: CricketScoreController, visible: Bo
                     HorizontalDivider(Modifier.padding(vertical = 3.dp), color = accent.copy(alpha = .3f))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(reading.title, Modifier.weight(1f), color = accent, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.ExtraBold)
-                        IconButton(onClick = controller::dismissReading, modifier = Modifier.size(28.dp)) {
+                        IconButton(onClick = controller::dismissReading, modifier = Modifier.cricketBadgeAction(controller,
+                            controller.readingCloseFocus, controller.badgeFocus, controller.readingBodyFocus, controller.readingBodyFocus)) {
                             Icon(Icons.Default.Close, "Dismiss commentary", Modifier.size(16.dp))
                         }
                     }
                     val textScroll = key(reading.id) { rememberScrollState() }
-                    Text(reading.text, Modifier.fillMaxWidth().heightIn(max = readingTextHeight).verticalScroll(textScroll),
+                    val readingScope = rememberCoroutineScope()
+                    Text(reading.text, Modifier.fillMaxWidth().heightIn(max = readingTextHeight).verticalScroll(textScroll)
+                        .focusRequester(controller.readingBodyFocus)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                Key.DirectionLeft -> runCatching { controller.readingCloseFocus.requestFocus() }.getOrDefault(false)
+                                Key.DirectionUp -> {
+                                    if (textScroll.value == 0) runCatching { controller.readingCloseFocus.requestFocus() }
+                                    else readingScope.launch { textScroll.scrollTo((textScroll.value - 72).coerceAtLeast(0)) }
+                                    true
+                                }
+                                Key.DirectionDown -> { readingScope.launch { textScroll.scrollTo((textScroll.value + 72).coerceAtMost(textScroll.maxValue)) }; true }
+                                else -> false
+                            }
+                        }.focusable(),
                         fontSize = 12.sp, lineHeight = 17.sp)
                     Text(if (controller.readingRefreshRequested) "Refreshing…" else if (textScroll.canScrollForward) "Scroll for full commentary · held until dismissed" else if (controller.score?.lastDelivery?.id != reading.score?.lastDelivery?.id)
                         "New delivery available · refresh when ready" else "Held for reading · dismiss when done",
@@ -357,10 +433,35 @@ private fun CricketBadgeToggle(controller: CricketScoreController, detailed: Boo
     IconButton(onClick = {
         controller.updateExpanded(!detailed)
         if (detailed) { controller.dismissReading(); controller.moving = false; controller.savePosition() }
-    }, modifier = Modifier.size(28.dp)) {
+        if (controller.badgeHasFocus) controller.focusBadge()
+    }, modifier = Modifier.cricketBadgeAction(controller, controller.toggleFocus,
+        if (detailed) controller.refreshFocus else controller.badgeFocus, controller.closeFocus)) {
         Icon(if (detailed) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
             if (detailed) "Collapse score badge" else "Expand score badge", Modifier.size(18.dp), tint = Color.White.copy(alpha = .65f))
     }
+}
+
+@Composable
+private fun CricketBadgeClose(controller: CricketScoreController) {
+    IconButton(onClick = controller::stop,
+        modifier = Modifier.cricketBadgeAction(controller, controller.closeFocus, controller.toggleFocus, controller.badgeFocus)) {
+        Icon(Icons.Default.Close, "Dismiss live score badge", Modifier.size(16.dp), tint = Color.White.copy(alpha = .8f))
+    }
+}
+
+@Composable
+private fun Modifier.cricketBadgeAction(controller: CricketScoreController, requester: FocusRequester,
+    left: FocusRequester, right: FocusRequester, down: FocusRequester? = controller.reading?.let { controller.readingCloseFocus }): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    return size(28.dp).focusRequester(requester).onFocusChanged { focused = it.isFocused }
+        .border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(6.dp))
+        .focusProperties { this.left = left; this.right = right; up = controller.badgeFocus }
+        .onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                if (down != null) runCatching { down.requestFocus() } else controller.returnToPlayer?.invoke()
+                true
+            } else false
+        }.playerDpadFocusRoutes(left = left, right = right, up = controller.badgeFocus)
 }
 
 @Composable
@@ -393,6 +494,12 @@ private fun CricketLastBall(delivery: CricketDelivery, stale: Boolean, compact: 
 @Composable
 private fun CricketMatchPicker(controller: CricketScoreController) {
     val entry = remember { FocusRequester() }
+    DisposableEffect(controller) {
+        val returnToBadge = controller.badgeHasFocus
+        onDispose {
+            if (returnToBadge && !controller.moving && controller.selected != null) controller.focusBadge()
+        }
+    }
     Dialog(onDismissRequest = { controller.pickerOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp), contentAlignment = Alignment.Center) {
             val wide = maxWidth > 580.dp && maxWidth > maxHeight

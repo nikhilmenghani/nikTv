@@ -6983,7 +6983,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         type: CatalogType,
         supplied: List<MediaItem>
     ): List<MediaItem> {
-        if (supplied.isNotEmpty()) return supplied.distinctBy { it.id }
+        if (supplied.isNotEmpty()) return orderedPlayerQueue(supplied)
 
         val snapshot = _state.value
         val visible = snapshot.items.distinctBy { it.id }

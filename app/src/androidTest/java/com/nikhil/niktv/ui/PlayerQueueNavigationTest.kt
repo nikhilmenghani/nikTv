@@ -159,4 +159,37 @@ class PlayerQueueNavigationTest {
             assertFalse(PlayerQueueRegressionActivity.selected)
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
+    @Test fun pinned65KeepsItsProviderPositionBetween64And66() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val activity = instrumentation.startActivitySync(Intent(context, PlayerQueueRegressionActivity::class.java)
+            .putExtra("layout", "LIST").putExtra("pinnedId", "65").putExtra("playingId", "64")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        fun awaitSelection(id: String, index: Int) {
+            val until = System.currentTimeMillis() + 8000
+            while (System.currentTimeMillis() < until) {
+                if (PlayerQueueRegressionActivity.selectedId == id && PlayerQueueRegressionActivity.selectedIndex == index) return
+                Thread.sleep(80)
+            }
+            fail("Expected channel $id at index $index; got ${PlayerQueueRegressionActivity.selectedId} at ${PlayerQueueRegressionActivity.selectedIndex}")
+        }
+        try {
+            val until = System.currentTimeMillis() + 8000
+            while (bounds() == null && System.currentTimeMillis() < until) Thread.sleep(100)
+            Thread.sleep(350)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitSelection("64", 65)
+            key(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(200)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitSelection("65", 66)
+            key(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(200)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitSelection("66", 67)
+            // Move back through the provider rows to the pinned shortcut at index zero.
+            repeat(67) { key(KeyEvent.KEYCODE_DPAD_UP); Thread.sleep(220) }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitSelection("65", 0)
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
 }

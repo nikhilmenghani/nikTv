@@ -1,7 +1,12 @@
 package com.nikhil.niktv.ui
 
-/** One automatic reconnect per failure burst, rearmed by a minute of confirmed playback. */
-internal class LiveStreamRecovery {
+/** A bounded reconnect budget, rearmed by a minute of confirmed playback. */
+internal class LiveStreamRecovery(private val retryDelaysMillis: List<Long> = listOf(0L)) {
+    init { require(retryDelaysMillis.isNotEmpty() && retryDelaysMillis.all { it >= 0 }) }
+    val retryLimit get() = retryDelaysMillis.size
+    var attemptCount = 0
+        private set
+    private var failureDetectedAt: Long? = null
     var exhausted = false
         private set
     private var lastPosition: Long? = null
@@ -11,6 +16,8 @@ internal class LiveStreamRecovery {
 
     fun reset() {
         exhausted = false
+        attemptCount = 0
+        failureDetectedAt = null
         lastPosition = null
         lastSampleAt = null
         healthyPlaybackMillis = 0L
@@ -18,13 +25,16 @@ internal class LiveStreamRecovery {
 
     fun claimRecovery(): Boolean {
         if (exhausted) return false
-        exhausted = true
+        attemptCount++
+        exhausted = attemptCount >= retryLimit
+        failureDetectedAt = null
         healthyPlaybackMillis = 0L
         return true
     }
 
     fun observePlayback(now: Long, position: Long, eligible: Boolean, terminated: Boolean = false) {
         if (!eligible) {
+            failureDetectedAt = null
             lastPosition = null
             lastSampleAt = null
             healthyPlaybackMillis = 0L
@@ -43,8 +53,10 @@ internal class LiveStreamRecovery {
             lastAdvanceAt = now
         }
         lastSampleAt = now
-        if (!terminated && exhausted && healthyPlaybackMillis >= 60_000L) {
+        if (!terminated && attemptCount > 0 && healthyPlaybackMillis >= 60_000L) {
             exhausted = false
+            attemptCount = 0
+            failureDetectedAt = null
             healthyPlaybackMillis = 0L
         }
     }
@@ -56,7 +68,18 @@ internal class LiveStreamRecovery {
     fun shouldRecover(now: Long, position: Long, eligible: Boolean, terminated: Boolean): Boolean {
         observePlayback(now, position, eligible, terminated)
         if (!eligible) return false
-        if (exhausted || (!terminated && now - lastAdvanceAt < 20_000L)) return false
+        if (exhausted) return false
+        if (!terminated && now - lastAdvanceAt < 20_000L) {
+            failureDetectedAt = null
+            return false
+        }
+        val failedAt = failureDetectedAt ?: now.also { failureDetectedAt = it }
+        if (now - failedAt < retryDelaysMillis[attemptCount]) return false
         return claimRecovery()
+    }
+
+    companion object {
+        // Continue through a brief server outage, without reconnecting in a tight loop.
+        val VLC_RETRY_DELAYS_MILLIS = listOf(2_000L, 5_000L, 10_000L, 20_000L, 30_000L, 30_000L, 30_000L, 30_000L)
     }
 }
