@@ -643,7 +643,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
         if (state.profileSwitcherOpen) ModernProfileSwitchDialog(state.profiles, state.savedProfile,
-            close = vm::closeProfileSwitcher, select = vm::switchProfile)
+            close = vm::closeProfileSwitcher, select = vm::switchProfile, openChooser = vm::openProfileChooser)
         ParentalPinPrompt(vm)
         Surface(Modifier.fillMaxSize()) {
           if (updateEnforcementEnabled && (checkingForRequiredUpdate || requiredUpdate != null)) {

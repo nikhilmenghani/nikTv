@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.People
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -15,7 +18,7 @@ import com.nikhil.niktv.model.PortalProfile
 /** Switching is explicit; opening or dismissing this modal leaves the active session intact. */
 @Composable
 internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: PortalProfile?,
-    close: () -> Unit, select: (PortalProfile) -> Unit) {
+    close: () -> Unit, select: (PortalProfile) -> Unit, openChooser: () -> Unit = {}) {
     val entry = remember { FocusRequester() }
     val selected = profiles.indexOfFirst { it.cacheKey() == current?.cacheKey() }.coerceAtLeast(0)
     val closeFocus = remember { FocusRequester() }
@@ -35,5 +38,16 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                     }
                 }
             }
-        }, confirmButton = { NikTvSecondaryActionButton(close, Modifier.fillMaxWidth().focusRequester(closeFocus)) { Text("Close") } })
+        }, confirmButton = {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NikTvSecondaryActionButton(openChooser, Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Icon(Icons.Default.People, null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Who's watching?")
+                }
+                NikTvSecondaryActionButton(close, Modifier.size(48.dp).focusRequester(closeFocus), contentPadding = PaddingValues(0.dp)) {
+                    Icon(Icons.Default.Close, "Close", Modifier.size(22.dp))
+                }
+            }
+        })
 }

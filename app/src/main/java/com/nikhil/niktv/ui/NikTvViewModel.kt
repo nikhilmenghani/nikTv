@@ -7995,6 +7995,23 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
     fun openProfileSwitcher() { _state.update { it.copy(profileSwitcherOpen = true) } }
     fun closeProfileSwitcher() { _state.update { it.copy(profileSwitcherOpen = false) } }
+    /** Return to the same chooser used on launch; keep saved profiles, sessions and libraries intact. */
+    fun openProfileChooser() {
+        closePlayer()
+        profilePreparationJob?.cancel()
+        searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
+        movieStructureJob?.cancel()
+        cancelEpisodeDestination()
+        episodePageJob?.cancel()
+        episodeMetadataRefreshJob?.cancel()
+        singleEpisodeMetadataJob?.cancel()
+        discoveryMetadataRequests.cancel()
+        _state.update { it.copy(session = null, profileSwitcherOpen = false, profileEditorOpen = false,
+            settingsOpen = false, offlineDownloadsOpen = false, searchOpen = false, favoritesOpen = false,
+            selectedSeries = null, providerMovieDetails = null, nowPlaying = null, loading = false,
+            restoring = false, error = null, profileLoadProgress = null, episodeTmdbRefresh = null) }
+    }
     fun exportBackup(uri: Uri) = viewModelScope.launch {
         runCatching {
             com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile export · Device") {
