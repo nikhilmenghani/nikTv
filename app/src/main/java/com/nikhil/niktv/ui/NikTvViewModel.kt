@@ -3294,9 +3294,39 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         )
         cacheSeason(base)
         if (backgroundTmdb) {
-            viewModelScope.launch { enrichEpisodeCacheFromTmdb(series, base, forceTmdb) }
+            launchEpisodeMetadataEnrichment(series, base, forceTmdb)
         } else {
             enrichEpisodeCacheFromTmdb(series, base, forceTmdb)
+        }
+    }
+
+    /** Optional metadata failure must never cancel a successfully refreshed provider catalogue. */
+    internal fun launchEpisodeMetadataEnrichment(series: MediaItem, cache: EpisodeSeasonCache, force: Boolean) =
+        viewModelScope.launch {
+            val destinationRevision = episodeDestinationRequest
+            try {
+                withTimeout(90_000L) { enrichEpisodeCacheFromTmdb(series, cache, force) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                if (cancelled !is kotlinx.coroutines.TimeoutCancellationException) throw cancelled
+                reportBackgroundEpisodeMetadataFailure(series, cache, force, destinationRevision,
+                    "TMDB episode details timed out. Your IPTV episodes are still available.")
+            } catch (failure: Exception) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                Log.w("NikTvEpisodeMetadata", "Optional episode metadata refresh failed; keeping provider episodes", failure)
+                reportBackgroundEpisodeMetadataFailure(series, cache, force, destinationRevision,
+                    "Could not update TMDB episode details. Your IPTV episodes are still available. " +
+                        if (failure.message == "No confident TMDB series match was found") "No confident series match was found." else "Please retry.")
+            }
+        }
+
+    private fun reportBackgroundEpisodeMetadataFailure(series: MediaItem, cache: EpisodeSeasonCache,
+        force: Boolean, destinationRevision: Long, message: String) {
+        if (!force) return
+        _state.update { current ->
+            if (episodeDestinationRequest == destinationRevision && current.session?.profile?.cacheKey() == cache.profileKey &&
+                current.selectedSeries?.id == series.id && current.selectedSeriesSeason == cache.season)
+                current.copy(error = message)
+            else current
         }
     }
 
@@ -8158,7 +8188,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             seasonIndexValidated = true
         )
         cacheSeason(cache)
-        viewModelScope.launch { enrichEpisodeCacheFromTmdb(series, cache, force = false) }
+        launchEpisodeMetadataEnrichment(series, cache, force = false)
         return raw
     }
 

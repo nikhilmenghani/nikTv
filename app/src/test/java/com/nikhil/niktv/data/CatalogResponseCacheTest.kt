@@ -30,4 +30,26 @@ class CatalogResponseCacheTest {
         runCatching { cache.get("a") { error("offline") } }
         assertEquals(listOf(1), cache.get("a") { listOf(1) })
     }
+
+    @Test fun slowFetchDoesNotBlockInvalidationOrOtherCategoriesAndCannotRepopulateAfterRefresh() {
+        val cache = CatalogResponseCache<String, Int>()
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val old = executor.submit<List<Int>> {
+                cache.get("a") { started.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS)); listOf(1) }
+            }
+            assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val refreshed = executor.submit<List<Int>> {
+                cache.invalidate("a")
+                assertEquals(listOf(3), cache.get("b") { listOf(3) })
+                cache.get("a") { listOf(2) }
+            }
+            assertEquals(listOf(2), refreshed.get(2, java.util.concurrent.TimeUnit.SECONDS))
+            release.countDown()
+            assertEquals(listOf(1), old.get(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(listOf(2), cache.get("a") { error("New cache must survive old completion") })
+        } finally { release.countDown(); executor.shutdownNow() }
+    }
 }

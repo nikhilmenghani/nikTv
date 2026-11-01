@@ -458,6 +458,15 @@ internal fun DiscoveryPreviewScreen(
         }
         return
     }
+    if (state.detail?.series == true) {
+        saved.SaveableStateProvider(routeKey) {
+            DiscoverySeriesDetailScreen(state, app, vm::loadSeason, playEpisode, downloadEpisode,
+                close = ::closeRoute, favorite = { state.detail?.let { toggleFavorite(favorite(it)) } },
+                openMovie = { details(it.tmdb.discovery(), "related:${it.tmdb.id}") },
+                openSeries = { details(it.tmdb.discovery(), "related:${it.tmdb.id}") })
+        }
+        return
+    }
     // TV pivot scrolling must not compete with explicit vertical row alignment.
     StableTileFocusViewport {
     BoxWithConstraints(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)

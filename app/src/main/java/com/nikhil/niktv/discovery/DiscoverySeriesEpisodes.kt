@@ -29,7 +29,8 @@ import kotlinx.coroutines.Job
 internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesStartSeason,
     seasonEntry: FocusRequester, loadSeason: (Int) -> Unit,
     play: (DiscoveryCard, Int, Int) -> Unit, download: (DiscoveryCard, Int, Int) -> Unit,
-    onFocus: () -> Unit, up: () -> Boolean, down: () -> Boolean) {
+    onFocus: () -> Unit, up: () -> Boolean, down: () -> Boolean,
+    modifier: Modifier = Modifier, lastWatched: Pair<Int, Int>? = null) {
     val card = state.detail ?: return
     val alternateSource = LocalPlayAlternateSource.current
     val configuration = LocalConfiguration.current
@@ -109,14 +110,25 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             }
         }
     }
-    LaunchedEffect(state.details?.card?.key) { chosen?.let(loadSeason) }
+    var positioned by rememberSaveable(state.profile, card.key, chosen) { mutableStateOf(false) }
+    LaunchedEffect(episodes, lastWatched, chosen) {
+        if (!positioned && episodes.isNotEmpty() && lastWatched != null && lastWatched.first == chosen) {
+            val index = episodes.indexOfFirst { it.number == lastWatched.second }
+            if (index >= 0) {
+                episodeState.scrollToItem((index - 1).coerceAtLeast(0))
+                focused = "${lastWatched.first}:${lastWatched.second}"
+                positioned = true
+            }
+        }
+    }
+    LaunchedEffect(state.details?.card?.key) { (lastWatched?.first ?: chosen)?.let(loadSeason) }
     LaunchedEffect(seasonOpen) {
         if (seasonOpen) repeat(12) {
             withFrameNanos { }
             if (runCatching { selectedSeason.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
     }
-    Column(Modifier.onPreviewKeyEvent { event ->
+    Column(modifier.onPreviewKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key in listOf(
                 Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) entryJob?.cancel()
         false
@@ -142,6 +154,13 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             onSearch = { if (searchOpen) closeSearch() else searchOpen = true },
             searchRequester = toolbarSearch, sortRequester = sort, layoutRequester = layout,
             onSortApplied = { enterEpisodes(fromStart = true) },
+            onGoToEpisode = { number ->
+                episodes.firstOrNull { it.number == number }?.let { focused = "${it.season}:${it.number}"; enterEpisodes() }
+            },
+            onLastWatched = lastWatched?.let { watched -> {
+                focused = "${watched.first}:${watched.second}"
+                if (chosen != watched.first) loadSeason(watched.first) else enterEpisodes()
+            } },
             beforeAction = { searchImeWasVisible = false; keyboard?.hide() },
             searchField = {
                 SeriesEpisodeSearchField(query, { query = it; scrollReset++ }, ::closeSearch,
@@ -177,7 +196,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 }
             }
             DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
-                listView = listView, overview = episode.overview,
+                listView = listView, overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
                 modifier = (if (listView) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else when (event.key) {
@@ -219,7 +238,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             loadSeason, { enterEpisodes() }, { runCatching { toolbarSearch.requestFocus() } },
             Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), horizontal = true)
         if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
-            .height((configuration.screenHeightDp * .68f).coerceIn(260f, 620f).dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            .weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (wide && seasons.isNotEmpty()) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
                 loadSeason, { enterEpisodes() }, { runCatching { seasonEntry.requestFocus() } }, Modifier.width(156.dp).fillMaxHeight())
             LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -230,7 +249,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 }
                 itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode) }
             }
-        } else if (!listView) LazyRow(state = episodeState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        } else if (!listView) LazyRow(modifier = Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode) }
         }
     }

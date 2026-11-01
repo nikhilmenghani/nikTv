@@ -110,6 +110,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     synopsisAvailable: (Boolean) -> Unit = {},
     seasonCounts: (Map<Int, Int>) -> Unit = {},
     compactSeries: Boolean = false,
+    discoveryDetails: DiscoveryDetails? = null,
     tools: @Composable RowScope.() -> Unit = {},
     layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
         cast: (() -> Boolean)?, related: (() -> Boolean)?) -> Unit = { hero, castRow, supplementary, _, _ ->
@@ -137,7 +138,11 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val castEntry = remember { FocusRequester() }
     val relatedEntry = remember { FocusRequester() }
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-    LaunchedEffect(profile, item.id, type, item.externalTmdbId, retry) {
+    LaunchedEffect(profile, item.id, type, item.externalTmdbId, retry, discoveryDetails) {
+        if (discoveryDetails != null) {
+            metadata = discoveryDetails; loading = false; failed = false
+            return@LaunchedEffect
+        }
         loading = true; failed = false
         val request = coroutineContext
         try {

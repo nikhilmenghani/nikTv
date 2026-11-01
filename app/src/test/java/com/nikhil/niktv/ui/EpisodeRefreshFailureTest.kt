@@ -105,6 +105,39 @@ class EpisodeRefreshFailureTest {
 
     private fun finish() = await { !state.value.tmdbEpisodeCacheRefreshing }
 
+    private fun backgroundCache() = EpisodeSeasonCache(
+        state.value.session!!.profile.cacheKey(), "series", 1, listOf(1), listOf(episode), iptvEpisodes = listOf(episode))
+
+    @Test fun backgroundForcedRefreshWithoutConfidentMatchDoesNotCrash() {
+        vm.episodeTmdbSeriesLookup = { null }
+        val job = vm.launchEpisodeMetadataEnrichment(state.value.selectedSeries!!, backgroundCache(), true)
+        await { job.isCompleted }
+        assertFalse(job.isCancelled)
+        assertEquals(listOf(episode), state.value.items)
+        assertTrue(state.value.error.orEmpty().contains("No confident series match"))
+    }
+
+    @Test fun oldBackgroundMetadataFailureDoesNotChangeNewSeries() {
+        val lookup = CompletableDeferred<TmdbSeries?>()
+        vm.episodeTmdbSeriesLookup = { lookup.await() }
+        val job = vm.launchEpisodeMetadataEnrichment(state.value.selectedSeries!!, backgroundCache(), true)
+        scheduler.runCurrent()
+        state.value = state.value.copy(selectedSeries = MediaItem("other", "Other", null, null), error = "New screen")
+        lookup.complete(null)
+        await { job.isCompleted }
+        assertEquals("New screen", state.value.error)
+    }
+
+    @Test fun backgroundMetadataCancellationRemainsCancellation() {
+        vm.episodeTmdbSeriesLookup = { awaitCancellation() }
+        val job = vm.launchEpisodeMetadataEnrichment(state.value.selectedSeries!!, backgroundCache(), true)
+        scheduler.runCurrent()
+        job.cancel()
+        await { job.isCompleted }
+        assertTrue(job.isCancelled)
+        assertNull(state.value.error)
+    }
+
     @Test fun provider404DoesNotBlockTmdbOrChangePlaybackIdentity() {
         startRefresh()
         response.complete(listOf(metadata))

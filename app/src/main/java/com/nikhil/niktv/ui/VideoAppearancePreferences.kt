@@ -702,9 +702,9 @@ internal fun PlayerQueueOverlay(
     val listQueue = queueLayout == PlayerQueueLayout.LIST
     val phoneQueue = !tvQueueGrid && configuration.smallestScreenWidthDp < 600
     val listPanelWidth = if (phoneQueue) {
-        configuration.screenWidthDp.dp * if (configuration.screenWidthDp < 600) .88f else .46f
+        configuration.screenWidthDp.dp * if (configuration.screenWidthDp < 600) .86f else .38f
     } else {
-        (configuration.screenWidthDp.dp * .36f).coerceIn(300.dp, 380.dp)
+        (configuration.screenWidthDp.dp * .30f).coerceIn(260.dp, 330.dp)
     }
     val touchQueueRail = !tvQueueGrid && !listQueue
     val liveChannelQueue = onTogglePin != null
@@ -795,7 +795,7 @@ internal fun PlayerQueueOverlay(
         else -> 12.dp
     }
     val queueCardHeight = when {
-        listQueue -> 68.dp
+        listQueue -> 54.dp
         tvQueueGrid -> 72.dp
         else -> (touchQueueSheetHeight - 72.dp).coerceAtLeast(96.dp)
     }
@@ -1192,7 +1192,7 @@ internal fun PlayerQueueOverlay(
                     )
                     .focusable(),
                 color = when {
-                    else -> Color(0xFF171A20)
+                    else -> if (listQueue) Color(0x66171A20) else Color(0xFF171A20)
                 },
                 border = if (focused) {
                     androidx.compose.foundation.BorderStroke(
@@ -1206,7 +1206,7 @@ internal fun PlayerQueueOverlay(
             ) {
                 if (tvQueueGrid || listQueue) {
                     CompactPlayerQueueContent(item, current, liveChannelQueue, liveCategoryTitle, liveXtream,
-                        guideNow, item.id in favoriteIds, item.id in pinnedIds, availability.flags[item.id])
+                        guideNow, item.id in favoriteIds, item.id in pinnedIds, availability.flags[item.id], compactList = listQueue)
                 } else PlayerMediaTileContent(item = item, current = current, isTv = tvQueueGrid)
 
             }
@@ -1415,7 +1415,8 @@ internal fun PlayerQueueOverlay(
                     if (listQueue) translationX = size.width * (1f - renderedReveal)
                     else translationY = size.height * (1f - renderedReveal)
                 },
-            color = Color(0xF51A1A1A),
+            color = if (listQueue) Color(0xA6191D25) else Color(0xF51A1A1A),
+            border = if (listQueue) androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .16f)) else null,
             shape =
                 androidx.compose.foundation.shape.RoundedCornerShape(
                     queueSheetCornerRadius
@@ -1424,6 +1425,8 @@ internal fun PlayerQueueOverlay(
             Column(
                 Modifier
                     .fillMaxSize()
+                    .then(if (listQueue) Modifier.background(androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = .07f), Color.Transparent, Color.Black.copy(alpha = .10f)))) else Modifier)
                     .padding(queueSheetPadding)
             ) {
                 Row(
@@ -1457,7 +1460,7 @@ internal fun PlayerQueueOverlay(
                     NikTvActionButton(
                         label = if (listQueue) "Tiles" else "List",
                         icon = if (listQueue) Icons.Default.GridView else Icons.Default.ViewList,
-                        modifier = Modifier.width(92.dp).height(44.dp)
+                        modifier = Modifier.width(if (listQueue) 76.dp else 92.dp).height(if (listQueue) 40.dp else 44.dp)
                             .focusRequester(layoutToggleRequester)
                             .onFocusChanged { layoutToggleFocused = it.isFocused },
                         onClick = {

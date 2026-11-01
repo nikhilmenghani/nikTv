@@ -23,18 +23,18 @@ import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
 @Composable
 internal fun CompactPlayerQueueContent(
     item: MediaItem, current: Boolean, live: Boolean, category: String, xtream: Boolean,
-    now: Long, favorite: Boolean, pinned: Boolean, availabilityFlag: IptvChannelFlag? = null
+    now: Long, favorite: Boolean, pinned: Boolean, availabilityFlag: IptvChannelFlag? = null, compactList: Boolean = false
 ) {
     val title = remember(item.title, category, xtream) { liveTvTilePresentation(item.title, category, xtream) }
     val programme = if (live) item.currentLiveProgramme(now)?.takeUnless { isMissingLiveProgrammeTitle(it.title) } else null
     val start = programme?.startTimeMillis
     val end = programme?.endTimeMillis
     val progress = if (start != null && end != null && end > start) ((now - start).toFloat() / (end - start)).coerceIn(0f, 1f) else null
-    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize().padding(horizontal = if (compactList) 10.dp else 12.dp, vertical = if (compactList) 4.dp else 8.dp), verticalArrangement = Arrangement.Center) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (current) Icon(Icons.Default.PlayArrow, "Now playing", Modifier.size(16.dp), tint = Color(0xFFFF4D57))
             Text(if (live) title.title else item.title, Modifier.weight(1f),
-                style = if (programme == null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, lineHeight = 14.sp),
+                style = if (programme == null) MaterialTheme.typography.bodyMedium.copy(fontSize = if (compactList) 12.sp else 14.sp, lineHeight = if (compactList) 15.sp else 20.sp) else MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, lineHeight = 14.sp),
                 color = if (programme == null) Color.White else Color(0xFFB9BDCA),
                 fontWeight = FontWeight.SemiBold, maxLines = if (programme == null) 2 else 1, overflow = TextOverflow.Ellipsis)
             if (pinned) Icon(Icons.Default.PushPin, "Pinned", Modifier.size(14.dp), tint = Color.LightGray)
@@ -43,15 +43,15 @@ internal fun CompactPlayerQueueContent(
             title.quality?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Color.LightGray) }
         }
         programme?.let {
-            Spacer(Modifier.height(3.dp))
-            Text(liveProgrammeDisplayTitle(it.title), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp),
+            Spacer(Modifier.height(if (compactList) 1.dp else 3.dp))
+            Text(liveProgrammeDisplayTitle(it.title), style = MaterialTheme.typography.bodyMedium.copy(fontSize = if (compactList) 11.sp else 12.sp, lineHeight = if (compactList) 13.sp else 16.sp),
                 color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
             liveTileScheduleText(start, end)?.let { schedule ->
                 Text(schedule, style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp), color = Color.LightGray, maxLines = 1)
             }
         }
         if (progress != null) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(if (compactList) 2.dp else 4.dp))
             Box(Modifier.fillMaxWidth().height(3.dp).background(Color(0xFF363B47))) {
                 Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFF8A86E8)))
             }
