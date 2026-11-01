@@ -18,7 +18,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
-import com.liskovsoft.smartyoutubetv2.common.utils.IntentExtractor
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
@@ -82,7 +81,7 @@ class TrailerPlayerActivityTest {
         return chooser.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
     }
 
-    @Test fun restrictedOrPrivateTrailerSearchesByTitleAndSmartTubeReadsTheQuery() {
+    @Test fun restrictedOrPrivateTrailerSearchesByTitleWithExternalAppQuery() {
         activity.intent.putExtra("title", "Chashme Baddoor")
         listOf(100, 101, 150).forEach { code ->
             bridge("error", code)
@@ -91,8 +90,8 @@ class TrailerPlayerActivityTest {
             assertEquals("/results", target.data?.path)
             assertNull(target.data?.getQueryParameter("v"))
             assertEquals("Chashme Baddoor official trailer", target.getStringExtra(SearchManager.QUERY))
-            assertEquals("Chashme Baddoor official trailer", IntentExtractor.extractSearchText(target))
-            assertNull(IntentExtractor.extractVideoId(target))
+            assertEquals("Chashme Baddoor official trailer", target.data?.getQueryParameter("search_query"))
+            assertNull(target.data?.getQueryParameter("v"))
         }
     }
 
@@ -101,7 +100,7 @@ class TrailerPlayerActivityTest {
         val target = externalTarget()
         assertEquals("/watch", target.data?.path)
         assertEquals("abcdefghijk", target.data?.getQueryParameter("v"))
-        assertEquals("abcdefghijk", IntentExtractor.extractVideoId(target))
+        assertEquals("abcdefghijk", target.data?.getQueryParameter("v"))
     }
 
     @Test fun networkOrPlayerIdentityFailureKeepsDirectVideoFallback() {
@@ -113,7 +112,7 @@ class TrailerPlayerActivityTest {
         val title = "English | Léon & Amélie (FHD)"
         val target = externalTrailerIntent(title, null)
         assertEquals("Léon & Amélie official trailer", target.data?.getQueryParameter("search_query"))
-        assertEquals("Léon & Amélie official trailer", IntentExtractor.extractSearchText(target))
+        assertEquals("Léon & Amélie official trailer", target.data?.getQueryParameter("search_query"))
         assertEquals(title, target.getStringExtra(Intent.EXTRA_TITLE))
     }
 

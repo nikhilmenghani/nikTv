@@ -701,11 +701,6 @@ internal fun ModernSettingsScreen(
             val queueLayout = rememberPlayerQueueLayout()
             SettingsPickerRow("Player media browser", PlayerQueueLayout.entries.map { it to it.label }, queueLayout,
                 { PlayerQueuePreferences.setLayout(context, it) }, "Browse media while the video continues.")
-            var nikTubeEngine by remember { mutableStateOf(com.nikhil.niktv.data.NikTubeEnginePreferences.selected(context)) }
-            SettingsPickerRow("NikTube experience", listOf(com.nikhil.niktv.data.NikTubeEngine.AUTO to "Automatic",
-                com.nikhil.niktv.data.NikTubeEngine.FLOW to "Flow", com.nikhil.niktv.data.NikTubeEngine.SMARTTUBE to "SmartTube"),
-                nikTubeEngine, { nikTubeEngine = it; com.nikhil.niktv.data.NikTubeEnginePreferences.set(context, it) },
-                "Automatic uses SmartTube on TV and Flow on phones and tablets.")
             SettingsPickerRow("Default season", SeriesStartSeason.entries.map { it to if (it == SeriesStartSeason.FIRST) "First season" else "Latest season" },
                 state.seriesStartSeason, setSeriesStartSeason, "Used when a series has no remembered season.")
             SettingsLinkRow(SettingsPage.COMPATIBILITY, "Audio recovery")

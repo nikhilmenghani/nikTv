@@ -440,7 +440,7 @@ fun PlayerScreen(
 
     val requestedEngine = sessionEngineOverride ?: configuredEngine
 
-    val effectiveEngine = if (media.nativeSabr != null || media.separateAudioUrl != null ||
+    val effectiveEngine = if (media.separateAudioUrl != null ||
 
         (requestedEngine == PlaybackEngine.VLC && vlcHeaderOptions(media.streamRequestHeaders) == null)) PlaybackEngine.MEDIA3 else requestedEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
@@ -737,8 +737,8 @@ fun PlayerScreen(
     }
     val isTvDevice = rememberPlayerTvDevice()
     // Fire TV has no Google Cast module. Local playback must not depend on it.
-    val castPlayer = remember(context, isTvDevice, media.nativeSabr) {
-        if (isTvDevice || media.nativeSabr != null) null
+    val castPlayer = remember(context, isTvDevice) {
+        if (isTvDevice) null
         else runCatching { CastPlayer(CastContext.getSharedInstance(context)) }.getOrNull()
     }
     val castMediaItem = remember(media.url, media.media.title, media.playbackFormat) {
@@ -776,7 +776,7 @@ fun PlayerScreen(
             }
         } else {
         val renderersFactory = (if (effectiveEngine == PlaybackEngine.FLOW)
-            io.github.aedev.flow.player.factory.PlayerFactory().createRenderersFactory(context)
+            com.nikhil.niktv.ui.flowInspiredRenderers(context)
             else DefaultRenderersFactory(context)).apply {
             if (effectiveEngine.isMedia3Player()) {
                 setEnableDecoderFallback(true)
@@ -821,14 +821,7 @@ fun PlayerScreen(
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
 
                 .setMimeType(playbackMimeType(media.playbackFormat, media.url))
-            if (media.nativeSabr != null) {
-                val transport = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-                    .setDefaultRequestProperties(media.streamRequestHeaders)
-                    .setKeepPostFor302Redirects(true)
-                    .setConnectTimeoutMs(15_000).setReadTimeoutMs(15_000)
-                setMediaSource(com.newtube.sabr.SabrMediaSource(media.nativeSabr, transport,
-                    androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(context)))
-            } else if (media.separateAudioUrl != null) {
+            if (media.separateAudioUrl != null) {
                 val sources = signedStreamSources
                 setMediaSource(androidx.media3.exoplayer.source.MergingMediaSource(
                     sources.createMediaSource(mediaItemBuilder.build()),
@@ -1144,7 +1137,7 @@ fun PlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 val inferredMime = detectedManifestMime.get()
                 if (player === localPlayer && effectiveEngine.isMedia3Player() &&
-                    media.nativeSabr == null && media.separateAudioUrl == null && !manifestFallbackUsed &&
+                    media.separateAudioUrl == null && !manifestFallbackUsed &&
                     inferredMime != null && playbackMimeType(media.playbackFormat, media.url) == null &&
                     error.errorCode in setOf(PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
                         PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED)) {
@@ -1281,7 +1274,7 @@ fun PlayerScreen(
                     }
 
                     effectiveEngine.isMedia3Player() &&
-                        media.nativeSabr == null && media.separateAudioUrl == null &&
+                        media.separateAudioUrl == null &&
                         automaticLivePlayerFallback(selectedPlayerChoice, media.catalogType == CatalogType.LIVE_TV,
                             playbackRequested, media.offlinePlayback, vlcHeaderOptions(media.streamRequestHeaders) != null,
                             error.errorCode) -> {
@@ -2203,13 +2196,13 @@ fun PlayerScreen(
                     if (introSettings.target != null) add(introFocusRequester)
                     add(subtitleFocusRequester)
                     if (audioTracks.size > 1) add(audioFocusRequester)
-                    if (!media.externalPlayback && media.nativeSabr == null && onChooseAlternateSource == null) add(downloadFocusRequester)
+                    if (!media.externalPlayback && onChooseAlternateSource == null) add(downloadFocusRequester)
                 }
                 if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) add(refreshFocusRequester)
                 if (media.catalogType != CatalogType.LIVE_TV) add(speedFocusRequester)
                 add(resizeFocusRequester)
                 add(pictureModeFocusRequester)
-                if (media.nativeSabr == null) add(playerSwitchFocusRequester)
+                add(playerSwitchFocusRequester)
                 if (onChooseAlternateSource != null) add(sourceFocusRequester)
                 add(controlsTimeoutFocusRequester)
                 add(cricketScoreFocusRequester)
@@ -2357,7 +2350,7 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        if (!media.externalPlayback && media.catalogType != CatalogType.LIVE_TV && media.nativeSabr == null && onChooseAlternateSource == null) {
+                        if (!media.externalPlayback && media.catalogType != CatalogType.LIVE_TV && onChooseAlternateSource == null) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                 contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
@@ -2407,7 +2400,7 @@ PlayerChromeIconButton(
                                 .playerSecondaryFocus(pictureModeFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
                             onFocused = { controlsFocused = it }
                         )
-                        if (media.nativeSabr == null) PlayerChromeIconButton(
+                        PlayerChromeIconButton(
                                     icon = Icons.Default.SmartDisplay,
                                     badgeText = selectedPlayerChoice.playerChoiceBadge(),
                                     contentDescription = "Player: ${selectedPlayerChoice.playerChoiceLabel()}",
@@ -3024,7 +3017,7 @@ PlayerChromeIconButton(
                             onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                         },
                         onNext = onPlayNext,
-                        showAlternatePlayer = media.nativeSabr == null,
+                        showAlternatePlayer = true,
                         onSwitchPlayer = {
                             playerPickerFromError = true
                             playerPickerVisible = true

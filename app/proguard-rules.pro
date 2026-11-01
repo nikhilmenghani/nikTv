@@ -1,8 +1,3 @@
-# This embedded entry point is invoked by name from NikTubeActivity.
--keep class com.liskovsoft.smartyoutubetv2.tv.ui.main.MainApplication {
-    public static void initialize(android.content.Context);
-}
-
 # Remove routine diagnostics and their unused message construction in release.
 # Warnings/errors remain available for actionable playback and update failures.
 -assumenosideeffects class android.util.Log {

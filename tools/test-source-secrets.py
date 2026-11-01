@@ -18,7 +18,7 @@ class SourceCredentialTests(unittest.TestCase):
             self.assertNotIn(value, str(result))
 
     def test_environment_references_are_safe(self):
-        self.assertEqual(checker.findings(b'BuildConfig.NIKTUBE_BOTGUARD_API_KEY {{NIKTUBE_OAUTH_ACCESS_TOKEN}}'), [])
+        self.assertEqual(checker.findings(b'BuildConfig.NIKTV_APPLICATION_API_KEY {{NIKTV_OAUTH_ACCESS_TOKEN}}'), [])
 
     def test_binary_content_is_not_skipped(self):
         self.assertTrue(checker.findings(b'\x00' + ("ya" + "29." + "x" * 40).encode()))

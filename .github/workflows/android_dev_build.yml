@@ -52,14 +52,10 @@ jobs:
           echo "DEV_KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
       - name: Build signed debug APK
         env:
-          NIKTUBE_BOTGUARD_API_KEY: ${{ secrets.NIKTUBE_BOTGUARD_API_KEY }}
-          NIKTUBE_GOOGLE_API_KEY_31043AAE8BE2: ${{ secrets.NIKTUBE_GOOGLE_API_KEY_31043AAE8BE2 }}
-          NIKTUBE_GOOGLE_API_KEY_418AF06CD1D9: ${{ secrets.NIKTUBE_GOOGLE_API_KEY_418AF06CD1D9 }}
           DEV_KEYSTORE_PATH: ${{ runner.temp }}/niktv.keystore
           DEV_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           DEV_KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          [[ -n "$NIKTUBE_BOTGUARD_API_KEY" ]] || { echo "Missing NIKTUBE_BOTGUARD_API_KEY repository secret"; exit 1; }
           chmod +x ./gradlew
           ./gradlew assembleDebug
           mkdir -p "$RUNNER_TEMP/niktv-apks"

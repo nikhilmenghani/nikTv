@@ -21,17 +21,4 @@ class LaunchBrandingTest {
         assertEquals(R.drawable.niktv_logo_foreground, icon.resourceId)
     }
 
-    @Test fun everyRememberedFlowSplashVariantKeepsHostBrandingAndFlowContentTheme() {
-        val resources = RuntimeEnvironment.getApplication().resources
-        val styles = R.style::class.java.fields.filter { it.name.startsWith("Theme_Flow_Starting") }
-        assertTrue(styles.size > 3)
-        for (style in styles) {
-            val theme = resources.newTheme().apply { applyStyle(style.getInt(null), true) }
-            val value = TypedValue()
-            assertTrue(style.name, theme.resolveAttribute(R.attr.windowSplashScreenAnimatedIcon, value, true))
-            assertEquals(style.name, R.drawable.niktv_logo_foreground, value.resourceId)
-            assertTrue(style.name, theme.resolveAttribute(R.attr.postSplashScreenTheme, value, true))
-            assertEquals(style.name, R.style.Theme_Flow, value.resourceId)
-        }
-    }
 }

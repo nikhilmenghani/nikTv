@@ -49,8 +49,7 @@ private data class NikTvBackup(
     val devicePreferences: Map<String, Map<String, DevicePreferenceValue>> = emptyMap(),
     val remoteConfiguration: RemoteConfigurationBackup? = null,
     val backupConnection: BackupConnectionConfiguration? = null,
-    val backupMetadata: DeviceBackupMetadata? = null,
-    val nikTubeLibrary: Map<String, String>? = null
+    val backupMetadata: DeviceBackupMetadata? = null
 )
 
 class ProfileStore @JvmOverloads constructor(
@@ -454,8 +453,7 @@ class ProfileStore @JvmOverloads constructor(
             remoteConfiguration = RemoteCredentials.exportDeviceConfiguration(context),
             backupConnection = BackupConnectionConfiguration(connection.username, connection.repository, connection.token,
                 connection.passphrase, connection.backupMode.name, connection.autoBackupIntervalHours),
-            backupMetadata = metadata,
-            nikTubeLibrary = NikTubeRepository(context).use { it.exportDeviceLibrary() })
+            backupMetadata = metadata)
     }
 
     suspend fun backupFingerprint(): String = withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -479,7 +477,6 @@ class ProfileStore @JvmOverloads constructor(
         }
         if (backup.formatVersion >= 2) {
             DevicePreferencesBackup.validate(backup.devicePreferences)
-            backup.nikTubeLibrary?.let { NikTubeRepository.validateDeviceLibrary(it) }
             RemoteCredentials.validateDeviceConfiguration(backup.remoteConfiguration)
             backup.backupConnection?.let {
                 require(it.intervalHours in setOf(0, 6, 12, 24)) { "Invalid backup interval" }
@@ -501,7 +498,6 @@ class ProfileStore @JvmOverloads constructor(
         }
         if (backup.formatVersion >= 2) {
             DevicePreferencesBackup.restore(context, backup.devicePreferences)
-            backup.nikTubeLibrary?.let { library -> NikTubeRepository(context).use { it.restoreDeviceLibrary(library) } }
             RemoteCredentials.restoreDeviceConfiguration(context, backup.remoteConfiguration)
             backup.backupConnection?.let {
                 GitHubBackupManager(context).saveConfig(GitHubBackupConfig(username = it.username,

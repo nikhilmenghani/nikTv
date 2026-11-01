@@ -55,7 +55,7 @@ internal object SportsPlaybackPolicy {
         "network-timeout" to "15", "demuxer-readahead-secs" to "15", "osd-level" to "0", "tls-verify" to "yes")
 
     fun renderers(context: Context, engine: PlaybackEngine, session: String): DefaultRenderersFactory =
-        (if (engine == PlaybackEngine.FLOW) io.github.aedev.flow.player.factory.PlayerFactory().createRenderersFactory(context)
+        (if (engine == PlaybackEngine.FLOW) com.nikhil.niktv.ui.flowInspiredRenderers(context)
         else DefaultRenderersFactory(context)).apply {
             setEnableDecoderFallback(true)
             setMediaCodecSelector(SportsDecoderPolicy.selector(session))
@@ -70,7 +70,7 @@ internal object SportsPlaybackPolicy {
             val bytes = when { small -> 4; memory <= 384 -> 12; else -> 32 } * 1024 * 1024
             builder.setTrackSelector(DefaultTrackSelector(context, AdaptiveTrackSelection.Factory(
                 5_000, 32_500, AdaptiveTrackSelection.DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS, .7f)))
-                .setBandwidthMeter(io.github.aedev.flow.player.factory.PlayerFactory().createBandwidthMeter(context))
+                .setBandwidthMeter(com.nikhil.niktv.ui.flowInspiredBandwidthMeter(context))
                 .experimentalSetDynamicSchedulingEnabled(false)
                 .setLoadControl(DefaultLoadControl.Builder().setAllocator(DefaultAllocator(true, 64 * 1024))
                     .setBufferDurationsMs(if (small) 8_000 else 15_000, if (small) 18_000 else 30_000, 750, 3_000)

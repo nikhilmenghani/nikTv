@@ -53,13 +53,9 @@ jobs:
           echo "RELEASE_KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
       - name: Build signed release APK
         env:
-          NIKTUBE_BOTGUARD_API_KEY: ${{ secrets.NIKTUBE_BOTGUARD_API_KEY }}
-          NIKTUBE_GOOGLE_API_KEY_31043AAE8BE2: ${{ secrets.NIKTUBE_GOOGLE_API_KEY_31043AAE8BE2 }}
-          NIKTUBE_GOOGLE_API_KEY_418AF06CD1D9: ${{ secrets.NIKTUBE_GOOGLE_API_KEY_418AF06CD1D9 }}
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           RELEASE_KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          [[ -n "$NIKTUBE_BOTGUARD_API_KEY" ]] || { echo "Missing NIKTUBE_BOTGUARD_API_KEY repository secret"; exit 1; }
           chmod +x ./gradlew
           ./gradlew assembleRelease
           mkdir -p "$RUNNER_TEMP/niktv-apks"

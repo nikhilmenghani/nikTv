@@ -172,7 +172,6 @@ class CompactSettingsDeviceTest {
         assertFalse(closed.get())
         screenshot("settings-tv-compact.png")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Player media browser")
-        move(KeyEvent.KEYCODE_DPAD_DOWN, "NikTube experience")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Default season")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Compatibility")
         key(KeyEvent.KEYCODE_DPAD_CENTER)

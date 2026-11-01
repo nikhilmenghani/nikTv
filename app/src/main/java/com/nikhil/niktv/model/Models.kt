@@ -382,7 +382,6 @@ data class PlayingMedia(
     val playbackFormat: String = "",
     val separateAudioUrl: String? = null,
     val streamRequestHeaders: Map<String, String> = emptyMap(),
-    val nativeSabr: com.newtube.sabr.SabrStreamInfo? = null,
     val queueFilter: PlaybackQueueFilter? = null,
     val playWhenReady: Boolean = true,
     val decoderSessionId: String = java.util.UUID.randomUUID().toString(),

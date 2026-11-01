@@ -51,8 +51,6 @@ class DeviceSetupBackupTest {
         context.getSharedPreferences("discovery_trial_v1", 0).edit().putString("profile:HOME", "ROW_B,ROW_A").commit()
         context.getSharedPreferences("iptv_pin_preferences", 0).edit().putStringSet("pins", setOf("movie-2", "movie-1")).commit()
         context.getSharedPreferences("browse_collections", 0).edit().putString("collections", "fixture grouping").commit()
-        val library = mapOf("history" to "[]", "playlists" to "{\"Saved\":[]}", "subscriptions" to "[]")
-        NikTubeRepository(context).use { it.restoreDeviceLibrary(library) }
         context.getSharedPreferences("player_intro_timings", 0).edit().putLong("intro", 85000L).commit()
         context.getSharedPreferences("app_update_download", 0).edit().putBoolean("startup_check_enabled", false)
             .putLong("download_id", 999L).commit()
@@ -66,7 +64,6 @@ class DeviceSetupBackupTest {
         assertFalse(root.containsKey("database"))
         preferences.edit { it.clear() }
         DevicePreferencesBackup.stores.forEach { context.getSharedPreferences(it, 0).edit().clear().commit() }
-        NikTubeRepository(context).use { it.restoreDeviceLibrary(emptyMap()) }
         context.getSharedPreferences("discovery_trial_v1", 0).edit().putString("extra-destination-row", "remove me").commit()
         store.importBackup(content)
         assertEquals(favorites, store.favorites.first())
@@ -74,7 +71,6 @@ class DeviceSetupBackupTest {
         assertEquals(42, store.initialCatalogItems.first())
         assertTrue(store.keepAwakeOnlyDuringPlayback.first())
         assertEquals(expectedPreferences, DevicePreferencesBackup.capture(context))
-        assertEquals(library, NikTubeRepository(context).use { it.exportDeviceLibrary() })
         assertFalse(preferences.data.first().contains(stringPreferencesKey("active_session")))
     }
 
@@ -110,24 +106,12 @@ class DeviceSetupBackupTest {
         assertEquals("keep", context.getSharedPreferences("discovery_trial_v1", 0).getString("order", null))
     }
 
-    @Test fun libraryRecordsRestoreWithoutExportingCachedPages() = runBlocking {
-        val video = NikTubeVideo("fixture-video", "Saved video", "Fixture channel")
-        val channels = listOf(NikTubeChannel("fixture-channel", "Subscribed channel"))
-        NikTubeRepository(context).use {
-            it.saveHistory(listOf(video to 12_000L))
-            it.saveSubscriptions(channels)
-            it.savePlaylists(mapOf("Watch later" to listOf(video)))
-            it.cache("fixture-cached-page", NikTubePage(listOf(video)))
-        }
+    @Test fun retiredYouTubeBackupFieldsAreIgnoredWithoutLosingIptvSettings() = runBlocking {
+        store.importBackup("""{"formatVersion":2,"strings":{},"integers":{"initial_catalog_items":42},"nikTubeLibrary":{"history":"[]"},"devicePreferences":{"niktube_engine":{"engine":{"type":"string","value":"FLOW"}}}}""")
+        assertEquals(42, store.initialCatalogItems.first())
         val content = store.exportBackup()
-        assertFalse(content.contains("fixture-cached-page"))
-        NikTubeRepository(context).use { it.restoreDeviceLibrary(emptyMap()) }
-        store.importBackup(content)
-        NikTubeRepository(context).use {
-            assertEquals(listOf(video to 12_000L), it.history())
-            assertEquals(channels, it.subscriptions())
-            assertEquals(mapOf("Watch later" to listOf(video)), it.playlists())
-        }
+        assertFalse(content.contains("nikTubeLibrary"))
+        assertFalse(content.contains("niktube_engine"))
     }
 
     @Test fun invalidPortablePreferenceFailsBeforeChangingStoredSetup() = runBlocking {

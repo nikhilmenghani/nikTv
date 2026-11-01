@@ -212,7 +212,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             )
 
             Text(
-                if (profiles.isEmpty()) "Watch videos or add an IPTV profile" else "Choose an IPTV profile",
+                if (profiles.isEmpty()) "Add an IPTV profile to start watching" else "Choose an IPTV profile",
                 color = Color(0xFF9B9FA8),
                 style = if (compactChooser) {
                     MaterialTheme.typography.bodySmall
@@ -223,7 +223,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
 
             BoxWithConstraints(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
                 val gap = if (compactChooser) 12.dp else 24.dp
-                val tileCount = profiles.size + if (sportsAvailable) 6 else 5
+                val tileCount = profiles.size + if (sportsAvailable) 5 else 4
                 val capacity = ((maxWidth + gap) / ((if (compactChooser) 148.dp else 180.dp) + gap)).toInt().coerceIn(1, 5)
                 val rowCount = (tileCount + capacity - 1) / capacity
                 val columns = (tileCount + rowCount - 1) / rowCount
@@ -270,25 +270,14 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     }
                 }
 
-                ProfileChooserTile(
-                    title = "NikTube",
-                    subtitle = "Discover YouTube videos",
-                    icon = Icons.Default.PlayCircle,
-                    tileWidth = chooserTileWidth,
-                    portraitCardHeight = portraitCardHeight,
-                    compact = compactChooser,
-                    modifier = if (preferredProfileKey == null) Modifier.focusRequester(preferredRequester) else Modifier
-                ) {
-                    chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.NikTubeActivity::class.java))
-                }
-
                 if (sportsAvailable) ProfileChooserTile(
                     title = "Sports",
                     subtitle = "Live events & stream choices",
                     icon = Icons.Default.SportsCricket,
                     tileWidth = chooserTileWidth,
                     portraitCardHeight = portraitCardHeight,
-                    compact = compactChooser
+                    compact = compactChooser,
+                    modifier = if (preferredProfileKey == null) Modifier.focusRequester(preferredRequester) else Modifier
                 ) {
                     chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.sports.SportsActivity::class.java))
                 }
@@ -299,7 +288,8 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     icon = Icons.Default.DownloadDone,
                     tileWidth = chooserTileWidth,
                         portraitCardHeight = portraitCardHeight,
-                        compact = compactChooser
+                        compact = compactChooser,
+                    modifier = if (preferredProfileKey == null && !sportsAvailable) Modifier.focusRequester(preferredRequester) else Modifier
                 ) { openOfflineDownloads() }
 
                 ProfileChooserTile(

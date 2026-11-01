@@ -99,7 +99,7 @@ internal class IntroSkipSettings(val target: IntroTarget?, private val store: In
 internal fun rememberIntroSkipSettings(media: PlayingMedia): IntroSkipSettings {
     val context = LocalContext.current.applicationContext
     val target = remember(media.profileKey, media.catalogType, media.media.id, media.media.seasonNumber,
-        media.media.episodeNumber, media.series, media.nativeSabr, media.progressKey) { introTarget(media) }
+        media.media.episodeNumber, media.series, media.progressKey) { introTarget(media) }
     val scope = rememberCoroutineScope()
     val store = remember(context) { IntroTimingStore { context.getSharedPreferences("player_intro_timings", Context.MODE_PRIVATE) } }
     val settings = remember(target) {

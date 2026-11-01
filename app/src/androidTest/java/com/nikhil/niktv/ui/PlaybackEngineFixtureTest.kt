@@ -760,7 +760,7 @@ class PlaybackEngineFixtureTest {
                 val surface = SurfaceView(host); host.setContentView(surface)
                 player = if (engine == "MPV") MpvPlayerAdapter(context, media, 0L, start).apply { setVideoSurfaceView(surface) }
                 else ExoPlayer.Builder(context, if (engine == "FLOW")
-                    io.github.aedev.flow.player.factory.PlayerFactory().createRenderersFactory(context)
+                    com.nikhil.niktv.ui.flowInspiredRenderers(context)
                     else androidx.media3.exoplayer.DefaultRenderersFactory(context))
                     .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
                     .setHandleAudioBecomingNoisy(true)

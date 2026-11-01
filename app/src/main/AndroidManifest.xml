@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- MPV is guarded at runtime on API 26+. Other players still support API 24. -->
-    <uses-sdk tools:overrideLibrary="dev.jdtech.mpv,io.github.aedev.flow" />
+    <uses-sdk tools:overrideLibrary="dev.jdtech.mpv" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -22,26 +22,6 @@
     </queries>
     <application android:name=".NikTvApplication" android:allowBackup="false" android:largeHeap="true" android:icon="${appIcon}" android:roundIcon="${appIcon}" android:label="${appLabel}" android:theme="@style/Theme.NikTv" android:usesCleartextTraffic="true" android:banner="${appBanner}">
         <meta-data android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME" android:value="com.nikhil.niktv.cast.CastOptionsProvider" />
-        <activity android:name=".NikTubeActivity" android:exported="true" android:supportsPictureInPicture="true" android:launchMode="singleTop" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" />
-                <data android:scheme="http" />
-                <data android:host="youtube.com" />
-                <data android:host="www.youtube.com" />
-                <data android:host="m.youtube.com" />
-                <data android:host="music.youtube.com" />
-                <data android:host="youtu.be" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <property android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" android:value="true" />
-        </activity>
         <activity android:name=".sports.SportsActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
         <activity android:name=".TrailerPlayerActivity" android:exported="false" android:screenOrientation="userLandscape" />
         <activity android:name=".ExternalVideoActivity" android:exported="true"
@@ -94,7 +74,6 @@
                 android:resource="@xml/niktv_share_paths" />
         </provider>
         <service android:name=".data.NikTvDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
-        <service android:name=".data.NikTubePlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
         <service android:name=".data.LiveTvRecordingService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

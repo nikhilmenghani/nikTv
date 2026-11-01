@@ -17,8 +17,7 @@ data class AppStorageSnapshot(
     val hlsWorkingBytes: Long,
     val temporaryCacheBytes: Long,
     val recordingBytes: Long = 0L,
-    val mediaCacheBytes: Long = 0L,
-    val nikTubeDownloadBytes: Long = 0L
+    val mediaCacheBytes: Long = 0L
 )
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -47,10 +46,10 @@ suspend fun appStorageSnapshot(
         }
 
     val artworkDirectory = File(appContext.cacheDir, "artwork_cache")
-    val flowArtworkDirectory = File(appContext.cacheDir, "image_cache")
+    val sharedArtworkDirectory = File(appContext.cacheDir, "image_cache")
     val subtitleDirectory = File(appContext.cacheDir, "subtitles")
     val hlsDirectory = File(appContext.cacheDir, "hls_exports")
-    val namedCacheBytes = directorySize(artworkDirectory) + directorySize(flowArtworkDirectory) + directorySize(subtitleDirectory)
+    val namedCacheBytes = directorySize(artworkDirectory) + directorySize(sharedArtworkDirectory) + directorySize(subtitleDirectory)
     // discovery_preview is deliberately unnamed: its bounded public metadata is
     // reported as temporary cache and removed by clearTemporaryCaches.
     val allCacheBytes = directorySize(appContext.cacheDir) +
@@ -61,9 +60,8 @@ suspend fun appStorageSnapshot(
         totalBytes = stats.totalBytes,
         availableBytes = stats.availableBytes,
         offlineDownloadBytes = trackedPublicBytes,
-        nikTubeDownloadBytes = NikTubeDownloads.bytes(appContext),
         mediaCacheBytes = OfflineMediaDownloads.cachedMediaBytes(appContext) + directorySize(hlsDirectory),
-        artworkCacheBytes = directorySize(artworkDirectory) + directorySize(flowArtworkDirectory),
+        artworkCacheBytes = directorySize(artworkDirectory) + directorySize(sharedArtworkDirectory),
         subtitleCacheBytes = directorySize(subtitleDirectory),
         hlsWorkingBytes = 0L,
         temporaryCacheBytes = (allCacheBytes - namedCacheBytes - directorySize(hlsDirectory)).coerceAtLeast(0L),
@@ -75,12 +73,12 @@ suspend fun appStorageSnapshot(
 suspend fun clearArtworkCache(context: Context): Long = withContext(Dispatchers.IO) {
     val appContext = context.applicationContext
     val directory = File(appContext.cacheDir, "artwork_cache")
-    val flowDirectory = File(appContext.cacheDir, "image_cache")
-    val before = directorySize(directory) + directorySize(flowDirectory)
+    val sharedDirectory = File(appContext.cacheDir, "image_cache")
+    val before = directorySize(directory) + directorySize(sharedDirectory)
     runCatching { appContext.imageLoader.memoryCache?.clear() }
     runCatching { appContext.imageLoader.diskCache?.clear() }
     deleteDirectoryContents(directory)
-    val after = directorySize(directory) + directorySize(flowDirectory)
+    val after = directorySize(directory) + directorySize(sharedDirectory)
     (before - after).coerceAtLeast(0L)
 }
 

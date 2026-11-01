@@ -12,7 +12,7 @@ internal enum class SettingsDestination(
     val title: String,
     val subtitle: String
 ) {
-    PLAYBACK("Playback", "Player, series and NikTube preferences"),
+    PLAYBACK("Playback", "Player and series preferences"),
     GENERAL(
         "Display & controls",
         "Brightness, orientation and screen awake"

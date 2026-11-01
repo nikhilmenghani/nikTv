@@ -12,7 +12,7 @@ internal object DevicePreferencesBackup {
     val stores = listOf("discovery_trial_v1", "discovery_experience", "browse_collections", "iptv_pin_preferences",
         "niktv_ui_preferences", "mobile_ui_preferences", "video_appearance_profiles", "player_video_sizing",
         "niktv_playback_ui", "player_media_browser", "app_display_preferences", "device_audio_preferences",
-        "player_intro_timings", "parental_controls", "niktube_engine", "niktube_playback", "niktube_draft",
+        "player_intro_timings", "parental_controls",
         "app_update_download", "catalog_device", "catalog_scans", "on_screen_dpad", "niktv_pairing_relay")
 
     private fun included(file: String, key: String) = when (file) {

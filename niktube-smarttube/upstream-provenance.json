@@ -1,8 +1,0 @@
-{
-  "source": "https://github.com/yuliskov/SmartTube",
-  "revision": "5b7ced25163bc08054fb00351103abbc5448ce8f",
-  "license": "MIT",
-  "sharedModulesRevision": "13f5687dd6757b02fbcdf14c5403d0339e377db5",
-  "mediaServiceCoreRevision": "c00b74d758c53f73aca5604a022b6de5bbfe6072",
-  "integration": "Android library; generated Fragment namespace relocation, startup and navigation adapters"
-}

@@ -12,12 +12,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.test.platform.app.InstrumentationRegistry
-import com.nikhil.niktv.NikTubeActivity
 import com.nikhil.niktv.data.RemoteCredentials
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Empty, token-free fixture only. NikTube intents are intercepted; no provider is contacted. */
+/** Empty, token-free fixture only; no provider is contacted. */
 class EmptyProfileDashboardDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
@@ -63,17 +62,12 @@ class EmptyProfileDashboardDeviceTest {
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }
 
-    @Test fun tokenFreeDashboardShowsIndependentTilesAndNikTubeCanOpen() = withDashboard { _, _ ->
-        for (label in listOf("NikTube", "Offline", "Settings", "Add profile", "Import backup"))
+    @Test fun tokenFreeDashboardShowsAvailableActionsWithoutTheRemovedYouTubeTile() = withDashboard { _, _ ->
+        for (label in listOf("Offline", "Settings", "Add profile", "Import backup"))
             assertNotNull("Dashboard exposes $label without a profile", find(label))
         assertNull("Sports stays hidden without configuration", find("Sports"))
         assertNull("Must not force the profile form", find("Portal URL"))
-        val monitor = instrumentation.addMonitor(NikTubeActivity::class.java.name,
-            Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null), true)
-        try {
-            click("NikTube")
-            await("NikTube starts without a token or IPTV profile") { monitor.hits == 1 }
-        } finally { instrumentation.removeMonitor(monitor) }
+        assertNull(find("NikTube"))
     }
 
     @Test fun firstProfileCanBeCanceledWithButtonAndSystemBack() = withDashboard { _, _ ->
@@ -96,10 +90,10 @@ class EmptyProfileDashboardDeviceTest {
         await("Configured dashboard shows Sports") { find("Sports") != null }
         instrumentation.runOnMainSync { available.value = false }
         await("Configuration change removes Sports") { find("Sports") == null }
-        assertNotNull(find("NikTube"))
+        assertNotNull(find("Offline"))
     }
 
-    @Test fun emptyTvDashboardStartsRemoteFocusOnNikTube() = withDashboard { host, _ ->
+    @Test fun emptyTvDashboardStartsRemoteFocusOnOffline() = withDashboard { host, _ ->
         instrumentation.setInTouchMode(false)
         instrumentation.runOnMainSync { host.setContent {
             val configuration = Configuration(LocalConfiguration.current).apply {
@@ -114,10 +108,10 @@ class EmptyProfileDashboardDeviceTest {
             repeat(6) { if (node?.isFocused == true) return true; node = node?.parent }
             return false
         }
-        await("First TV focus reaches NikTube without a saved profile") { focused("NikTube") }
+        await("First TV focus reaches Offline without a saved profile") { focused("Offline") }
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
-        await("Right reaches the next available tile") { focused("Offline") }
+        await("Right reaches the next available tile") { focused("Settings") }
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
-        await("Left returns to NikTube") { focused("NikTube") }
+        await("Left returns to Offline") { focused("Offline") }
     }
 }

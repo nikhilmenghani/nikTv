@@ -12,7 +12,6 @@ class IntroTimingTest {
 
     @Test fun noTimingWithoutExplicitProfile() { assertNull(introTarget(episode(profile = ""))) }
     @Test fun liveChannelsNeverHaveIntroTiming() { assertNull(introTarget(episode().copy(catalogType = CatalogType.LIVE_TV))) }
-    @Test fun niktubeIsExcluded() { assertNull(introTarget(episode().copy(progressKey = "niktube:123"))) }
     @Test fun profilesRemainSeparate() {
         assertNotEquals(introTarget(episode("wio")), introTarget(episode("nikhil")))
     }

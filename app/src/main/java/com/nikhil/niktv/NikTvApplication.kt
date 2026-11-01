@@ -1,10 +1,11 @@
 package com.nikhil.niktv
 
-import dagger.hilt.android.HiltAndroidApp
+import android.app.Application
 import android.content.Context
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
+import coil3.video.VideoFrameDecoder
 import coil3.memory.MemoryCache
 import okio.Path.Companion.toOkioPath
 import com.nikhil.niktv.data.RemoteCredentials
@@ -13,24 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-@HiltAndroidApp
-class NikTvApplication : io.github.aedev.flow.FlowApplication() {
+class NikTvApplication : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
-        registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
-            override fun onActivityPreCreated(activity: android.app.Activity, state: android.os.Bundle?) {
-                if (!activity.javaClass.name.startsWith("com.liskovsoft.smartyoutubetv2.")) restoreHostDensity(activity)
-            }
-            override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) = Unit
-            override fun onActivityStarted(activity: android.app.Activity) = Unit
-            override fun onActivityResumed(activity: android.app.Activity) {
-                if (!activity.javaClass.name.startsWith("com.liskovsoft.smartyoutubetv2.")) restoreHostDensity(activity)
-            }
-            override fun onActivityPaused(activity: android.app.Activity) = Unit
-            override fun onActivityStopped(activity: android.app.Activity) = Unit
-            override fun onActivitySaveInstanceState(activity: android.app.Activity, state: android.os.Bundle) = Unit
-            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
-        })
         RemoteCredentials.initialize(this)
         RemoteCredentials.schedule(this)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -38,14 +24,15 @@ class NikTvApplication : io.github.aedev.flow.FlowApplication() {
         }
     }
 
-    override fun newImageLoader(context: Context): ImageLoader =
-        super.newImageLoader(context)
-
-    fun restoreHostDensity(context: Context) {
-        listOf(context.resources, resources).forEach { resource ->
-            val configuration = resource.configuration
-            resource.displayMetrics.density = configuration.densityDpi / 160f
-            resource.displayMetrics.scaledDensity = resource.displayMetrics.density * configuration.fontScale
+    override fun newImageLoader(context: Context): ImageLoader = ImageLoader.Builder(context)
+        .components { add(VideoFrameDecoder.Factory()) }
+        .memoryCache { MemoryCache.Builder().maxSizePercent(context, 0.10).build() }
+        .diskCache {
+            DiskCache.Builder()
+                // Reuse the existing artwork cache instead of forcing a cold cache after upgrading.
+                .directory(context.cacheDir.resolve("image_cache").toOkioPath())
+                .maxSizeBytes(64L * 1024 * 1024)
+                .build()
         }
-    }
+        .build()
 }

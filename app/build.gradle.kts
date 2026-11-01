@@ -27,7 +27,6 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("com.google.dagger.hilt.android")
 }
 
 // Test-only manifests and package IDs must never overwrite Android Studio's normal debug outputs.
@@ -110,10 +109,6 @@ configurations.configureEach {
 }
 dependencies { add("implementation", files(prepareAndroidDnsJava.flatMap { it.output })) }
 androidComponents.onVariants { variant ->
-    variant.resValues.put(variant.makeResValueKey("string", "search_authority"),
-        variant.applicationId.map { com.android.build.api.variant.ResValue("$it.smarttube", "Embedded SmartTube search") })
-    variant.resValues.put(variant.makeResValueKey("string", "niktv_search_intent_data"),
-        variant.applicationId.map { com.android.build.api.variant.ResValue("content://$it.smarttube/video", "Embedded SmartTube search") })
     variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareMpvNativeRuntime) { it.outputDirectory }
 }
 
@@ -132,10 +127,6 @@ android {
         listOf("NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION").forEach {
             buildConfigField("String", it, "\"\"")
         }
-        buildConfigField("String", "NIKTUBE_BOTGUARD_API_KEY",
-            providers.environmentVariable("NIKTUBE_BOTGUARD_API_KEY")
-                .orElse(providers.gradleProperty("NIKTUBE_BOTGUARD_API_KEY"))
-                .orElse("").get().asBuildConfigString())
         if (fireTvApk.get()) {
             ndk { abiFilters += setOf("armeabi-v7a", "arm64-v8a") }
         }
@@ -222,39 +213,37 @@ kotlin {
 }
 
 dependencies {
-    implementation(project(":niktube-flow"))
-    implementation(project(":st-smarttubetv"))
-    implementation("com.google.dagger:hilt-android:2.60.1")
-    ksp("com.google.dagger:hilt-android-compiler:2.60.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
-    implementation(project(":niktube-sabr"))
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
-    implementation("androidx.core:core-ktx:1.17.0")
+    // Preserve shared runtime versions previously contributed by the bundled Flow app.
+    implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.activity:activity-compose:1.11.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
-    implementation("androidx.navigation:navigation-compose:2.9.8")
-    implementation(platform("androidx.compose:compose-bom:2025.12.01"))
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("androidx.navigation:navigation-compose:2.10.0")
+    implementation(platform("androidx.compose:compose-bom-alpha:2026.08.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.datastore:datastore-preferences:1.2.0")
-    implementation("androidx.work:work-runtime-ktx:2.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("org.jsoup:jsoup:1.23.2")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
-    implementation("com.google.zxing:core:3.5.3")
-    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    implementation("com.google.zxing:core:3.5.4")
+    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
+    implementation("io.coil-kt.coil3:coil-video:3.5.0")
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
+    implementation("androidx.media3:media3-exoplayer-dash:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("androidx.media3:media3-cast:1.8.0")
     implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
@@ -267,11 +256,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("junit:junit:4.13.2")
-    // Expose the embedded networking API to its device smoke test; production already bundles it.
-    androidTestImplementation(project(":st-sharedutils"))
-    androidTestImplementation("org.chromium.net:cronet-api:143.7445.0")
     testImplementation("junit:junit:4.13.2")
-    testImplementation(project(":st-common"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }

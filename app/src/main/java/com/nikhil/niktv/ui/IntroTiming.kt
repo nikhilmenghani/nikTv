@@ -39,8 +39,7 @@ private fun introKey(vararg parts: String): String {
 }
 
 internal fun introTarget(media: PlayingMedia): IntroTarget? {
-    if (media.profileKey.isBlank() || media.catalogType == CatalogType.LIVE_TV || media.nativeSabr != null ||
-        media.progressKey.startsWith("niktube:")) return null
+    if (media.profileKey.isBlank() || media.catalogType == CatalogType.LIVE_TV) return null
     val series = media.series
     if (series == null) {
         if (media.catalogType != CatalogType.MOVIES || media.media.id.isBlank()) return null
