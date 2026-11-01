@@ -36,7 +36,7 @@ class DiscoveryViewModelTest {
             override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
                 heroResult.await()
         })
-        vm.bind("clear-focus", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.bind("clear-focus", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump()
         vm.prepareHero(); pump()
         val feed = vm.state.value.feeds
         val hero = vm.state.value.hero
@@ -108,7 +108,7 @@ class DiscoveryViewModelTest {
             override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
                 DiscoveryDetails(card.copy(titleLogo = "https://example.invalid/title.png", genres = listOf("Comedy")))
         })
-        vm.bind("hero-public", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.bind("hero-public", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump()
         vm.prepareHero(); pump()
         assertEquals(listOf("Comedy"), vm.state.value.heroPresentation?.genres)
         assertNull(vm.state.value.detail)
@@ -123,7 +123,7 @@ class DiscoveryViewModelTest {
             override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
                 if (card.id == 1) withContext(NonCancellable) { old.await() } else DiscoveryDetails(card.copy(genres = listOf("New")))
         })
-        vm.bind("hero-race", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.bind("hero-race", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump()
         vm.prepareHero(); pump(); vm.rotate(1); vm.prepareHero(); pump()
         old.complete(DiscoveryDetails(card(1))); pump()
         assertEquals(2, vm.state.value.hero?.id)
@@ -135,7 +135,7 @@ class DiscoveryViewModelTest {
         val vm = DiscoveryViewModel(app, object : Source() {
             override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) = withContext(NonCancellable) { old.await() }
         })
-        vm.bind("hero-old", DashboardSurface.MOVIES, emptyList()); pump(); vm.prepareHero(); pump()
+        vm.bind("hero-old", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump(); vm.prepareHero(); pump()
         vm.pause(); vm.bind("hero-new", DashboardSurface.SERIES, emptyList()); pump()
         old.complete(DiscoveryDetails(card(1))); pump()
         assertEquals("hero-new", vm.state.value.profile)
@@ -146,7 +146,7 @@ class DiscoveryViewModelTest {
         val vm = DiscoveryViewModel(app, object : Source() {
             override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails = error("offline")
         })
-        vm.bind("hero-error", DashboardSurface.MOVIES, emptyList()); pump(); vm.prepareHero(); pump()
+        vm.bind("hero-error", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump(); vm.prepareHero(); pump()
         assertNotNull(vm.state.value.hero)
         assertNull(vm.state.value.heroPresentation)
         assertTrue(vm.state.value.errors.isEmpty())
@@ -160,12 +160,29 @@ class DiscoveryViewModelTest {
             override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
                 if (card.id == 1) withContext(NonCancellable) { old.await() } else DiscoveryDetails(card)
         })
-        vm.bind("hero-refresh", DashboardSurface.MOVIES, emptyList()); pump(); vm.prepareHero(); pump()
+        vm.bind("hero-refresh", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump(); vm.prepareHero(); pump()
         vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES, true); pump(); vm.prepareHero(); pump()
         assertEquals(2, vm.state.value.heroPresentation?.id)
         old.complete(DiscoveryDetails(card(1))); pump()
         assertEquals(2, vm.state.value.heroPresentation?.id)
     }
+    @Test fun onlyHomeAutomaticallyFetchesTmdbDiscovery() {
+        val requested = mutableListOf<TmdbHomeSection>()
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> {
+                requested += section
+                return emptyList()
+            }
+        })
+        vm.bind("split", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.resume("split", DashboardSurface.MOVIES); pump()
+        vm.bind("split", DashboardSurface.SERIES, emptyList()); pump()
+        vm.resume("split", DashboardSurface.SERIES); pump()
+        assertTrue(requested.isEmpty())
+        vm.bind("split", DashboardSurface.HOME, emptyList()); pump()
+        assertEquals(setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES), requested.toSet())
+    }
+
     private val app get() = RuntimeEnvironment.getApplication()
     private fun pump() = shadowOf(Looper.getMainLooper()).idle()
     private fun card(id: Int, series: Boolean = false) = DiscoveryCard(id, series, "Movie $id", date = "2020-01-01")
@@ -238,8 +255,8 @@ class DiscoveryViewModelTest {
                 if (first) { first = false; withContext(NonCancellable) { old.await() } } else listOf(card(2))
         }
         val vm = DiscoveryViewModel(app, source)
-        vm.bind("old", DashboardSurface.MOVIES, emptyList()); pump()
-        vm.bind("new", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.bind("old", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump()
+        vm.bind("new", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump()
         old.complete(listOf(card(1))); pump()
         assertEquals("new", vm.state.value.profile)
         assertEquals(2, vm.state.value.hero?.id)
@@ -278,9 +295,9 @@ class DiscoveryViewModelTest {
             }
         }
         val vm = DiscoveryViewModel(app, source)
-        vm.bind("p", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.bind("p", DashboardSurface.HOME, emptyList()); pump()
         vm.pause(); pump(); assertTrue(canceled); assertTrue(vm.state.value.loading.isEmpty())
-        vm.resume("other", DashboardSurface.MOVIES); pump(); assertEquals(1, calls)
-        vm.resume("p", DashboardSurface.MOVIES); pump(); assertEquals("movie:9", vm.state.value.hero?.key)
+        vm.resume("other", DashboardSurface.HOME); pump(); assertEquals(2, calls)
+        vm.resume("p", DashboardSurface.HOME); pump(); assertEquals("movie:9", vm.state.value.hero?.key)
     }
 }

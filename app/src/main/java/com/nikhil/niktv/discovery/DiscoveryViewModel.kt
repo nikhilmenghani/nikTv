@@ -41,8 +41,8 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
             TmdbHomeSection.entries.firstOrNull { it.name == name }
         }.filter { surface == DashboardSurface.HOME || it.series == (surface == DashboardSurface.SERIES) }.distinct()
         _state.value = DiscoveryState(profile = profile, surface = surface, sections = sections)
-        if (surface != DashboardSurface.SERIES) loadFeed(TmdbHomeSection.TRENDING_MOVIES)
-        if (surface != DashboardSurface.MOVIES) loadFeed(TmdbHomeSection.TRENDING_SERIES)
+        if (surface == DashboardSurface.HOME) loadFeed(TmdbHomeSection.TRENDING_MOVIES)
+        if (surface == DashboardSurface.HOME) loadFeed(TmdbHomeSection.TRENDING_SERIES)
     }
     fun pause() {
         focusGeneration.next()
@@ -53,8 +53,8 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     fun resume(profile: String, surface: DashboardSurface) {
         val current = _state.value
         if (current.profile != profile || current.surface != surface || profile.isBlank()) return
-        if (surface != DashboardSurface.SERIES) loadFeed(TmdbHomeSection.TRENDING_MOVIES, true)
-        if (surface != DashboardSurface.MOVIES) loadFeed(TmdbHomeSection.TRENDING_SERIES, true)
+        if (surface == DashboardSurface.HOME) loadFeed(TmdbHomeSection.TRENDING_MOVIES, true)
+        if (surface == DashboardSurface.HOME) loadFeed(TmdbHomeSection.TRENDING_SERIES, true)
         current.detail?.takeIf { current.details == null }?.let(::showDetails)
     }
     fun configure(sections: List<TmdbHomeSection>) {

@@ -123,7 +123,7 @@ internal fun DiscoveryPreviewScreen(
     val providerPageLoader = LocalProviderDiscoveryPageLoader.current
     val providerSelections = remember(profile, surface, app.categoryFilters, app.rawCategoriesByType, app.browseCachesByType.mapValues { it.value.categories }) {
         listOf(CatalogType.MOVIES, CatalogType.SERIES)
-            .filter { surface == DashboardSurface.HOME || (it == CatalogType.SERIES) == (surface == DashboardSurface.SERIES) }
+            .filter { surface != DashboardSurface.HOME && (it == CatalogType.SERIES) == (surface == DashboardSurface.SERIES) }
             .associateWith { type -> providerDiscoveryCategoryRows(
                 app.modernVisibleIptvCategories(type, requireExplicitSelection = surface == DashboardSurface.HOME),
                 implicitSelection = app.categoryFilters["$profile|${type.name}"] == null) }
@@ -387,15 +387,15 @@ internal fun DiscoveryPreviewScreen(
                         })
                 }))
             }
-            if (surface != DashboardSurface.SERIES) add(Rail("daily-movies", "Trending Movies Today",
+            if (surface == DashboardSurface.HOME) add(Rail("daily-movies", "Trending Movies Today",
                 state.feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty().take(10).map { cardEntry(it, "daily-movies") }, true, TmdbHomeSection.TRENDING_MOVIES))
-            if (surface != DashboardSurface.MOVIES) add(Rail("daily-series", "Trending Series Today",
+            if (surface == DashboardSurface.HOME) add(Rail("daily-series", "Trending Series Today",
                 state.feeds[TmdbHomeSection.TRENDING_SERIES].orEmpty().take(10).map { cardEntry(it, "daily-series") }, true, TmdbHomeSection.TRENDING_SERIES))
             if (surface == DashboardSurface.HOME) app.historyRecommendations.filter { it.profile == profile }.forEach { row ->
                 val cards = (row.movies.map { it.discovery() } + row.series.map { it.discovery() }).filter { it.released() }
                 if (cards.isNotEmpty()) add(Rail("personal:${row.key}", row.title, cards.map { cardEntry(it, "personal:${row.key}") }, recommendation = row))
             }
-            state.sections.filterNot { it in setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES) }.forEach { section ->
+            state.sections.filter { surface == DashboardSurface.HOME }.filterNot { it in setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES) }.forEach { section ->
                 add(Rail("section:${section.name}", section.title, state.feeds[section].orEmpty().map { cardEntry(it, "section:${section.name}") }, section = section))
             }
             providerSelections.filterValues { it.isNotEmpty() }.forEach { (type, categories) ->
@@ -482,7 +482,7 @@ internal fun DiscoveryPreviewScreen(
                 DiscoveryPhoneNavigation(surface, tabRequester, playRequester,
                     ::closeRoute, ::selectRoute, ::navigateRoute,
                     menu = menu, changeMenu = { menu = it }, categoryManagerOpen = app.categoryManagerOpen,
-                    categoriesEnabled = state.detail == null, categoryPopupChanged = { categoryPopup = it })
+                    categoriesEnabled = state.detail == null && surface != DashboardSurface.HOME, categoryPopupChanged = { categoryPopup = it })
             }
             saved.SaveableStateProvider(routeKey) {
                 val positions = discoveryFeedIndices(!phone, state.detail?.series == true)
@@ -637,13 +637,28 @@ internal fun DiscoveryPreviewScreen(
                                 back = ::closeRoute,
                                 select = { tab -> if (tab != surface) selectRoute(tab) else if (state.detail != null) closeRoute() },
                                 navigate = ::navigateRoute, headerFocus = { if (ownsFocusRoute()) { contentFocused = false; alignFocusedRow("navigation", 0) } },
-                                menu = menu, changeMenu = { menu = it }, customize = { configure = true },
+                                menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null,
                                 backdrop = prepared?.backdrop.takeIf { showBackdrop }, backdropBounds = glassBounds,
-                                categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = state.detail == null,
+                                categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = state.detail == null && surface != DashboardSurface.HOME,
                                 categoryPopupChanged = { categoryPopup = it })
                         }
                     }
                     item("hero") {
+                        if (state.detail == null && surface != DashboardSurface.HOME) {
+                            Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                                if (phonePortrait) DiscoveryPhoneHeader(surface, false, tabRequester, playRequester,
+                                    back = ::closeRoute, select = { if (it != surface) selectRoute(it) }, navigate = ::navigateRoute,
+                                    menu = menu, changeMenu = { menu = it }, customize = null,
+                                    profile = app.savedProfile?.name.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
+                                    categoryPopupChanged = { categoryPopup = it })
+                                if (!phonePortrait) Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp).onPreviewKeyEvent {
+                                    if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) moveRow(positions.hero, 1) else false
+                                }) {
+                                    DiscoveryCategoryAccess(surface, app.categoryManagerOpen,
+                                        modifier = Modifier.focusRequester(playRequester), popupChanged = { categoryPopup = it })
+                                }
+                            }
+                        } else {
                         val origin = "hero:${displayed?.key}"
                         val infoFocusRequester = remember(origin) { returnRequesters.getOrPut(origin) { FocusRequester() } }
                         val heroHeight = if (phonePortrait) phoneDiscoveryHeroHeight()
@@ -674,9 +689,9 @@ internal fun DiscoveryPreviewScreen(
                             index = state.heroIndex, count = state.heroes.size,
                             categoryActions = if (state.detail == null && !phone) ({
                                 key(profile, surface) {
-                                DiscoveryCategoryAccess(surface, app.categoryManagerOpen, modifier = if (phone) Modifier.widthIn(min = 144.dp) else Modifier, popupChanged = { categoryPopup = it },
+                                if (surface != DashboardSurface.HOME) DiscoveryCategoryAccess(surface, app.categoryManagerOpen, modifier = if (phone) Modifier.widthIn(min = 144.dp) else Modifier, popupChanged = { categoryPopup = it },
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } })
-                                DiscoveryAction("TMDB categories", Icons.Default.AutoAwesome, modifier = Modifier.then(if (phone) Modifier.widthIn(min = 144.dp) else Modifier).focusRequester(tmdbCategoriesRequester),
+                                if (surface == DashboardSurface.HOME) DiscoveryAction("TMDB categories", Icons.Default.AutoAwesome, modifier = Modifier.then(if (phone) Modifier.widthIn(min = 144.dp) else Modifier).focusRequester(tmdbCategoriesRequester),
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }) { restoreTmdbCategories = true; configure = true }
                                 }
                             }) else null,
@@ -685,11 +700,12 @@ internal fun DiscoveryPreviewScreen(
                                 DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
                                     back = ::closeRoute,
                                     select = { if (it != surface) selectRoute(it) }, navigate = ::navigateRoute,
-                                    menu = menu, changeMenu = { menu = it }, customize = { configure = true }, profile = app.savedProfile?.name.orEmpty(),
+                                    menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null, profile = app.savedProfile?.name.orEmpty(),
                                     categoryManagerOpen = app.categoryManagerOpen, categoryPopupChanged = { categoryPopup = it })
                             }) else null)
                         state.errors.filterKeys { it == "detail" }.values.forEach { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray, fontSize = 13.sp) }
                         if (candidate == null && state.loading.isEmpty() && (state.feeds.isNotEmpty() || state.errors.isNotEmpty())) Text("Discovery is unavailable. Check your TMDB configuration or retry below.", Modifier.padding(24.dp), color = Color.LightGray)
+                        }
                     }
                     if (state.detail?.series == true) item("seasons") {
                         val seasonEntry = remember { FocusRequester() }
@@ -839,7 +855,7 @@ internal fun DiscoveryPreviewScreen(
                             }
                         }
                     } else item("categories") {
-                        val types = when (surface) { DashboardSurface.MOVIES -> listOf(CatalogType.MOVIES); DashboardSurface.SERIES -> listOf(CatalogType.SERIES); else -> listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) }
+                        val types = when (surface) { DashboardSurface.MOVIES -> listOf(CatalogType.MOVIES); DashboardSurface.SERIES -> listOf(CatalogType.SERIES); else -> emptyList() }
                         types.forEach { type ->
                             val categories = app.modernVisibleIptvCategories(type, requireExplicitSelection = surface == DashboardSurface.HOME).filterNot { adultContentLabel(it.title) }
                             if (categories.isNotEmpty() || type != CatalogType.LIVE_TV) {
