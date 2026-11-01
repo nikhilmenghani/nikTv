@@ -24,19 +24,29 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private var heroRequestKey: String? = null
     private val jobs = mutableMapOf<String, Job>()
     private val stack = mutableListOf<DiscoveryCard>()
-    private fun preferenceKey(profile: String, surface: DashboardSurface) = "$profile:${surface.name}"
-    fun bind(profile: String, surface: DashboardSurface, originalSections: List<TmdbHomeSection>?) {
-        if (_state.value.profile == profile && _state.value.surface == surface) return
+    private var boundExperiment = false
+    private fun preferenceKey(profile: String, surface: DashboardSurface, experiment: Boolean = false) =
+        "$profile:${surface.name}" + if (experiment) ":scroll-experiment" else ""
+    fun bind(profile: String, surface: DashboardSurface, originalSections: List<TmdbHomeSection>?, experiment: Boolean = false) {
+        if (_state.value.profile == profile && _state.value.surface == surface && boundExperiment == experiment) return
+        boundExperiment = experiment
         jobs.values.forEach { it.cancel() }; jobs.clear(); stack.clear()
         focusGeneration.next(); preparedPresentation = null; completedFocusKey = null
         screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()
-        val key = preferenceKey(profile, surface)
+        val key = preferenceKey(profile, surface, experiment)
         val defaults = originalSections ?: when (surface) {
             DashboardSurface.MOVIES -> listOf(TmdbHomeSection.TOP_RATED_MOVIES, TmdbHomeSection.NEW_HOLLYWOOD_MOVIES, TmdbHomeSection.NEW_BOLLYWOOD_MOVIES)
             DashboardSurface.SERIES -> listOf(TmdbHomeSection.TOP_RATED_SERIES, TmdbHomeSection.NEW_HOLLYWOOD_SERIES, TmdbHomeSection.NEW_BOLLYWOOD_SERIES)
             else -> listOf(TmdbHomeSection.TOP_RATED_MOVIES, TmdbHomeSection.TOP_RATED_SERIES, TmdbHomeSection.NEW_BOLLYWOOD_MOVIES)
         }
-        if (!preferences.contains(key)) preferences.edit().putString(key, defaults.joinToString(",") { it.name }).apply()
+        if (!preferences.contains(key)) {
+            // Start the trial with the current Home configuration once. Later trial
+            // changes must never write back to the established screen or another profile.
+            val originalKey = preferenceKey(profile, surface)
+            val initial = if (experiment && preferences.contains(originalKey)) preferences.getString(originalKey, "").orEmpty()
+                else defaults.joinToString(",") { it.name }
+            preferences.edit().putString(key, initial).apply()
+        }
         val sections = preferences.getString(key, "").orEmpty().split(',').mapNotNull { name ->
             TmdbHomeSection.entries.firstOrNull { it.name == name }
         }.filter { surface == DashboardSurface.HOME || it.series == (surface == DashboardSurface.SERIES) }.distinct()
@@ -59,7 +69,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     }
     fun configure(sections: List<TmdbHomeSection>) {
         val s = _state.value
-        preferences.edit().putString(preferenceKey(s.profile, s.surface), sections.joinToString(",") { it.name }).apply()
+        preferences.edit().putString(preferenceKey(s.profile, s.surface, boundExperiment), sections.joinToString(",") { it.name }).apply()
         _state.update { it.copy(sections = sections) }
     }
     private fun publishFeed(section: TmdbHomeSection, cards: List<DiscoveryCard>) = _state.update { current ->

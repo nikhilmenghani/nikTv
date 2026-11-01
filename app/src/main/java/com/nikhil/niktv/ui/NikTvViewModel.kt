@@ -54,6 +54,7 @@ data class NikTvState(
     val alternateSources: AlternateSourcePickerState? = null,
     val tmdbIptvLookupMiss: TmdbIptvLookupMiss? = null,
     val discoverySurface: DashboardSurface? = null,
+    val discoveryExperiment: Boolean = false,
     val watchProvidersOpen: Boolean = false,
     val discoveryNavigationId: Long = 0,
     val discoveryMatchCounts: Map<String, Int> = emptyMap(),
@@ -443,7 +444,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 session = session,
                 savedProfile = session.profile,
                 homeOpen = true,
-                watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME,
+                watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, discoveryExperiment = false,
                 favoritesOpen = false,
                 settingsOpen = false,
                 offlineDownloadsOpen = false,
@@ -7871,7 +7872,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             modernIptvCategory = null, modernTmdbSection = null, selectedCategory = null, playbackReturnFocusId = null,
             searchQuery = "", searchResults = emptyList(), searchLocalLoading = false, searchServerLoading = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true,
-            watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, offlineDownloadsOpen = false,
+            watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, discoveryExperiment = false, offlineDownloadsOpen = false,
             categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList(),
@@ -7972,10 +7973,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Discovery navigation never resolves provider titles in the background. */
 
-    fun openDiscovery(surface: DashboardSurface) {
+    fun openDiscovery(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = false)
+    fun openHomeExperiment() = openDiscoveryExperiment(DashboardSurface.HOME)
+    fun openDiscoveryExperiment(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = true)
+
+    private fun openDiscoveryRoute(surface: DashboardSurface, experiment: Boolean) {
         searchSeriesReturn = null
         cancelPendingPlayback()
-        _state.update { it.copy(discoverySurface = surface, watchProvidersOpen = false,
+        _state.update { it.copy(discoverySurface = surface, discoveryExperiment = experiment, watchProvidersOpen = false,
             discoveryNavigationId = it.discoveryNavigationId + 1, homeOpen = true, favoritesOpen = false,
             settingsOpen = false, searchOpen = false, offlineDownloadsOpen = false,
             selectedSeries = null, modernTmdbSection = null, modernIptvCategory = null) }

@@ -233,6 +233,7 @@ internal fun DiscoveryScreenHost(
     val modernSectionOpen =
         (state.modernTmdbSection != null || state.modernIptvCategory != null)
     val openTrial = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
+    val openHomeExperiment = com.nikhil.niktv.discovery.LocalOpenDiscoveryExperiment.current
     fun landingHome() { openTrial(DashboardSurface.HOME) }
     val playTrialEpisode = com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode.current
     val openProviders = com.nikhil.niktv.discovery.LocalOpenWatchProviders.current
@@ -263,6 +264,7 @@ internal fun DiscoveryScreenHost(
     val navigateDiscovery: (String) -> Unit = { label -> when (label) {
         "Providers" -> openProviders()
         "Home" -> openTrial(DashboardSurface.HOME)
+        "Home 2" -> openHomeExperiment()
         "Movies" -> openTrial(DashboardSurface.MOVIES)
         "Series" -> openTrial(DashboardSurface.SERIES)
         "Live TV" -> { libraryMenuEpoch++; if (!state.searchOpen && libraryBrowseAll && !state.favoritesOpen) libraryBrowseAll = false else if (state.searchOpen || state.homeOpen || state.favoritesOpen || state.selectedType != CatalogType.LIVE_TV || modernSectionOpen) selectType(CatalogType.LIVE_TV) }
@@ -415,14 +417,15 @@ internal fun DiscoveryScreenHost(
                     playCard = { card -> if (card.series) openTrendingSeries(com.nikhil.niktv.data.TrendingSeries(card.show()))
                         else openTrendingMovie(com.nikhil.niktv.data.TrendingMovie(card.movie())) },
                     detailVisibilityChanged = { phoneDetailOpen = it }) }
-                previewVisible -> browseStateHolder.SaveableStateProvider("discovery2:${state.savedProfile?.cacheKey()}:${state.discoverySurface}") {
+                previewVisible -> browseStateHolder.SaveableStateProvider("discovery2:${state.savedProfile?.cacheKey()}:${state.discoverySurface}:${state.discoveryExperiment}") {
+                    CompositionLocalProvider(LocalDiscoveryExperiment provides state.discoveryExperiment) {
                     com.nikhil.niktv.discovery.DiscoveryPreviewScreen(
                     app = state, surface = requireNotNull(state.discoverySurface), selectSurface = openTrial,
                     exit = {
                         if (state.discoverySurface == DashboardSurface.HOME) exitConfirmationOpen = true
                         else landingHome()
                     }, navigate = { label -> when (label) {
-                        "Home" -> openHome(); "Live TV" -> selectType(CatalogType.LIVE_TV)
+                        "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Live TV" -> selectType(CatalogType.LIVE_TV)
                         "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                         "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                         "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
@@ -432,14 +435,17 @@ internal fun DiscoveryScreenHost(
                     toggleFavorite = toggleFavoriteEntry, openCategory = openModernIptvCategory, openSection = openModernTmdbSection,
                     removeRecent = removeRecent, markWatched = markEpisodeWatched, dismissEpisode = dismissWatchedEpisode,
                     detailVisibilityChanged = { phoneDetailOpen = it }, dismissRecommendation = dismissRecommendation,
-                    parentModalOpen = exitConfirmationOpen
+                    parentModalOpen = exitConfirmationOpen,
+                    experiment = state.discoveryExperiment,
+                    vm = androidx.lifecycle.viewmodel.compose.viewModel(key = "discovery2:${state.savedProfile?.cacheKey()}:${state.discoveryExperiment}")
                     )
+                    }
                 }
                 previewProviderCategory -> browseStateHolder.SaveableStateProvider("provider-trial:${state.savedProfile?.cacheKey()}:${state.modernIptvCategory?.id}:${state.modernIptvCategoryOpenId}") {
                     com.nikhil.niktv.discovery.DiscoveryProviderCategory(state, requireNotNull(state.modernIptvCategory),
                         close = closeModernSection, selectSurface = openTrial,
                         navigate = { label -> when (label) {
-                            "Home" -> openHome(); "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
+                            "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                             "Live TV" -> selectType(CatalogType.LIVE_TV); "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                             "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
                         } }, open = { item, queue, filter -> playInContext?.invoke(item, queue, filter) ?: play(item) },

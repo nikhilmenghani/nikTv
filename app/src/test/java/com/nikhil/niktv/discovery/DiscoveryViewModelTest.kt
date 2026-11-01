@@ -194,6 +194,27 @@ class DiscoveryViewModelTest {
         override suspend fun reviews(card: DiscoveryCard) = emptyList<DiscoveryReview>()
         override suspend fun episodes(card: DiscoveryCard, season: Int) = listOf(DiscoveryEpisode(season, 1, "Episode", date = "2020-01-01"))
     }
+    @Test fun homeExperimentCopiesCategoriesOnceAndCannotChangeOriginalHome() {
+        val profile = "home-experiment-categories"
+        val original = DiscoveryViewModel(app, Source())
+        original.bind(profile, DashboardSurface.HOME, listOf(TmdbHomeSection.ACTION)); pump()
+        original.configure(listOf(TmdbHomeSection.COMEDY))
+        val trial = DiscoveryViewModel(app, Source())
+        trial.bind(profile, DashboardSurface.HOME, emptyList(), experiment = true); pump()
+        assertEquals(listOf(TmdbHomeSection.COMEDY), trial.state.value.sections)
+        assertEquals(profile, trial.state.value.profile)
+        trial.configure(listOf(TmdbHomeSection.ACTION))
+        val reloadedOriginal = DiscoveryViewModel(app, Source())
+        reloadedOriginal.bind(profile, DashboardSurface.HOME, emptyList()); pump()
+        assertEquals(listOf(TmdbHomeSection.COMEDY), reloadedOriginal.state.value.sections)
+        original.configure(emptyList())
+        val reloadedTrial = DiscoveryViewModel(app, Source())
+        reloadedTrial.bind(profile, DashboardSurface.HOME, emptyList(), experiment = true); pump()
+        assertEquals(listOf(TmdbHomeSection.ACTION), reloadedTrial.state.value.sections)
+        reloadedTrial.bind("other-$profile", DashboardSurface.HOME, emptyList(), experiment = true); pump()
+        assertTrue(reloadedTrial.state.value.sections.isEmpty())
+    }
+
     @Test fun trialSettingsAreSeparateByProfileAndSurface() {
         val vm = DiscoveryViewModel(app, Source())
         val original = listOf(TmdbHomeSection.ACTION)

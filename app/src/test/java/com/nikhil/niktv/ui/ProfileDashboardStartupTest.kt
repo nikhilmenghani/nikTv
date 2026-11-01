@@ -115,6 +115,35 @@ class ProfileDashboardStartupTest {
         assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
     }
 
+    @Test fun homeExperimentIsSeparateAndNormalNavigationRestoresOriginalExperience() = runTest(scheduler) {
+        vm.openHome()
+        assertFalse(vm.state.value.discoveryExperiment)
+        val originalNavigation = vm.state.value.discoveryNavigationId
+        vm.openHomeExperiment()
+        assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
+        assertTrue(vm.state.value.discoveryExperiment)
+        assertTrue(vm.state.value.discoveryNavigationId > originalNavigation)
+        vm.openDiscovery(DashboardSurface.MOVIES)
+        assertFalse(vm.state.value.discoveryExperiment)
+        vm.openHomeExperiment()
+        vm.openHome()
+        assertFalse(vm.state.value.discoveryExperiment)
+        assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
+    }
+
+    @Test fun experimentalSurfaceNavigationDoesNotReplaceNormalMoviesOrSeries() = runTest(scheduler) {
+        for (surface in listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)) {
+            vm.openDiscoveryExperiment(surface)
+            assertEquals(surface, vm.state.value.discoverySurface)
+            assertTrue(vm.state.value.discoveryExperiment)
+            val navigation = vm.state.value.discoveryNavigationId
+            vm.openDiscovery(surface)
+            assertEquals(surface, vm.state.value.discoverySurface)
+            assertFalse(vm.state.value.discoveryExperiment)
+            assertTrue(vm.state.value.discoveryNavigationId > navigation)
+        }
+    }
+
     @Test fun newDeviceStartsAtDashboardWithoutAProfileOrSession() = runTest(scheduler) {
         launchDashboard()
         assertTrue(vm.state.value.profiles.isEmpty())
