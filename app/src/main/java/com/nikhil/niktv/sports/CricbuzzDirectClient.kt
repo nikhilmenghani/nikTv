@@ -89,6 +89,12 @@ internal class CricbuzzDirectClient(
         return if (collectionId == null) CricketHomeProtobuf.latest(bytes) else CricketHomeProtobuf.collectionPage(bytes)
     }
 
+    internal suspend fun scoreRequest(path: String): ByteArray {
+        require(path in setOf("/a/matches/v1/live", "/a/infra/v1/settings") || path.matches(Regex("/a/mcenter/v1/[1-9][0-9]*/h?comm")))
+        if (!configured) throw SportsException("Import your Cricbuzz configuration in Settings to enable live scores.")
+        return request(path)
+    }
+
     private suspend fun request(path: String, json: Boolean = false): ByteArray {
         val url = "https://api.cricbuzz.com$path"
         suspend fun send(): ByteArray {

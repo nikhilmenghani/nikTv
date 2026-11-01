@@ -353,6 +353,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     var playbackSpeed by rememberSaveable(media.progressKey) { mutableFloatStateOf(1f) }
+    val cricketScores = rememberCricketScoreController()
     val introSettings = rememberIntroSkipSettings(media)
     val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
@@ -445,6 +446,7 @@ fun PlayerScreen(
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
+            cricketScores = cricketScores,
             introSettings = introSettings,
             initialResumePosition = engineSwitchResumePosition,
             onBack = onBack,
@@ -567,7 +569,7 @@ fun PlayerScreen(
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
+    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
@@ -681,6 +683,7 @@ fun PlayerScreen(
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
     val moreFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val cricketScoreFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rewindFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1710,6 +1713,7 @@ fun PlayerScreen(
             .playerActivityObserver {
                 dpadInteraction++
             }
+            .cricketScoreMovement(cricketScores)
             .playerMediaKeys(playbackRequested) { requested ->
                 playbackRequested = requested
                 if (requested) player.play() else player.pause()
@@ -2208,6 +2212,7 @@ fun PlayerScreen(
                 if (media.nativeSabr == null) add(playerSwitchFocusRequester)
                 if (onChooseAlternateSource != null) add(sourceFocusRequester)
                 add(controlsTimeoutFocusRequester)
+                add(cricketScoreFocusRequester)
                 add(moreFocusRequester)
                 if (pipAvailable) add(pipFocusRequester)
             }
@@ -2442,6 +2447,14 @@ PlayerChromeIconButton(
                                 modeFeedback = playerControlsTimeoutFeedback(seconds)
                             },
                             modifier = Modifier.playerSecondaryFocus(controlsTimeoutFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = Icons.Default.SportsCricket,
+                            contentDescription = "Live cricket scores",
+                            onClick = { cricketScores.pickerOpen = true },
+                            modifier = Modifier.playerSecondaryFocus(cricketScoreFocusRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -2809,6 +2822,7 @@ PlayerChromeIconButton(
             }
         }
         PlayerOverlayLayer {
+        CricketScoreOverlay(cricketScores, visible = !inPictureInPicture)
         if (introAvailable && !controlsVisible && (focusMode || embeddedMode) && !queueVisible &&
             !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen && !inPictureInPicture &&
             playbackError == null && !startupTimedOut) IntroSkipButton(skipIntroFocusRequester,

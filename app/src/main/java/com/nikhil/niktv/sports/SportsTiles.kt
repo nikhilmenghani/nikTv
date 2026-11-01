@@ -127,11 +127,11 @@ internal fun sportsFlagDescription(flag: SportsChannelFlag): String {
 @Composable internal fun SportsSourceTile(stream: SportsStream, index: Int, resolving: Boolean, modifier: Modifier, enabled: Boolean, click: () -> Unit) {
     Surface(onClick = click, enabled = enabled, modifier = modifier.remoteFocusFrame(SportsShape), shape = SportsShape,
         color = SportsSurface, contentColor = Color.White, border = BorderStroke(1.dp, if (resolving) MaterialTheme.colorScheme.primary else Color(0xFF353C49))) {
-        Row(Modifier.heightIn(min = 72.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Default.PlayArrow, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(stream.title, style = MaterialTheme.typography.labelLarge, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (resolving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(stream.title, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(if (resolving) "Preparing stream…" else "Source ${index + 1}", color = SportsMuted, style = MaterialTheme.typography.labelSmall)
             }
         }

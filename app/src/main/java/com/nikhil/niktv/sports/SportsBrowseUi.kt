@@ -3,6 +3,7 @@ package com.nikhil.niktv.sports
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -22,6 +23,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,6 +63,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val availabilityAction = remember { FocusRequester() }
     val sourceFocus = remember(state.streams) { state.streams.map { FocusRequester() } }
     val selected = state.selected
+    var relatedExpanded by rememberSaveable(selected?.key) { mutableStateOf(false) }
     val hasGroups = (if (state.favouritesOnly) state.favourites else state.collectionChannels).any { it.group.isNotBlank() }
     val headerFocus = tabFocus.getValue(state.tab)
     var searchOpen by rememberSaveable { mutableStateOf(query.isNotBlank()) }
@@ -140,20 +143,37 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             if (!state.loadingStreams && state.streams.isEmpty() && state.streamError == null) SportsEmpty("Streams are not available yet", "Refresh to check this channel again.")
             SportsGrid(state.streams, { "source:${it.title}:${state.streams.indexOf(it)}" }, streamsScroll, if (compact) 150 else 190,
                 Modifier.weight(1f), headerFocus, relatedEntry.takeIf { state.detail.related.isNotEmpty() },
-                requester = { index -> sourceFocus[index] }) { stream, index, modifier ->
-                SportsSourceTile(stream, index, state.resolving == index, modifier, state.resolving == null || state.resolving == index) { play(index) }
-            }
-            if (state.detail.related.isNotEmpty()) {
-                Text("Related channels", color = SportsMuted, style = MaterialTheme.typography.labelLarge)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(4.dp, 2.dp, 4.dp, 12.dp)) {
-                    items(state.detail.related, key = { it.key }) { item ->
-                        val index = state.detail.related.indexOf(item)
-                        SportsChannelTile(item, state.favourites.any { it.key == item.key }, Modifier.width(152.dp)
-                            .then(if (index == 0) Modifier.focusRequester(relatedEntry) else Modifier)
-                            .focusProperties { up = sourceFocus.lastOrNull() ?: backFocus },
-                            click = { openChannel(item) }, menu = { contextItem = item; restoreTile = relatedEntry }, flag = state.channelFlags[item.key])
+                requester = { index -> sourceFocus[index] }, footer = {
+                    if (state.detail.related.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(onClick = { relatedExpanded = !relatedExpanded }, color = SportsSurface, contentColor = SportsMuted,
+                            shape = SportsShape, modifier = Modifier.fillMaxWidth().focusRequester(relatedEntry)
+                                .remoteFocusFrame(SportsShape)
+                                .semantics { stateDescription = if (relatedExpanded) "Expanded" else "Collapsed" }
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) false
+                                    else { scope.launch {
+                                        if (state.streams.isNotEmpty()) streamsScroll.scrollToItem(state.streams.lastIndex)
+                                        withFrameNanos { }; runCatching { (sourceFocus.lastOrNull() ?: backFocus).requestFocus() }
+                                    }; true }
+                                }) {
+                            Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Related channels (${state.detail.related.size})", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                                Icon(if (relatedExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    if (relatedExpanded) "Hide related channels" else "Show related channels", Modifier.size(20.dp))
+                            }
+                        }
+                        AnimatedVisibility(relatedExpanded) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(4.dp, 2.dp, 4.dp, 8.dp)) {
+                                items(state.detail.related, key = { it.key }) { item ->
+                                    SportsChannelTile(item, state.favourites.any { it.key == item.key }, Modifier.width(152.dp)
+                                        .focusProperties { up = relatedEntry },
+                                        click = { openChannel(item) }, menu = { contextItem = item; restoreTile = relatedEntry }, flag = state.channelFlags[item.key])
+                                }
+                            }
+                        }
                     }
-                }
+                }) { stream, index, modifier ->
+                SportsSourceTile(stream, index, state.resolving == index, modifier, state.resolving == null || state.resolving == index) { play(index) }
             }
         } else {
             if (state.collection != null || state.favouritesOnly) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -279,7 +299,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
 /** Exact row/column movement, including targets virtualized outside the viewport. */
 @Composable internal fun <T> SportsGrid(rows: List<T>, key: (T) -> String, scroll: LazyGridState, minWidth: Int,
     modifier: Modifier, above: FocusRequester, below: FocusRequester? = null, entry: FocusRequester? = null,
-    requester: (Int) -> FocusRequester, tile: @Composable (T, Int, Modifier) -> Unit) {
+    requester: (Int) -> FocusRequester, footer: (@Composable () -> Unit)? = null, tile: @Composable (T, Int, Modifier) -> Unit) {
     val scope = rememberCoroutineScope()
     var movement by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     BoxWithConstraints(modifier) {
@@ -293,7 +313,13 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                         val target = sportsGridTarget(index, columns, rows.size, event.key)
                         when {
                             target == -1 -> { movement?.cancel(); runCatching { above.requestFocus() } }
-                            target == rows.size -> { movement?.cancel(); below?.let { runCatching { it.requestFocus() } } }
+                            target == rows.size -> {
+                                movement?.cancel()
+                                if (below != null) movement = scope.launch {
+                                    if (footer != null) scroll.scrollToItem(rows.size)
+                                    withFrameNanos { }; runCatching { below.requestFocus() }
+                                }
+                            }
                             target != index -> {
                                 movement?.cancel()
                                 movement = scope.launch {
@@ -311,6 +337,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                         true
                     })
             }
+            if (footer != null) item(key = "sports-grid-footer", span = { GridItemSpan(maxLineSpan) }) { footer() }
         }
     }
 }

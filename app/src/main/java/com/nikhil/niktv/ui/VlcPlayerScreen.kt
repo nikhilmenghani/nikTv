@@ -130,6 +130,7 @@ private fun VlcRetainedStill(bitmap: Bitmap, resizeMode: VideoResizeMode) {
 @Composable
 internal fun VlcPlayerScreen(
     media: PlayingMedia,
+    cricketScores: CricketScoreController,
     introSettings: IntroSkipSettings,
     initialResumePosition: Long,
     onBack: () -> Unit,
@@ -274,7 +275,7 @@ internal fun VlcPlayerScreen(
     var speedPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
+    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
@@ -355,6 +356,7 @@ internal fun VlcPlayerScreen(
     val pictureSettingsRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutRequester = remember(media.progressKey) { FocusRequester() }
     val moreRequester = remember(media.progressKey) { FocusRequester() }
+    val cricketScoreRequester = remember(media.progressKey) { FocusRequester() }
     val previousRequester = remember(media.progressKey) { FocusRequester() }
     val rewindRequester = remember(media.progressKey) { FocusRequester() }
     val playRequester = remember(media.progressKey) { FocusRequester() }
@@ -1146,6 +1148,7 @@ internal fun VlcPlayerScreen(
             .playerActivityObserver {
                 dpadInteraction++
             }
+            .cricketScoreMovement(cricketScores)
             .playerMediaKeys(playbackRequested && !streamTerminated) { requested ->
                 requestPlayback(requested)
                 showControls()
@@ -1566,6 +1569,7 @@ internal fun VlcPlayerScreen(
                 add(playerSwitchRequester)
                 if (onChooseAlternateSource != null) add(sourceRequester)
                 add(controlsTimeoutRequester)
+                add(cricketScoreRequester)
                 add(moreRequester)
                 if (pipAvailable) add(pipRequester)
             }
@@ -1796,6 +1800,14 @@ PlayerChromeIconButton(
                                 modeFeedback = playerControlsTimeoutFeedback(seconds)
                             },
                             modifier = Modifier.playerSecondaryFocus(controlsTimeoutRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = Icons.Default.SportsCricket,
+                            contentDescription = "Live cricket scores",
+                            onClick = { cricketScores.pickerOpen = true },
+                            modifier = Modifier.playerSecondaryFocus(cricketScoreRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -2157,6 +2169,7 @@ PlayerChromeIconButton(
             }
         }
         PlayerOverlayLayer {
+        CricketScoreOverlay(cricketScores, visible = !inPictureInPicture)
         if (introAvailable && !controlsVisible && (focusMode || embeddedMode) && !queueVisible &&
             !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen && !inPictureInPicture && error == null)
             IntroSkipButton(skipIntroRequester, onSkip = ::skipIntro, onControls = ::showControls,
