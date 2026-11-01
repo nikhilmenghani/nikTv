@@ -1,6 +1,8 @@
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.discovery.components.*
+
 import com.nikhil.niktv.data.providerDisplayTitle
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
@@ -84,7 +86,7 @@ private data class Rail(val key: String, val title: String, val entries: List<Ra
 @Composable
 internal fun DiscoveryPreviewScreen(
     app: NikTvState, surface: DashboardSurface, selectSurface: (DashboardSurface) -> Unit,
-    exit: () -> Unit, classic: (String) -> Unit, playCard: (DiscoveryCard) -> Unit,
+    exit: () -> Unit, navigate: (String) -> Unit, playCard: (DiscoveryCard) -> Unit,
     playEpisode: (DiscoveryCard, Int, Int) -> Unit, openRecent: (RecentItem) -> Unit,
     openWatched: (WatchedSeries, MediaItem) -> Unit, toggleFavorite: (FavoriteItem) -> Unit,
     openCategory: (Category) -> Unit, openSection: (TmdbHomeSection) -> Unit,
@@ -234,7 +236,7 @@ internal fun DiscoveryPreviewScreen(
         }
     }
     fun selectRoute(destination: DashboardSurface) { parkRouteFocus(); selectSurface(destination) }
-    fun classicRoute(destination: String) { parkRouteFocus(); classic(destination) }
+    fun navigateRoute(destination: String) { parkRouteFocus(); navigate(destination) }
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
@@ -469,7 +471,7 @@ internal fun DiscoveryPreviewScreen(
         Column(Modifier.fillMaxSize()) {
             if (phone && !phonePortrait) {
                 DiscoveryPhoneNavigation(surface, tabRequester, playRequester,
-                    ::closeRoute, ::selectRoute, ::classicRoute,
+                    ::closeRoute, ::selectRoute, ::navigateRoute,
                     menu = menu, changeMenu = { menu = it }, categoryManagerOpen = app.categoryManagerOpen,
                     categoriesEnabled = state.detail == null, categoryPopupChanged = { categoryPopup = it })
             }
@@ -625,7 +627,7 @@ internal fun DiscoveryPreviewScreen(
                             DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
                                 back = ::closeRoute,
                                 select = { tab -> if (tab != surface) selectRoute(tab) else if (state.detail != null) closeRoute() },
-                                classic = ::classicRoute, headerFocus = { if (ownsFocusRoute()) { contentFocused = false; alignFocusedRow("navigation", 0) } },
+                                navigate = ::navigateRoute, headerFocus = { if (ownsFocusRoute()) { contentFocused = false; alignFocusedRow("navigation", 0) } },
                                 menu = menu, changeMenu = { menu = it }, customize = { configure = true },
                                 backdrop = prepared?.backdrop.takeIf { showBackdrop }, backdropBounds = glassBounds,
                                 categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = state.detail == null,
@@ -673,7 +675,7 @@ internal fun DiscoveryPreviewScreen(
                             phoneHeader = if (phonePortrait && state.detail == null) ({
                                 DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
                                     back = ::closeRoute,
-                                    select = { if (it != surface) selectRoute(it) }, classic = ::classicRoute,
+                                    select = { if (it != surface) selectRoute(it) }, navigate = ::navigateRoute,
                                     menu = menu, changeMenu = { menu = it }, customize = { configure = true }, profile = app.savedProfile?.name.orEmpty(),
                                     categoryManagerOpen = app.categoryManagerOpen, categoryPopupChanged = { categoryPopup = it })
                             }) else null)

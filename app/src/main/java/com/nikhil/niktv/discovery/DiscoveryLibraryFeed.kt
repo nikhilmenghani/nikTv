@@ -1,5 +1,7 @@
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.discovery.components.*
+
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*

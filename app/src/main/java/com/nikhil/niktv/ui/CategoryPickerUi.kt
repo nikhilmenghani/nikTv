@@ -46,7 +46,7 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     }
     val saved = state.categoryFilters["$profile|${type.name}"]
     var draft by rememberSaveable(profile, type) { mutableStateOf<List<String>?>(null) }
-    val defaults = if (state.modernUiEnabled) raw.map { it.id } else raw.take(10).map { it.id }
+    val defaults = raw.map { it.id }
     val selected = categoryPickerSelection(draft, saved, defaults)
     var query by rememberSaveable(profile, type) { mutableStateOf("") }
     val filtered = remember(raw, query) {

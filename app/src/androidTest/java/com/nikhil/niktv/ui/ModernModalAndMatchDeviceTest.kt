@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.*
+
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Rect
@@ -62,7 +64,7 @@ class ModernModalAndMatchDeviceTest {
                 Column {
                     Text(if (enabled) "Artwork enabled fixture" else "Artwork disabled fixture")
                     com.nikhil.niktv.discovery.DiscoveryBrowseMenu(menu, { menu = it }, DashboardSurface.HOME,
-                        classic = {}, customize = {})
+                        navigate = {}, customize = {})
                 }
             }) {
                 await("Artwork starts disabled") { find("Artwork disabled fixture") != null }

@@ -129,7 +129,7 @@ class CompactSettingsDeviceTest {
                         setInitialCatalogItems = { state = state.copy(initialCatalogItems = it); initialLoad.set(it) },
                         setPlayerControlsTimeoutSeconds = {}, setKeepAwakeOnlyDuringPlayback = { state = state.copy(keepAwakeOnlyDuringPlayback = it) },
                         setAutomaticReauthentication = { state = state.copy(automaticReauthentication = it); reauthenticationChanges.incrementAndGet() },
-                        setModernUiEnabled = {}, setPlaybackEngine = { state = state.copy(playbackEngine = it); engine.set(it) },
+                        setPlaybackEngine = { state = state.copy(playbackEngine = it); engine.set(it) },
                         setSeriesStartSeason = {}, setBrowseLayout = {}, openCategoryManager = {}
                     )
                     }

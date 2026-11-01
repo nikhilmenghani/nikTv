@@ -41,12 +41,6 @@ class SearchNavigationTest {
         assertTrue(search.copy(searchOpen = false).favoritesOpen)
     }
 
-    @Test fun legacySearchKeepsItsExistingFavoritesPolicy() {
-        val search = NikTvState(discoveryExperienceEnabled = false, favoritesOpen = true).openSearchNavigation()
-        assertTrue(search.searchOpen)
-        assertFalse(search.favoritesOpen)
-    }
-
     @Test fun seriesBackRestoresSearchAndParentWithoutFetchingACategoryOrLosingNewProgress() {
         val origin = NikTvState(savedProfile = profile, favoritesOpen = true, homeOpen = false,
             selectedType = CatalogType.LIVE_TV, selectedCategory = null, items = listOf(saved),
@@ -110,8 +104,6 @@ class SearchNavigationTest {
 
     @Test fun returnRoutesAreOnlyCapturedForOpenModernSearchWithAProfile() {
         assertNull(SearchSeriesReturn.capture(NikTvState(savedProfile = profile), selected))
-        assertNull(SearchSeriesReturn.capture(NikTvState(savedProfile = profile, searchOpen = true,
-            discoveryExperienceEnabled = false), selected))
         assertNull(SearchSeriesReturn.capture(NikTvState(searchOpen = true), selected))
     }
 }

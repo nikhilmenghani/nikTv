@@ -1,4 +1,7 @@
-package com.nikhil.niktv.ui
+package com.nikhil.niktv.discovery.components
+
+import com.nikhil.niktv.ui.*
+
 
 import android.content.Context
 import android.content.pm.PackageManager
@@ -112,7 +115,7 @@ private fun SearchContentType.searchFavoriteKind() = when (this) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun ModernSearchScreen(
+internal fun DiscoverySearchContent(
     state: NikTvState,
     close: () -> Unit,
     setType: (SearchContentType) -> Unit,
@@ -124,7 +127,6 @@ internal fun ModernSearchScreen(
     openResult: (MediaItem) -> Unit,
     loadMore: () -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
-    discoveryChrome: Boolean = false,
     headerFocusRequester: FocusRequester? = null,
     queryFocusRequester: FocusRequester? = null,
     headerHasFocus: Boolean = false
@@ -300,27 +302,10 @@ internal fun ModernSearchScreen(
             .background(SearchBackground)
             .padding(horizontal = if (configuration.screenWidthDp < 600) 14.dp else 20.dp)
     ) {
-        if (!discoveryChrome) SearchScreenHeader(
-            title = if (state.searchScopeLocked) {
-                "Search ${state.searchType.title}"
-            } else {
-                "Search"
-            },
-            subtitle = listOfNotNull(
-                state.session?.profile?.name?.takeIf { it.isNotBlank() },
-                selectedCategoryTitle.takeUnless { it == "All categories" }
-            ).joinToString(" · ").takeIf { it.isNotBlank() }
-                ?: if (state.searchScopeLocked) {
-                    "Find ${state.searchType.title.lowercase()} in your library"
-                } else {
-                    "Find channels, series and movies"
-                },
-            close = close
-        )
 
         Spacer(Modifier.height(6.dp))
 
-        val searchBarShape = RoundedCornerShape(if (discoveryChrome) 10.dp else 18.dp)
+        val searchBarShape = RoundedCornerShape(10.dp)
         val queryFocusBorder =
             if (queryFocused && remoteNavigationActive) {
                 Color(0xFFFF3340)
@@ -984,54 +969,6 @@ private fun SyncProgressCard(
 }
 
 @Composable
-private fun SearchScreenHeader(
-    title: String,
-    subtitle: String?,
-    close: () -> Unit
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(
-            onClick = close,
-            modifier = Modifier.remoteFocusFrame(CircleShape)
-        ) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
-                "Back",
-                tint = Color.White
-            )
-        }
-
-        Spacer(Modifier.width(4.dp))
-
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-            subtitle
-                ?.takeIf { it.isNotBlank() }
-                ?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SearchMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-        }
-    }
-}
-
-@Composable
 private fun SearchScopeButton(
     type: SearchContentType,
     selected: Boolean,
@@ -1478,9 +1415,8 @@ private fun SearchResultsContent(
     var resultTab by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(SearchContentType.SERIES) }
     val tabRequesters = remember { globalSearchTypes.associateWith { FocusRequester() } }
     val resultRequester = if (all) remember { FocusRequester() } else firstItemRequester
-    val posterGrid = (!all || state.discoveryExperienceEnabled && !isTv && screenWidthDp < 600) &&
-        (if (all) resultTab else state.searchType) in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) &&
-        (isTv || screenWidthDp >= 600 || state.discoveryExperienceEnabled)
+    val posterGrid = (!all || !isTv && screenWidthDp < 600) &&
+        (if (all) resultTab else state.searchType) in setOf(SearchContentType.MOVIES, SearchContentType.SERIES)
     val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
     val columns = when {
         liveGrid -> 2

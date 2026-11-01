@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.*
+
 import android.content.Intent
 import android.graphics.Rect
 import android.os.SystemClock
@@ -63,8 +65,7 @@ class CompactSeriesLayoutDeviceTest {
         val model = mutableStateOf(NikTvState(savedProfile = profile,
             session = PortalSession(profile, "", profile.portalUrl, "", "", ""), selectedSeries = series,
             selectedType = CatalogType.SERIES, selectedSeriesSeason = 1, availableSeriesSeasons = listOf(1),
-            items = episodes, useTmdbEpisodeMetadata = false, discoveryExperienceEnabled = true,
-            recentlyPlayed = listOf(RecentItem(FavoriteKind.SERIES, series, lastPlayed = episodes.first { it.episodeNumber == 250 },
+            items = episodes, useTmdbEpisodeMetadata = false,             recentlyPlayed = listOf(RecentItem(FavoriteKind.SERIES, series, lastPlayed = episodes.first { it.episodeNumber == 250 },
                 profileKey = profile.cacheKey())), loading = false, restoring = false, homeOpen = false))
         runBlocking { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")).write(
             "provider-presentation-v1:SERIES:null:${providerSeriesTmdbTitle(series.title)}", "[]") }
@@ -75,7 +76,7 @@ class CompactSeriesLayoutDeviceTest {
             instrumentation.setInTouchMode(true)
             instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
                 CompositionLocalProvider(com.nikhil.niktv.discovery.LocalMobileGlassEnabled provides true) {
-                    ModernSeriesDetailScreen(model.value, play = { fail("Navigation must not play") }, closeSeries = {},
+                    DiscoverySeriesContent(model.value, play = { fail("Navigation must not play") }, closeSeries = {},
                         toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = {}, setUseTmdbEpisodeMetadata = {},
                         refreshTmdbEpisodeCache = {}, downloadForOffline = { _, _, _ -> }, removeOfflineDownload = { _, _ -> },
                         openSearch = {}, openSettings = {}, refreshCatalog = {}, loadMoreEpisodes = {}, openTmdbMovie = {}, openTmdbSeries = {},

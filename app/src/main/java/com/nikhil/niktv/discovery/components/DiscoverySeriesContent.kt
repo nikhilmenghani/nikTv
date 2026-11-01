@@ -1,4 +1,6 @@
-package com.nikhil.niktv.ui
+package com.nikhil.niktv.discovery.components
+
+import com.nikhil.niktv.ui.*
 
 import android.Manifest
 import android.content.ClipData
@@ -130,7 +132,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-internal fun ModernSeriesDetailScreen(
+internal fun DiscoverySeriesContent(
     state: NikTvState,
     play: (MediaItem) -> Unit,
     closeSeries: () -> Unit,

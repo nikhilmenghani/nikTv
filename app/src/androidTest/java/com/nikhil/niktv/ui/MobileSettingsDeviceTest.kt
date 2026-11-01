@@ -194,7 +194,7 @@ class MobileSettingsDeviceTest {
                                         switchProfile = { mutations.incrementAndGet() }, removeProfile = { mutations.incrementAndGet() },
                                         setPreconfiguredProfileEnabled = { _, _ -> mutations.incrementAndGet() }, logout = { mutations.incrementAndGet() },
                                         setCacheIntervalMinutes = {}, setInitialCatalogItems = {}, setPlayerControlsTimeoutSeconds = {}, setKeepAwakeOnlyDuringPlayback = {},
-                                        setAutomaticReauthentication = {}, setModernUiEnabled = {}, setPlaybackEngine = {}, setSeriesStartSeason = {}, setBrowseLayout = {}, openCategoryManager = {})
+                                        setAutomaticReauthentication = {}, setPlaybackEngine = {}, setSeriesStartSeason = {}, setBrowseLayout = {}, openCategoryManager = {})
                                 }
                             }
                         }

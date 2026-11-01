@@ -1,9 +1,14 @@
 package com.nikhil.niktv.ui
 
 import android.app.Application
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.viewModelScope
 import com.nikhil.niktv.data.ProfileStore
+import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.model.PortalSession
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +31,7 @@ class ProfileDashboardStartupTest {
     @get:Rule val temporary = TemporaryFolder()
     private val scheduler = TestCoroutineScheduler()
     private lateinit var vm: NikTvViewModel
+    private lateinit var preferences: DataStore<Preferences>
     private lateinit var store: ProfileStore
     private lateinit var storeScope: CoroutineScope
 
@@ -33,7 +39,7 @@ class ProfileDashboardStartupTest {
         Dispatchers.setMain(StandardTestDispatcher(scheduler))
         val application = RuntimeEnvironment.getApplication()
         storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val preferences = PreferenceDataStoreFactory.create(scope = storeScope,
+        preferences = PreferenceDataStoreFactory.create(scope = storeScope,
             produceFile = { temporary.newFolder().resolve("dashboard.preferences_pb") })
         store = ProfileStore(application, preferences)
         vm = NikTvViewModel(application)
@@ -73,6 +79,40 @@ class ProfileDashboardStartupTest {
         assertEquals(profile, vm.state.value.savedProfile)
         assertEquals(session, store.activeSession.first())
         assertEquals(listOf(profile), store.profiles.first())
+    }
+
+    @Test fun retiredOptOutPreferencesCannotRestoreLegacyHomeOrClearProfileData() = runTest(scheduler) {
+        val application = RuntimeEnvironment.getApplication()
+        val profile = PortalProfile("Fixture", "https://fixture.invalid", "00:00:00:00:00:01")
+        store.addProfile(profile)
+        preferences.edit { it[intPreferencesKey("modern_ui_enabled")] = 0 }
+        application.getSharedPreferences("discovery_experience", 0).edit().putBoolean("enabled", false).commit()
+        application.getSharedPreferences("mobile_ui_preferences", 0).edit().putString("mobile_ui_design", "CLASSIC").commit()
+        launchDashboard()
+        vm.openHome()
+        assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
+        assertTrue(vm.state.value.homeOpen)
+        assertEquals(listOf(profile), store.profiles.first())
+    }
+
+    @Test fun allDiscoveryTabsAndHomeReturnUseTheModernRoute() = runTest(scheduler) {
+        val stateField = NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val state = stateField.get(vm) as MutableStateFlow<NikTvState>
+        for (surface in listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)) {
+            state.value = NikTvState(searchOpen = true, settingsOpen = true, favoritesOpen = true,
+                offlineDownloadsOpen = true, watchProvidersOpen = true)
+            vm.openDiscovery(surface)
+            assertEquals(surface, vm.state.value.discoverySurface)
+            assertTrue(vm.state.value.homeOpen)
+            assertFalse(vm.state.value.searchOpen)
+            assertFalse(vm.state.value.settingsOpen)
+            assertFalse(vm.state.value.favoritesOpen)
+            assertFalse(vm.state.value.offlineDownloadsOpen)
+            assertFalse(vm.state.value.watchProvidersOpen)
+        }
+        vm.openHome()
+        assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
     }
 
     @Test fun newDeviceStartsAtDashboardWithoutAProfileOrSession() = runTest(scheduler) {

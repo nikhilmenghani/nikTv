@@ -43,7 +43,7 @@ import java.util.Date
 
 @Composable
 internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
-    surface: DashboardSurface, classic: (String) -> Unit, customize: (() -> Unit)?,
+    surface: DashboardSurface, navigate: (String) -> Unit, customize: (() -> Unit)?,
     categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val configure = LocalConfigureProviderDiscovery.current
@@ -68,7 +68,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
                 onClick = { DiscoveryArtworkPreference.setEnabled(context, !suggestedArtwork); change(false) })
             NikDropdownMenuItem(text = { Text("Sports") }, onClick = { change(false); context.openSports() })
             listOf("Offline", "Settings").forEach { label ->
-                NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); classic(label) })
+                NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); navigate(label) })
             }
         }
     }
@@ -78,7 +78,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
 @Composable
 internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     tabRequester: FocusRequester, playRequester: FocusRequester,
-    back: () -> Unit, select: (DashboardSurface) -> Unit, classic: (String) -> Unit,
+    back: () -> Unit, select: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
     headerFocus: () -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit, customize: (() -> Unit)?,
     backdrop: String? = null, backdropBounds: Rect = Rect.Zero,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
@@ -108,7 +108,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
                 DiscoveryAction("Search", Icons.Default.Search, selected = searchActive, horizontalPadding = 10.dp,
                     modifier = if (searchActive) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
-                    onFocus = headerFocus) { classic("Search") }
+                    onFocus = headerFocus) { navigate("Search") }
                 StableTileFocusViewport {
                     Row(Modifier.weight(1f, fill = false).horizontalScroll(tabs), horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically) {
@@ -121,21 +121,21 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         }
                         DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
-                            onFocus = headerFocus) { classic("Live TV") }
+                            onFocus = headerFocus) { navigate("Live TV") }
                         DiscoveryAction("Providers", selected = library == DiscoveryLibraryDestination.PROVIDERS, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.PROVIDERS) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                             onFocus = headerFocus, onClick = providers)
                         DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.MY_LIST) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
-                            onFocus = headerFocus) { classic("My List") }
+                            onFocus = headerFocus) { navigate("My List") }
                     }
                 }
-                DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize)
+                DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize)
             }
             }
         }
         Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
-        DiscoveryClockProfile(profile, Modifier.width(widths.profile.dp).height(height), backdrop, backdropBounds) { classic("Profile") }
+        DiscoveryClockProfile(profile, Modifier.width(widths.profile.dp).height(height), backdrop, backdropBounds) { navigate("Profile") }
     }
     }
 }
@@ -167,18 +167,18 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
 
 @Composable
 internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusRequester, play: FocusRequester,
-    back: () -> Unit, select: (DashboardSurface) -> Unit, classic: (String) -> Unit,
+    back: () -> Unit, select: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
     menu: Boolean, changeMenu: (Boolean) -> Unit,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
     library: DiscoveryLibraryDestination? = null, profile: String = "", searchActive: Boolean = false) {
-    DiscoveryPhoneHeader(surface, false, tab, play, back, select, classic, menu, changeMenu,
+    DiscoveryPhoneHeader(surface, false, tab, play, back, select, navigate, menu, changeMenu,
         customize = null, profile = profile, categoryManagerOpen = categoryManagerOpen,
         categoryPopupChanged = categoryPopupChanged, searchActive = searchActive)
 
 }
 
-/** A direct entry to the same profile/type-scoped selections used by classic browsing. */
+/** Category configuration uses the same profile/type-scoped selections as the modern catalog. */
 @Composable
 internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boolean, compact: Boolean = false,
     popupChanged: (Boolean) -> Unit = {}, onFocus: () -> Unit = {}, modifier: Modifier = Modifier,

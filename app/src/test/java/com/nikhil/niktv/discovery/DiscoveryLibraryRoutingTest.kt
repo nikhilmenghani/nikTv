@@ -22,7 +22,6 @@ class DiscoveryLibraryRoutingTest {
         assertNull(destination(type = CatalogType.SERIES))
     }
     @Test fun secondaryRoutesKeepTheirOwners() {
-        assertNull(destination(enabled = false))
         assertNull(destination(overlay = true))
         assertNull(destination(detail = true))
         assertNull(destination(favorites = true, overlay = true))
@@ -30,7 +29,7 @@ class DiscoveryLibraryRoutingTest {
     @Test fun returningFromMyListDoesNotWrapDiscoveryPagesInALiveTvHeader() {
         // My List clears homeOpen but retains the discovery surface and selected catalogue type.
         // On Back, Home/Movies/Series render their own header even with that legacy state.
-        assertNull(discoveryLibraryDestination(true, false, CatalogType.LIVE_TV,
+        assertNull(discoveryLibraryDestination(false, CatalogType.LIVE_TV,
             favorites = false, overlay = false, detail = false, discoveryPageVisible = true))
         assertEquals(DiscoveryLibraryDestination.MY_LIST, destination(favorites = true))
         assertEquals(DiscoveryLibraryDestination.LIVE_TV, destination())
@@ -41,7 +40,7 @@ class DiscoveryLibraryRoutingTest {
         assertNull(modernCatalogSurface(CatalogType.LIVE_TV))
         assertNull(modernCatalogSurface(CatalogType.RADIO))
     }
-    private fun destination(enabled: Boolean = true, home: Boolean = false, type: CatalogType = CatalogType.LIVE_TV,
+    private fun destination(home: Boolean = false, type: CatalogType = CatalogType.LIVE_TV,
         favorites: Boolean = false, overlay: Boolean = false, detail: Boolean = false) =
-        discoveryLibraryDestination(enabled, home, type, favorites, overlay, detail)
+        discoveryLibraryDestination(home, type, favorites, overlay, detail)
 }

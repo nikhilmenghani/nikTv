@@ -1,5 +1,9 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.ModernRail
+
+import com.nikhil.niktv.discovery.components.*
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState

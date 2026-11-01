@@ -71,7 +71,6 @@ class ProfileStore @JvmOverloads constructor(
     private val playerControlsTimeoutKey = intPreferencesKey("player_controls_timeout_seconds")
     private val keepAwakeOnlyDuringPlaybackKey = intPreferencesKey("keep_awake_only_during_playback")
     private val automaticReauthenticationKey = intPreferencesKey("automatic_reauthentication")
-    private val modernUiEnabledKey = intPreferencesKey("modern_ui_enabled")
     private val playbackEngineKey = stringPreferencesKey("playback_engine")
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
     private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
@@ -188,10 +187,7 @@ class ProfileStore @JvmOverloads constructor(
     val automaticReauthentication: Flow<Boolean> = preferences.data.map {
         (it[automaticReauthenticationKey] ?: 1) == 1
     }
-    val modernUiEnabled: Flow<Boolean> = preferences.data.map {
-        // Existing and new installs both default to the tile-first interface.
-        true
-    }
+
     val playbackEngine: Flow<PlaybackEngine> = preferences.data.map { prefs ->
         prefs[playbackEngineKey]?.let { runCatching { PlaybackEngine.valueOf(it) }.getOrNull() }
             ?.let { if (it == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else it }
@@ -370,9 +366,7 @@ class ProfileStore @JvmOverloads constructor(
     suspend fun setAutomaticReauthentication(enabled: Boolean) = preferences.edit {
         it[automaticReauthenticationKey] = if (enabled) 1 else 0
     }
-    suspend fun setModernUiEnabled(enabled: Boolean) = preferences.edit {
-        it[modernUiEnabledKey] = 1
-    }
+
     suspend fun setPlaybackEngine(engine: PlaybackEngine) = preferences.edit {
         it[playbackEngineKey] = if (engine == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3.name else engine.name
     }
@@ -539,7 +533,6 @@ class ProfileStore @JvmOverloads constructor(
         it.remove(rememberedSeriesSeasonsKey)
         it.remove(episodeSeasonCachesKey)
         it.remove(browseLayoutsKey)
-        it.remove(modernUiEnabledKey)
         it.remove(tmdbMappingsKey)
         it.remove(recommendationProgressKey)
     }

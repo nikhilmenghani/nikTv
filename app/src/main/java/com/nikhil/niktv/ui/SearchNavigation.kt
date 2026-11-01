@@ -5,8 +5,7 @@ import com.nikhil.niktv.model.MediaItem
 /** Search overlays the modern destination, so Back can reveal the same My List. */
 internal fun NikTvState.openSearchNavigation(): NikTvState = copy(
     searchOpen = true,
-    settingsOpen = false,
-    favoritesOpen = discoveryExperienceEnabled && favoritesOpen
+    settingsOpen = false
 )
 
 /**
@@ -28,7 +27,7 @@ internal class SearchSeriesReturn private constructor(
 
     companion object {
         fun capture(origin: NikTvState, selected: MediaItem, movieContainer: Boolean = false): SearchSeriesReturn? {
-            if (!movieContainer && (!origin.discoveryExperienceEnabled || !origin.searchOpen)) return null
+            if (!movieContainer && !origin.searchOpen) return null
             val profile = origin.searchProfileKey() ?: return null
             // Capture only the fields owned by the replaced browse/detail page.
             val home = origin.homeOpen

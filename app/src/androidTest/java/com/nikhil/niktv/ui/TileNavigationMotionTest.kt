@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.*
+
 import android.content.Intent
 import android.view.KeyEvent
 import androidx.activity.compose.setContent

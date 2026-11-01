@@ -1,5 +1,7 @@
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.discovery.components.*
+
 import com.nikhil.niktv.data.providerDisplayTitle
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -24,7 +26,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 /** Provider pagination/cache stays in the existing catalog; presentation belongs to the trial. */
 @Composable
 internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
-    close: () -> Unit, selectSurface: (DashboardSurface) -> Unit, classic: (String) -> Unit,
+    close: () -> Unit, selectSurface: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
     open: (MediaItem, List<MediaItem>, PlaybackQueueFilter) -> Unit,
     favorite: (FavoriteItem) -> Unit, more: () -> Unit, refresh: () -> Unit,
     download: (MediaItem, CatalogType, MediaItem?) -> Unit) {
@@ -62,9 +64,9 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
     StableTileFocusViewport {
         Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).safeDrawingPadding()) {
             val phone = configuration.smallestScreenWidthDp < 600 && !context.isTvLikeDevice(configuration)
-            if (phone) DiscoveryPhoneNavigation(surface, tab, heroPlay, close, selectSurface, classic, menu, { menu = it })
+            if (phone) DiscoveryPhoneNavigation(surface, tab, heroPlay, close, selectSurface, navigate, menu, { menu = it })
             else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tab, heroPlay,
-                back = close, select = selectSurface, classic = classic, headerFocus = {},
+                back = close, select = selectSurface, navigate = navigate, headerFocus = {},
                 menu = menu, changeMenu = { menu = it }, customize = null)
             LazyVerticalGrid(GridCells.Adaptive(if (configuration.smallestScreenWidthDp >= 600) 112.dp else 92.dp),
                 Modifier.fillMaxSize(), state = grid, contentPadding = PaddingValues(12.dp),

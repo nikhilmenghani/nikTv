@@ -1,5 +1,7 @@
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.discovery.components.*
+
 import android.provider.Settings
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -35,7 +37,7 @@ import com.nikhil.niktv.ui.*
 import kotlinx.coroutines.*
 
 internal data class ProviderDetailNavigation(
-    val openDiscovery: (DashboardSurface) -> Unit, val classic: (String) -> Unit,
+    val openDiscovery: (DashboardSurface) -> Unit, val navigate: (String) -> Unit,
     val favorite: (FavoriteItem) -> Unit, val playEpisode: (DiscoveryCard, Int, Int) -> Unit,
     val recent: (RecentItem) -> Unit, val watched: (WatchedSeries, MediaItem) -> Unit,
     val category: (Category) -> Unit, val section: (TmdbHomeSection) -> Unit,
@@ -173,7 +175,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     LaunchedEffect(profile, item.id, metadata.seasonEpisodeCounts) { seasonCounts(metadata.seasonEpisodeCounts) }
     LaunchedEffect(profile, item.id, metadata.card.overview) { synopsisAvailable(!metadata.card.overview.isNullOrBlank()) }
     val landscape = configuration.screenWidthDp >= 600 || context.isTvLikeDevice(configuration)
-    val phone = app.discoveryExperienceEnabled && usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
+    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
         configuration.screenHeightDp >= configuration.screenWidthDp
     val wideSeries = type == CatalogType.SERIES && (configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration))
     var compactInfoOpen by remember(item.id) { mutableStateOf(false) }
@@ -383,7 +385,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             LaunchedEffect(initialized, current.detail) { if (initialized && current.detail == null) relatedDetail = null }
             DiscoveryPreviewScreen(app, if (card.series) DashboardSurface.SERIES else DashboardSurface.MOVIES,
                 selectSurface = { relatedDetail = null; close(); nav.openDiscovery(it) }, exit = { relatedDetail = null },
-                classic = { relatedDetail = null; close(); nav.classic(it) },
+                navigate = { relatedDetail = null; close(); nav.navigate(it) },
                 playCard = { selected -> relatedDetail = null; if (selected.series) openTmdbSeries(TrendingSeries(selected.show())) else openTmdbMovie(TrendingMovie(selected.movie())) },
                 playEpisode = { selected, season, number -> relatedDetail = null; close(); nav.playEpisode(selected, season, number) },
                 openRecent = nav.recent, openWatched = nav.watched,

@@ -1,4 +1,6 @@
-package com.nikhil.niktv.ui
+package com.nikhil.niktv.discovery.components
+
+import com.nikhil.niktv.ui.*
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn

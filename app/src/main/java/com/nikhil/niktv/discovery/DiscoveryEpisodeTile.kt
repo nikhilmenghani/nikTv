@@ -1,5 +1,7 @@
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.discovery.components.*
+
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,7 +23,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.ui.remoteCombinedClickable
-import com.nikhil.niktv.ui.EpisodeMetadataBadge
+import com.nikhil.niktv.discovery.components.EpisodeMetadataBadge
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
 /** Shared landscape episode treatment. Provider-specific actions remain with the caller. */

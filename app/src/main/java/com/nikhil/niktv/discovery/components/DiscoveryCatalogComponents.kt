@@ -1,4 +1,6 @@
-package com.nikhil.niktv.ui
+package com.nikhil.niktv.discovery.components
+
+import com.nikhil.niktv.ui.*
 
 import androidx.compose.material.icons.filled.SportsCricket
 
@@ -9,7 +11,7 @@ import androidx.compose.foundation.indication
 // MODERN_TILE_BROWSE_V1
 //
 // Tile-first destination browsing for Home / Movies / Series.
-// The existing ModernBrowseScreen is still used when modernUiEnabled is false.
+// Shared category and collection browsing inside the modern navigation shell.
 
 import android.content.Context
 import android.content.pm.PackageManager
@@ -253,7 +255,7 @@ private fun modernTvTileSubtitleStyle(shadowed: Boolean = false): TextStyle =
 // a zero-elevation shadow layer while touch layouts keep their existing lift.
 
 @Composable
-internal fun ModernTileBrowseScreen(
+internal fun DiscoveryCatalogContent(
     state: NikTvState,
     dashboardSurface: DashboardSurface,
     openHome: () -> Unit,
@@ -296,7 +298,6 @@ internal fun ModernTileBrowseScreen(
     val context = LocalContext.current
     val isTv = context.isModernTileTv(configuration)
     val wide = configuration.screenWidthDp >= 720 || isTv
-    val mobileUiDesign by rememberMobileUiDesign()
     val activeTmdb = state.modernTmdbSection
     val activeIptv = state.modernIptvCategory
 
@@ -349,22 +350,6 @@ internal fun ModernTileBrowseScreen(
 
                 else -> {
                     Column(Modifier.fillMaxSize()) {
-                        if (!wide && !(state.discoveryExperienceEnabled &&
-                                com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv) &&
-                                state.selectedType == CatalogType.LIVE_TV && !state.homeOpen)) {
-                            ModernTilePhoneHeader(
-                                state = state,
-                                youtubeNavigation =
-                                    mobileUiDesign.usesYouTubeOn(configuration),
-                                openHome = openHome,
-                                selectType = selectType,
-                                openFavorites = openFavorites,
-                                openSearch = openSearch,
-                                openSettings = openSettings,
-                                openProfileSwitcher = openProfileSwitcher
-                            )
-                        }
-
                         ModernDestinationHub(
                             state = state,
                             refreshLiveProgramme = refreshLiveProgramme,
@@ -403,185 +388,6 @@ internal fun Context.isModernTileTv(configuration: Configuration): Boolean =
         configuration.uiMode and Configuration.UI_MODE_TYPE_MASK ==
             Configuration.UI_MODE_TYPE_TELEVISION ||
         !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
-
-@Composable
-private fun ModernTilePhoneHeader(
-    state: NikTvState,
-    youtubeNavigation: Boolean,
-    openHome: () -> Unit,
-    selectType: (CatalogType) -> Unit,
-    openFavorites: () -> Unit,
-    openSearch: () -> Unit,
-    openSettings: () -> Unit,
-    openProfileSwitcher: () -> Unit
-) {
-    val openDiscovery = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
-    val isPhone = LocalConfiguration.current.smallestScreenWidthDp < 600
-    var profileMenuOpen by remember { mutableStateOf(false) }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(ModernChromeSurface)
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Image(
-                painter = painterResource(R.drawable.niktv_logo_foreground),
-                contentDescription = "NikTV",
-                modifier = Modifier.size(32.dp)
-            )
-            Spacer(Modifier.width(9.dp))
-            if (!isPhone) {
-                IconButton(onClick = openProfileSwitcher) {
-                    Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
-                }
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "NikTV",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1
-                )
-                if (isPhone) {
-                    Text(
-                        state.savedProfile?.name ?: "Profile",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            IconButton(onClick = openSearch) {
-                Icon(Icons.Default.Search, "Search")
-            }
-            if (!isPhone) {
-                IconButton(onClick = openFavorites) {
-                    Icon(Icons.Default.FavoriteBorder, "My List")
-                }
-            }
-            if (isPhone) {
-                Box {
-                    IconButton(onClick = { profileMenuOpen = true }) {
-                        Icon(Icons.Default.AccountCircle, "Profile menu")
-                    }
-                    DropdownMenu(
-                        expanded = profileMenuOpen,
-                        onDismissRequest = { profileMenuOpen = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Switch profile") },
-                            leadingIcon = { Icon(Icons.Default.AccountCircle, null) },
-                            onClick = { profileMenuOpen = false; openProfileSwitcher() }
-                        )
-                        val sportsContext = LocalContext.current
-                        DropdownMenuItem(
-                            text = { Text("Sports") },
-                            leadingIcon = { Icon(Icons.Default.SportsCricket, null) },
-                            onClick = { profileMenuOpen = false; sportsContext.startActivity(android.content.Intent(sportsContext, com.nikhil.niktv.sports.SportsActivity::class.java)) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Settings") },
-                            leadingIcon = { Icon(Icons.Default.Settings, null) },
-                            onClick = { profileMenuOpen = false; openSettings() }
-                        )
-                    }
-                }
-            } else {
-                IconButton(onClick = openSettings) {
-                    Icon(Icons.Default.Settings, "Settings")
-                }
-            }
-        }
-
-        if (!youtubeNavigation) {
-            LazyRow(
-                contentPadding = PaddingValues(
-                    horizontal = 10.dp,
-                    vertical = 4.dp
-                ),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                item("home") {
-                    ModernNavButton(
-                        label = "Home",
-                        icon = Icons.Default.Home,
-                        selected = state.homeOpen && !state.favoritesOpen,
-                        onClick = openHome
-                    )
-                }
-                item("live") {
-                    ModernNavButton(
-                        label = "Live TV",
-                        icon = Icons.Default.LiveTv,
-                        selected = !state.homeOpen &&
-                            !state.favoritesOpen &&
-                            state.selectedType == CatalogType.LIVE_TV,
-                        onClick = { selectType(CatalogType.LIVE_TV) }
-                    )
-                }
-                item("movies") {
-                    ModernNavButton(
-                        label = "Movies",
-                        icon = Icons.Default.SmartDisplay,
-                        selected = !state.homeOpen &&
-                            !state.favoritesOpen &&
-                            state.selectedType == CatalogType.MOVIES,
-                        onClick = { selectType(CatalogType.MOVIES) }
-                    )
-                }
-                item("series") {
-                    ModernNavButton(
-                        label = "Series",
-                        icon = Icons.Default.Tv,
-                        selected = !state.homeOpen &&
-                            !state.favoritesOpen &&
-                            state.selectedType == CatalogType.SERIES,
-                        onClick = { selectType(CatalogType.SERIES) }
-                    )
-                }
-                item("library") {
-                    ModernNavButton(
-                        label = "My List",
-                        icon = Icons.Default.FavoriteBorder,
-                        selected = state.favoritesOpen,
-                        onClick = openFavorites
-                    )
-                }
-            }
-        }
-
-        HorizontalDivider(color = ModernOutline)
-    }
-}
-
-@Composable
-private fun ModernNavButton(
-    label: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    NikTvTextActionButton(onClick = onClick) {
-        Icon(
-            icon,
-            null,
-            Modifier.size(18.dp),
-            tint = if (selected) Color.White else Color.Gray
-        )
-        Spacer(Modifier.width(5.dp))
-        Text(
-            label,
-            color = if (selected) Color.White else Color.Gray,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-        )
-    }
-}
 
 @Composable
 private fun ModernDestinationHub(
@@ -836,7 +642,7 @@ private fun ModernDestinationHub(
         seriesCategories.map { "series:${it.id}" }
     fun hubEntryModifier(key: String) = if (hubEntryTile == key) Modifier.focusRequester(hubEntryRequester) else Modifier
     LaunchedEffect(hubViewportKey, hubRemoteNavigation, hubEntryTile, availableHubTiles) {
-        if ((state.discoveryExperienceEnabled && dashboardSurface == DashboardSurface.LIVE_TV && hubReturnTile == null) || !hubRemoteNavigation || (dashboardSurface == DashboardSurface.HOME && recents.isNotEmpty()) || hubEntryFocusComplete || hubEntryTile == null) return@LaunchedEffect
+        if ((dashboardSurface == DashboardSurface.LIVE_TV && hubReturnTile == null) || !hubRemoteNavigation || (dashboardSurface == DashboardSurface.HOME && recents.isNotEmpty()) || hubEntryFocusComplete || hubEntryTile == null) return@LaunchedEffect
         if (hubEntryTile !in availableHubTiles) return@LaunchedEffect
         if (hubReturnTile == null) hubGridState.scrollToItem(0)
         else restoredHubViewport?.let { hubGridState.scrollToItem(it.index, it.offset) }

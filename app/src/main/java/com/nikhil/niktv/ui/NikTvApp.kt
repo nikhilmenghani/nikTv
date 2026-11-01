@@ -1,5 +1,8 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.LocalRefreshProviderCategories
+import com.nikhil.niktv.discovery.DiscoveryScreenHost
+
 import android.Manifest
 import android.content.ClipData
 import android.content.Context
@@ -132,15 +135,6 @@ internal val XtreamColors = NikColors
 internal val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 internal val menuActivationKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
-internal enum class MobileMainPage(val title: String, val icon: ImageVector) {
-    HOME("Home", Icons.Default.Home),
-    LIVE("Live", Icons.Default.LiveTv),
-    MOVIES("Movies", Icons.Default.Movie),
-    SERIES("Series", Icons.Default.VideoLibrary),
-    LIBRARY("Library", Icons.Default.FavoriteBorder),
-    DOWNLOADS("Offline", Icons.Default.DownloadDone)
-}
-
 internal enum class MobileSettingsPage(val title: String, val icon: ImageVector) {
     APPEARANCE("Appearance", Icons.Default.Palette),
     PLAYBACK("Playback", Icons.Default.PlayCircle),
@@ -157,15 +151,6 @@ internal fun settingsPageFor(title: String): MobileSettingsPage = when (title) {
         MobileSettingsPage.PLAYBACK
     "Category Filters", "Catalog cache" -> MobileSettingsPage.CONTENT
     else -> MobileSettingsPage.ACCOUNT
-}
-
-internal fun NikTvState.mobileMainPage(): MobileMainPage = when {
-    offlineDownloadsOpen -> MobileMainPage.DOWNLOADS
-    favoritesOpen -> MobileMainPage.LIBRARY
-    homeOpen -> MobileMainPage.HOME
-    selectedType == CatalogType.LIVE_TV -> MobileMainPage.LIVE
-    selectedType == CatalogType.MOVIES -> MobileMainPage.MOVIES
-    else -> MobileMainPage.SERIES
 }
 
 internal fun Context.isTvLikeDevice(configuration: Configuration): Boolean =
@@ -296,161 +281,6 @@ internal fun String.isRedundantTvTileSubtitle(): Boolean {
         value.startsWith("IPTV ·", ignoreCase = true)
 }
 
-@Composable
-internal fun Modifier.mobileMainTabSwipe(
-    enabled: Boolean,
-    currentPage: MobileMainPage,
-    onPageSelected: (MobileMainPage) -> Unit
-): Modifier {
-    val latestOnPageSelected by rememberUpdatedState(onPageSelected)
-    if (!enabled) return this
-
-    // DOWNLOADS is a Library sub-tab, not a sixth primary destination.
-    // Treat both Library states as the same primary page for horizontal
-    // navigation so swiping right from either My List or Downloads returns
-    // to Series instead of getting trapped inside Library.
-    val swipePages = remember {
-        MobileMainPage.entries.filterNot { it == MobileMainPage.DOWNLOADS }
-    }
-    val swipeCurrentPage =
-        if (currentPage == MobileMainPage.DOWNLOADS) {
-            MobileMainPage.LIBRARY
-        } else {
-            currentPage
-        }
-
-    val swipeScope = rememberCoroutineScope()
-    var swipeOffsetTarget by remember { mutableFloatStateOf(0f) }
-    var swipeDragging by remember { mutableStateOf(false) }
-    val swipeOffset by animateFloatAsState(
-        targetValue = swipeOffsetTarget,
-        animationSpec =
-            if (swipeDragging) {
-                snap()
-            } else {
-                tween(140, easing = FastOutSlowInEasing)
-            },
-        label = "mainTabSwipeOffset"
-    )
-
-    return graphicsLayer { translationX = swipeOffset }
-        .pointerInput(enabled, swipeCurrentPage) {
-        val distanceThreshold = 56.dp.toPx()
-        val directionRatio = 1.25f
-        val destinationEntryOffset = 28.dp.toPx()
-
-        awaitPointerEventScope {
-            while (true) {
-                val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
-                val down = initialEvent.changes.firstOrNull {
-                    it.pressed && !it.previousPressed
-                } ?: continue
-
-                val pointerId = down.id
-                var totalX = 0f
-                var totalY = 0f
-                var horizontalDragLocked = false
-                var cancelled = false
-
-                while (true) {
-                    // Let nested LazyRows and other horizontal content claim the
-                    // gesture first. The page swipe only handles movement left
-                    // unconsumed after child dispatch, which makes blank-space
-                    // swipes navigate while tile drags continue scrolling.
-                    val event = awaitPointerEvent(PointerEventPass.Final)
-                    if (event.changes.count { it.pressed } > 1) {
-                        cancelled = true
-                    }
-
-                    val change = event.changes.firstOrNull { it.id == pointerId }
-                        ?: break
-                    if (change.isConsumed && !horizontalDragLocked) {
-                        cancelled = true
-                        break
-                    }
-                    val movement = change.positionChange()
-                    totalX += movement.x
-                    totalY += movement.y
-
-                    if (!horizontalDragLocked &&
-                        kotlin.math.abs(totalX) > 12.dp.toPx() &&
-                        kotlin.math.abs(totalX) > kotlin.math.abs(totalY) * directionRatio
-                    ) {
-                        horizontalDragLocked = true
-                    }
-                    if (horizontalDragLocked) {
-                        change.consume()
-                        swipeDragging = true
-                        swipeOffsetTarget = totalX.coerceIn(
-                            -size.width * 0.28f,
-                            size.width * 0.28f
-                        )
-                    }
-
-                    if (!change.pressed) break
-                }
-
-                if (cancelled) {
-                    swipeDragging = false
-                    swipeOffsetTarget = 0f
-                    continue
-                }
-
-                val horizontalDistance = kotlin.math.abs(totalX)
-                val verticalDistance = kotlin.math.abs(totalY)
-                if (
-                    horizontalDistance < distanceThreshold ||
-                    horizontalDistance <= verticalDistance * directionRatio
-                ) {
-                    swipeDragging = false
-                    swipeOffsetTarget = 0f
-                    continue
-                }
-
-                val currentIndex = swipePages.indexOf(swipeCurrentPage)
-                val targetIndex =
-                    if (totalX < 0f) currentIndex + 1
-                    else currentIndex - 1
-                val target = swipePages.getOrNull(targetIndex)
-
-                if (target != null) {
-                    /*
-                     * Keep the destination transition intentionally short.
-                     *
-                     * The old implementation teleported the new page a full
-                     * screen width away, waited a fixed 16 ms, then animated
-                     * it for 260 ms. That made a successful swipe feel as if
-                     * navigation paused after finger-up, especially when the
-                     * destination was also recomposing a large browse grid.
-                     *
-                     * Put the destination only 28 dp off-center and settle on
-                     * the next Compose frame. The page change still has clear
-                     * directional motion without adding a quarter-second wait.
-                     */
-                    swipeDragging = true
-                    swipeOffsetTarget =
-                        if (totalX < 0f) {
-                            destinationEntryOffset
-                        } else {
-                            -destinationEntryOffset
-                        }
-
-                    latestOnPageSelected(target)
-
-                    swipeScope.launch {
-                        withFrameNanos { }
-                        swipeDragging = false
-                        swipeOffsetTarget = 0f
-                    }
-                } else {
-                    swipeDragging = false
-                    swipeOffsetTarget = 0f
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun Modifier.remoteCombinedClickable(
@@ -547,7 +377,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         com.nikhil.niktv.discovery.LocalProviderDiscoveryPageLoader provides vm::loadDiscoveryCategoryPage,
         com.nikhil.niktv.discovery.LocalProviderDetailNavigation provides com.nikhil.niktv.discovery.ProviderDetailNavigation(
             openDiscovery = vm::openDiscovery,
-            classic = { label -> when (label) {
+            navigate = { label -> when (label) {
                 "Home" -> vm.openHome(); "Live TV" -> vm.openCatalogType(CatalogType.LIVE_TV)
                 "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
@@ -793,14 +623,13 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds,
                     setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback,
                     setAutomaticReauthentication = vm::setAutomaticReauthentication,
-                    setModernUiEnabled = vm::setModernUiEnabled,
                     setPlaybackEngine = vm::setPlaybackEngine,
                     setSeriesStartSeason = vm::setSeriesStartSeason,
                     setBrowseLayout = vm::setBrowseLayout,
                     openCategoryManager = vm::openCategoryManager
                 )
                 state.session == null && !state.offlineDownloadsOpen -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::openSettingsFromProfileChooser, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup, vm::openOfflineDownloads)
-                else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { CatalogScreen(
+                else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { DiscoveryScreenHost(
                     state = state,
                     selectType = vm::openCatalogType,
                     openGlobalSearch = vm::openGlobalSearch,
@@ -838,7 +667,6 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds
                     ,setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback
                     ,setAutomaticReauthentication = vm::setAutomaticReauthentication
-                    ,setModernUiEnabled = vm::setModernUiEnabled
                     ,setPlaybackEngine = vm::setPlaybackEngine
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
                     ,loadSeriesSeason = vm::loadSeriesSeason
@@ -876,7 +704,6 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled
                     ,openCategoryManager = vm::openCategoryManager
                     ,removeCategoryFilter = vm::removeCategoryFilter
-                    ,loadMoreCategorySection = vm::loadMoreCategorySection
                     ,setTmdbSections = vm::setTmdbSections
                     ,resetScreenConfiguration = vm::resetScreenConfiguration
                     ,openModernTmdbSection = vm::openModernTmdbSection

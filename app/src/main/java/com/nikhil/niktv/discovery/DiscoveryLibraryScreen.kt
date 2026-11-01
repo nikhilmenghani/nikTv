@@ -71,10 +71,10 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
 }
 
 /** Keep secondary overlays and detail routes out of the library navigation shell. */
-internal fun discoveryLibraryDestination(enabled: Boolean, home: Boolean, type: CatalogType,
+internal fun discoveryLibraryDestination(home: Boolean, type: CatalogType,
     favorites: Boolean, overlay: Boolean, detail: Boolean,
     discoveryPageVisible: Boolean = false): DiscoveryLibraryDestination? = when {
-    !enabled || overlay || detail || discoveryPageVisible -> null
+    overlay || detail || discoveryPageVisible -> null
     favorites -> DiscoveryLibraryDestination.MY_LIST
     !home && type == CatalogType.LIVE_TV -> DiscoveryLibraryDestination.LIVE_TV
     else -> null

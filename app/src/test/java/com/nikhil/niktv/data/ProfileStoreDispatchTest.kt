@@ -36,13 +36,6 @@ class ProfileStoreDispatchTest {
     private val series = MediaItem("series", "Fixture series", null, null)
     private val episode = MediaItem("episode", "Episode 1", null, null, seasonNumber = 1, episodeNumber = 1)
 
-    @Test fun legacyLayoutPreferenceCannotRouteBackToRemovedExperience() = runBlocking {
-        preferences.updateData { it.toMutablePreferences().apply { this[intPreferencesKey("modern_ui_enabled")] = 0 } }
-        assertTrue(store.modernUiEnabled.first())
-        store.setModernUiEnabled(false)
-        assertTrue(store.modernUiEnabled.first())
-    }
-
     @Before fun create() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         file = temporary.newFolder("preferences").resolve("fixture.preferences_pb")

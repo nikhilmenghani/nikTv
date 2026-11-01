@@ -1,4 +1,8 @@
-package com.nikhil.niktv.ui
+package com.nikhil.niktv.discovery
+
+import com.nikhil.niktv.ui.*
+
+import com.nikhil.niktv.discovery.components.*
 
 import android.Manifest
 import android.content.ClipData
@@ -123,7 +127,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 private enum class LibraryPane { MY_LIST, DOWNLOADS, STORAGE }
 
 @Composable
-internal fun CatalogScreen(
+internal fun DiscoveryScreenHost(
     state: NikTvState,
     selectType: (CatalogType) -> Unit,
     selectCategory: (Category) -> Unit,
@@ -159,7 +163,6 @@ internal fun CatalogScreen(
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
     setAutomaticReauthentication: (Boolean) -> Unit,
-    setModernUiEnabled: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     loadSeriesSeason: (Int) -> Unit,
@@ -195,7 +198,6 @@ internal fun CatalogScreen(
     setPreconfiguredProfileEnabled: (PortalProfile, Boolean) -> Unit,
     openCategoryManager: (CatalogType) -> Unit,
     removeCategoryFilter: (CatalogType, String) -> Unit,
-    loadMoreCategorySection: (Category) -> Unit,
     setTmdbSections: (DashboardSurface, List<TmdbHomeSection>) -> Unit,
     resetScreenConfiguration: (DashboardSurface) -> Unit,
     openModernTmdbSection: (TmdbHomeSection) -> Unit,
@@ -223,19 +225,15 @@ internal fun CatalogScreen(
     val context = LocalContext.current
     val activity = context.findHostActivity()
     val isTv = context.isTvLikeDevice(configuration)
-    val phoneExperience = state.discoveryExperienceEnabled && com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    val phoneExperience = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
     var phoneDetailOpen by remember(state.savedProfile?.cacheKey()) { mutableStateOf(false) }
-    val wide = configuration.screenWidthDp >= 720
-    val mobileUiDesign by rememberMobileUiDesign()
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
     var libraryPane by rememberSaveable { mutableStateOf(LibraryPane.MY_LIST) }
     val exitFocusRequester = remember { FocusRequester() }
     val modernSectionOpen =
-        state.modernUiEnabled &&
-            (state.modernTmdbSection != null || state.modernIptvCategory != null)
-    val mobileMainPage = state.mobileMainPage()
+        (state.modernTmdbSection != null || state.modernIptvCategory != null)
     val openTrial = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
-    fun landingHome() { if (state.discoveryExperienceEnabled) openTrial(DashboardSurface.HOME) else openHome() }
+    fun landingHome() { openTrial(DashboardSurface.HOME) }
     val playTrialEpisode = com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode.current
     val openProviders = com.nikhil.niktv.discovery.LocalOpenWatchProviders.current
     val providersVisible = state.watchProvidersOpen && state.homeOpen && !state.settingsOpen && !state.searchOpen &&
@@ -246,14 +244,13 @@ internal fun CatalogScreen(
         state.movieMatchSelection == null && state.seriesMatchSelection == null && !modernSectionOpen
     val previewProviderCategory = state.discoverySurface != null && state.modernIptvCategory?.type in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
         state.selectedSeries == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && !state.offlineDownloadsOpen
-    val discoveryMatches = state.discoveryExperienceEnabled && !state.settingsOpen && !state.offlineDownloadsOpen &&
-        (state.movieMatchSelection != null || state.seriesMatchSelection != null)
+    val discoveryMatches = state.movieMatchSelection != null || state.seriesMatchSelection != null
     fun closeMatches() { if (state.movieMatchSelection != null) closeTmdbMovieMatches() else closeTmdbSeriesMatches() }
     val discoverySearch = com.nikhil.niktv.discovery.usesDiscoverySearchShell(
-        state.discoveryExperienceEnabled, state.searchOpen, state.settingsOpen, state.offlineDownloadsOpen,
+        state.searchOpen, state.settingsOpen, state.offlineDownloadsOpen,
         state.movieMatchSelection != null || state.seriesMatchSelection != null)
     val discoveryLibrary = com.nikhil.niktv.discovery.discoveryLibraryDestination(
-        state.discoveryExperienceEnabled, state.homeOpen && state.modernIptvCategory?.type != CatalogType.LIVE_TV, state.selectedType, state.favoritesOpen,
+        state.homeOpen && state.modernIptvCategory?.type != CatalogType.LIVE_TV, state.selectedType, state.favoritesOpen,
         state.settingsOpen || state.searchOpen || state.offlineDownloadsOpen || state.movieMatchSelection != null || state.seriesMatchSelection != null,
         state.selectedSeries != null && !state.favoritesOpen,
         discoveryPageVisible = providersVisible || previewVisible || previewProviderCategory)
@@ -285,17 +282,6 @@ internal fun CatalogScreen(
     fun openStoragePane() {
         libraryPane = LibraryPane.STORAGE
         openOfflineDownloads()
-    }
-
-    fun selectMobileMainPage(page: MobileMainPage) {
-        when (page) {
-            MobileMainPage.HOME -> openHome()
-            MobileMainPage.LIVE -> selectType(CatalogType.LIVE_TV)
-            MobileMainPage.MOVIES -> selectType(CatalogType.MOVIES)
-            MobileMainPage.SERIES -> selectType(CatalogType.SERIES)
-            MobileMainPage.LIBRARY -> openFavorites()
-            MobileMainPage.DOWNLOADS -> openDownloadsPane()
-        }
     }
 
     LaunchedEffect(state.favoritesOpen) {
@@ -335,33 +321,13 @@ internal fun CatalogScreen(
     // destinations have their own nested keys; category selection must not
     // discard the Home hub's saved viewport.
     val browseStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-    val browseStateKey = when {
-        state.modernUiEnabled -> "modern"
-        state.homeOpen -> "home"
-        else -> "${state.selectedType}:${state.selectedCategory?.id}"
-    }
+    val browseStateKey = "modern"
 
     // Determine the current content to show in the main pane
     @Composable
     fun MainContent(modifier: Modifier = Modifier) {
         Box(modifier) {
             when {
-                state.movieMatchSelection != null -> TmdbMatchScreen(
-                    title = state.movieMatchSelection.title,
-                    year = state.movieMatchSelection.releaseYear,
-                    candidates = state.movieMatchCandidates,
-                    loadingMore = state.movieMatchLoadingMore,
-                    select = selectTmdbMovieMatch,
-                    close = closeTmdbMovieMatches
-                )
-                state.seriesMatchSelection != null -> TmdbMatchScreen(
-                    title = state.seriesMatchSelection.name,
-                    year = state.seriesMatchSelection.firstAirYear,
-                    candidates = state.seriesMatchCandidates,
-                    loadingMore = false,
-                    select = selectTmdbSeriesMatch,
-                    close = closeTmdbSeriesMatches
-                )
                 state.offlineDownloadsOpen -> if (libraryPane == LibraryPane.STORAGE) {
                     OfflineStorageScreen(
                         state = state,
@@ -395,13 +361,12 @@ internal fun CatalogScreen(
                     setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
                     setKeepAwakeOnlyDuringPlayback = setKeepAwakeOnlyDuringPlayback,
                     setAutomaticReauthentication = setAutomaticReauthentication,
-                    setModernUiEnabled = setModernUiEnabled,
                     setPlaybackEngine = setPlaybackEngine,
                     setSeriesStartSeason = setSeriesStartSeason,
                     setBrowseLayout = setBrowseLayout,
                     openCategoryManager = openCategoryManager
                 )
-                state.searchOpen -> ModernSearchScreen(
+                state.searchOpen -> DiscoverySearchContent(
                     state = state,
                     close = closeSearch,
                     setType = setSearchType,
@@ -413,23 +378,18 @@ internal fun CatalogScreen(
                     openResult = openSearchResult,
                     loadMore = loadMoreSearch,
                     toggleFavorite = toggleFavoriteEntry,
-                    discoveryChrome = discoverySearch,
                     headerFocusRequester = com.nikhil.niktv.discovery.LocalDiscoverySearchHeaderFocus.current,
                     queryFocusRequester = com.nikhil.niktv.discovery.LocalDiscoverySearchQueryFocus.current,
                     headerHasFocus = com.nikhil.niktv.discovery.LocalDiscoverySearchHeaderFocused.current
                 )
-                state.favoritesOpen -> StableTileFocusViewport { ModernFavoritesScreen(
+                state.favoritesOpen -> StableTileFocusViewport { DiscoveryFavoritesContent(
                     state = if (libraryBrowseAll && libraryKind != null) state.copy(favorites = state.favorites.filter { it.kind == libraryKind }) else state,
                     openFavorite = openFavorite,
                     toggleFavorite = toggleFavoriteEntry,
-                    openSearch = openSearch,
-                    openSettings = openSettings,
-                    closeFavorites = closeFavorites,
-                    discoveryChrome = discoveryLibrary != null,
                     heroPresentation = { libraryPresentation = it },
                     refreshLiveProgramme = refreshLiveProgramme
                 ) }
-                state.selectedSeries != null -> StableTileFocusViewport { ModernSeriesDetailScreen(
+                state.selectedSeries != null -> StableTileFocusViewport { DiscoverySeriesContent(
                     state = state,
                     play = play,
                     closeSeries = closeSeries,
@@ -461,7 +421,7 @@ internal fun CatalogScreen(
                     exit = {
                         if (state.discoverySurface == DashboardSurface.HOME) exitConfirmationOpen = true
                         else landingHome()
-                    }, classic = { label -> when (label) {
+                    }, navigate = { label -> when (label) {
                         "Home" -> openHome(); "Live TV" -> selectType(CatalogType.LIVE_TV)
                         "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                         "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
@@ -478,18 +438,17 @@ internal fun CatalogScreen(
                 previewProviderCategory -> browseStateHolder.SaveableStateProvider("provider-trial:${state.savedProfile?.cacheKey()}:${state.modernIptvCategory?.id}:${state.modernIptvCategoryOpenId}") {
                     com.nikhil.niktv.discovery.DiscoveryProviderCategory(state, requireNotNull(state.modernIptvCategory),
                         close = closeModernSection, selectSurface = openTrial,
-                        classic = { label -> when (label) {
+                        navigate = { label -> when (label) {
                             "Home" -> openHome(); "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                             "Live TV" -> selectType(CatalogType.LIVE_TV); "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                             "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
                         } }, open = { item, queue, filter -> playInContext?.invoke(item, queue, filter) ?: play(item) },
                         favorite = toggleFavoriteEntry, more = loadMoreCatalog, refresh = refreshCatalog, download = downloadForOffline)
                 }
-                else -> browseStateHolder.SaveableStateProvider(browseStateKey) { ModernBrowseScreen(
+                else -> browseStateHolder.SaveableStateProvider(browseStateKey) { DiscoveryCatalogBrowser(
                     state = state,
                     playInContext = playInContext,
                     selectType = selectType,
-                    selectCategory = selectCategory,
                     play = play,
                     openTrendingMovie = openTrendingMovie,
                     openTrendingSeries = openTrendingSeries,
@@ -502,10 +461,7 @@ internal fun CatalogScreen(
                             markEpisodeWatched = markEpisodeWatched,
                     clearRecent = clearRecent,
                     openWatchedEpisode = openWatchedEpisode,
-                    toggleFavorite = toggleFavorite,
                     toggleFavoriteEntry = toggleFavoriteEntry,
-                    setBrowseLayout = setBrowseLayout,
-                    openFavorite = openFavorite,
                     openFavorites = openFavorites,
                     openSearch = openSearch,
                     openSettings = openSettings,
@@ -513,7 +469,6 @@ internal fun CatalogScreen(
                     refreshCatalog = refreshCatalog,
                     openCategoryManager = openCategoryManager,
                     removeCategoryFilter = removeCategoryFilter,
-                    loadMoreCategorySection = loadMoreCategorySection,
                     setTmdbSections = setTmdbSections,
                     resetScreenConfiguration = resetScreenConfiguration,
                     loadMoreCatalog = loadMoreCatalog,
@@ -626,81 +581,18 @@ internal fun CatalogScreen(
         }
     } else if (providersVisible || previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) {
         LibraryContent(Modifier.fillMaxSize())
-    } else if (wide || isTv) {
-        Row(
-            Modifier
-                .fillMaxSize()
-                .background(Color(0xFF090909))
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-        ) {
-            ModernSideRail(
-                state = state,
-                selectType = selectType,
-                openHome = openHome,
-                openFavorites = openFavorites,
-                openOfflineDownloads = openOfflineDownloads,
-                openSearch = openSearch,
-                openSettings = openSettings,
-                openProfileSwitcher = openProfileSwitcher,
-                // TABLET_NAVIGATION_TITLES_V12
-                expanded = true,
-                modifier = Modifier
-                    .width(if (isTv) 196.dp else 176.dp)
-                    .fillMaxHeight()
-            )
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                MainContent(Modifier.weight(1f).fillMaxWidth())
-                if (state.favoritesOpen || state.offlineDownloadsOpen) {
-                    MobileLibrarySwitcher(
-                        downloadsSelected = state.offlineDownloadsOpen,
-                        storageSelected = libraryPane == LibraryPane.STORAGE,
-                        openFavorites = openFavorites,
-                        openOfflineDownloads = ::openDownloadsPane,
-                        openStorage = ::openStoragePane
-                    )
-                }
-            }
-        }
     } else {
-        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            val showYouTubeNavigation = mobileUiDesign.usesYouTubeOn(configuration) && !state.settingsOpen && !state.searchOpen
-            val mainTabSwipeEnabled =
-                showYouTubeNavigation &&
-                    state.movieMatchSelection == null &&
-                    state.seriesMatchSelection == null &&
-                    state.selectedSeries == null &&
-                    !modernSectionOpen
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
-            ) {
-                MainContent(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .mobileMainTabSwipe(
-                            enabled = mainTabSwipeEnabled,
-                            currentPage = mobileMainPage,
-                            onPageSelected = ::selectMobileMainPage
-                        )
-                )
-                if (showYouTubeNavigation && (state.favoritesOpen || state.offlineDownloadsOpen)) {
-                    MobileLibrarySwitcher(
-                        downloadsSelected = state.offlineDownloadsOpen,
-                        storageSelected = libraryPane == LibraryPane.STORAGE,
-                        openFavorites = openFavorites,
-                        openOfflineDownloads = ::openDownloadsPane,
-                        openStorage = ::openStoragePane
-                    )
-                }
-            }
-            if (showYouTubeNavigation) {
-                YouTubeStyleBottomBar(
-                    currentPage = mobileMainPage,
-                    selectPage = ::selectMobileMainPage,
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                )
+        // Secondary destinations, including downloads, use the same modern header.
+        com.nikhil.niktv.discovery.DiscoveryLibraryScreen(
+            state, com.nikhil.niktv.discovery.DiscoveryLibraryDestination.MY_LIST,
+            back = ::landingHome, select = openTrial, navigate = navigateDiscovery
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                MainContent(Modifier.weight(1f).fillMaxWidth())
+                if (state.offlineDownloadsOpen) MobileLibrarySwitcher(
+                    downloadsSelected = true, storageSelected = libraryPane == LibraryPane.STORAGE,
+                    openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane,
+                    openStorage = ::openStoragePane)
             }
         }
     }

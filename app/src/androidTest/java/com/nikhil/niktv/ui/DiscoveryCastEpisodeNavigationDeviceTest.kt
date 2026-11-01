@@ -75,7 +75,7 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
                             restoring = false, homeOpen = false),
                         surface = DashboardSurface.SERIES,
                         selectSurface = { actions.add("surface") }, exit = { actions.add("exit") },
-                        classic = { actions.add("classic:$it") }, playCard = { actions.add("play") },
+                        navigate = { actions.add("navigate:$it") }, playCard = { actions.add("play") },
                         playEpisode = { _, _, _ -> actions.add("episode") }, openRecent = { actions.add("recent") },
                         openWatched = { _, _ -> actions.add("watched") }, toggleFavorite = { actions.add("favorite") },
                         openCategory = { actions.add("category") }, openSection = { actions.add("section") },

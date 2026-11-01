@@ -107,7 +107,7 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
             LaunchedEffect(card.key) { vm.bind(profile, surface, emptyList()); vm.openRootDetails(card); initialized = true }
             LaunchedEffect(initialized, current.detail) { if (initialized && current.detail == null && vm.state.value.detail == null) { selected = null; restore() } }
             DiscoveryPreviewScreen(app, surface, selectSurface = { selected = null; select(it) },
-                exit = { selected = null; restore() }, classic = { selected = null; navigate(it) },
+                exit = { selected = null; restore() }, navigate = { selected = null; navigate(it) },
                 playCard = playCard, playEpisode = nav.playEpisode, openRecent = nav.recent, openWatched = nav.watched,
                 toggleFavorite = nav.favorite, openCategory = nav.category, openSection = nav.section,
                 removeRecent = nav.removeRecent, markWatched = nav.markWatched, dismissEpisode = nav.dismissEpisode,

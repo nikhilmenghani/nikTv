@@ -1,4 +1,6 @@
-package com.nikhil.niktv.ui
+package com.nikhil.niktv.discovery.components
+
+import com.nikhil.niktv.ui.*
 
 import android.Manifest
 import android.content.ClipData
@@ -119,14 +121,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
-internal fun ModernFavoritesScreen(
+internal fun DiscoveryFavoritesContent(
     state: NikTvState,
     openFavorite: (FavoriteItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
-    openSearch: () -> Unit,
-    openSettings: () -> Unit,
-    closeFavorites: () -> Unit,
-    discoveryChrome: Boolean = false,
     refreshLiveProgramme: (MediaItem) -> Unit = {},
     heroPresentation: (com.nikhil.niktv.discovery.DiscoveryCard?) -> Unit = {}
 ) {
@@ -137,33 +135,16 @@ internal fun ModernFavoritesScreen(
     val availability = rememberIptvAvailability(profileKey)
     val availabilityFocus = remember(profileKey) { FocusRequester() }
     val availabilityScope = rememberCoroutineScope()
-    val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
-        LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val entryFocusRequester = remember(profileKey) { FocusRequester() }
-    var entryFocusComplete by rememberSaveable(profileKey) { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     val posterColumns = modernPosterColumns(configuration, isTv)
-    val phoneLibrary = discoveryChrome && com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
-    val discoveryCards = discoveryChrome &&
-        !com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    val phoneLibrary = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    val discoveryCards = !phoneLibrary
     val groups = FavoriteKind.entries.mapNotNull { kind ->
         state.favorites.filter { it.kind == kind && (kind != FavoriteKind.CHANNEL ||
             availability.filter.includes(availability.flags[it.media.id])) }.takeIf { it.isNotEmpty() }?.let { kind to it }
     }
     val firstFavoriteKey = groups.firstOrNull()?.second?.firstOrNull()?.key
-    LaunchedEffect(remoteNavigationActive, firstFavoriteKey) {
-        if (discoveryChrome || !remoteNavigationActive || entryFocusComplete) return@LaunchedEffect
-        // The top bar and first group heading precede the first media tile.
-        gridState.scrollToItem(if (discoveryChrome || firstFavoriteKey == null) 0 else 2)
-        repeat(6) { attempt ->
-            withFrameNanos { }
-            if (runCatching { entryFocusRequester.requestFocus() }.getOrDefault(false)) {
-                entryFocusComplete = true
-                return@LaunchedEffect
-            }
-            delay(40L * (attempt + 1))
-        }
-    }
     LazyVerticalGrid(
         // Match the dashboard's Continue Watching geometry. The old adaptive
         // 180dp rule collapsed compact phones to one nearly full-width poster.
@@ -182,16 +163,14 @@ internal fun ModernFavoritesScreen(
                 openFavorite, toggleFavorite, heroPresentation)
         }
         if (!phoneLibrary) item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
-            if (discoveryChrome) ModernSectionHeader("My List", "Saved for this profile")
-            else ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings,
-                backModifier = if (firstFavoriteKey == null) Modifier.focusRequester(entryFocusRequester) else Modifier)
+            ModernSectionHeader("My List", "Saved for this profile")
         }
         if (state.favorites.any { it.kind == FavoriteKind.CHANNEL }) item("channel-availability", span = { GridItemSpan(maxLineSpan) }) {
             IptvAvailabilityControl(availability, Modifier.padding(horizontal = 12.dp).focusRequester(availabilityFocus))
         }
         if (groups.isEmpty()) item("favorites-empty", span = { GridItemSpan(maxLineSpan) }) {
             Box(Modifier.fillMaxWidth().height(360.dp)
-                .then(if (discoveryChrome) Modifier.focusRequester(entryFocusRequester).focusable() else Modifier), contentAlignment = Alignment.Center) {
+                .focusRequester(entryFocusRequester).focusable(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.FavoriteBorder, null, Modifier.size(48.dp), tint = Color.Gray)
                     Text(if (state.favorites.isNotEmpty()) "No favorites match this availability filter" else "No favorites yet", style = MaterialTheme.typography.titleMedium, color = Color.White)

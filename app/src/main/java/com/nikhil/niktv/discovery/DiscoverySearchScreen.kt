@@ -53,6 +53,6 @@ internal fun DiscoverySearchScreen(
 }
 
 /** Follow main-pane precedence when another overlay is retained above Search. */
-internal fun usesDiscoverySearchShell(enabled: Boolean, searchOpen: Boolean,
+internal fun usesDiscoverySearchShell(searchOpen: Boolean,
     settingsOpen: Boolean, downloadsOpen: Boolean, matchesOpen: Boolean): Boolean =
-    enabled && searchOpen && !settingsOpen && !downloadsOpen && !matchesOpen
+    searchOpen && !settingsOpen && !downloadsOpen && !matchesOpen

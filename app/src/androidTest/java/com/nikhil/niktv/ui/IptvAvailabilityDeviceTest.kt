@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.*
+
 import android.content.Intent
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -142,7 +144,7 @@ class IptvAvailabilityDeviceTest {
             store.flag(profile.cacheKey(), "one", IptvFlagReason.MANUAL)
             store.setFilter(profile.cacheKey(), IptvAvailabilityFilter.FLAGGED_ONLY)
             ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
-                ModernFavoritesScreen(NikTvState(savedProfile = profile, favorites = favorites), {}, {}, {}, {}, {}, discoveryChrome = true)
+                DiscoveryFavoritesContent(NikTvState(savedProfile = profile, favorites = favorites), {}, {})
             } } }
             await("My List uses profile flag/filter") { find(rows.first().title) != null && find(rows.last().title) == null && find("Flagged unavailable") != null }
             longClick(rows.first().title); click("Remove flag")

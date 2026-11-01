@@ -104,7 +104,7 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
 @Composable
 internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, tab: FocusRequester,
     play: FocusRequester, back: () -> Unit, select: (DashboardSurface) -> Unit,
-    classic: (String) -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit,
+    navigate: (String) -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit,
     customize: (() -> Unit)?, profile: String = "", categoryManagerOpen: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {}, searchActive: Boolean = false) {
     CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
@@ -127,11 +127,11 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             Spacer(Modifier.weight(1f))
             if (!detail) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
-                    modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { classic("Search") }
+                    modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
                 DiscoveryAction("Profile: $profile", visualLabel = profile.trim().firstOrNull()?.uppercase() ?: "N",
                     horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $profile" }
-                        .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play }) { classic("Profile") }
-                DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize, categoryManagerOpen, categoryPopupChanged)
+                        .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play }) { navigate("Profile") }
+                DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
             }
         }
 

@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.*
+
 import android.content.Intent
 import android.graphics.Rect
 import android.os.SystemClock
@@ -87,7 +89,7 @@ class SeriesEpisodeNavigationDeviceTest {
             instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
                 val pages = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                 if (showingSeries.value) pages.SaveableStateProvider("series-details") {
-                ModernSeriesDetailScreen(model.value, play = { fail("Sort must not play") }, closeSeries = {},
+                DiscoverySeriesContent(model.value, play = { fail("Sort must not play") }, closeSeries = {},
                     toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = {}, setUseTmdbEpisodeMetadata = {},
                     refreshTmdbEpisodeCache = {}, downloadForOffline = { _, _, _ -> }, removeOfflineDownload = { _, _ -> },
                     openSearch = {}, openSettings = {}, refreshCatalog = {}, loadMoreEpisodes = {}, openTmdbMovie = {}, openTmdbSeries = {},
@@ -175,7 +177,7 @@ class SeriesEpisodeNavigationDeviceTest {
                     orientation = android.content.res.Configuration.ORIENTATION_PORTRAIT
                 }
                 CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides phone) {
-                    ModernSeriesDetailScreen(state, play = { fail("Search must not play") }, closeSeries = {},
+                    DiscoverySeriesContent(state, play = { fail("Search must not play") }, closeSeries = {},
                         toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = {}, setUseTmdbEpisodeMetadata = {},
                         refreshTmdbEpisodeCache = {}, downloadForOffline = { _, _, _ -> }, removeOfflineDownload = { _, _ -> },
                         openSearch = {}, openSettings = {}, refreshCatalog = {}, loadMoreEpisodes = {}, openTmdbMovie = {}, openTmdbSeries = {})
@@ -434,7 +436,7 @@ class SeriesEpisodeNavigationDeviceTest {
         val activity = startHost()
         try {
             instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
-                ModernSeriesDetailScreen(state, play = { actions.add("play") }, closeSeries = {},
+                DiscoverySeriesContent(state, play = { actions.add("play") }, closeSeries = {},
                     toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = { actions.add("season") },
                     setUseTmdbEpisodeMetadata = {}, refreshTmdbEpisodeCache = {},
                     downloadForOffline = { _, _, _ -> actions.add("download") }, removeOfflineDownload = { _, _ -> },
@@ -523,7 +525,7 @@ class SeriesEpisodeNavigationDeviceTest {
         try {
             instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
                 CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDiscoveryNavigationTrace provides ::diagnostic) {
-                ModernSeriesDetailScreen(state, play = { plays.add(it.id) }, closeSeries = {},
+                DiscoverySeriesContent(state, play = { plays.add(it.id) }, closeSeries = {},
                     toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = { seasons.add(it) },
                     setUseTmdbEpisodeMetadata = {}, refreshTmdbEpisodeCache = {},
                     downloadForOffline = { _, _, _ -> fail("Navigation must not download") },

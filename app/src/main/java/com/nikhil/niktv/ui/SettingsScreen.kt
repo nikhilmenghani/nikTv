@@ -1,5 +1,9 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.discovery.components.ModernMediaListCard
+
+import com.nikhil.niktv.discovery.components.*
+
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -162,7 +166,6 @@ internal fun ModernSettingsScreen(
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
     setAutomaticReauthentication: (Boolean) -> Unit,
-    setModernUiEnabled: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     setBrowseLayout: (BrowseLayout) -> Unit,

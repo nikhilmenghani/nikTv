@@ -23,22 +23,6 @@ class DiscoveryPhoneLayoutTest {
     private val context get() = RuntimeEnvironment.getApplication()
     @Before fun reset() { context.getSharedPreferences("discovery_experience", 0).edit().clear().commit() }
 
-    @Test fun storedOriginalUiOptOutMigratesToModernWithoutClearingData() {
-        assertTrue(DiscoveryExperiencePreferences.enabled(context))
-        DiscoveryExperiencePreferences.setEnabled(context, false)
-        assertTrue(DiscoveryExperiencePreferences.enabled(context.applicationContext))
-        DiscoveryExperiencePreferences.setEnabled(context, true)
-        assertTrue(DiscoveryExperiencePreferences.enabled(context))
-    }
-
-    @Test fun switchingExperienceDoesNotClearTrialCustomization() {
-        val prefs = context.getSharedPreferences("discovery_trial_v1", 0)
-        prefs.edit().putString("p:HOME", "COMEDY").commit()
-        DiscoveryExperiencePreferences.setEnabled(context, false)
-        DiscoveryExperiencePreferences.setEnabled(context, true)
-        assertEquals("COMEDY", prefs.getString("p:HOME", null))
-    }
-
     @Test fun phonePolicyDoesNotSelectTabletOrTvEvenWithCompactDisplay() {
         assertTrue(usesDiscoveryPhoneLayout(384, false))
         assertTrue(usesDiscoveryPhoneLayout(411, false))
