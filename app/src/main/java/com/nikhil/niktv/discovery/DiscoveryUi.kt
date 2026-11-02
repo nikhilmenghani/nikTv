@@ -59,6 +59,8 @@ import com.nikhil.niktv.model.*
 import com.nikhil.niktv.ui.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 internal val LocalOpenDiscovery = staticCompositionLocalOf<(DashboardSurface) -> Unit> { {} }
 internal val LocalRefreshDiscoveryMatches = staticCompositionLocalOf<((DiscoveryCard) -> Unit)?> { null }
@@ -111,6 +113,8 @@ internal fun DiscoveryPreviewScreen(
     val configuration = LocalConfiguration.current
     val television = remember(context, configuration.uiMode) { context.isTvLikeDevice(configuration) }
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, television)
+    val heroPreferences = remember(context) { context.getSharedPreferences("home2_presentation", 0) }
+    var optionalHeroMetadata by remember { mutableStateOf(heroPreferences.getBoolean("title_metadata", false)) }
     val scrollVariant = discoveryVariantForRoute(experiment, experimentVariant)
     val phonePortrait = phone && configuration.screenHeightDp >= configuration.screenWidthDp
     val remoteNavigation = context.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
@@ -190,7 +194,13 @@ internal fun DiscoveryPreviewScreen(
         providerLifecycle.addObserver(observer)
         onDispose { providerLifecycle.removeObserver(observer) }
     }
-    val loadedState by vm.state.collectAsStateWithLifecycle()
+    val feedState = remember(vm, experiment, scrollVariant.isolateHero) {
+        vm.state.map { it.recycledFeedState(experiment && scrollVariant.isolateHero) }.distinctUntilChanged()
+    }
+    val initialFeedState = remember(vm, profile, surface, scrollVariant.isolateHero) { vm.recycledFeedSnapshot() }
+    val loadedState by if (experiment && scrollVariant.isolateHero)
+        feedState.collectAsStateWithLifecycle(initialValue = initialFeedState)
+    else vm.state.collectAsStateWithLifecycle()
     val state = loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)
     // TV browsing prioritizes one decisive focus change over full-screen presentation work.
     // Explicit detail routes keep their artwork, metadata and actions.
@@ -498,6 +508,14 @@ internal fun DiscoveryPreviewScreen(
         title = { Text("Home 2 · performance experiment") },
         text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
             Text("Home stays unchanged. Compare each stage with the preceding stage using the same content and input pattern.", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Hero title artwork and metadata", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Switch(checked = optionalHeroMetadata, onCheckedChange = {
+                    optionalHeroMetadata = it
+                    heroPreferences.edit().putBoolean("title_metadata", it).apply()
+                })
+            }
+            Text("Off skips optional hero detail lookups and title logos. Opening Info still loads details.", style = MaterialTheme.typography.bodySmall)
             Text("Browse source", style = MaterialTheme.typography.labelMedium)
             val openExperiment = LocalOpenDiscoveryExperimentSurface.current
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -510,7 +528,7 @@ internal fun DiscoveryPreviewScreen(
             }
             HorizontalDivider(Modifier.padding(bottom = 8.dp))
             Text("Incremental rebuild", style = MaterialTheme.typography.labelMedium)
-            recycledDiscoveryStages.forEach { variant ->
+            (recycledDiscoveryStages + listOf(DiscoveryScrollVariant.RECYCLED_HERO_METADATA, DiscoveryScrollVariant.RECYCLED_HERO_WORKER, DiscoveryScrollVariant.RECYCLED_ISOLATED_HERO, DiscoveryScrollVariant.RECYCLED_HOME_TILES, DiscoveryScrollVariant.RECYCLED_PREPARED_HERO)).forEach { variant ->
                 NikDropdownMenuItem(text = { Text(variant.title) },
                     leadingIcon = if (variant == experimentVariant) ({ Icon(Icons.Default.Check, null) }) else null,
                     onClick = { experimentVariant = variant; experimentSettings = false })
@@ -527,19 +545,38 @@ internal fun DiscoveryPreviewScreen(
     if (experiment && scrollVariant.nativeRows && state.detail == null) {
         var nativePopup by remember { mutableStateOf<RailEntry?>(null) }
         var restoreNativeSelection by remember(app.discoveryNavigationId) { mutableStateOf(nativeNavigationId == app.discoveryNavigationId) }
+        // Observe only eligibility: scrolling/focus detail must not recompose the full feed.
+        var nativeHeroMayRotate by remember(profile, surface) { mutableStateOf(false) }
+        val mayRotateHero = nativeHeroMayRotate && presentationActive &&
+            !(menu || configure || experimentSettings || nativePopup != null || app.categoryManagerOpen || categoryPopup || actor != null)
+        LaunchedEffect(scrollVariant.heroAutoRotate, mayRotateHero, state.hero?.key, state.heroes.size, reduceMotion) {
+            while (scrollVariant.heroAutoRotate && !reduceMotion && mayRotateHero && state.heroes.size > 1) {
+                delay(8_000)
+                // Read the current eligibility again when the timer fires.
+                if (nativeHeroMayRotate) vm.rotate(1)
+            }
+        }
         val heroPlayRequester = remember(profile, surface) { FocusRequester() }
         val heroInfoRequester = remember(profile, surface) { FocusRequester() }
-        val heroCard = state.hero
-        // Trial-only: defer optional public metadata; never enable focused/provider presentation.
-        LaunchedEffect(scrollVariant.heroTitleArtwork, heroCard?.key, presentationActive) {
-            if (scrollVariant.heroTitleArtwork && presentationActive) {
-                delay(200)
-                vm.prepareHero()
-            } else vm.pauseHeroMetadata()
-        }
-        DisposableEffect(vm) { onDispose { vm.pauseHeroMetadata() } }
-        val heroLogo = discoveryTrialHeroLogo(heroCard, state.heroPresentation, scrollVariant.heroTitleArtwork)
         val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout) ({ focused, down, up ->
+            val heroState by vm.state.collectAsStateWithLifecycle()
+            val heroCard = heroState.takeIf { it.profile == profile && it.surface == surface }?.hero
+            LaunchedEffect(scrollVariant.prepareNextHero, mayRotateHero, heroCard?.key) {
+                if (scrollVariant.prepareNextHero && mayRotateHero && heroState.heroes.size > 1) {
+                    delay(1_000)
+                    val next = heroState.heroes[(heroState.heroIndex + 1) % heroState.heroes.size]
+                    prepareTrialHeroArtwork(context, next.backdrop ?: next.poster)
+                }
+            }
+            // Trial-only: defer optional public metadata; never enable focused/provider presentation.
+            LaunchedEffect(optionalHeroMetadata, scrollVariant.heroTitleArtwork, scrollVariant.heroMetadataOnly, scrollVariant.heroMetadataOffMain, heroCard?.key, presentationActive) {
+                if (optionalHeroMetadata && (scrollVariant.heroTitleArtwork || scrollVariant.heroMetadataOnly) && presentationActive) {
+                    delay(200)
+                    vm.prepareHero(offMain = scrollVariant.heroMetadataOffMain)
+                } else vm.pauseHeroMetadata()
+            }
+            DisposableEffect(vm) { onDispose { vm.pauseHeroMetadata() } }
+            val heroLogo = discoveryTrialHeroLogo(heroCard, heroState.heroPresentation, optionalHeroMetadata && scrollVariant.heroTitleArtwork)
             Box(Modifier.fillMaxWidth()) {
                 if (scrollVariant.heroArtwork) {
                     // One identity-scoped image: never retain the previous title's artwork while loading.
@@ -570,7 +607,7 @@ internal fun DiscoveryPreviewScreen(
                     info = { heroCard?.let { focused("info"); currentDetails(it, "trial-hero:${it.key}") } },
                     onFocus = { focused("play"); restoreNativeSelection = true }, onDown = down, onUp = { up(); true },
                     previous = { vm.rotate(-1) }, next = { vm.rotate(1) },
-                    carousel = state.heroes.size > 1, index = state.heroIndex, count = state.heroes.size,
+                    carousel = state.heroes.size > 1, index = heroState.heroIndex, count = heroState.heroes.size,
                     portraitPhone = phonePortrait)
             }
         }) else null
@@ -626,8 +663,8 @@ internal fun DiscoveryPreviewScreen(
                     if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
                         .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
                         up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = scrollVariant.animateNativeFocus,
-                        containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows,
-                        hero = nativeHero, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
+                        containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
+                        hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
                             runCatching { (if (id == "info") heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
                         })
                     else NativeDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()

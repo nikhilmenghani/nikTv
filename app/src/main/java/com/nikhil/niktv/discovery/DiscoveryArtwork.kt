@@ -3,6 +3,7 @@ package com.nikhil.niktv.discovery
 import android.app.ActivityManager
 import android.content.Context
 import coil3.imageLoader
+import coil3.asDrawable
 import coil3.request.ImageRequest
 import coil3.request.transformations
 import coil3.size.Size
@@ -100,4 +101,25 @@ internal suspend fun prefetchDiscoveryArtwork(context: Context, posters: List<St
               catch (_: Exception) { /* Speculative artwork is optional. */ }
         }
     } }.awaitAll()
+}
+
+/** Trial only: one idle, bounded next-backdrop request; never blocks navigation. */
+internal suspend fun prepareTrialHeroArtwork(context: Context, url: String?) {
+    if (url.isNullOrBlank()) return
+    withContext(Dispatchers.IO) {
+        speculativeImages.withPermit {
+            ensureActive()
+            if (discoveryArtworkPressure(context)) return@withPermit
+            try {
+                val result = context.imageLoader.execute(ImageRequest.Builder(context)
+                    .data(thumbnailArtworkUrl(url, 1280)).size(1280, 720)
+                    .transformations(DiscoveryBackdropTransformation()).build())
+                ensureActive()
+                if (result is coil3.request.SuccessResult) {
+                    (result.image.asDrawable(context.resources) as? android.graphics.drawable.BitmapDrawable)?.bitmap?.prepareToDraw()
+                }
+            } catch (cancel: CancellationException) { throw cancel }
+              catch (_: Exception) { /* Optional; normal image loading remains available. */ }
+        }
+    }
 }

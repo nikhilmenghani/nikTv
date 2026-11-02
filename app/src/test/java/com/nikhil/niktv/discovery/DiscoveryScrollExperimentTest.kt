@@ -16,13 +16,13 @@ class DiscoveryScrollExperimentTest {
             "rows" to v.rowLimit, "cards" to v.tileLimit, "sources" to v.sourceCaptions,
             "progress" to v.progressIndicators, "motion" to v.animateNativeFocus,
             "static" to v.staticArtwork, "posters" to v.posterArtwork, "recycled" to v.recycledRows,
-            "captions" to v.containedCaptions, "shadows" to v.cardShadows, "hero" to v.heroLayout, "artwork" to v.heroArtwork, "fade" to v.heroArtworkFade, "titleArtwork" to v.heroTitleArtwork)
+            "captions" to v.containedCaptions, "shadows" to v.cardShadows, "hero" to v.heroLayout, "artwork" to v.heroArtwork, "fade" to v.heroArtworkFade, "titleArtwork" to v.heroTitleArtwork, "rotation" to v.heroAutoRotate)
         val baseline = recycledDiscoveryStages.first()
         assertEquals(4, baseline.rowLimit)
         assertEquals(8, baseline.tileLimit)
         assertTrue(baseline.staticArtwork && baseline.posterArtwork && baseline.recycledRows)
         assertFalse(baseline.sourceCaptions || baseline.progressIndicators || baseline.animateNativeFocus)
-        val expectedChanges = listOf("cards", "rows", "sources", "progress", "motion", "captions", "shadows", "hero", "artwork", "fade", "titleArtwork")
+        val expectedChanges = listOf("cards", "rows", "sources", "progress", "motion", "captions", "shadows", "hero", "artwork", "fade", "titleArtwork", "rotation")
         recycledDiscoveryStages.zipWithNext().forEachIndexed { index, (before, after) ->
             val a = features(before); val b = features(after)
             assertEquals(setOf(expectedChanges[index]), a.keys.filter { a[it] != b[it] }.toSet())
@@ -111,6 +111,25 @@ class DiscoveryScrollExperimentTest {
         assertEquals("feed-logo", discoveryTrialHeroLogo(movie, prepared.copy(series = true), true))
         assertNull(discoveryTrialHeroLogo(movie.copy(titleLogo = null), prepared.copy(id = 2), true))
         assertEquals("feed-logo", discoveryTrialHeroLogo(movie, prepared.copy(titleLogo = " "), true))
+    }
+
+    @Test fun metadataDiagnosticDoesNotRenderALogoOrChangeBaselineGeometry() {
+        val v = DiscoveryScrollVariant.RECYCLED_HERO_METADATA
+        assertTrue(v.heroMetadataOnly && v.heroLayout && v.heroArtworkFade)
+        assertFalse(v.heroTitleArtwork)
+        assertEquals(DiscoveryScrollVariant.RECYCLED_HERO_FADE.rowLimit, v.rowLimit)
+        assertEquals(DiscoveryScrollVariant.RECYCLED_HERO_FADE.tileLimit, v.tileLimit)
+        assertFalse(recycledDiscoveryStages.contains(v))
+    }
+
+    @Test fun isolatedFeedIgnoresHeroRotationsButKeepsDetailAndProfileUpdates() {
+        val a = DiscoveryState(profile = "one", heroes = listOf(DiscoveryCard(1, false, "One"), DiscoveryCard(2, false, "Two")))
+        val b = a.copy(heroIndex = 1, heroPresentation = a.heroes[1])
+        assertEquals(a.recycledFeedState(true), b.recycledFeedState(true))
+        assertNotEquals(a.recycledFeedState(false), b.recycledFeedState(false))
+        assertNotEquals(a.recycledFeedState(true), b.copy(profile = "two").recycledFeedState(true))
+        val detail = b.copy(detail = b.heroes[1])
+        assertSame(detail, detail.recycledFeedState(true))
     }
 
 }

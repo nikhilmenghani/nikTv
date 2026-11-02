@@ -46,20 +46,21 @@ private class RecycledPosition(var row: String = "", var item: String = "") {
 @Composable
 internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Modifier,
     focusEntry: FocusRequester, up: () -> Unit, visible: (String) -> Unit = {}, animateFocus: Boolean = true,
-    containedCaptions: Boolean = false, cardShadows: Boolean = false,
-    hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true) {
+    containedCaptions: Boolean = false, cardShadows: Boolean = false, homeTileProportions: Boolean = false,
+    hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
     val displayedRows = remember(rows, hero != null) {
         if (hero != null) listOf(NativeDiscoveryRow(HERO_ROW, "", emptyList(), isHero = true)) + rows else rows
     }
-    key(containedCaptions, cardShadows) {
-    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, parentComposition) }, modifier = modifier.focusRequester(focusEntry),
+    key(containedCaptions, cardShadows, homeTileProportions) {
+    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, parentComposition) }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { it.release() }, update = { view ->
             view.animateFocus = animateFocus
             view.restoreSelection = restoreSelection
             view.heroContent = hero; view.heroFocusEntry = heroFocusEntry
+            view.onHeroActivity = heroActivity
             view.onUp = { view.leave(host, up) }; view.onVisible = visible; view.update(displayedRows)
         })
     }
@@ -80,8 +81,42 @@ private val cardDiff = object : DiffUtil.ItemCallback<NativeDiscoveryItem>() {
 }
 
 private class RailRecycler(context: Context, private val position: RecycledPosition,
-    private val containedCaptions: Boolean, private val cardShadows: Boolean,
+    private val containedCaptions: Boolean, private val cardShadows: Boolean, private val homeTileProportions: Boolean,
     private val parentComposition: CompositionContext) : RecyclerView(context) {
+    var onHeroActivity: ((HeroActivity) -> Unit)? = null
+    private var touchingHeroFeed = false
+    private val scrollingChildren = mutableSetOf<RecyclerView>()
+    private val focusObserver = ViewTreeObserver.OnGlobalFocusChangeListener { _, _ -> reportHeroActivity() }
+    private fun reportHeroActivity() {
+        val report = onHeroActivity ?: return
+        val header = findViewHolderForAdapterPosition(0)?.takeIf { models[rowAdapter.currentList.firstOrNull()?.id]?.isHero == true }?.itemView
+        val visible = Rect()
+        val shown = header != null && header.getGlobalVisibleRect(visible) && visible.height() >= header.height * .8f
+        report(HeroActivity(shown, hasWindowFocus(), hasFocus(), scrollState != SCROLL_STATE_IDLE || scrollingChildren.isNotEmpty(), touchingHeroFeed, false))
+    }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        viewTreeObserver.addOnGlobalFocusChangeListener(focusObserver)
+    }
+    override fun onDetachedFromWindow() {
+        viewTreeObserver.removeOnGlobalFocusChangeListener(focusObserver)
+        touchingHeroFeed = false; scrollingChildren.clear()
+        onHeroActivity?.invoke(HeroActivity(false, false, false, false, false, false))
+        super.onDetachedFromWindow()
+    }
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) { super.onWindowFocusChanged(hasWindowFocus); reportHeroActivity() }
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); reportHeroActivity() }
+    override fun onScrolled(dx: Int, dy: Int) { super.onScrolled(dx, dy); reportHeroActivity() }
+    override fun onScrollStateChanged(state: Int) { super.onScrollStateChanged(state); reportHeroActivity() }
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> touchingHeroFeed = true
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> touchingHeroFeed = false
+        }
+        val result = super.dispatchTouchEvent(event)
+        reportHeroActivity()
+        return result
+    }
     var heroContent by mutableStateOf<RecycledHeroContent?>(null)
     var heroFocusEntry: (String) -> Boolean = { false }
     var restoreSelection = true
@@ -113,7 +148,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         override fun onCreateViewHolder(parent: ViewGroup, type: Int) = RowHolder(type == 1)
         override fun onBindViewHolder(holder: RowHolder, index: Int) { holder.bind(getItem(index)) }
         override fun onViewRecycled(holder: RowHolder) { holder.cards.submitList(emptyList()) }
-        override fun onViewDetachedFromWindow(holder: RowHolder) { holder.stopMotion() }
+        override fun onViewDetachedFromWindow(holder: RowHolder) { holder.stopMotion(); reportHeroActivity() }
         override fun onFailedToRecycleView(holder: RowHolder): Boolean { holder.stopMotion(); return true }
         override fun onViewAttachedToWindow(holder: RowHolder) {
             val row = holder.rowId
@@ -237,6 +272,12 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 // within GapWorker's frame deadline instead of inflating it on Down.
                 initialPrefetchItemCount = 9
             }
+            addOnScrollListener(object : OnScrollListener() {
+                override fun onScrollStateChanged(recyclerView: RecyclerView, state: Int) {
+                    if (state == SCROLL_STATE_IDLE) scrollingChildren.remove(recyclerView) else scrollingChildren.add(recyclerView)
+                    reportHeroActivity()
+                }
+            })
             setRecycledViewPool(pool); itemAnimator = null; setItemViewCacheSize(1)
             setPadding(dp(4), dp(5), dp(4), dp(10)); clipToPadding = false; isFocusable = false
         }
@@ -258,7 +299,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 }, LinearLayout.LayoutParams(-1, -2))
             } else {
             (itemView as LinearLayout).addView(title)
-            (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1, dp(172 + (48 * resources.configuration.fontScale).toInt())))
+            (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1, dp(if (homeTileProportions) 167 else 172 + (48 * resources.configuration.fontScale).toInt())))
             horizontal.adapter = cards
             title.setOnFocusChangeListener { _, focused -> if (focused) { epoch++; pending = null; selected(rowId, "") } }
             title.setOnKeyListener { _, key, event ->
@@ -296,6 +337,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             }
         }
         fun stopMotion() {
+            if (onHeroActivity != null) { scrollingChildren.remove(horizontal); reportHeroActivity() }
             for (index in 0 until horizontal.childCount) horizontal.getChildAt(index).apply {
                 animate().cancel(); scaleX = 1f; scaleY = 1f
             }
@@ -326,8 +368,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         private val progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 1000; progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(229,9,37))
         }
-        private val title = TextView(context).apply { textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; minLines = 2; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
-        private val subtitle = TextView(context).apply { textSize = 10f; setTextColor(Color.LTGRAY); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        private val title = TextView(context).apply { textSize = if (homeTileProportions) 8.7f else 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; minLines = 2; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+        private val subtitle = TextView(context).apply { textSize = if (homeTileProportions) 7.4f else 10f; setTextColor(Color.LTGRAY); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         init {
             if (!containedCaptions) (LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }).also { column ->
                 (itemView as FrameLayout).addView(column, FrameLayout.LayoutParams(-1, -1))

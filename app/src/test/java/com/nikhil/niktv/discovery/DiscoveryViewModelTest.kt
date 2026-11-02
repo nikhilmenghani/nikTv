@@ -15,6 +15,24 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryViewModelTest {
+    @Test fun trialPreparationCanMoveRepositoryWorkOffTheCallingThread() {
+        val caller = Thread.currentThread()
+        val invoked = java.util.concurrent.CountDownLatch(1)
+        var worker: Thread? = null
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails {
+                worker = Thread.currentThread()
+                invoked.countDown()
+                return DiscoveryDetails(card)
+            }
+        })
+        vm.bind("worker", DashboardSurface.MOVIES, emptyList()); vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES); pump()
+        vm.prepareHero(offMain = true); pump()
+        assertTrue(invoked.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        assertNotSame(caller, worker)
+        vm.pause()
+    }
+
     @Test fun openingProviderRootReplacesPreviousDetailStack() {
         val vm = DiscoveryViewModel(app, Source())
         vm.bind("providers", DashboardSurface.MOVIES, emptyList()); pump()

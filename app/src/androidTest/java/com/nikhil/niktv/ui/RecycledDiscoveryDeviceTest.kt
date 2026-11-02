@@ -54,6 +54,7 @@ class RecycledDiscoveryDeviceTest {
         }
         val entry = FocusRequester(); val header = FocusRequester()
         val heroEntry = FocusRequester()
+        val activity = java.util.concurrent.atomic.AtomicReference<HeroActivity>()
         val heroFocused = java.util.concurrent.atomic.AtomicBoolean(false)
         val headerFocused = java.util.concurrent.atomic.AtomicBoolean(false)
         val rowsShown = mutableStateOf(true)
@@ -72,6 +73,7 @@ class RecycledDiscoveryDeviceTest {
                         RecycledDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, { header.requestFocus() },
                             containedCaptions = containedCaptions, cardShadows = cardShadows,
                             restoreSelection = restoreSelection.value,
+                            heroActivity = if (withHero) ({ activity.set(it) }) else null,
                             hero = if (withHero) ({ focused, down, up ->
                                 Box(Modifier.height(200.dp)) {
                                     Button({}, Modifier.focusRequester(heroEntry).onFocusChanged {
@@ -93,11 +95,13 @@ class RecycledDiscoveryDeviceTest {
             i.runOnMainSync { entry.requestFocus() }
             if (withHero) {
                 await("Header Down enters hero") { heroFocused.get() }
+                await("Focused hero blocks rotation") { activity.get()?.let { it.visible && it.focused && !it.mayRotate } == true }
                 i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             }
             await("First card") { focus() == "r0:i0" }
             for (n in 1..15) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); await("Horizontal $n") { focus() == "r0:i$n" } }
             for (r in 1..12) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); await("Vertical $r") { focus() == "r$r:i0" } }
+            if (withHero) await("Offscreen hero blocks rotation") { activity.get()?.visible == false }
             var cards = 0
             i.runOnMainSync {
                 fun count(v: View) { if (v.tag is String) cards++; if (v is ViewGroup) for (n in 0 until v.childCount) count(v.getChildAt(n)) }
@@ -117,6 +121,7 @@ class RecycledDiscoveryDeviceTest {
                 await("First rail Up enters hero") { heroFocused.get() }
                 i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
                 await("Hero Up reaches header") { headerFocused.get() }
+                await("Visible idle hero permits rotation") { activity.get()?.mayRotate == true }
                 i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
                 await("Header reenters hero") { heroFocused.get() }
             }

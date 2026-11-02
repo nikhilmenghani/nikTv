@@ -12,6 +12,8 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val preferences = app.getSharedPreferences("discovery_trial_v1", 0)
     private val _state = MutableStateFlow(DiscoveryState())
     val state = _state.asStateFlow()
+    /** Initial value for the trial's filtered Flow; subsequent values are collected reactively. */
+    fun recycledFeedSnapshot() = _state.value.recycledFeedState(true)
     private val screen = DiscoveryGeneration()
     private val detail = DiscoveryGeneration()
     private val seasonGeneration = DiscoveryGeneration()
@@ -138,7 +140,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         }
     }
     /** Only public, cache-backed TMDB metadata; never resolve an IPTV stream while browsing. */
-    fun prepareHero() {
+    fun prepareHero(offMain: Boolean = false) {
         val snapshot = _state.value
         val card = snapshot.hero ?: return
         if (snapshot.detail != null || snapshot.heroPresentation?.key == card.key ||
@@ -153,7 +155,16 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
                         current.detail == null && current.hero?.key == card.key) current.copy(heroPresentation = value.card) else current
                 }
             }
-            try { publish(repository.details(card, ::publish)) }
+            try {
+                val value = if (offMain) withContext(Dispatchers.Default) {
+                    repository.details(card) { cached ->
+                        // Generation checks and publication remain confined to Main.
+                        viewModelScope.launch(Dispatchers.Main.immediate) { publish(cached) }
+                    }
+                }
+                    else repository.details(card, ::publish)
+                publish(value)
+            }
             catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* Optional title artwork must not block or show a global error. */ }
         }

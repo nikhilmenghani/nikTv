@@ -138,3 +138,18 @@ Phase 9 committed as `00742171`. Added a separately selectable, identity-scoped 
 ## Phase 11 hero title artwork (2026-11-01)
 
 Phase 10 committed as `a6730b87`. Added optional cached title artwork only in Home 2, with text fallback, a 200 ms selection delay and existing metadata generation guards. Warm tablet D-pad scrolling median p95 stayed 15 ms; touch was 16 to 17 ms with more missed deadlines, so additional cost is not ruled out. 200 targeted tests passed; 22 existing lint errors remain. See [Phase 11 measurements and limitations](home2-phase11-performance.md). Original Home and Fire TV untouched.
+
+
+## Phase 11 investigation: metadata vs logos
+
+Phase 12 paused. Tablet experiments separate Phase 10, metadata-only and full logos; a second comparison moves preparation off Main. Extra misses also occur without logos; worker results are mixed. No cause or fix is proven. Diagnostic Dev build installed, Home 2 left on Phase 10; Home and Fire TV untouched. See [investigation](home2-phase11-investigation.md).
+
+
+## Phase 12 idle hero rotation
+
+Added eight-second idle rotation in Home 2 only, metadata off. Fixed an introduced broad-state observation regression: scrolling p95 median 25 to 16 ms; warm Stage 11 control 15 ms. Automatic artwork transition still has a sampled 172 ms frame and needs further isolation. 202 targeted unit tests and four tablet device regressions passed; lint retains 22 existing errors. Installed on tablet only. Home and Fire TV untouched. See [Phase 12 evidence and limits](home2-phase12-performance.md).
+
+
+## Hero transition and tile-layout investigation (2026-11-02)
+
+Tested isolated hero state, Home-like native tile proportions and one-image idle preparation. Transition hitches remain; preparation did not consistently help. Home-like native tiles measured 19 ms median p95 versus compact controls 15-19 ms; unchanged full Home measured 101 ms in a different full-screen scenario, not an isolated tile-style cost. See [measurements and limits](home2-hero-transition-and-tiles.md). Tablet only; original Home and Fire TV untouched.
