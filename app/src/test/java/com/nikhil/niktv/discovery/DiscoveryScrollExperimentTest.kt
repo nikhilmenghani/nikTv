@@ -171,4 +171,17 @@ class DiscoveryScrollExperimentTest {
         assertFalse(candidate.tvImmediateFocus || candidate.prepareNextHero || candidate.isolateHero)
     }
 
+    @Test fun tvPresentationControlKeepsOriginalRendererAndFeedBudgets() {
+        val control = DiscoveryScrollVariant.CONTROL
+        val diagnostic = DiscoveryScrollVariant.TV_PRESENTATION_CONTROL
+        assertTrue(diagnostic.tvPresentation)
+        assertFalse(control.tvPresentation)
+        assertSame(control, discoveryVariantForRoute(false, diagnostic))
+        assertEquals(control.rowLimit, diagnostic.rowLimit)
+        assertEquals(control.tileLimit, diagnostic.tileLimit)
+        assertFalse(diagnostic.nativeRows || diagnostic.recycledRows || diagnostic.staticArtwork)
+        assertEquals(control.sourceCaptions, diagnostic.sourceCaptions)
+        assertEquals(control.progressIndicators, diagnostic.progressIndicators)
+    }
+
 }

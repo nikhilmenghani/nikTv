@@ -162,3 +162,7 @@ Previous pending work committed as `4e8f79e3`. Focus-driven backgrounds are expl
 ## TV rendering isolation (2026-11-02)
 
 Fire TV tests reject immediate tile focus as a vertical-scroll improvement. Optional cached tile drawing retains zoom and captions: Wio median p95 18 to 17 ms, Nikhil 30/31 to 17 ms, with about 18-20 MiB additional graphics PSS in sampled runs. Kept selectable in Home 2, original Home unchanged. Optimized Dev installed on Fire TV; 206 targeted tests pass, lint retains 22 existing errors. Remote synthetic long-press check is unresolved. See [TV experiments](home2-tv-rendering-experiments.md).
+
+## Optimized tablet controls (2026-11-02)
+
+Pending sizing/TV experiments committed as `72f18771`. Added a Home 2-only TV presentation control; it did not reproduce the native renderer's improvement. On one optimized Dev APK, Phase 12 median vertical p95 was 16 ms in both profiles, against repeated Home 28 ms (Wio) and 30 ms (Nikhil). Layout/pixel workloads still differ; no cross-device speedup or input-latency claim. 207 targeted tests passed, lint retains 22 existing errors. Tablet installed and restored to Wio Phase 12; Fire TV untouched this step. See [tablet controls](home2-optimized-tablet-comparison.md).

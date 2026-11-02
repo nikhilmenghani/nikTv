@@ -204,7 +204,7 @@ internal fun DiscoveryPreviewScreen(
     val state = loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)
     // TV browsing prioritizes one decisive focus change over full-screen presentation work.
     // Explicit detail routes keep their artwork, metadata and actions.
-    val fastTvLanding = (television || scrollVariant.staticArtwork) && state.detail == null
+    val fastTvLanding = (television || scrollVariant.tvPresentation || scrollVariant.staticArtwork) && state.detail == null
     val suggestedArtwork by rememberSuggestedArtwork()
     val showBackdrop = state.detail != null || (suggestedArtwork && !scrollVariant.staticArtwork)
     LaunchedEffect(vm, profile, surface, fastTvLanding) {
@@ -685,7 +685,7 @@ internal fun DiscoveryPreviewScreen(
     } else {
     // TV pivot scrolling must not compete with explicit vertical row alignment.
     CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { experimentSettings = true },
-        LocalSimpleDiscoveryTiles provides scrollVariant.simpleFocus,
+        LocalSimpleDiscoveryTiles provides (scrollVariant.simpleFocus || scrollVariant.tvPresentation),
         LocalDiscoveryWideCards provides scrollVariant.wideCards,
         LocalDiscoveryPosterArtwork provides scrollVariant.posterArtwork) {
     StableTileFocusViewport {

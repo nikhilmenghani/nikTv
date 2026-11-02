@@ -14,8 +14,9 @@ internal val LocalDiscoveryExperimentSettings = staticCompositionLocalOf<() -> U
 internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int = Int.MAX_VALUE,
     val tileLimit: Int = 30, val staticArtwork: Boolean = false, val simpleFocus: Boolean = false, val posterArtwork: Boolean = true, val minimalReveal: Boolean = false, val wideCards: Boolean = false, val nativeRows: Boolean = false, val animateNativeFocus: Boolean = false,
     val recycledRows: Boolean = false, val sourceCaptions: Boolean = true, val progressIndicators: Boolean = true,
-    val containedCaptions: Boolean = false, val cardShadows: Boolean = false, val heroLayout: Boolean = false, val heroArtwork: Boolean = false, val heroArtworkFade: Boolean = false, val heroTitleArtwork: Boolean = false, val heroMetadataOnly: Boolean = false, val heroMetadataOffMain: Boolean = false, val heroAutoRotate: Boolean = false, val isolateHero: Boolean = false, val homeTileProportions: Boolean = false, val prepareNextHero: Boolean = false, val stableHeroBounds: Boolean = false, val nativeHeroBounds: Boolean = false, val tvImmediateFocus: Boolean = false, val tvCachedTiles: Boolean = false) {
+    val containedCaptions: Boolean = false, val cardShadows: Boolean = false, val heroLayout: Boolean = false, val heroArtwork: Boolean = false, val heroArtworkFade: Boolean = false, val heroTitleArtwork: Boolean = false, val heroMetadataOnly: Boolean = false, val heroMetadataOffMain: Boolean = false, val heroAutoRotate: Boolean = false, val isolateHero: Boolean = false, val homeTileProportions: Boolean = false, val prepareNextHero: Boolean = false, val stableHeroBounds: Boolean = false, val nativeHeroBounds: Boolean = false, val tvImmediateFocus: Boolean = false, val tvCachedTiles: Boolean = false, val tvPresentation: Boolean = false) {
     CONTROL("Control · same as Home"),
+    TV_PRESENTATION_CONTROL("Control - TV presentation", tvPresentation = true),
     FEWER_ROWS("4 rows · original tiles", rowLimit = 4),
     FEWER_TILES("8 tiles per row", tileLimit = 8),
     STATIC_ARTWORK("Static header · no focus artwork", staticArtwork = true),
