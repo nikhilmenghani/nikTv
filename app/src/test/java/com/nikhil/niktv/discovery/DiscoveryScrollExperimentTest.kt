@@ -4,6 +4,39 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiscoveryScrollExperimentTest {
+    @Test fun experimentalChoicesCannotChangeOriginalDestinations() {
+        DiscoveryScrollVariant.entries.forEach { selected ->
+            assertSame(DiscoveryScrollVariant.CONTROL, discoveryVariantForRoute(false, selected))
+            assertSame(selected, discoveryVariantForRoute(true, selected))
+        }
+    }
+
+    @Test fun recycledRebuildAddsExactlyOneFeaturePerStage() {
+        fun features(v: DiscoveryScrollVariant) = mapOf(
+            "rows" to v.rowLimit, "cards" to v.tileLimit, "sources" to v.sourceCaptions,
+            "progress" to v.progressIndicators, "motion" to v.animateNativeFocus,
+            "static" to v.staticArtwork, "posters" to v.posterArtwork, "recycled" to v.recycledRows,
+            "captions" to v.containedCaptions, "shadows" to v.cardShadows)
+        val baseline = recycledDiscoveryStages.first()
+        assertEquals(4, baseline.rowLimit)
+        assertEquals(8, baseline.tileLimit)
+        assertTrue(baseline.staticArtwork && baseline.posterArtwork && baseline.recycledRows)
+        assertFalse(baseline.sourceCaptions || baseline.progressIndicators || baseline.animateNativeFocus)
+        val expectedChanges = listOf("cards", "rows", "sources", "progress", "motion", "captions", "shadows")
+        recycledDiscoveryStages.zipWithNext().forEachIndexed { index, (before, after) ->
+            val a = features(before); val b = features(after)
+            assertEquals(setOf(expectedChanges[index]), a.keys.filter { a[it] != b[it] }.toSet())
+        }
+    }
+
+    @Test fun recycledRequestsFollowDistantRowsWithoutTrimmingTheFeed() {
+        val selected = (0..499).map { com.nikhil.niktv.model.Category("$it", "Row $it", com.nikhil.niktv.model.CatalogType.MOVIES) }
+        assertEquals((249..254).map(Int::toString), discoveryRecycledProviderScope(selected, "250").map { it.id })
+        assertEquals((0..5).map(Int::toString), discoveryRecycledProviderScope(selected, null).map { it.id })
+        assertEquals(listOf("498", "499"), discoveryRecycledProviderScope(selected, "499").map { it.id })
+        assertSame(selected, discoveryTrialProviderScope(selected, DiscoveryScrollVariant.RECYCLED_ROWS.rowLimit))
+        assertEquals(500, selected.size)
+    }
     @Test fun controlRetainsOriginalBudgetsAndFeatures() {
         val control = DiscoveryScrollVariant.CONTROL
         assertEquals(Int.MAX_VALUE, control.rowLimit)

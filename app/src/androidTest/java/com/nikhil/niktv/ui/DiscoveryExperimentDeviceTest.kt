@@ -39,6 +39,9 @@ class DiscoveryExperimentDeviceTest {
         lateinit var vm: DiscoveryViewModel
         var vmReady = false
         val experiment = mutableStateOf(true)
+        // A previously installed experiment must not keep changing original Home.
+        val legacyPreferences = context.getSharedPreferences("niktv_discovery_rendering", 0)
+        legacyPreferences.edit().putBoolean("recycled", true).commit()
         try {
             instrumentation.runOnMainSync {
                 vm = DiscoveryViewModel(context.applicationContext as Application, source)
@@ -62,10 +65,9 @@ class DiscoveryExperimentDeviceTest {
             await("Fixture Home feed is ready") { vm.state.value.feeds[TmdbHomeSection.TRENDING_MOVIES]?.size == 20 }
             click("Options")
             click("Performance experiment")
-            await("The bounded variant chooser is ready") { text(DiscoveryScrollVariant.FEWER_TILES.title)?.isVisibleToUser == true }
+            await("The baseline stage chooser is ready") { text(DiscoveryScrollVariant.RECYCLED_BASELINE.title)?.isVisibleToUser == true }
             // The chooser scrolls as experiments are added; offscreen options need not be composed.
-            assertNotNull(text(DiscoveryScrollVariant.CONTROL.title))
-            click(DiscoveryScrollVariant.FEWER_TILES.title)
+            click(DiscoveryScrollVariant.RECYCLED_BASELINE.title)
             assertEquals("Preview limits never truncate repository data", 20, vm.state.value.feeds[TmdbHomeSection.TRENDING_MOVIES]?.size)
             // A title outside the eight-tile preview remains a normal, complete detail destination.
             instrumentation.runOnMainSync { vm.openDetails(cards.last()) }
@@ -77,6 +79,7 @@ class DiscoveryExperimentDeviceTest {
             assertNull("Original Home does not expose trial settings", text("Performance experiment"))
             assertEquals(20, vm.state.value.feeds[TmdbHomeSection.TRENDING_MOVIES]?.size)
         } finally {
+            legacyPreferences.edit().clear().commit()
             instrumentation.runOnMainSync { if (vmReady) vm.viewModelScope.cancel(); host.finish() }
         }
     }

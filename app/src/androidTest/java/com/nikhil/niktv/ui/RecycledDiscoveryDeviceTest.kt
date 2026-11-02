@@ -1,0 +1,100 @@
+package com.nikhil.niktv.ui
+
+import android.content.Intent
+import android.graphics.Rect
+import android.os.SystemClock
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.*
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.unit.dp
+import androidx.recyclerview.widget.RecyclerView
+import androidx.test.platform.app.InstrumentationRegistry
+import com.nikhil.niktv.discovery.*
+import org.junit.Assert.*
+import org.junit.Test
+
+class RecycledDiscoveryDeviceTest {
+    @Test fun largeFeedRecyclesAndRestoresSelectionAcrossDetails() = verify(false, false)
+    @Test fun styledFeedRetainsFocusAndFullyVisibleReturn() = verify(true, true)
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean) {
+        val i = InstrumentationRegistry.getInstrumentation()
+        val c = i.targetContext
+        check(c.packageName.endsWith(".regression"))
+        val host = i.startActivitySync(Intent(c, PlaybackFixtureHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        fun await(message: String, block: () -> Boolean) {
+            val end = SystemClock.uptimeMillis() + 6000
+            while (SystemClock.uptimeMillis() < end) { if (block()) return; Thread.sleep(30) }
+            var actual: Any? = null
+            i.runOnMainSync { actual = host.currentFocus?.let { view ->
+                val rect = Rect(); view.getGlobalVisibleRect(rect)
+                "${view.tag}, visible=$rect, size=${view.width}x${view.height}"
+            } }
+            fail("$message; actual=$actual")
+        }
+        fun focus(): String? { var value: String? = null; i.runOnMainSync { value = host.currentFocus?.tag as? String }; return value }
+        fun fullyVisible(): Boolean {
+            var visible = false
+            i.runOnMainSync {
+                host.currentFocus?.let { view ->
+                    val rect = Rect()
+                    visible = view.getGlobalVisibleRect(rect) && rect.width() >= view.width && rect.height() >= view.height
+                }
+            }
+            return visible
+        }
+        val entry = FocusRequester(); val header = FocusRequester()
+        val rowsShown = mutableStateOf(true)
+        val rows = (0 until 80).map { r -> NativeDiscoveryRow("r$r", "Row $r", (0 until 40).map { n ->
+            NativeDiscoveryItem("i$n", "Item $r $n", onClick = { rowsShown.value = false }) }) }
+        try {
+            i.setInTouchMode(false)
+            i.runOnMainSync { host.setContent { MaterialTheme {
+                Column(Modifier.fillMaxSize()) {
+                    Text("Header", Modifier.height(48.dp).focusRequester(header).onPreviewKeyEvent {
+                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { entry.requestFocus(); true } else false
+                    }.focusable())
+                    val saved = rememberSaveableStateHolder()
+                    if (rowsShown.value) saved.SaveableStateProvider("feed") {
+                        RecycledDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, { header.requestFocus() },
+                            containedCaptions = containedCaptions, cardShadows = cardShadows)
+                    } else Text("Detail")
+                }
+            } } }
+            await("Initial layout") { host.window.decorView.isLaidOut }
+            i.runOnMainSync { entry.requestFocus() }
+            await("First card") { focus() == "r0:i0" }
+            for (n in 1..15) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); await("Horizontal $n") { focus() == "r0:i$n" } }
+            for (r in 1..12) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); await("Vertical $r") { focus() == "r$r:i0" } }
+            var cards = 0
+            i.runOnMainSync {
+                fun count(v: View) { if (v.tag is String) cards++; if (v is ViewGroup) for (n in 0 until v.childCount) count(v.getChildAt(n)) }
+                count(host.window.decorView)
+            }
+            assertTrue("3200 records must not create 3200 views: $cards", cards < 100)
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Detail removes list") { focus() == null }
+            i.runOnMainSync { rowsShown.value = true }
+            Thread.sleep(200)
+            i.runOnMainSync { entry.requestFocus() }
+            await("Return identity") { focus() == "r12:i0" }
+            await("Returned card fits the viewport") { fullyVisible() }
+            for (r in 11 downTo 0) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP); await("Up $r") { focus() == "r$r:i${if (r == 0) 15 else 0}" } }
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Header reentry") { focus() == "r0:i15" }
+            repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN) }
+            repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP) }
+            await("Rapid direction reversal retains identity") { focus() == "r0:i15" }
+            await("Reversed card fits the viewport") { fullyVisible() }
+        } finally { i.runOnMainSync { host.finish() } }
+    }
+}

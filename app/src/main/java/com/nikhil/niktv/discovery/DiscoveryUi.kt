@@ -98,9 +98,8 @@ internal fun DiscoveryPreviewScreen(
     parentModalOpen: Boolean = false,
     experiment: Boolean = false
 ) {
-    var experimentVariant by rememberSaveable(app.savedProfile?.cacheKey(), experiment) { mutableStateOf(DiscoveryScrollVariant.NATIVE_MOTION) }
+    var experimentVariant by rememberSaveable(app.savedProfile?.cacheKey(), experiment) { mutableStateOf(DiscoveryScrollVariant.RECYCLED_BASELINE) }
     var experimentSettings by remember { mutableStateOf(false) }
-    val scrollVariant = if (experiment) experimentVariant else DiscoveryScrollVariant.CONTROL
     var nativeNavigationId by rememberSaveable(app.savedProfile?.cacheKey(), surface, experiment) { mutableLongStateOf(-1L) }
     val context = LocalContext.current
     val hostView = LocalView.current
@@ -112,6 +111,7 @@ internal fun DiscoveryPreviewScreen(
     val configuration = LocalConfiguration.current
     val television = remember(context, configuration.uiMode) { context.isTvLikeDevice(configuration) }
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, television)
+    val scrollVariant = discoveryVariantForRoute(experiment, experimentVariant)
     val phonePortrait = phone && configuration.screenHeightDp >= configuration.screenWidthDp
     val remoteNavigation = context.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val landscape = !phone
@@ -138,32 +138,49 @@ internal fun DiscoveryPreviewScreen(
     val providerSelections = remember(fullProviderSelections, scrollVariant.rowLimit) {
         fullProviderSelections.mapValues { (_, categories) -> discoveryTrialProviderScope(categories, scrollVariant.rowLimit) }
     }
-    val expectedProviderCategories = remember(providerSelections) {
-        providerSelections.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
+    var nearbyRow by remember(profile, surface) { mutableStateOf<String?>(null) }
+    val providerBindingSelections = remember(providerSelections, scrollVariant, nearbyRow) {
+        if (!scrollVariant.recycledRows) providerSelections else
+            providerSelections.mapValues { (type, categories) ->
+                discoveryRecycledProviderScope(categories, nearbyRow?.removePrefix("provider:${type.name}:"))
+            }
+    }
+    val expectedProviderCategories = remember(providerBindingSelections) {
+        providerBindingSelections.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
     }
     val providerState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
         ?: ProviderDiscoveryState(profile = profile, categories = expectedProviderCategories)
     val providerQueues by produceState(providerVm.retainedRows.takeIf { it.first == profile }
-        ?: (profile to emptyMap<String, List<MediaItem>>()), profile, providerSelections, providerState.pages) {
+        ?: (profile to emptyMap<String, List<MediaItem>>()), profile, providerSelections, providerState.pages, scrollVariant) {
+        val retained = providerVm.retainedRows.takeIf { it.first == profile }?.second.orEmpty()
         value = profile to withContext(Dispatchers.Default) {
             buildMap { providerSelections.forEach { (type, categories) -> categories.forEach { category ->
-                put("provider:${type.name}:${category.id}", providerDiscoveryItems(providerDiscoverySources(listOf(category)), providerState.pages[type].orEmpty()))
+                val key = "provider:${type.name}:${category.id}"
+                val sources = providerDiscoverySources(listOf(category))
+                val pages = providerState.pages[type].orEmpty()
+                put(key, if (!scrollVariant.recycledRows || sources.any { it.id in pages }) providerDiscoveryItems(sources, pages) else retained[key].orEmpty())
             } } }
         }
     }
-    SideEffect { if (providerQueues.first == profile) providerVm.retainedRows = providerQueues }
+    SideEffect { if (providerQueues.first == profile) {
+        providerVm.retainedRows = if (!scrollVariant.recycledRows) providerQueues else {
+            val hot = providerBindingSelections.flatMap { (type, cats) -> cats.map { "provider:${type.name}:${it.id}" } }.toSet()
+            val values = providerQueues.second
+            profile to (values.filterKeys { it in hot } + values.filter { it.key !in hot && it.value.isNotEmpty() }).entries.take(100).associate { it.toPair() }
+        }
+    } }
     var providerCollection by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
     var providerCollectionVisit by rememberSaveable(profile, surface) { mutableIntStateOf(0) }
     var providerCollectionCategory by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
-    LaunchedEffect(profile, app.session, providerSelections, app.cacheIntervalMinutes) {
-        providerVm.bind(app.session, providerSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
+    LaunchedEffect(profile, app.session, providerBindingSelections, app.cacheIntervalMinutes) {
+        providerVm.bind(app.session, providerBindingSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
     }
     // Keep bounded landing previews for an immediate return from details; nested detail
     // routes release their private catalogue copies. No network work survives disposal.
     DisposableEffect(providerVm) { onDispose { providerVm.pause(release = vm.state.value.detail != null) } }
     val providerLifecycle = LocalLifecycleOwner.current.lifecycle
     val bindProvider by rememberUpdatedState {
-        providerVm.bind(app.session, providerSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
+        providerVm.bind(app.session, providerBindingSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
     }
     DisposableEffect(providerLifecycle, providerVm) {
         val observer = LifecycleEventObserver { _, event ->
@@ -480,6 +497,7 @@ internal fun DiscoveryPreviewScreen(
     if (experimentSettings && experiment) AlertDialog(onDismissRequest = { experimentSettings = false },
         title = { Text("Home 2 · performance experiment") },
         text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
+            Text("Home stays unchanged. Compare each stage with the preceding stage using the same content and input pattern.", style = MaterialTheme.typography.bodySmall)
             Text("Browse source", style = MaterialTheme.typography.labelMedium)
             val openExperiment = LocalOpenDiscoveryExperimentSurface.current
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -491,8 +509,15 @@ internal fun DiscoveryPreviewScreen(
                 }
             }
             HorizontalDivider(Modifier.padding(bottom = 8.dp))
-            Text("Presentation", style = MaterialTheme.typography.labelMedium)
-            DiscoveryScrollVariant.entries.forEach { variant ->
+            Text("Incremental rebuild", style = MaterialTheme.typography.labelMedium)
+            recycledDiscoveryStages.forEach { variant ->
+                NikDropdownMenuItem(text = { Text(variant.title) },
+                    leadingIcon = if (variant == experimentVariant) ({ Icon(Icons.Default.Check, null) }) else null,
+                    onClick = { experimentVariant = variant; experimentSettings = false })
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("Original-renderer comparisons", style = MaterialTheme.typography.labelMedium)
+            DiscoveryScrollVariant.entries.filterNot { it.recycledRows }.forEach { variant ->
                 NikDropdownMenuItem(text = { Text(variant.title) },
                     leadingIcon = if (variant == experimentVariant) ({ Icon(Icons.Default.Check, null) }) else null,
                     onClick = { experimentVariant = variant; experimentSettings = false })
@@ -501,8 +526,14 @@ internal fun DiscoveryPreviewScreen(
         confirmButton = { NikTvSecondaryActionButton({ experimentSettings = false }) { Text("Close") } })
     if (experiment && scrollVariant.nativeRows && state.detail == null) {
         var nativePopup by remember { mutableStateOf<RailEntry?>(null) }
-        LaunchedEffect(providerState.identity, providerState.ready, providerState.pages, providerState.loading, providerState.errors) {
-            if (providerState.ready) visibleRails.filter { it.providerCategory != null && it.providerType != null }
+        val recycled = scrollVariant.recycledRows
+        val requestedRails = if (recycled) {
+            val anchor = visibleRails.indexOfFirst { it.key == nearbyRow }.coerceAtLeast(0)
+            visibleRails.drop((anchor - 1).coerceAtLeast(0)).take(3)
+        } else visibleRails
+        LaunchedEffect(providerState.identity, providerState.ready, providerState.pages, providerState.loading, providerState.errors, nearbyRow) {
+            requestedRails.forEach { row -> row.section?.let(vm::loadFeed) }
+            if (providerState.ready) requestedRails.filter { it.providerCategory != null && it.providerType != null }
                 .groupBy { it.providerType!! }.forEach { (type, rows) ->
                     if (type !in providerState.loading && type !in providerState.errors) {
                         val sources = providerDiscoverySources(rows.mapNotNull { it.providerCategory })
@@ -511,10 +542,16 @@ internal fun DiscoveryPreviewScreen(
                     }
                 }
         }
-        val nativeRows = remember(visibleRails) { visibleRails.map { row ->
+        val nativeRows = remember(visibleRails, scrollVariant) { visibleRails.map { row ->
             NativeDiscoveryRow(row.key, row.title, row.entries.map { entry -> NativeDiscoveryItem(
-                entry.key, entry.title, listOfNotNull(entry.displaySource?.label, entry.subtitle.takeIf(String::isNotBlank)).joinToString(" · "),
-                entry.artwork, entry.open, entry.popup?.let { { nativePopup = entry } }) })
+                entry.key, entry.title, listOfNotNull(entry.displaySource?.label.takeIf { scrollVariant.sourceCaptions }, entry.subtitle.takeIf(String::isNotBlank)).joinToString(" · "),
+                entry.artwork, entry.open, entry.popup?.let { { nativePopup = entry } }, entry.progress.takeIf { scrollVariant.progressIndicators }) } +
+                if (recycled && (row.providerType != null || row.section != null)) listOf(NativeDiscoveryItem("${row.key}:all", "Search / All", row.title, onClick = {
+                    row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
+                        ?: row.section?.let(openSection)
+                })) else if (recycled && row.recommendation != null && dismissRecommendation != null)
+                    listOf(NativeDiscoveryItem("${row.key}:dismiss", "Dismiss recommendations", row.title,
+                        onClick = { dismissRecommendation(row.recommendation) })) else emptyList())
         } }
         CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { experimentSettings = true }) {
             Column(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -538,7 +575,11 @@ internal fun DiscoveryPreviewScreen(
                             if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
                         }
                     }
-                    NativeDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
+                    if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
+                        .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
+                        up = { runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = scrollVariant.animateNativeFocus,
+                        containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows)
+                    else NativeDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
                         .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
                         up = { runCatching { tabRequester.requestFocus() } }, animateFocus = scrollVariant.animateNativeFocus)
                 }

@@ -213,6 +213,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
