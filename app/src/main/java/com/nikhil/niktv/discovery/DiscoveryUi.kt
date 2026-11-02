@@ -534,28 +534,35 @@ internal fun DiscoveryPreviewScreen(
             Box(Modifier.fillMaxWidth()) {
                 if (scrollVariant.heroArtwork) {
                     // One identity-scoped image: never retain the previous title's artwork while loading.
-                    key(heroCard?.key) {
+                    key(heroCard?.key, heroCard?.backdrop ?: heroCard?.poster) {
                         val artwork = heroCard?.backdrop ?: heroCard?.poster
                         val request = remember(context, artwork) {
                             ImageRequest.Builder(context).data(thumbnailArtworkUrl(artwork, 1280))
                                 .size(1280, 720).transformations(DiscoveryBackdropTransformation())
                                 .crossfade(false).build()
                         }
-                        AsyncImage(request, null, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+                        var artworkReady by remember { mutableStateOf(false) }
+                        val artworkAlpha by animateFloatAsState(
+                            if (!scrollVariant.heroArtworkFade || artworkReady) 1f else 0f,
+                            tween(if (reduceMotion) 0 else 300), label = "trialHeroArtwork")
+                        AsyncImage(request, null,
+                            Modifier.matchParentSize().graphicsLayer { alpha = artworkAlpha },
+                            contentScale = ContentScale.Crop,
+                            onSuccess = { artworkReady = true }, onError = { artworkReady = false })
                     }
                 }
-            DiscoveryHero(heroCard?.copy(backdrop = null, poster = null, titleLogo = null), rank = null,
-                height = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f).dp,
-                landscape = landscape, compact = true, detail = false,
-                loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,
-                playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
-                play = { heroCard?.let { focused("play"); currentPlayCard(it) } },
-                add = { heroCard?.let { currentToggleFavorite(favorite(it)) } },
-                info = { heroCard?.let { focused("info"); currentDetails(it, "trial-hero:${it.key}") } },
-                onFocus = { focused("play"); restoreNativeSelection = true }, onDown = down, onUp = { up(); true },
-                previous = { vm.rotate(-1) }, next = { vm.rotate(1) },
-                carousel = state.heroes.size > 1, index = state.heroIndex, count = state.heroes.size,
-                portraitPhone = phonePortrait)
+                DiscoveryHero(heroCard?.copy(backdrop = null, poster = null, titleLogo = null), rank = null,
+                    height = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f).dp,
+                    landscape = landscape, compact = true, detail = false,
+                    loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,
+                    playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
+                    play = { heroCard?.let { focused("play"); currentPlayCard(it) } },
+                    add = { heroCard?.let { currentToggleFavorite(favorite(it)) } },
+                    info = { heroCard?.let { focused("info"); currentDetails(it, "trial-hero:${it.key}") } },
+                    onFocus = { focused("play"); restoreNativeSelection = true }, onDown = down, onUp = { up(); true },
+                    previous = { vm.rotate(-1) }, next = { vm.rotate(1) },
+                    carousel = state.heroes.size > 1, index = state.heroIndex, count = state.heroes.size,
+                    portraitPhone = phonePortrait)
             }
         }) else null
         val recycled = scrollVariant.recycledRows

@@ -128,3 +128,8 @@ Evidence is outside the repository at `D:/workspace/niktv-playback-tests/`: `rec
 ## Phase 9 static hero artwork (2026-11-01)
 
 Phase 8 committed as `3036f1f4`. Added a separately selectable static hero image to Home 2 only. Warm tablet p95 median 15 ms control versus 16 ms with artwork; small sample, not a proven regression. No crossfade, rotation or focus-driven background. See [Phase 9 evidence and limits](home2-phase9-performance.md). Original screens and Fire TV untouched.
+
+
+## Phase 10 prepared artwork fade (2026-11-01)
+
+Phase 9 committed as `00742171`. Added a separately selectable, identity-scoped 300 ms fade-in after hero image readiness in Home 2. Same-APK tablet paging median p95 stayed 11 ms; scrolling was 15 ms versus 17 ms repeated control (small samples, not a proven speed improvement). No old/new two-image crossfade, rotation or focus-driven backgrounds. See [Phase 10 measurements and limitations](home2-phase10-performance.md). Original screens and Fire TV untouched.
