@@ -664,8 +664,9 @@ internal fun DiscoveryPreviewScreen(
         }
         val nativeRows = remember(visibleRails, scrollVariant) { visibleRails.map { row ->
             NativeDiscoveryRow(row.key, row.title, row.entries.map { entry -> NativeDiscoveryItem(
-                entry.key, entry.title, listOfNotNull(entry.displaySource?.label.takeIf { scrollVariant.sourceCaptions }, entry.subtitle.takeIf(String::isNotBlank)).joinToString(" · "),
-                entry.artwork, entry.open, entry.popup?.let { { nativePopup = entry; nativePopupOpen = true } }, entry.progress.takeIf { scrollVariant.progressIndicators }) } +
+                entry.key, entry.title, entry.subtitle,
+                entry.artwork, entry.open, entry.popup?.let { { nativePopup = entry; nativePopupOpen = true } }, entry.progress.takeIf { scrollVariant.progressIndicators },
+                source = entry.displaySource.takeIf { scrollVariant.sourceCaptions }) } +
                 if (recycled && (row.providerType != null || row.section != null)) listOf(NativeDiscoveryItem("${row.key}:all", "Search / All", row.title, onClick = {
                     row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
                         ?: row.section?.let(openSection)

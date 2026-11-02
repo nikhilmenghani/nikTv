@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.ViewCompat
@@ -54,7 +56,9 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     val displayedRows = remember(rows, hero != null) {
         if (hero != null) listOf(NativeDiscoveryRow(HERO_ROW, "", emptyList(), isHero = true)) + rows else rows
     }
-    key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing) {
+    val configuration = LocalConfiguration.current
+    key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing,
+        configuration.screenWidthDp, configuration.screenHeightDp, configuration.fontScale) {
     AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing) }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
             focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
@@ -69,7 +73,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
 
 private fun NativeDiscoveryItem.samePresentation(other: NativeDiscoveryItem) =
     id == other.id && title == other.title && subtitle == other.subtitle &&
-        artwork == other.artwork && progress == other.progress
+        artwork == other.artwork && progress == other.progress && source == other.source
 private val rowDiff = object : DiffUtil.ItemCallback<NativeDiscoveryRow>() {
     override fun areItemsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) = a.id == b.id
     override fun areContentsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) =
@@ -171,6 +175,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         }
     }
     private fun dp(n: Int) = (n * resources.displayMetrics.density + .5f).toInt()
+    private fun px(n: Float) = (n * resources.displayMetrics.density + .5f).toInt()
+    private val polishedCaptions = containedCaptions && !homeTileProportions
+    private val posterGeometry = resources.configuration.let { nativePosterGeometry(it.screenWidthDp.toFloat(), it.screenHeightDp.toFloat(), it.fontScale) }
     init {
         layoutManager = vertical; adapter = rowAdapter; itemAnimator = null
         recycledViewPool.setMaxRecycledViews(0, 4)
@@ -361,7 +368,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 addView(action, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(7) })
                 addView(title, LinearLayout.LayoutParams(0, -2, 1f))
             })
-            (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1, dp(if (homeTileProportions) 167 else 172 + (48 * resources.configuration.fontScale).toInt())))
+            (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1,
+                if (polishedCaptions) px(posterGeometry.railHeight) else dp(if (homeTileProportions) 167 else 172 + (48 * resources.configuration.fontScale).toInt())))
             horizontal.adapter = cards
             title.setOnFocusChangeListener { _, focused -> if (focused) { epoch++; pending = null; selected(rowId, "") } }
             title.setOnKeyListener { _, key, event ->
@@ -443,7 +451,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     private inner class CardHolder : ViewHolder(FrameLayout(context).apply {
         isFocusable = true; isFocusableInTouchMode = false
-        layoutParams = LayoutParams(dp(104), LayoutParams.MATCH_PARENT).apply { marginEnd = dp(10) }
+        layoutParams = LayoutParams(if (polishedCaptions) px(posterGeometry.width) else dp(104), LayoutParams.MATCH_PARENT).apply { marginEnd = dp(12) }
         setPadding(dp(4), dp(4), dp(4), dp(4)); isSoundEffectsEnabled = false
     }) {
         private var row = ""; private var identity = ""; private var imageJob: Job? = null
@@ -453,8 +461,20 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         private val progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 1000; progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(229,9,37))
         }
-        private val title = TextView(context).apply { textSize = if (homeTileProportions) 8.7f else 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; minLines = 2; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
-        private val subtitle = TextView(context).apply { textSize = if (homeTileProportions) 7.4f else 10f; setTextColor(Color.LTGRAY); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        private val title = TextView(context).apply {
+            textSize = if (polishedCaptions) 10f * posterGeometry.textScale else if (homeTileProportions) 8.7f else 12f
+            setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+            minLines = if (polishedCaptions) 1 else 2; maxLines = if (polishedCaptions) 6 else 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        private val subtitle = TextView(context).apply {
+            textSize = if (polishedCaptions) 8.5f * posterGeometry.textScale else if (homeTileProportions) 7.4f else 10f
+            setTextColor(Color.LTGRAY); maxLines = if (polishedCaptions) 4 else 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        private val source = TextView(context).apply {
+            textSize = 9f; typeface = Typeface.DEFAULT_BOLD; maxLines = 1
+            setPadding(dp(5), dp(3), dp(5), dp(3)); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
         init {
             // TV-only diagnostic: reuse the tile's rendered contents while the rail moves.
             // RecyclerView bounds holder/cache counts; detached layers are not drawn.
@@ -480,6 +500,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 }
                 poster.addView(caption, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { bottomMargin = dp(3) })
                 poster.addView(progress, FrameLayout.LayoutParams(-1, dp(3), Gravity.BOTTOM))
+                if (polishedCaptions) poster.addView(source, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { topMargin = dp(6); marginStart = dp(6) })
             }
             itemView.setOnClickListener { selected(row, identity); models[row]?.items?.firstOrNull { it.id == identity }?.onClick?.invoke() }
             itemView.setOnLongClickListener { selected(row, identity); models[row]?.items?.firstOrNull { it.id == identity }?.onLongClick?.let { it(); true } ?: false }
@@ -525,13 +546,23 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             if (replacement) { cancel(); itemView.scaleX = 1f; itemView.scaleY = 1f }
             row = rowId; identity = item.id; artwork = item.artwork; itemView.tag = "$row:$identity"
             frame(itemView.isFocused)
-            title.text = item.title; subtitle.text = item.subtitle; itemView.contentDescription = "${item.title}, ${item.subtitle}"
+            title.text = item.title
+            subtitle.text = if (polishedCaptions) item.subtitle else listOfNotNull(item.source?.label, item.subtitle.takeIf(String::isNotBlank)).joinToString(" · ")
+            subtitle.visibility = if (subtitle.text.isBlank()) View.GONE else View.VISIBLE
+            source.text = item.source?.label; source.visibility = if (item.source == null) View.GONE else View.VISIBLE
+            item.source?.let { tag ->
+                source.setTextColor(tag.foreground.toArgb())
+                source.background = GradientDrawable().apply { cornerRadius = dp(5).toFloat(); setColor(tag.background.toArgb()); setStroke(dp(1), tag.foreground.copy(alpha = .45f).toArgb()) }
+            }
+            itemView.contentDescription = listOfNotNull(item.title, item.source?.label, item.subtitle.takeIf(String::isNotBlank)).joinToString(", ")
             progress.visibility = if (item.progress == null) View.INVISIBLE else View.VISIBLE
             progress.progress = ((item.progress ?: 0f).coerceIn(0f,1f) * 1000).toInt()
             if (!replacement) return
             item.artwork?.let { url -> imageJob = work.launch { images.withPermit {
                 try {
-                    val result = withContext(Dispatchers.IO) { context.imageLoader.execute(ImageRequest.Builder(context).data(thumbnailArtworkUrl(url, dp(104))).size(dp(104),dp(147)).build()) }
+                    val w = if (polishedCaptions) px(posterGeometry.width - 8f) else dp(104)
+                    val h = if (polishedCaptions) px(posterGeometry.posterHeight) else dp(147)
+                    val result = withContext(Dispatchers.IO) { context.imageLoader.execute(ImageRequest.Builder(context).data(thumbnailArtworkUrl(url, w)).size(w,h).build()) }
                     ensureActive(); if (result is SuccessResult) image.setImageDrawable(result.image.asDrawable(resources))
                 } catch (c: CancellationException) { throw c } catch (_: Exception) { }
             } } }

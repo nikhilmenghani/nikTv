@@ -37,6 +37,7 @@ import kotlinx.coroutines.sync.withPermit
 internal data class NativeDiscoveryItem(
     val id: String, val title: String, val subtitle: String = "", val artwork: String? = null,
     val onClick: () -> Unit, val onLongClick: (() -> Unit)? = null, val progress: Float? = null,
+    val source: DiscoveryTileSource? = null,
 )
 internal data class NativeDiscoveryRow(val id: String, val title: String, val items: List<NativeDiscoveryItem>, val isHero: Boolean = false,
     val actionLabel: String? = null, val action: (() -> Unit)? = null)
@@ -176,7 +177,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
 
     fun render(incoming: List<NativeDiscoveryRow>) {
         currentRows = incoming.take(4).map { it.copy(items = it.items.take(8)) }
-        val nextSignature = currentRows.flatMap { row -> listOf(row.id, row.title) + row.items.flatMap { listOf(it.id, it.title, it.subtitle, it.artwork.orEmpty()) } }
+        val nextSignature = currentRows.flatMap { row -> listOf(row.id, row.title) + row.items.flatMap { listOf(it.id, it.title, it.subtitle, it.source?.label.orEmpty(), it.artwork.orEmpty()) } }
         if (signature == nextSignature) return
         signature = nextSignature
         val revision = ++renderRevision
@@ -296,7 +297,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
                 card.addView(TextView(context).apply {
-                    text = item.subtitle; textSize = 10f; setTextColor(Color.LTGRAY)
+                    text = listOfNotNull(item.source?.label, item.subtitle.takeIf(String::isNotBlank)).joinToString(" · "); textSize = 10f; setTextColor(Color.LTGRAY)
                     maxLines = 1; minLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                     setPadding(dp(3), dp(2), dp(3), dp(4)); isFocusable = false
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO

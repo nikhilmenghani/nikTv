@@ -28,6 +28,48 @@ class RecycledDiscoveryDeviceTest {
     @Test fun heroScrollsWithFeedAndKeepsHeaderAndDetailReturn() = verify(true, true, true)
     @Test fun exactNativeHeroBoundsPreserveNavigationAndReturn() = verify(true, true, true, true)
     @Test fun heldRemoteActivationDoesNotPlayOrLeakRelease() = verify(true, true, exerciseHold = true)
+    @Test fun homeCaptionsFitLongTitlesAndLargerFonts() {
+        val i = InstrumentationRegistry.getInstrumentation()
+        val c = i.targetContext
+        check(c.packageName.endsWith(".regression"))
+        val host = i.startActivitySync(Intent(c, PlaybackFixtureHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val title = "Taarak Mehta Ka Ooltah Chashmah"
+        val subtitle = "Season 49 · Episode 4838 · 22 min left"
+        try {
+            for (scale in listOf(1f, 1.6f)) {
+                val configuration = android.content.res.Configuration(c.resources.configuration).apply { fontScale = scale }
+                val context = host.createConfigurationContext(configuration)
+                i.runOnMainSync { host.setContent { MaterialTheme {
+                    CompositionLocalProvider(androidx.compose.ui.platform.LocalContext provides context,
+                        androidx.compose.ui.platform.LocalConfiguration provides configuration) {
+                        RecycledDiscoveryRows(listOf(NativeDiscoveryRow("captions", "Captions", listOf(
+                            NativeDiscoveryItem("long", title, subtitle, onClick = {}, source = DiscoveryTileSource.IPTV)))),
+                            Modifier.fillMaxSize(), remember { FocusRequester() }, {}, containedCaptions = true)
+                    }
+                } } }
+                val end = SystemClock.uptimeMillis() + 6000
+                var found = false
+                while (!found && SystemClock.uptimeMillis() < end) {
+                    i.runOnMainSync {
+                        val texts = mutableListOf<android.widget.TextView>()
+                        fun collect(view: View) {
+                            if (view is android.widget.TextView && view.text.toString() in listOf(title, subtitle)) texts += view
+                            if (view is ViewGroup) for (n in 0 until view.childCount) collect(view.getChildAt(n))
+                        }
+                        collect(host.window.decorView)
+                        found = texts.size == 2 && texts.all { it.layout != null && it.height > 0 }
+                        if (found) texts.forEach { text ->
+                            val rect = Rect()
+                            assertTrue("Full caption visible at font scale $scale", text.getGlobalVisibleRect(rect) && rect.height() == text.height)
+                            assertEquals("No caption ellipsis at font scale $scale", 0, text.layout.getEllipsisCount(text.layout.lineCount - 1))
+                        }
+                    }
+                    if (!found) Thread.sleep(30)
+                }
+                assertTrue("Caption laid out at scale $scale", found)
+            }
+        } finally { i.runOnMainSync { host.finish() } }
+    }
     @Test fun rowActionsRemoveNeighborsWithoutLosingRemoteFocus() {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
