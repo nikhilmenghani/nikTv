@@ -47,7 +47,7 @@ private class RecycledPosition(var row: String = "", var item: String = "") {
 internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Modifier,
     focusEntry: FocusRequester, up: () -> Unit, visible: (String) -> Unit = {}, animateFocus: Boolean = true,
     containedCaptions: Boolean = false, cardShadows: Boolean = false, homeTileProportions: Boolean = false,
-    hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false) {
+    hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false, focusRestorer: NativeDiscoveryFocusRestorer? = null) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -56,7 +56,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     }
     key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing) {
     AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing) }, modifier = modifier.focusRequester(focusEntry),
-        onRelease = { it.release() }, update = { view ->
+        onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
+            focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
             view.animateFocus = animateFocus
             view.restoreSelection = restoreSelection
             view.heroContent = hero; view.heroFocusEntry = heroFocusEntry
@@ -104,7 +105,12 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         onHeroActivity?.invoke(HeroActivity(false, false, false, false, false, false))
         super.onDetachedFromWindow()
     }
-    override fun onWindowFocusChanged(hasWindowFocus: Boolean) { super.onWindowFocusChanged(hasWindowFocus); reportHeroActivity() }
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (!hasWindowFocus) for (index in 0 until childCount) (getChildViewHolder(getChildAt(index)) as? RowHolder)?.cancelRemoteInput()
+        if (hasWindowFocus && hasFocus()) pending?.let { reveal(it.first, it.second) }
+        reportHeroActivity()
+    }
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); reportHeroActivity() }
     override fun onScrolled(dx: Int, dy: Int) { super.onScrolled(dx, dy); reportHeroActivity() }
     override fun onScrollStateChanged(state: Int) { super.onScrollStateChanged(state); reportHeroActivity() }
@@ -189,6 +195,14 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         val target = if (heroContent != null && !restoreSelection) HERO_ROW to "play" else
             pending ?: row?.let { it.id to (position.columns[it.id] ?: if (it.isHero) "play" else it.items.first().id) }
         target?.let {
+            // Compose hero focus cannot be committed from Android's descendant
+            // search: the bridge would subsequently focus this outer anchor and
+            // erase it. Complete that handoff on the next frame instead.
+            if (it.first == HERO_ROW) {
+                pending = it
+                postOnAnimation { if (isAttachedToWindow && hasWindowFocus() && hasFocus()) reveal(it.first, it.second) }
+                return false
+            }
             val index = rowAdapter.currentList.indexOfFirst { row -> row.id == it.first }
             val holder = findViewHolderForAdapterPosition(index) as? RowHolder
             // Returning false after a successful child request would focus the
@@ -225,6 +239,18 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             else pending = null
         } }
         retry(0)
+    }
+    fun requestSavedFocus(): Boolean {
+        if (!isAttachedToWindow || !hasWindowFocus()) return false
+        val row = models[position.row] ?: rowAdapter.currentList.firstOrNull { it.items.isNotEmpty() } ?: return false
+        val item = position.item.takeIf { position.row == row.id } ?: row.items.firstOrNull()?.id ?: return false
+        val index = rowAdapter.currentList.indexOfFirst { it.id == row.id }
+        val holder = findViewHolderForAdapterPosition(index) as? RowHolder
+        if (holder?.focus(item, fromTouch = true) == true) return true
+        restoreSelection = true
+        requestFocusFromTouch()
+        reveal(row.id, item)
+        return false
     }
     fun leave(host: View, action: () -> Unit) {
         epoch++; pending = null
@@ -336,13 +362,17 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 }
             }
         }
+        fun cancelRemoteInput() {
+            for (index in 0 until horizontal.childCount) (horizontal.getChildViewHolder(horizontal.getChildAt(index)) as? CardHolder)?.cancelRemoteInput()
+        }
         fun stopMotion() {
+            cancelRemoteInput()
             if (onHeroActivity != null) { scrollingChildren.remove(horizontal); reportHeroActivity() }
             for (index in 0 until horizontal.childCount) horizontal.getChildAt(index).apply {
                 animate().cancel(); scaleX = 1f; scaleY = 1f
             }
         }
-        fun focus(id: String, scroll: Boolean = true): Boolean {
+        fun focus(id: String, scroll: Boolean = true, fromTouch: Boolean = false): Boolean {
             if (hero) return runCatching { heroFocusEntry(id) }.getOrDefault(false).also { focused ->
                 if (focused) itemView.requestRectangleOnScreen(Rect(0, 0, itemView.width, itemView.height), false)
             }
@@ -351,7 +381,22 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             val holder = horizontal.findViewHolderForAdapterPosition(index) as? CardHolder
             if (holder == null) { if (scroll) horizontal.scrollToPosition(index); return false }
             if (pending?.first == rowId) pending = rowId to cards.currentList[index].id
+            // A holder can be attached but only a few pixels visible after a fast
+            // reversal. Resolve its horizontal visibility locally before focus;
+            // a nested requestRectangleOnScreen alone can be rejected mid-reveal.
+            horizontal.stopScroll()
+            val card = holder.itemView
+            val start = horizontal.paddingLeft + dp(3)
+            val end = horizontal.width - horizontal.paddingRight - dp(3)
+            val dx = when {
+                card.left < start -> card.left - start
+                card.right > end -> card.right - end
+                else -> 0
+            }
+            if (dx != 0 && horizontal.canScrollHorizontally(if (dx > 0) 1 else -1)) horizontal.scrollBy(dx, 0)
+            if (fromTouch) holder.itemView.isFocusableInTouchMode = true
             val focused = holder.itemView.requestFocus()
+            if (fromTouch && !focused) holder.itemView.isFocusableInTouchMode = false
             if (focused) holder.itemView.requestRectangleOnScreen(
                 Rect(0, 0, holder.itemView.width, holder.itemView.height), false)
             return focused
@@ -364,6 +409,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }) {
         private var row = ""; private var identity = ""; private var imageJob: Job? = null
         private var artwork: String? = null
+        private val activation = NativeTileActivation()
         private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         private val progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 1000; progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(229,9,37))
@@ -399,13 +445,24 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             itemView.setOnClickListener { selected(row, identity); models[row]?.items?.firstOrNull { it.id == identity }?.onClick?.invoke() }
             itemView.setOnLongClickListener { selected(row, identity); models[row]?.items?.firstOrNull { it.id == identity }?.onLongClick?.let { it(); true } ?: false }
             itemView.setOnFocusChangeListener { _, focused ->
+                if (!focused) { activation.cancel(); itemView.isFocusableInTouchMode = false }
                 frame(focused); itemView.animate().cancel()
                 if (motion && animateFocus) itemView.animate().scaleX(if (focused) 1.025f else 1f).scaleY(if (focused) 1.025f else 1f).setDuration(320).withLayer().start()
                 else { itemView.scaleX = 1f; itemView.scaleY = 1f }
                 if (focused && (pending == null || pending == (row to identity))) { epoch++; pending = null; selected(row, identity) }
             }
             itemView.setOnKeyListener { _, key, e ->
-                if (e.action != KeyEvent.ACTION_DOWN) false else when (key) {
+                if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER || key == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                    when (e.action) {
+                        KeyEvent.ACTION_DOWN -> activation.down(key, e.eventTime, e.isLongPress)
+                        KeyEvent.ACTION_UP -> when (activation.up(key, e.eventTime, e.isCanceled, ViewConfiguration.getLongPressTimeout().toLong())) {
+                            NativeTileActivation.Action.CLICK -> itemView.performClick()
+                            NativeTileActivation.Action.LONG_CLICK -> if (!itemView.performLongClick()) itemView.performClick()
+                            NativeTileActivation.Action.NONE -> Unit
+                        }
+                    }
+                    true
+                } else if (e.action != KeyEvent.ACTION_DOWN) false else when (key) {
                     KeyEvent.KEYCODE_DPAD_UP -> { adjacent(row, -1); true }
                     KeyEvent.KEYCODE_DPAD_DOWN -> { adjacent(row, 1); true }
                     KeyEvent.KEYCODE_DPAD_LEFT -> { horizontal(row, identity, -1); true }
@@ -421,7 +478,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 setStroke(dp(if (focused) 2 else 1), if (focused) Color.WHITE else if (cardShadows) Color.rgb(43,48,58) else Color.rgb(49,57,70))
             }
         }
-        fun cancel() { imageJob?.cancel(); imageJob = null; itemView.animate().cancel(); image.setImageDrawable(null); row = ""; identity = ""; artwork = null }
+        fun cancelRemoteInput() { activation.cancel() }
+        fun cancel() { activation.cancel(); imageJob?.cancel(); imageJob = null; itemView.animate().cancel(); image.setImageDrawable(null); row = ""; identity = ""; artwork = null }
         fun bind(rowId: String, item: NativeDiscoveryItem) {
             val replacement = row != rowId || identity != item.id || artwork != item.artwork
             if (replacement) { cancel(); itemView.scaleX = 1f; itemView.scaleY = 1f }

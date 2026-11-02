@@ -27,7 +27,8 @@ class RecycledDiscoveryDeviceTest {
     @Test fun styledFeedRetainsFocusAndFullyVisibleReturn() = verify(true, true)
     @Test fun heroScrollsWithFeedAndKeepsHeaderAndDetailReturn() = verify(true, true, true)
     @Test fun exactNativeHeroBoundsPreserveNavigationAndReturn() = verify(true, true, true, true)
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false) {
+    @Test fun heldRemoteActivationDoesNotPlayOrLeakRelease() = verify(true, true, exerciseHold = true)
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -60,8 +61,10 @@ class RecycledDiscoveryDeviceTest {
         val headerFocused = java.util.concurrent.atomic.AtomicBoolean(false)
         val rowsShown = mutableStateOf(true)
         val restoreSelection = mutableStateOf(true)
+        val nativeRestorer = NativeDiscoveryFocusRestorer()
+        val holds = java.util.concurrent.atomic.AtomicInteger()
         val rows = (0 until 80).map { r -> NativeDiscoveryRow("r$r", "Row $r", (0 until 40).map { n ->
-            NativeDiscoveryItem("i$n", "Item $r $n", onClick = { rowsShown.value = false }) }) }
+            NativeDiscoveryItem("i$n", "Item $r $n", onClick = { rowsShown.value = false }, onLongClick = { holds.incrementAndGet() }) }) }
         try {
             i.setInTouchMode(false)
             i.runOnMainSync { host.setContent { MaterialTheme {
@@ -72,7 +75,7 @@ class RecycledDiscoveryDeviceTest {
                     val saved = rememberSaveableStateHolder()
                     if (rowsShown.value) saved.SaveableStateProvider("feed") {
                         RecycledDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, { header.requestFocus() },
-                            containedCaptions = containedCaptions, cardShadows = cardShadows,
+                            containedCaptions = containedCaptions, cardShadows = cardShadows, focusRestorer = nativeRestorer,
                             restoreSelection = restoreSelection.value,
                             heroHeightPx = if (fixedHero) (200 * c.resources.displayMetrics.density).toInt() else null,
                             heroActivity = if (withHero) ({ activity.set(it) }) else null,
@@ -93,7 +96,7 @@ class RecycledDiscoveryDeviceTest {
                     } else Text("Detail")
                 }
             } } }
-            await("Initial layout") { host.window.decorView.isLaidOut }
+            await("Active initial layout") { host.window.decorView.isLaidOut && host.window.decorView.hasWindowFocus() }
             i.runOnMainSync { entry.requestFocus() }
             if (withHero) {
                 await("Header Down enters hero") { heroFocused.get() }
@@ -101,6 +104,30 @@ class RecycledDiscoveryDeviceTest {
                 i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             }
             await("First card") { focus() == "r0:i0" }
+            if (exerciseHold) {
+                i.setInTouchMode(true)
+                var restored = false
+                i.runOnMainSync { restored = nativeRestorer.restore() }
+                assertTrue("Touch-to-remote restoration requests actual card focus", restored)
+                await("Native restoration survives touch mode") { focus() == "r0:i0" }
+                val down = SystemClock.uptimeMillis()
+                i.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout().toLong() + 100)
+                i.runOnMainSync { assertEquals("No popup before release", 0, holds.get()); assertTrue(rowsShown.value) }
+                val up = SystemClock.uptimeMillis()
+                i.sendKeySync(KeyEvent(down, up, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                await("One long action on release") { holds.get() == 1 }
+                i.sendKeySync(KeyEvent(down, up + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                i.runOnMainSync { assertTrue("Release must not also click", rowsShown.value) }
+                val canceled = SystemClock.uptimeMillis()
+                i.sendKeySync(KeyEvent(canceled, canceled, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Move cancels old press") { focus() == "r1:i0" }
+                i.sendKeySync(KeyEvent(canceled, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                i.runOnMainSync { assertTrue(rowsShown.value); assertEquals(1, holds.get()) }
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Return after cancel") { focus() == "r0:i0" }
+            }
             for (n in 1..15) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); await("Horizontal $n") { focus() == "r0:i$n" } }
             for (r in 1..12) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); await("Vertical $r") { focus() == "r$r:i0" } }
             if (withHero) await("Offscreen hero blocks rotation") { activity.get()?.visible == false }

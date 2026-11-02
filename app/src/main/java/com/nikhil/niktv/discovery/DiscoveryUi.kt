@@ -543,12 +543,34 @@ internal fun DiscoveryPreviewScreen(
         } },
         confirmButton = { NikTvSecondaryActionButton({ experimentSettings = false }) { Text("Close") } })
     if (experiment && scrollVariant.nativeRows && state.detail == null) {
-        var nativePopup by remember { mutableStateOf<RailEntry?>(null) }
+        var nativePopup by remember(profile, surface) { mutableStateOf<RailEntry?>(null) }
+        var nativePopupOpen by remember(profile, surface) { mutableStateOf(false) }
+        fun ownsNativePopupRoute() = focusRouteOwner.owns(focusRouteToken) &&
+            vm.state.value.ownsFocusRoute(profile, surface, "landing")
+        val nativeFocusRestorer = remember(profile, surface) { NativeDiscoveryFocusRestorer() }
+        val nativeRestoreJobs = remember(profile, surface) { arrayOfNulls<Job>(1) }
+        DisposableEffect(nativeRestoreJobs) { onDispose { nativeRestoreJobs[0]?.cancel() } }
+        val restoreNativePopupFocus: () -> Boolean = {
+            val restored = ownsNativePopupRoute() && hostView.hasWindowFocus() &&
+                nativeFocusRestorer.restore()
+            if (!restored && nativeRestoreJobs[0]?.isActive != true) nativeRestoreJobs[0] = localScope.launch {
+                repeat(12) {
+                    withFrameNanos { }
+                    if (!ownsNativePopupRoute()) return@launch
+                    if (hostView.hasWindowFocus() && nativeFocusRestorer.restore()) return@launch
+                }
+            }
+            restored
+        }
+        val dismissNativePopup: () -> Unit = {
+            nativePopupOpen = false
+            localScope.launch { withFrameNanos { }; restoreNativePopupFocus() }
+        }
         var restoreNativeSelection by remember(app.discoveryNavigationId) { mutableStateOf(nativeNavigationId == app.discoveryNavigationId) }
         // Observe only eligibility: scrolling/focus detail must not recompose the full feed.
         var nativeHeroMayRotate by remember(profile, surface) { mutableStateOf(false) }
         val mayRotateHero = nativeHeroMayRotate && presentationActive &&
-            !(menu || configure || experimentSettings || nativePopup != null || app.categoryManagerOpen || categoryPopup || actor != null)
+            !(menu || configure || experimentSettings || nativePopupOpen || app.categoryManagerOpen || categoryPopup || actor != null)
         LaunchedEffect(scrollVariant.heroAutoRotate, mayRotateHero, state.hero?.key, state.heroes.size, reduceMotion) {
             while (scrollVariant.heroAutoRotate && !reduceMotion && mayRotateHero && state.heroes.size > 1) {
                 delay(8_000)
@@ -634,7 +656,7 @@ internal fun DiscoveryPreviewScreen(
         val nativeRows = remember(visibleRails, scrollVariant) { visibleRails.map { row ->
             NativeDiscoveryRow(row.key, row.title, row.entries.map { entry -> NativeDiscoveryItem(
                 entry.key, entry.title, listOfNotNull(entry.displaySource?.label.takeIf { scrollVariant.sourceCaptions }, entry.subtitle.takeIf(String::isNotBlank)).joinToString(" · "),
-                entry.artwork, entry.open, entry.popup?.let { { nativePopup = entry } }, entry.progress.takeIf { scrollVariant.progressIndicators }) } +
+                entry.artwork, entry.open, entry.popup?.let { { nativePopup = entry; nativePopupOpen = true } }, entry.progress.takeIf { scrollVariant.progressIndicators }) } +
                 if (recycled && (row.providerType != null || row.section != null)) listOf(NativeDiscoveryItem("${row.key}:all", "Search / All", row.title, onClick = {
                     row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
                         ?: row.section?.let(openSection)
@@ -667,7 +689,7 @@ internal fun DiscoveryPreviewScreen(
                     if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
                         .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
                         up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = discoveryNativeFocusMotion(scrollVariant, television),
-                        cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television),
+                        cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
                         heroHeightPx = if (scrollVariant.nativeHeroBounds && landscape && !phone) with(LocalDensity.current) {
                             trialHeroFrameHeight((configuration.screenHeightDp * .45f).coerceIn(200f, 300f), fontScale).dp.roundToPx()
@@ -680,7 +702,7 @@ internal fun DiscoveryPreviewScreen(
                         up = { runCatching { tabRequester.requestFocus() } }, animateFocus = scrollVariant.animateNativeFocus)
                 }
             }
-            nativePopup?.let { entry -> entry.popup?.invoke(true, { nativePopup = null }, { true }) }
+            nativePopup?.let { entry -> entry.popup?.invoke(nativePopupOpen, dismissNativePopup, restoreNativePopupFocus) }
         }
     } else {
     // TV pivot scrolling must not compete with explicit vertical row alignment.
