@@ -89,3 +89,7 @@ internal fun discoveryNativeFocusMotion(variant: DiscoveryScrollVariant, televis
 
 internal fun discoveryCacheTileDrawing(variant: DiscoveryScrollVariant, television: Boolean): Boolean =
     television && variant.tvCachedTiles
+
+/** Hero-only updates must not submit an unchanged recycled feed again. */
+internal fun discoveryIsolateHero(experiment: Boolean, variant: DiscoveryScrollVariant): Boolean =
+    experiment && (variant.isolateHero || (variant.recycledRows && variant.heroLayout))

@@ -200,11 +200,12 @@ internal fun DiscoveryPreviewScreen(
         providerLifecycle.addObserver(observer)
         onDispose { providerLifecycle.removeObserver(observer) }
     }
-    val feedState = remember(vm, experiment, scrollVariant.isolateHero) {
-        vm.state.map { it.recycledFeedState(experiment && scrollVariant.isolateHero) }.distinctUntilChanged()
+    val isolateNativeHero = discoveryIsolateHero(experiment, scrollVariant)
+    val feedState = remember(vm, isolateNativeHero) {
+        vm.state.map { it.recycledFeedState(isolateNativeHero) }.distinctUntilChanged()
     }
-    val initialFeedState = remember(vm, profile, surface, scrollVariant.isolateHero) { vm.recycledFeedSnapshot() }
-    val loadedState by if (experiment && scrollVariant.isolateHero)
+    val initialFeedState = remember(vm, profile, surface, isolateNativeHero) { vm.recycledFeedSnapshot() }
+    val loadedState by if (isolateNativeHero)
         feedState.collectAsStateWithLifecycle(initialValue = initialFeedState)
     else vm.state.collectAsStateWithLifecycle()
     val state = loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)
@@ -610,7 +611,7 @@ internal fun DiscoveryPreviewScreen(
             val heroLogo = discoveryTrialHeroLogo(heroCard, heroState.heroPresentation, optionalHeroMetadata && scrollVariant.heroTitleArtwork)
             val baseHeroHeight = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f)
             Box(Modifier.fillMaxWidth().then(
-                if (scrollVariant.stableHeroBounds && landscape && !phone)
+                if (landscape && !phone)
                     Modifier.height(trialHeroFrameHeight(baseHeroHeight, LocalDensity.current.fontScale).dp)
                 else Modifier)) {
                 if (scrollVariant.heroArtwork) {
@@ -703,7 +704,7 @@ internal fun DiscoveryPreviewScreen(
                         up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = discoveryNativeFocusMotion(scrollVariant, television),
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
-                        heroHeightPx = if (scrollVariant.nativeHeroBounds && landscape && !phone) with(LocalDensity.current) {
+                        heroHeightPx = if (scrollVariant.heroLayout && landscape && !phone) with(LocalDensity.current) {
                             trialHeroFrameHeight((configuration.screenHeightDp * .45f).coerceIn(200f, 300f), fontScale).dp.roundToPx()
                         } else null,
                         hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
