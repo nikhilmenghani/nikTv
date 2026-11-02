@@ -123,3 +123,8 @@ Evidence is outside the repository at `D:/workspace/niktv-playback-tests/`: `rec
 4. Test full collection Search / All, long-press action restoration, recommendation dismissal, category changes, actual movie/series playback returns, touch-to-D-pad re-entry and accessibility exposure.
 5. Add longer memory/thermal runs and actual input-to-visible-focus measurements. Do not infer either from frame p95 or attached views.
 6. Keep all experiments in Home 2. Do not migrate original Home, Movies or Series until the user approves a tested result. Skeleton loading remains deferred by the user.
+
+
+## Phase 9 static hero artwork (2026-11-01)
+
+Phase 8 committed as `3036f1f4`. Added a separately selectable static hero image to Home 2 only. Warm tablet p95 median 15 ms control versus 16 ms with artwork; small sample, not a proven regression. No crossfade, rotation or focus-driven background. See [Phase 9 evidence and limits](home2-phase9-performance.md). Original screens and Fire TV untouched.

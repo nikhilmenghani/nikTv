@@ -16,13 +16,13 @@ class DiscoveryScrollExperimentTest {
             "rows" to v.rowLimit, "cards" to v.tileLimit, "sources" to v.sourceCaptions,
             "progress" to v.progressIndicators, "motion" to v.animateNativeFocus,
             "static" to v.staticArtwork, "posters" to v.posterArtwork, "recycled" to v.recycledRows,
-            "captions" to v.containedCaptions, "shadows" to v.cardShadows, "hero" to v.heroLayout)
+            "captions" to v.containedCaptions, "shadows" to v.cardShadows, "hero" to v.heroLayout, "artwork" to v.heroArtwork)
         val baseline = recycledDiscoveryStages.first()
         assertEquals(4, baseline.rowLimit)
         assertEquals(8, baseline.tileLimit)
         assertTrue(baseline.staticArtwork && baseline.posterArtwork && baseline.recycledRows)
         assertFalse(baseline.sourceCaptions || baseline.progressIndicators || baseline.animateNativeFocus)
-        val expectedChanges = listOf("cards", "rows", "sources", "progress", "motion", "captions", "shadows", "hero")
+        val expectedChanges = listOf("cards", "rows", "sources", "progress", "motion", "captions", "shadows", "hero", "artwork")
         recycledDiscoveryStages.zipWithNext().forEachIndexed { index, (before, after) ->
             val a = features(before); val b = features(after)
             assertEquals(setOf(expectedChanges[index]), a.keys.filter { a[it] != b[it] }.toSet())

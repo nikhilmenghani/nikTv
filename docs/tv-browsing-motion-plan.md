@@ -837,3 +837,8 @@ Added Home 2-only contained captions/gradient (7A), then border/shadow finish (7
 ### 2026-11-01 — commit and Phase 8
 
 Committed the isolated baseline/styling work as `0f763045`, then added a Home 2-only scrolling hero with existing text/actions through a recycled Compose header. Hero images and automatic rotation remain disabled. Final Wio tablet Dev groups measured 7B median p95 17 ms versus Stage 8 18 ms (roughly +1 ms; warm repeats about +2 ms), with more deadline misses. An earlier 29 ms first pass remains recorded; cold-entry cost is not resolved. No Fire TV commands or original Home changes. [Phase 8 implementation, costs and qualifications](home2-phase8-performance.md).
+
+
+## Phase 9 static hero artwork (2026-11-01)
+
+Phase 8 committed as `3036f1f4`. Added a separately selectable static hero image to Home 2 only. Warm tablet p95 median 15 ms control versus 16 ms with artwork; small sample, not a proven regression. No crossfade, rotation or focus-driven background. See [Phase 9 evidence and limits](home2-phase9-performance.md). Original screens and Fire TV untouched.
