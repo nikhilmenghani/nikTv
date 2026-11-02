@@ -530,6 +530,15 @@ internal fun DiscoveryPreviewScreen(
         val heroPlayRequester = remember(profile, surface) { FocusRequester() }
         val heroInfoRequester = remember(profile, surface) { FocusRequester() }
         val heroCard = state.hero
+        // Trial-only: defer optional public metadata; never enable focused/provider presentation.
+        LaunchedEffect(scrollVariant.heroTitleArtwork, heroCard?.key, presentationActive) {
+            if (scrollVariant.heroTitleArtwork && presentationActive) {
+                delay(200)
+                vm.prepareHero()
+            } else vm.pauseHeroMetadata()
+        }
+        DisposableEffect(vm) { onDispose { vm.pauseHeroMetadata() } }
+        val heroLogo = discoveryTrialHeroLogo(heroCard, state.heroPresentation, scrollVariant.heroTitleArtwork)
         val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout) ({ focused, down, up ->
             Box(Modifier.fillMaxWidth()) {
                 if (scrollVariant.heroArtwork) {
@@ -551,7 +560,7 @@ internal fun DiscoveryPreviewScreen(
                             onSuccess = { artworkReady = true }, onError = { artworkReady = false })
                     }
                 }
-                DiscoveryHero(heroCard?.copy(backdrop = null, poster = null, titleLogo = null), rank = null,
+                DiscoveryHero(heroCard?.copy(backdrop = null, poster = null, titleLogo = heroLogo), rank = null,
                     height = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f).dp,
                     landscape = landscape, compact = true, detail = false,
                     loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,

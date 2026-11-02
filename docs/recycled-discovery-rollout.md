@@ -133,3 +133,8 @@ Phase 8 committed as `3036f1f4`. Added a separately selectable static hero image
 ## Phase 10 prepared artwork fade (2026-11-01)
 
 Phase 9 committed as `00742171`. Added a separately selectable, identity-scoped 300 ms fade-in after hero image readiness in Home 2. Same-APK tablet paging median p95 stayed 11 ms; scrolling was 15 ms versus 17 ms repeated control (small samples, not a proven speed improvement). No old/new two-image crossfade, rotation or focus-driven backgrounds. See [Phase 10 measurements and limitations](home2-phase10-performance.md). Original screens and Fire TV untouched.
+
+
+## Phase 11 hero title artwork (2026-11-01)
+
+Phase 10 committed as `a6730b87`. Added optional cached title artwork only in Home 2, with text fallback, a 200 ms selection delay and existing metadata generation guards. Warm tablet D-pad scrolling median p95 stayed 15 ms; touch was 16 to 17 ms with more missed deadlines, so additional cost is not ruled out. 200 targeted tests passed; 22 existing lint errors remain. See [Phase 11 measurements and limitations](home2-phase11-performance.md). Original Home and Fire TV untouched.

@@ -14,7 +14,7 @@ internal val LocalDiscoveryExperimentSettings = staticCompositionLocalOf<() -> U
 internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int = Int.MAX_VALUE,
     val tileLimit: Int = 30, val staticArtwork: Boolean = false, val simpleFocus: Boolean = false, val posterArtwork: Boolean = true, val minimalReveal: Boolean = false, val wideCards: Boolean = false, val nativeRows: Boolean = false, val animateNativeFocus: Boolean = false,
     val recycledRows: Boolean = false, val sourceCaptions: Boolean = true, val progressIndicators: Boolean = true,
-    val containedCaptions: Boolean = false, val cardShadows: Boolean = false, val heroLayout: Boolean = false, val heroArtwork: Boolean = false, val heroArtworkFade: Boolean = false) {
+    val containedCaptions: Boolean = false, val cardShadows: Boolean = false, val heroLayout: Boolean = false, val heroArtwork: Boolean = false, val heroArtworkFade: Boolean = false, val heroTitleArtwork: Boolean = false) {
     CONTROL("Control · same as Home"),
     FEWER_ROWS("4 rows · original tiles", rowLimit = 4),
     FEWER_TILES("8 tiles per row", tileLimit = 8),
@@ -35,6 +35,7 @@ internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int 
     RECYCLED_HERO("Stage 8 · hero layout and actions", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true),
     RECYCLED_HERO_ARTWORK("Stage 9 · static hero artwork", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true),
     RECYCLED_HERO_FADE("Stage 10 · prepared artwork fade", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true),
+    RECYCLED_HERO_TITLE("Stage 11 · hero title artwork", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true),
     TEXT_ONLY("Text tiles · no artwork", staticArtwork = true, simpleFocus = true, posterArtwork = false),
     LEAN("Lean · 4 rows, 8 tiles, static header", rowLimit = 4, tileLimit = 8, staticArtwork = true, simpleFocus = true, minimalReveal = true),
 }
@@ -46,7 +47,7 @@ internal fun discoveryVariantForRoute(experiment: Boolean, selected: DiscoverySc
 internal val recycledDiscoveryStages = listOf(DiscoveryScrollVariant.RECYCLED_BASELINE,
     DiscoveryScrollVariant.RECYCLED_MORE_CARDS, DiscoveryScrollVariant.RECYCLED_MORE_ROWS,
     DiscoveryScrollVariant.RECYCLED_SOURCES, DiscoveryScrollVariant.RECYCLED_PROGRESS, DiscoveryScrollVariant.RECYCLED_ROWS,
-    DiscoveryScrollVariant.RECYCLED_CAPTIONS, DiscoveryScrollVariant.RECYCLED_STYLING, DiscoveryScrollVariant.RECYCLED_HERO, DiscoveryScrollVariant.RECYCLED_HERO_ARTWORK, DiscoveryScrollVariant.RECYCLED_HERO_FADE)
+    DiscoveryScrollVariant.RECYCLED_CAPTIONS, DiscoveryScrollVariant.RECYCLED_STYLING, DiscoveryScrollVariant.RECYCLED_HERO, DiscoveryScrollVariant.RECYCLED_HERO_ARTWORK, DiscoveryScrollVariant.RECYCLED_HERO_FADE, DiscoveryScrollVariant.RECYCLED_HERO_TITLE)
 
 /** Bound only the trial preview's requests; callers retain the full selection for search/collections. */
 internal fun discoveryTrialProviderScope(categories: List<com.nikhil.niktv.model.Category>, rowLimit: Int): List<com.nikhil.niktv.model.Category> =
@@ -56,3 +57,9 @@ internal fun discoveryRecycledProviderScope(categories: List<com.nikhil.niktv.mo
     val index = categories.indexOfFirst { it.id == anchor }.coerceAtLeast(0)
     return categories.drop((index - 1).coerceAtLeast(0)).take(6)
 }
+
+/** Late metadata may supply a logo only for the selected hero, never another title. */
+internal fun discoveryTrialHeroLogo(card: DiscoveryCard?, prepared: DiscoveryCard?, enabled: Boolean): String? =
+    if (!enabled || card == null) null else
+        prepared?.takeIf { it.key == card.key }?.titleLogo?.takeIf(String::isNotBlank)
+            ?: card.titleLogo?.takeIf(String::isNotBlank)

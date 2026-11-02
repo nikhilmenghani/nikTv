@@ -16,13 +16,13 @@ class DiscoveryScrollExperimentTest {
             "rows" to v.rowLimit, "cards" to v.tileLimit, "sources" to v.sourceCaptions,
             "progress" to v.progressIndicators, "motion" to v.animateNativeFocus,
             "static" to v.staticArtwork, "posters" to v.posterArtwork, "recycled" to v.recycledRows,
-            "captions" to v.containedCaptions, "shadows" to v.cardShadows, "hero" to v.heroLayout, "artwork" to v.heroArtwork, "fade" to v.heroArtworkFade)
+            "captions" to v.containedCaptions, "shadows" to v.cardShadows, "hero" to v.heroLayout, "artwork" to v.heroArtwork, "fade" to v.heroArtworkFade, "titleArtwork" to v.heroTitleArtwork)
         val baseline = recycledDiscoveryStages.first()
         assertEquals(4, baseline.rowLimit)
         assertEquals(8, baseline.tileLimit)
         assertTrue(baseline.staticArtwork && baseline.posterArtwork && baseline.recycledRows)
         assertFalse(baseline.sourceCaptions || baseline.progressIndicators || baseline.animateNativeFocus)
-        val expectedChanges = listOf("cards", "rows", "sources", "progress", "motion", "captions", "shadows", "hero", "artwork", "fade")
+        val expectedChanges = listOf("cards", "rows", "sources", "progress", "motion", "captions", "shadows", "hero", "artwork", "fade", "titleArtwork")
         recycledDiscoveryStages.zipWithNext().forEachIndexed { index, (before, after) ->
             val a = features(before); val b = features(after)
             assertEquals(setOf(expectedChanges[index]), a.keys.filter { a[it] != b[it] }.toSet())
@@ -101,4 +101,16 @@ class DiscoveryScrollExperimentTest {
         assertEquals("500", selected.last().id)
         assertSame(selected, discoveryTrialProviderScope(selected, DiscoveryScrollVariant.FEWER_TILES.rowLimit))
     }
+    @Test fun titleArtworkCannotLeakFromAnOldSelectionOrIntoControl() {
+        val movie = DiscoveryCard(1, false, "One", titleLogo = "feed-logo")
+        val prepared = movie.copy(titleLogo = "prepared-logo")
+        assertEquals("prepared-logo", discoveryTrialHeroLogo(movie, prepared, true))
+        assertNull(discoveryTrialHeroLogo(movie, prepared, false))
+        assertNull(discoveryTrialHeroLogo(null, prepared, true))
+        assertEquals("feed-logo", discoveryTrialHeroLogo(movie, prepared.copy(id = 2), true))
+        assertEquals("feed-logo", discoveryTrialHeroLogo(movie, prepared.copy(series = true), true))
+        assertNull(discoveryTrialHeroLogo(movie.copy(titleLogo = null), prepared.copy(id = 2), true))
+        assertEquals("feed-logo", discoveryTrialHeroLogo(movie, prepared.copy(titleLogo = " "), true))
+    }
+
 }
