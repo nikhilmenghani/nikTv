@@ -28,6 +28,7 @@ class RecycledDiscoveryDeviceTest {
     @Test fun heroScrollsWithFeedAndKeepsHeaderAndDetailReturn() = verify(true, true, true)
     @Test fun exactNativeHeroBoundsPreserveNavigationAndReturn() = verify(true, true, true, true)
     @Test fun heldRemoteActivationDoesNotPlayOrLeakRelease() = verify(true, true, exerciseHold = true)
+    @Test fun memoryPressureDropsLayersWithoutLosingNavigation() = verify(true, true, exercisePressure = true)
     @Test fun homeCaptionsFitLongTitlesAndLargerFonts() {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
@@ -106,7 +107,7 @@ class RecycledDiscoveryDeviceTest {
             awaitTag("b:first")
         } finally { i.runOnMainSync { host.finish() } }
     }
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false) {
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -154,6 +155,7 @@ class RecycledDiscoveryDeviceTest {
                     if (rowsShown.value) saved.SaveableStateProvider("feed") {
                         RecycledDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, { header.requestFocus() },
                             containedCaptions = containedCaptions, cardShadows = cardShadows, focusRestorer = nativeRestorer,
+                            cacheTileDrawing = exercisePressure,
                             restoreSelection = restoreSelection.value,
                             heroHeightPx = if (fixedHero) (200 * c.resources.displayMetrics.density).toInt() else null,
                             heroActivity = if (withHero) ({ activity.set(it) }) else null,
@@ -182,6 +184,18 @@ class RecycledDiscoveryDeviceTest {
                 i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             }
             await("First card") { focus() == "r0:i0" }
+            if (exercisePressure) {
+                i.runOnMainSync {
+                    val card = host.currentFocus!!
+                    assertEquals("Foreground cache active", View.LAYER_TYPE_HARDWARE, card.layerType)
+                    var ancestor: android.view.ViewParent? = card.parent
+                    while (ancestor != null && ancestor !is android.content.ComponentCallbacks2) ancestor = ancestor.parent
+                    assertNotNull("Native cache owns its memory callback", ancestor)
+                    (ancestor as android.content.ComponentCallbacks2).onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+                    assertEquals("Pressure drops layer without dropping card focus", View.LAYER_TYPE_NONE, card.layerType)
+                    assertTrue(card.isFocused)
+                }
+            }
             if (exerciseHold) {
                 i.setInTouchMode(true)
                 var restored = false

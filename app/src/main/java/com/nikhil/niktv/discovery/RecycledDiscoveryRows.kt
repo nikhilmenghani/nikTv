@@ -1,6 +1,8 @@
 package com.nikhil.niktv.discovery
 
 import android.content.Context
+import android.content.ComponentCallbacks2
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
@@ -87,7 +89,11 @@ private val cardDiff = object : DiffUtil.ItemCallback<NativeDiscoveryItem>() {
 
 private class RailRecycler(context: Context, private val position: RecycledPosition,
     private val containedCaptions: Boolean, private val cardShadows: Boolean, private val homeTileProportions: Boolean, private val heroHeightPx: Int?,
-    private val parentComposition: CompositionContext, private val cacheTileDrawing: Boolean) : RecyclerView(context) {
+    private val parentComposition: CompositionContext, private val cacheTileDrawing: Boolean) : RecyclerView(context), ComponentCallbacks2 {
+    private val tileCache = NativeTileCachePolicy(cacheTileDrawing)
+    private var callbacksRegistered = false
+    private var pressure = false
+    private var warmPoolJob: Job? = null
     var onHeroActivity: ((HeroActivity) -> Unit)? = null
     private var touchingHeroFeed = false
     private val scrollingChildren = mutableSetOf<RecyclerView>()
@@ -101,19 +107,39 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        if (!callbacksRegistered) { context.applicationContext.registerComponentCallbacks(this); callbacksRegistered = true }
+        tileCache.windowFocus(hasWindowFocus())
         viewTreeObserver.addOnGlobalFocusChangeListener(focusObserver)
     }
     override fun onDetachedFromWindow() {
         viewTreeObserver.removeOnGlobalFocusChangeListener(focusObserver)
+        if (callbacksRegistered) { context.applicationContext.unregisterComponentCallbacks(this); callbacksRegistered = false }
+        tileCache.windowFocus(false); refreshTileLayers()
         touchingHeroFeed = false; scrollingChildren.clear()
         onHeroActivity?.invoke(HeroActivity(false, false, false, false, false, false))
         super.onDetachedFromWindow()
     }
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
+        tileCache.windowFocus(hasWindowFocus); refreshTileLayers()
         if (!hasWindowFocus) for (index in 0 until childCount) (getChildViewHolder(getChildAt(index)) as? RowHolder)?.cancelRemoteInput()
         if (hasWindowFocus && hasFocus()) pending?.let { reveal(it.first, it.second) }
         reportHeroActivity()
+    }
+    private fun refreshTileLayers() {
+        for (index in 0 until childCount) (getChildViewHolder(getChildAt(index)) as? RowHolder)?.refreshTileLayers()
+    }
+    override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig) }
+    override fun onLowMemory() = trimTileCaches()
+    override fun onTrimMemory(level: Int) {
+        if (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) { tileCache.windowFocus(false); refreshTileLayers() }
+        else if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) trimTileCaches()
+    }
+    private fun trimTileCaches() {
+        pressure = true; warmed = true; tileCache.memoryPressure(); warmPoolJob?.cancel()
+        pool.clear(); recycledViewPool.clear(); setItemViewCacheSize(0)
+        for (index in 0 until childCount) (getChildViewHolder(getChildAt(index)) as? RowHolder)?.trimTileCaches()
+        refreshTileLayers()
     }
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); reportHeroActivity() }
     override fun onScrolled(dx: Int, dy: Int) { super.onScrolled(dx, dy); reportHeroActivity() }
@@ -161,6 +187,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         override fun onViewDetachedFromWindow(holder: RowHolder) { holder.stopMotion(); reportHeroActivity() }
         override fun onFailedToRecycleView(holder: RowHolder): Boolean { holder.stopMotion(); return true }
         override fun onViewAttachedToWindow(holder: RowHolder) {
+            holder.refreshTileLayers()
             val row = holder.rowId
             visibleJob?.cancel()
             visibleJob = work.launch { delay(400); if (holder.itemView.isAttachedToWindow && holder.rowId == row) onVisible(row) }
@@ -352,6 +379,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             override fun onCreateViewHolder(parent: ViewGroup, type: Int) = CardHolder()
             override fun onBindViewHolder(holder: CardHolder, index: Int) { holder.bind(rowId, getItem(index)) }
             override fun onViewRecycled(holder: CardHolder) { holder.cancel() }
+            override fun onViewAttachedToWindow(holder: CardHolder) { holder.cacheLayer(tileCache.enabled) }
+            override fun onViewDetachedFromWindow(holder: CardHolder) { holder.cacheLayer(false); holder.cancelRemoteInput() }
             override fun onFailedToRecycleView(holder: CardHolder): Boolean { holder.cancel(); return true }
         }
         init {
@@ -392,7 +421,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             if (wasLoadingFocus && row.items.isNotEmpty()) reveal(row.id, row.items.first().id)
             if (!warmed) {
                 warmed = true
-                work.launch {
+                warmPoolJob = work.launch {
                     delay(500)
                     repeat(16) {
                         while (android.os.SystemClock.uptimeMillis() - lastInputAt < 400) delay(100)
@@ -409,6 +438,10 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             }
         }
         fun focusAction(): Boolean = action.visibility == View.VISIBLE && action.requestFocus()
+        fun refreshTileLayers() {
+            for (index in 0 until horizontal.childCount) (horizontal.getChildViewHolder(horizontal.getChildAt(index)) as? CardHolder)?.cacheLayer(tileCache.enabled)
+        }
+        fun trimTileCaches() { horizontal.setItemViewCacheSize(0); stopMotion() }
         fun cancelRemoteInput() {
             for (index in 0 until horizontal.childCount) (horizontal.getChildViewHolder(horizontal.getChildAt(index)) as? CardHolder)?.cancelRemoteInput()
         }
@@ -417,6 +450,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             if (onHeroActivity != null) { scrollingChildren.remove(horizontal); reportHeroActivity() }
             for (index in 0 until horizontal.childCount) horizontal.getChildAt(index).apply {
                 animate().cancel(); scaleX = 1f; scaleY = 1f
+                setLayerType(View.LAYER_TYPE_NONE, null)
             }
         }
         fun focus(id: String, scroll: Boolean = true, fromTouch: Boolean = false): Boolean {
@@ -476,9 +510,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             setPadding(dp(5), dp(3), dp(5), dp(3)); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         init {
-            // TV-only diagnostic: reuse the tile's rendered contents while the rail moves.
-            // RecyclerView bounds holder/cache counts; detached layers are not drawn.
-            if (cacheTileDrawing) itemView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // Enable only attached foreground tiles; recycled/pooled cards retain no layer.
             if (!containedCaptions) (LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }).also { column ->
                 (itemView as FrameLayout).addView(column, FrameLayout.LayoutParams(-1, -1))
                 column.apply {
@@ -507,7 +539,11 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             itemView.setOnFocusChangeListener { _, focused ->
                 if (!focused) { activation.cancel(); itemView.isFocusableInTouchMode = false }
                 frame(focused); itemView.animate().cancel()
-                if (motion && animateFocus) itemView.animate().scaleX(if (focused) 1.025f else 1f).scaleY(if (focused) 1.025f else 1f).setDuration(320).withLayer().start()
+                if (motion && animateFocus && !pressure) {
+                    val animation = itemView.animate().scaleX(if (focused) 1.025f else 1f).scaleY(if (focused) 1.025f else 1f).setDuration(320)
+                    if (!tileCache.enabled) animation.withLayer()
+                    animation.start()
+                }
                 else { itemView.scaleX = 1f; itemView.scaleY = 1f }
                 if (focused && (pending == null || pending == (row to identity))) { epoch++; pending = null; selected(row, identity) }
             }
@@ -540,7 +576,15 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             }
         }
         fun cancelRemoteInput() { activation.cancel() }
-        fun cancel() { activation.cancel(); imageJob?.cancel(); imageJob = null; itemView.animate().cancel(); image.setImageDrawable(null); row = ""; identity = ""; artwork = null }
+        fun cacheLayer(enabled: Boolean) {
+            if (!enabled) {
+                itemView.animate().cancel()
+                if (!itemView.isFocused) { itemView.scaleX = 1f; itemView.scaleY = 1f }
+            }
+            val type = if (enabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_NONE
+            if (itemView.layerType != type) itemView.setLayerType(type, null)
+        }
+        fun cancel() { activation.cancel(); imageJob?.cancel(); imageJob = null; cacheLayer(false); image.setImageDrawable(null); row = ""; identity = ""; artwork = null }
         fun bind(rowId: String, item: NativeDiscoveryItem) {
             val replacement = row != rowId || identity != item.id || artwork != item.artwork
             if (replacement) { cancel(); itemView.scaleX = 1f; itemView.scaleY = 1f }

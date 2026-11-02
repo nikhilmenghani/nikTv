@@ -14,8 +14,8 @@ Phases 1–12 and their individual findings are linked from [rollout](recycled-d
 | 14 | Row/category management and recommendation dismissal parity, stable focus after removal | Complete: [findings](home2-phase14-performance.md) |
 | 15 | Responsive Home-like tile geometry, readable title/subtitle/source/progress placement | Complete: [findings](home2-phase15-performance.md) |
 | 16 | Hero transitions and on-demand information behavior; measure rather than assume cached work is free | Complete, idle tail remains: [findings](home2-phase16-performance.md) |
-| 17 | TV tile-cache memory/lifecycle limits and sustained navigation; keep tablet path independent | Next |
-| 18 | End-to-end navigation/action matrix: profiles, categories, Search/All, details/back, touch and D-pad | Pending |
+| 17 | TV tile-cache memory/lifecycle limits and sustained navigation; keep tablet path independent | Complete: [findings](home2-phase17-performance.md) |
+| 18 | End-to-end navigation/action matrix: profiles, categories, Search/All, details/back, touch and D-pad | Next |
 | 19 | Optional focus-driven artwork last, followed by final cost/benefit review | Pending |
 
 For each step record APK/build identity, device/profile, feature settings, per-run frame p95 and deadline counters, first-exposure versus repeat results, memory snapshots where relevant, and actual functional outcomes. Do not label histogram timing as input-to-visible-focus latency. Keep recordings/tracing outside timed runs. Preserve personal categories, history and credentials; restore any temporary UI selection changes.
