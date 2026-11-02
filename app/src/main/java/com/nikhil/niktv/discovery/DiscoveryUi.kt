@@ -528,7 +528,7 @@ internal fun DiscoveryPreviewScreen(
             }
             HorizontalDivider(Modifier.padding(bottom = 8.dp))
             Text("Incremental rebuild", style = MaterialTheme.typography.labelMedium)
-            (recycledDiscoveryStages + listOf(DiscoveryScrollVariant.RECYCLED_HERO_METADATA, DiscoveryScrollVariant.RECYCLED_HERO_WORKER, DiscoveryScrollVariant.RECYCLED_ISOLATED_HERO, DiscoveryScrollVariant.RECYCLED_HOME_TILES, DiscoveryScrollVariant.RECYCLED_PREPARED_HERO)).forEach { variant ->
+            (recycledDiscoveryStages + listOf(DiscoveryScrollVariant.RECYCLED_TV_FOCUS, DiscoveryScrollVariant.RECYCLED_TV_LAYERS, DiscoveryScrollVariant.RECYCLED_HERO_METADATA, DiscoveryScrollVariant.RECYCLED_HERO_WORKER, DiscoveryScrollVariant.RECYCLED_ISOLATED_HERO, DiscoveryScrollVariant.RECYCLED_HOME_TILES, DiscoveryScrollVariant.RECYCLED_PREPARED_HERO, DiscoveryScrollVariant.RECYCLED_STABLE_HERO, DiscoveryScrollVariant.RECYCLED_NATIVE_HERO_BOUNDS)).forEach { variant ->
                 NikDropdownMenuItem(text = { Text(variant.title) },
                     leadingIcon = if (variant == experimentVariant) ({ Icon(Icons.Default.Check, null) }) else null,
                     onClick = { experimentVariant = variant; experimentSettings = false })
@@ -577,7 +577,11 @@ internal fun DiscoveryPreviewScreen(
             }
             DisposableEffect(vm) { onDispose { vm.pauseHeroMetadata() } }
             val heroLogo = discoveryTrialHeroLogo(heroCard, heroState.heroPresentation, optionalHeroMetadata && scrollVariant.heroTitleArtwork)
-            Box(Modifier.fillMaxWidth()) {
+            val baseHeroHeight = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f)
+            Box(Modifier.fillMaxWidth().then(
+                if (scrollVariant.stableHeroBounds && landscape && !phone)
+                    Modifier.height(trialHeroFrameHeight(baseHeroHeight, LocalDensity.current.fontScale).dp)
+                else Modifier)) {
                 if (scrollVariant.heroArtwork) {
                     // One identity-scoped image: never retain the previous title's artwork while loading.
                     key(heroCard?.key, heroCard?.backdrop ?: heroCard?.poster) {
@@ -662,8 +666,12 @@ internal fun DiscoveryPreviewScreen(
                     }
                     if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
                         .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
-                        up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = scrollVariant.animateNativeFocus,
+                        up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = discoveryNativeFocusMotion(scrollVariant, television),
+                        cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television),
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
+                        heroHeightPx = if (scrollVariant.nativeHeroBounds && landscape && !phone) with(LocalDensity.current) {
+                            trialHeroFrameHeight((configuration.screenHeightDp * .45f).coerceIn(200f, 300f), fontScale).dp.roundToPx()
+                        } else null,
                         hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
                             runCatching { (if (id == "info") heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
                         })

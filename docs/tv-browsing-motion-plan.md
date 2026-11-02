@@ -867,3 +867,8 @@ Added eight-second idle rotation in Home 2 only, metadata off. Fixed an introduc
 ## Hero transition and tile-layout investigation (2026-11-02)
 
 Tested isolated hero state, Home-like native tile proportions and one-image idle preparation. Transition hitches remain; preparation did not consistently help. Home-like native tiles measured 19 ms median p95 versus compact controls 15-19 ms; unchanged full Home measured 101 ms in a different full-screen scenario, not an isolated tile-style cost. See [measurements and limits](home2-hero-transition-and-tiles.md). Tablet only; original Home and Fire TV untouched.
+
+
+## Priority update and next measured step (2026-11-02)
+
+Previous pending work committed as `4e8f79e3`. Focus-driven backgrounds are explicitly last. Tested fixed Compose hero sizing, then native exact header sizing, one at a time. Neither improved the idle hitch consistently, so both stay diagnostic/off. 204 unit tests and five tablet device tests passed; lint retains 22 existing errors. Home and Fire TV untouched. See [stable bounds experiment](home2-stable-hero-bounds.md). Next target: text-layout cost, without adding another presentation feature.

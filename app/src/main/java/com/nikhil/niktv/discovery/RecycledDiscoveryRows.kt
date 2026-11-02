@@ -47,15 +47,15 @@ private class RecycledPosition(var row: String = "", var item: String = "") {
 internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Modifier,
     focusEntry: FocusRequester, up: () -> Unit, visible: (String) -> Unit = {}, animateFocus: Boolean = true,
     containedCaptions: Boolean = false, cardShadows: Boolean = false, homeTileProportions: Boolean = false,
-    hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null) {
+    hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
     val displayedRows = remember(rows, hero != null) {
         if (hero != null) listOf(NativeDiscoveryRow(HERO_ROW, "", emptyList(), isHero = true)) + rows else rows
     }
-    key(containedCaptions, cardShadows, homeTileProportions) {
-    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, parentComposition) }, modifier = modifier.focusRequester(focusEntry),
+    key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing) {
+    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing) }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { it.release() }, update = { view ->
             view.animateFocus = animateFocus
             view.restoreSelection = restoreSelection
@@ -81,8 +81,8 @@ private val cardDiff = object : DiffUtil.ItemCallback<NativeDiscoveryItem>() {
 }
 
 private class RailRecycler(context: Context, private val position: RecycledPosition,
-    private val containedCaptions: Boolean, private val cardShadows: Boolean, private val homeTileProportions: Boolean,
-    private val parentComposition: CompositionContext) : RecyclerView(context) {
+    private val containedCaptions: Boolean, private val cardShadows: Boolean, private val homeTileProportions: Boolean, private val heroHeightPx: Int?,
+    private val parentComposition: CompositionContext, private val cacheTileDrawing: Boolean) : RecyclerView(context) {
     var onHeroActivity: ((HeroActivity) -> Unit)? = null
     private var touchingHeroFeed = false
     private val scrollingChildren = mutableSetOf<RecyclerView>()
@@ -296,7 +296,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     setContent { heroContent?.invoke({ item ->
                         if (pending == null || pending == (HERO_ROW to item)) selected(HERO_ROW, item)
                     }, { adjacent(HERO_ROW, 1) }, { onUp() }) }
-                }, LinearLayout.LayoutParams(-1, -2))
+                }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2))
             } else {
             (itemView as LinearLayout).addView(title)
             (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1, dp(if (homeTileProportions) 167 else 172 + (48 * resources.configuration.fontScale).toInt())))
@@ -371,6 +371,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         private val title = TextView(context).apply { textSize = if (homeTileProportions) 8.7f else 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; minLines = 2; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
         private val subtitle = TextView(context).apply { textSize = if (homeTileProportions) 7.4f else 10f; setTextColor(Color.LTGRAY); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         init {
+            // TV-only diagnostic: reuse the tile's rendered contents while the rail moves.
+            // RecyclerView bounds holder/cache counts; detached layers are not drawn.
+            if (cacheTileDrawing) itemView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             if (!containedCaptions) (LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }).also { column ->
                 (itemView as FrameLayout).addView(column, FrameLayout.LayoutParams(-1, -1))
                 column.apply {

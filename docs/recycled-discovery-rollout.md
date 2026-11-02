@@ -153,3 +153,12 @@ Added eight-second idle rotation in Home 2 only, metadata off. Fixed an introduc
 ## Hero transition and tile-layout investigation (2026-11-02)
 
 Tested isolated hero state, Home-like native tile proportions and one-image idle preparation. Transition hitches remain; preparation did not consistently help. Home-like native tiles measured 19 ms median p95 versus compact controls 15-19 ms; unchanged full Home measured 101 ms in a different full-screen scenario, not an isolated tile-style cost. See [measurements and limits](home2-hero-transition-and-tiles.md). Tablet only; original Home and Fire TV untouched.
+
+
+## Priority update and next measured step (2026-11-02)
+
+Previous pending work committed as `4e8f79e3`. Focus-driven backgrounds are explicitly last. Tested fixed Compose hero sizing, then native exact header sizing, one at a time. Neither improved the idle hitch consistently, so both stay diagnostic/off. 204 unit tests and five tablet device tests passed; lint retains 22 existing errors. Home and Fire TV untouched. See [stable bounds experiment](home2-stable-hero-bounds.md). Next target: text-layout cost, without adding another presentation feature.
+
+## TV rendering isolation (2026-11-02)
+
+Fire TV tests reject immediate tile focus as a vertical-scroll improvement. Optional cached tile drawing retains zoom and captions: Wio median p95 18 to 17 ms, Nikhil 30/31 to 17 ms, with about 18-20 MiB additional graphics PSS in sampled runs. Kept selectable in Home 2, original Home unchanged. Optimized Dev installed on Fire TV; 206 targeted tests pass, lint retains 22 existing errors. Remote synthetic long-press check is unresolved. See [TV experiments](home2-tv-rendering-experiments.md).

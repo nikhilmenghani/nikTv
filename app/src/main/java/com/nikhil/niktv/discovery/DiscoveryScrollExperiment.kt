@@ -14,7 +14,7 @@ internal val LocalDiscoveryExperimentSettings = staticCompositionLocalOf<() -> U
 internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int = Int.MAX_VALUE,
     val tileLimit: Int = 30, val staticArtwork: Boolean = false, val simpleFocus: Boolean = false, val posterArtwork: Boolean = true, val minimalReveal: Boolean = false, val wideCards: Boolean = false, val nativeRows: Boolean = false, val animateNativeFocus: Boolean = false,
     val recycledRows: Boolean = false, val sourceCaptions: Boolean = true, val progressIndicators: Boolean = true,
-    val containedCaptions: Boolean = false, val cardShadows: Boolean = false, val heroLayout: Boolean = false, val heroArtwork: Boolean = false, val heroArtworkFade: Boolean = false, val heroTitleArtwork: Boolean = false, val heroMetadataOnly: Boolean = false, val heroMetadataOffMain: Boolean = false, val heroAutoRotate: Boolean = false, val isolateHero: Boolean = false, val homeTileProportions: Boolean = false, val prepareNextHero: Boolean = false) {
+    val containedCaptions: Boolean = false, val cardShadows: Boolean = false, val heroLayout: Boolean = false, val heroArtwork: Boolean = false, val heroArtworkFade: Boolean = false, val heroTitleArtwork: Boolean = false, val heroMetadataOnly: Boolean = false, val heroMetadataOffMain: Boolean = false, val heroAutoRotate: Boolean = false, val isolateHero: Boolean = false, val homeTileProportions: Boolean = false, val prepareNextHero: Boolean = false, val stableHeroBounds: Boolean = false, val nativeHeroBounds: Boolean = false, val tvImmediateFocus: Boolean = false, val tvCachedTiles: Boolean = false) {
     CONTROL("Control · same as Home"),
     FEWER_ROWS("4 rows · original tiles", rowLimit = 4),
     FEWER_TILES("8 tiles per row", tileLimit = 8),
@@ -37,7 +37,11 @@ internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int 
     RECYCLED_HERO_FADE("Stage 10 · prepared artwork fade", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true),
     RECYCLED_HERO_TITLE("Stage 11 · hero title artwork", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true),
     RECYCLED_HERO_ROTATION("Stage 12 · idle hero rotation", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true),
+    RECYCLED_TV_LAYERS("TV - cached tile drawing", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true, tvCachedTiles = true),
+    RECYCLED_TV_FOCUS("TV - immediate tile focus", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true, tvImmediateFocus = true),
     RECYCLED_ISOLATED_HERO("Diagnostic · isolated hero", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true, isolateHero = true),
+    RECYCLED_STABLE_HERO("Diagnostic · stable hero bounds", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true, isolateHero = true, stableHeroBounds = true),
+    RECYCLED_NATIVE_HERO_BOUNDS("Diagnostic · native hero bounds", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true, isolateHero = true, stableHeroBounds = true, nativeHeroBounds = true),
     RECYCLED_PREPARED_HERO("Diagnostic · prepared next hero", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true, isolateHero = true, prepareNextHero = true),
     RECYCLED_HOME_TILES("Diagnostic · Home tile proportions", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroAutoRotate = true, isolateHero = true, homeTileProportions = true),
     RECYCLED_HERO_WORKER("Diagnostic · worker metadata and logo", staticArtwork = true, nativeRows = true, recycledRows = true, animateNativeFocus = true, containedCaptions = true, cardShadows = true, heroLayout = true, heroArtwork = true, heroArtworkFade = true, heroTitleArtwork = true, heroMetadataOffMain = true),
@@ -73,3 +77,14 @@ internal fun discoveryTrialHeroLogo(card: DiscoveryCard?, prepared: DiscoveryCar
 /** A hero rotation must not invalidate the recycled feed's parent composition. */
 internal fun DiscoveryState.recycledFeedState(isolated: Boolean): DiscoveryState =
     if (isolated && detail == null) copy(heroIndex = 0, heroPresentation = null) else this
+
+/** Landscape-only exact hero frame, with enough room for scaled text/actions. */
+internal fun trialHeroFrameHeight(base: Float, fontScale: Float): Float =
+    maxOf(base, 216f * fontScale.coerceAtLeast(1f) + 24f)
+
+/** Keep the TV rendering experiment out of touch devices and original routes. */
+internal fun discoveryNativeFocusMotion(variant: DiscoveryScrollVariant, television: Boolean): Boolean =
+    variant.animateNativeFocus && !(television && variant.tvImmediateFocus)
+
+internal fun discoveryCacheTileDrawing(variant: DiscoveryScrollVariant, television: Boolean): Boolean =
+    television && variant.tvCachedTiles

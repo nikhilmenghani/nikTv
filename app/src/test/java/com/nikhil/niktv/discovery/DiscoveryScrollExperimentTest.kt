@@ -132,4 +132,43 @@ class DiscoveryScrollExperimentTest {
         assertSame(detail, detail.recycledFeedState(true))
     }
 
+    @Test fun stableHeroFrameKeepsBaselineAndAllowsLargerFonts() {
+        assertEquals(300f, trialHeroFrameHeight(300f, 1f), 0f)
+        assertEquals(300f, trialHeroFrameHeight(300f, .8f), 0f)
+        assertEquals(456f, trialHeroFrameHeight(300f, 2f), 0f)
+        assertTrue(DiscoveryScrollVariant.RECYCLED_STABLE_HERO.stableHeroBounds)
+        assertFalse(DiscoveryScrollVariant.RECYCLED_ISOLATED_HERO.stableHeroBounds)
+        assertFalse(DiscoveryScrollVariant.RECYCLED_STABLE_HERO.prepareNextHero)
+        assertFalse(DiscoveryScrollVariant.RECYCLED_STABLE_HERO.homeTileProportions)
+    }
+
+    @Test fun immediateFocusCandidateIsTvOnlyAndRetainsPhase12Content() {
+        val candidate = DiscoveryScrollVariant.RECYCLED_TV_FOCUS
+        val control = DiscoveryScrollVariant.RECYCLED_HERO_ROTATION
+        assertFalse(discoveryNativeFocusMotion(candidate, true))
+        assertTrue(discoveryNativeFocusMotion(candidate, false))
+        assertTrue(discoveryNativeFocusMotion(control, true))
+        assertFalse(discoveryNativeFocusMotion(DiscoveryScrollVariant.CONTROL, true))
+        assertEquals(control.rowLimit, candidate.rowLimit)
+        assertEquals(control.tileLimit, candidate.tileLimit)
+        assertTrue(candidate.recycledRows && candidate.containedCaptions && candidate.cardShadows)
+        assertTrue(candidate.sourceCaptions && candidate.progressIndicators)
+        assertTrue(candidate.heroArtwork && candidate.heroArtworkFade && candidate.heroAutoRotate)
+        assertTrue(candidate.heroTitleArtwork)
+        assertFalse(candidate.isolateHero || candidate.prepareNextHero || candidate.homeTileProportions)
+        assertFalse(candidate.stableHeroBounds || candidate.nativeHeroBounds)
+        assertFalse(recycledDiscoveryStages.contains(candidate))
+    }
+
+    @Test fun cachedTileDrawingIsTvOnlyAndIndependentOfFocusMotion() {
+        val candidate = DiscoveryScrollVariant.RECYCLED_TV_LAYERS
+        assertTrue(discoveryCacheTileDrawing(candidate, true))
+        assertFalse(discoveryCacheTileDrawing(candidate, false))
+        assertFalse(discoveryCacheTileDrawing(DiscoveryScrollVariant.RECYCLED_HERO_ROTATION, true))
+        assertFalse(discoveryCacheTileDrawing(DiscoveryScrollVariant.CONTROL, true))
+        assertTrue(discoveryNativeFocusMotion(candidate, true))
+        assertTrue(candidate.heroAutoRotate && candidate.heroArtworkFade && candidate.containedCaptions)
+        assertFalse(candidate.tvImmediateFocus || candidate.prepareNextHero || candidate.isolateHero)
+    }
+
 }

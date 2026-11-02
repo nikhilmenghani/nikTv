@@ -26,7 +26,8 @@ class RecycledDiscoveryDeviceTest {
     @Test fun largeFeedRecyclesAndRestoresSelectionAcrossDetails() = verify(false, false)
     @Test fun styledFeedRetainsFocusAndFullyVisibleReturn() = verify(true, true)
     @Test fun heroScrollsWithFeedAndKeepsHeaderAndDetailReturn() = verify(true, true, true)
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false) {
+    @Test fun exactNativeHeroBoundsPreserveNavigationAndReturn() = verify(true, true, true, true)
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -73,6 +74,7 @@ class RecycledDiscoveryDeviceTest {
                         RecycledDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, { header.requestFocus() },
                             containedCaptions = containedCaptions, cardShadows = cardShadows,
                             restoreSelection = restoreSelection.value,
+                            heroHeightPx = if (fixedHero) (200 * c.resources.displayMetrics.density).toInt() else null,
                             heroActivity = if (withHero) ({ activity.set(it) }) else null,
                             hero = if (withHero) ({ focused, down, up ->
                                 Box(Modifier.height(200.dp)) {
