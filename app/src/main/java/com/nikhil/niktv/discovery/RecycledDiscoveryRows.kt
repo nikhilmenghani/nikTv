@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.ViewCompat
 import androidx.recyclerview.widget.*
@@ -26,6 +27,9 @@ import com.nikhil.niktv.data.thumbnailArtworkUrl
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+
+private const val HERO_ROW = "__discovery_hero__"
+internal typealias RecycledHeroContent = @Composable (focused: (String) -> Unit, down: () -> Unit, up: () -> Unit) -> Unit
 
 private class RecycledPosition(var row: String = "", var item: String = "") {
     val columns = mutableMapOf<String, String>()
@@ -42,14 +46,21 @@ private class RecycledPosition(var row: String = "", var item: String = "") {
 @Composable
 internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Modifier,
     focusEntry: FocusRequester, up: () -> Unit, visible: (String) -> Unit = {}, animateFocus: Boolean = true,
-    containedCaptions: Boolean = false, cardShadows: Boolean = false) {
+    containedCaptions: Boolean = false, cardShadows: Boolean = false,
+    hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
+    val parentComposition = rememberCompositionContext()
+    val displayedRows = remember(rows, hero != null) {
+        if (hero != null) listOf(NativeDiscoveryRow(HERO_ROW, "", emptyList(), isHero = true)) + rows else rows
+    }
     key(containedCaptions, cardShadows) {
-    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows) }, modifier = modifier.focusRequester(focusEntry),
+    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, parentComposition) }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { it.release() }, update = { view ->
             view.animateFocus = animateFocus
-            view.onUp = { view.leave(host, up) }; view.onVisible = visible; view.update(rows)
+            view.restoreSelection = restoreSelection
+            view.heroContent = hero; view.heroFocusEntry = heroFocusEntry
+            view.onUp = { view.leave(host, up) }; view.onVisible = visible; view.update(displayedRows)
         })
     }
 }
@@ -60,7 +71,7 @@ private fun NativeDiscoveryItem.samePresentation(other: NativeDiscoveryItem) =
 private val rowDiff = object : DiffUtil.ItemCallback<NativeDiscoveryRow>() {
     override fun areItemsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) = a.id == b.id
     override fun areContentsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) =
-        a.title == b.title && a.items.size == b.items.size &&
+        a.isHero == b.isHero && a.title == b.title && a.items.size == b.items.size &&
             a.items.indices.all { a.items[it].samePresentation(b.items[it]) }
 }
 private val cardDiff = object : DiffUtil.ItemCallback<NativeDiscoveryItem>() {
@@ -69,7 +80,11 @@ private val cardDiff = object : DiffUtil.ItemCallback<NativeDiscoveryItem>() {
 }
 
 private class RailRecycler(context: Context, private val position: RecycledPosition,
-    private val containedCaptions: Boolean, private val cardShadows: Boolean) : RecyclerView(context) {
+    private val containedCaptions: Boolean, private val cardShadows: Boolean,
+    private val parentComposition: CompositionContext) : RecyclerView(context) {
+    var heroContent by mutableStateOf<RecycledHeroContent?>(null)
+    var heroFocusEntry: (String) -> Boolean = { false }
+    var restoreSelection = true
     var animateFocus = true
         set(value) {
             if (field && !value) findFocus()?.let { it.animate().cancel(); it.scaleX = 1f; it.scaleY = 1f }
@@ -94,7 +109,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private val rowAdapter = object : ListAdapter<NativeDiscoveryRow, RowHolder>(rowDiff) {
         init { setHasStableIds(true) }
         override fun getItemId(position: Int) = stableId("row:${getItem(position).id}")
-        override fun onCreateViewHolder(parent: ViewGroup, type: Int) = RowHolder()
+        override fun getItemViewType(position: Int) = if (getItem(position).isHero) 1 else 0
+        override fun onCreateViewHolder(parent: ViewGroup, type: Int) = RowHolder(type == 1)
         override fun onBindViewHolder(holder: RowHolder, index: Int) { holder.bind(getItem(index)) }
         override fun onViewRecycled(holder: RowHolder) { holder.cards.submitList(emptyList()) }
         override fun onViewDetachedFromWindow(holder: RowHolder) { holder.stopMotion() }
@@ -105,9 +121,10 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             visibleJob = work.launch { delay(400); if (holder.itemView.isAttachedToWindow && holder.rowId == row) onVisible(row) }
         }
         override fun onCurrentListChanged(previous: MutableList<NativeDiscoveryRow>, current: MutableList<NativeDiscoveryRow>) {
-            if (hasFocus() && findFocus()?.tag !is String) {
-                val row = current.firstOrNull { it.id == position.row && it.items.isNotEmpty() } ?: current.firstOrNull { it.items.isNotEmpty() }
-                val target = pending ?: row?.let { it.id to (position.columns[it.id] ?: it.items.first().id) }
+            if (hasFocus() && findFocus()?.tag !is String &&
+                (position.row != HERO_ROW || findFocus() === this@RailRecycler)) {
+                val row = current.firstOrNull { it.id == position.row && (it.isHero || it.items.isNotEmpty()) } ?: current.firstOrNull { it.isHero || it.items.isNotEmpty() }
+                val target = pending ?: row?.let { it.id to (position.columns[it.id] ?: if (it.isHero) "play" else it.items.first().id) }
                 target?.let { reveal(it.first, it.second) }
             }
         }
@@ -116,6 +133,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     init {
         layoutManager = vertical; adapter = rowAdapter; itemAnimator = null
         recycledViewPool.setMaxRecycledViews(0, 4)
+        recycledViewPool.setMaxRecycledViews(1, 1)
         // Retain a small neighborhood of prepared rows; avoid rebinding the same
         // posters during short direction reversals without materializing the feed.
         setItemViewCacheSize(4); clipToPadding = false
@@ -131,8 +149,10 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         rowAdapter.submitList(rows.toList())
     }
     override fun onRequestFocusInDescendants(direction: Int, previouslyFocusedRect: Rect?): Boolean {
-        val row = models[position.row]?.takeIf { it.items.isNotEmpty() } ?: rowAdapter.currentList.firstOrNull { it.items.isNotEmpty() }
-        val target = pending ?: row?.let { it.id to (position.columns[it.id] ?: it.items.first().id) }
+        val row = if (heroContent != null && !restoreSelection) models[HERO_ROW] else
+            models[position.row]?.takeIf { it.isHero || it.items.isNotEmpty() } ?: rowAdapter.currentList.firstOrNull { it.isHero || it.items.isNotEmpty() }
+        val target = if (heroContent != null && !restoreSelection) HERO_ROW to "play" else
+            pending ?: row?.let { it.id to (position.columns[it.id] ?: if (it.isHero) "play" else it.items.first().id) }
         target?.let {
             val index = rowAdapter.currentList.indexOfFirst { row -> row.id == it.first }
             val holder = findViewHolderForAdapterPosition(index) as? RowHolder
@@ -182,7 +202,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         val list = rowAdapter.currentList
         var index = list.indexOfFirst { it.id == (pending?.first ?: row) } + step
         if (index < 0) onUp()
-        else list.getOrNull(index)?.let { reveal(it.id, position.columns[it.id] ?: it.items.firstOrNull()?.id.orEmpty()) }
+        else list.getOrNull(index)?.let { reveal(it.id, position.columns[it.id] ?: if (it.isHero) "play" else it.items.firstOrNull()?.id.orEmpty()) }
     }
     private fun selected(row: String, item: String) { position.row = row; position.item = item; position.columns[row] = item }
     private fun horizontal(row: String, item: String, direction: Int) {
@@ -203,7 +223,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         }
         return super.dispatchKeyEvent(event)
     }
-    private inner class RowHolder : ViewHolder(LinearLayout(context).apply {
+    private inner class RowHolder(private val hero: Boolean = false) : ViewHolder(LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL; layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
     }) {
         var rowId = ""
@@ -229,6 +249,14 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             override fun onFailedToRecycleView(holder: CardHolder): Boolean { holder.cancel(); return true }
         }
         init {
+            if (hero) {
+                (itemView as LinearLayout).addView(ComposeView(context).apply {
+                    setParentCompositionContext(parentComposition)
+                    setContent { heroContent?.invoke({ item ->
+                        if (pending == null || pending == (HERO_ROW to item)) selected(HERO_ROW, item)
+                    }, { adjacent(HERO_ROW, 1) }, { onUp() }) }
+                }, LinearLayout.LayoutParams(-1, -2))
+            } else {
             (itemView as LinearLayout).addView(title)
             (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1, dp(172 + (48 * resources.configuration.fontScale).toInt())))
             horizontal.adapter = cards
@@ -240,8 +268,10 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     else -> false
                 }
             }
+            }
         }
         fun bind(row: NativeDiscoveryRow) {
+            if (hero) { rowId = row.id; return }
             val wasLoadingFocus = title.isFocused
             if (rowId != row.id) { cards.submitList(emptyList()); horizontal.stopScroll(); horizontal.scrollToPosition(0) }
             rowId = row.id; title.text = row.title; title.tag = "${row.id}:loading"
@@ -271,6 +301,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             }
         }
         fun focus(id: String, scroll: Boolean = true): Boolean {
+            if (hero) return runCatching { heroFocusEntry(id) }.getOrDefault(false).also { focused ->
+                if (focused) itemView.requestRectangleOnScreen(Rect(0, 0, itemView.width, itemView.height), false)
+            }
             if (cards.currentList.isEmpty()) return title.requestFocus()
             val index = cards.currentList.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: 0
             val holder = horizontal.findViewHolderForAdapterPosition(index) as? CardHolder
@@ -361,5 +394,5 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             } } }
         }
     }
-    fun release() { epoch++; work.cancel(); adapter = null; pool.clear() }
+    fun release() { epoch++; work.cancel(); adapter = null; pool.clear(); recycledViewPool.clear() }
 }

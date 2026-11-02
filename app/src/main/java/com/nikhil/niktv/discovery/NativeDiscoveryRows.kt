@@ -38,7 +38,7 @@ internal data class NativeDiscoveryItem(
     val id: String, val title: String, val subtitle: String = "", val artwork: String? = null,
     val onClick: () -> Unit, val onLongClick: (() -> Unit)? = null, val progress: Float? = null,
 )
-internal data class NativeDiscoveryRow(val id: String, val title: String, val items: List<NativeDiscoveryItem>)
+internal data class NativeDiscoveryRow(val id: String, val title: String, val items: List<NativeDiscoveryItem>, val isHero: Boolean = false)
 
 /** Bounded renderer experiment: native scrolling/focus, shared cached artwork, no provider requests. */
 @Composable

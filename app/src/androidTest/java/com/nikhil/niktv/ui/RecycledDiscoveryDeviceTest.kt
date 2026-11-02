@@ -25,7 +25,8 @@ import org.junit.Test
 class RecycledDiscoveryDeviceTest {
     @Test fun largeFeedRecyclesAndRestoresSelectionAcrossDetails() = verify(false, false)
     @Test fun styledFeedRetainsFocusAndFullyVisibleReturn() = verify(true, true)
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean) {
+    @Test fun heroScrollsWithFeedAndKeepsHeaderAndDetailReturn() = verify(true, true, true)
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -52,25 +53,48 @@ class RecycledDiscoveryDeviceTest {
             return visible
         }
         val entry = FocusRequester(); val header = FocusRequester()
+        val heroEntry = FocusRequester()
+        val heroFocused = java.util.concurrent.atomic.AtomicBoolean(false)
+        val headerFocused = java.util.concurrent.atomic.AtomicBoolean(false)
         val rowsShown = mutableStateOf(true)
+        val restoreSelection = mutableStateOf(true)
         val rows = (0 until 80).map { r -> NativeDiscoveryRow("r$r", "Row $r", (0 until 40).map { n ->
             NativeDiscoveryItem("i$n", "Item $r $n", onClick = { rowsShown.value = false }) }) }
         try {
             i.setInTouchMode(false)
             i.runOnMainSync { host.setContent { MaterialTheme {
                 Column(Modifier.fillMaxSize()) {
-                    Text("Header", Modifier.height(48.dp).focusRequester(header).onPreviewKeyEvent {
+                    Text("Header", Modifier.height(48.dp).focusRequester(header).onFocusChanged { headerFocused.set(it.isFocused) }.onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { entry.requestFocus(); true } else false
                     }.focusable())
                     val saved = rememberSaveableStateHolder()
                     if (rowsShown.value) saved.SaveableStateProvider("feed") {
                         RecycledDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, { header.requestFocus() },
-                            containedCaptions = containedCaptions, cardShadows = cardShadows)
+                            containedCaptions = containedCaptions, cardShadows = cardShadows,
+                            restoreSelection = restoreSelection.value,
+                            hero = if (withHero) ({ focused, down, up ->
+                                Box(Modifier.height(200.dp)) {
+                                    Button({}, Modifier.focusRequester(heroEntry).onFocusChanged {
+                                        heroFocused.set(it.isFocused); if (it.isFocused) focused("play")
+                                    }.onPreviewKeyEvent {
+                                        if (it.type != KeyEventType.KeyDown) false else when (it.key) {
+                                            Key.DirectionDown -> { down(); true }
+                                            Key.DirectionUp -> { up(); true }
+                                            else -> false
+                                        }
+                                    }) { Text("Hero play") }
+                                }
+                            }) else null,
+                            heroFocusEntry = { runCatching { heroEntry.requestFocus() }.getOrDefault(false) })
                     } else Text("Detail")
                 }
             } } }
             await("Initial layout") { host.window.decorView.isLaidOut }
             i.runOnMainSync { entry.requestFocus() }
+            if (withHero) {
+                await("Header Down enters hero") { heroFocused.get() }
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            }
             await("First card") { focus() == "r0:i0" }
             for (n in 1..15) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); await("Horizontal $n") { focus() == "r0:i$n" } }
             for (r in 1..12) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); await("Vertical $r") { focus() == "r$r:i0" } }
@@ -89,12 +113,29 @@ class RecycledDiscoveryDeviceTest {
             await("Returned card fits the viewport") { fullyVisible() }
             for (r in 11 downTo 0) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP); await("Up $r") { focus() == "r$r:i${if (r == 0) 15 else 0}" } }
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            if (withHero) {
+                await("First rail Up enters hero") { heroFocused.get() }
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Hero Up reaches header") { headerFocused.get() }
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Header reenters hero") { heroFocused.get() }
+            }
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Header reentry") { focus() == "r0:i15" }
             repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN) }
             repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP) }
             await("Rapid direction reversal retains identity") { focus() == "r0:i15" }
             await("Reversed card fits the viewport") { fullyVisible() }
+            if (withHero) {
+                i.runOnMainSync { rowsShown.value = false }
+                await("Leave feed for menu navigation") { focus() == null }
+                i.runOnMainSync { restoreSelection.value = false; rowsShown.value = true }
+                Thread.sleep(200)
+                i.runOnMainSync { entry.requestFocus() }
+                await("Menu entry overrides saved media cursor with hero") { heroFocused.get() }
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Hero Down retains the row's saved column") { focus() == "r0:i15" }
+            }
         } finally { i.runOnMainSync { host.finish() } }
     }
 }

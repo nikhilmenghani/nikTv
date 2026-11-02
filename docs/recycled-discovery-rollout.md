@@ -1,6 +1,6 @@
 # Recycled discovery rows — 2026-11-01
 
-Status: **Home 2 only**, experimental and uncommitted. The user requested that the familiar Home remain unchanged until the experiment is ready to migrate. The global recycled-renderer preference and its original-tab controls have been removed. Original Home, Movies and Series always choose the original presenter, even if a previous APK saved the old opt-in preference. The shared navigation file has been restored to HEAD `de0922b6`.
+Status: **Home 2 only**. Phases 1–7 are committed as `0f763045`; Phase 8 is experimental and uncommitted. The user requested that familiar Home remain unchanged until migration is ready. The global recycled-renderer preference and its original-tab controls have been removed. Original Home, Movies and Series always choose the original presenter, even if a previous APK saved the old opt-in preference. Shared navigation remains unchanged.
 
 Fire TV testing remains stopped. A host-side STOP guard prevents the existing input driver from running. Do not resume interaction or install the rollback there without the user's instruction. The installed Fire TV APK remains the previous candidate until a later authorized installation; changing source code does not alter the running app. No skeleton UI was added; the user explicitly deferred it.
 
@@ -18,6 +18,7 @@ Home 2 starts with Stage 1. Its Options → Performance experiment menu exposes 
 | 6 — focus animation | Add the small focus enlargement animation |
 | 7A — contained captions | Put title/subtitle over artwork with a readability gradient; no ranking numbers |
 | 7B — borders and shadows | Add the border finish and restrained focused-card elevation |
+| 8 — hero layout/actions | Scrollable hero text and existing actions; artwork disabled. Final tablet median p95 +~1 ms versus 7B; first-pass cost still needs investigation |
 
 Tests require exactly one configuration difference between successive stages and require every experimental selection to resolve to CONTROL outside Home 2. Trial metadata preferences and route state remain separate from original Home. Playing, details, long-press actions and full collection callbacks retain the existing implementation.
 
@@ -25,7 +26,9 @@ For each addition, freeze the APK, profile, content, geometry and input cadence.
 
 These stages share underlying models and existing loading infrastructure. Rendering comparisons alone cannot assign the full cost of shared metadata work to a feature; trace that work separately and distinguish deterministic cached-fixture results from real-feed loading. Establish a fresh Stage 1 baseline rather than reusing the previous bounded-native measurements.
 
-Phase 7A/B are now implemented and measured on tablet: see [Phase 7 findings](home2-phase7-performance.md). Ranking numbers are excluded by user request. Remaining features: investigate poster density/aspect separately, then hero layout/actions, static hero artwork, crossfade and focus-driven backgrounds. No hero migration, skeleton implementation or production-tab replacement is included. Fire TV performance measurements remain paused.
+Phase 7A/B are implemented and measured on tablet: see [Phase 7 findings](home2-phase7-performance.md). Ranking numbers are excluded by user request. Remaining features after the Phase 8 hero layout: investigate poster density/aspect separately, then static hero artwork, crossfade and focus-driven backgrounds. No skeleton implementation or production-tab replacement is included. Fire TV performance measurements remain paused.
+
+Phase 8 now adds hero layout/actions within Home 2: [measured costs and verification](home2-phase8-performance.md). Static hero artwork is Phase 9; dynamic effects remain later. Per-phase figures are local comparisons on their respective APKs and must not be summed as a precise cumulative budget.
 
 Isolation verification (`home2-isolation-checks.log`): **199 targeted unit tests passed**, including the route guard and single-change-per-stage assertions. Two Xiaomi Pad 5 tests passed in **7.623 s** (`home2-isolation-tablet-tests.log`): the fixture enabled the legacy global preference, used the Home 2 baseline and complete detail data, then verified original Home has no experimental settings; the second test covered the 3,200-record recycled feed, header/detail returns and rapid-reversal full visibility. Both ran in the isolated regression package with fake data and no provider or playback/audio calls. No new performance timing claim is made.
 

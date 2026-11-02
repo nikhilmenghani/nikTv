@@ -833,3 +833,7 @@ Targeted verification: 199 unit tests and two isolated Xiaomi Pad 5 checks passe
 ### 2026-11-01 — Phase 7 tablet delta
 
 Added Home 2-only contained captions/gradient (7A), then border/shadow finish (7B), with no ranking numbers. Same-APK Wio tablet samples show roughly 2–4 ms higher vertical p95, 3 ms horizontal and 3–4 ms touch versus Stage 6. Three device checks and 199 targeted unit tests pass; existing 22 lint errors remain. Global counters are retained, but raw frame rings are partial; no SmartTube/Fire TV parity claim. Original Home stays unchanged and Fire TV was not contacted. [Full methods, results, limitations and evidence](home2-phase7-performance.md).
+
+### 2026-11-01 — commit and Phase 8
+
+Committed the isolated baseline/styling work as `0f763045`, then added a Home 2-only scrolling hero with existing text/actions through a recycled Compose header. Hero images and automatic rotation remain disabled. Final Wio tablet Dev groups measured 7B median p95 17 ms versus Stage 8 18 ms (roughly +1 ms; warm repeats about +2 ms), with more deadline misses. An earlier 29 ms first pass remains recorded; cold-entry cost is not resolved. No Fire TV commands or original Home changes. [Phase 8 implementation, costs and qualifications](home2-phase8-performance.md).

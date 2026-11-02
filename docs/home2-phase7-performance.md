@@ -1,6 +1,6 @@
 # Home 2 Phase 7 — tablet comparison, 2026-11-01
 
-Phase 7 is implemented only in Home 2. Original Home/Movies/Series remain on CONTROL. No Fire TV interaction, installation, release build, commit or push occurred. Ranking numbers are deliberately excluded, as requested.
+Phase 7 is implemented only in Home 2 and was subsequently committed as `0f763045`. Original Home/Movies/Series remain on CONTROL. No Fire TV interaction, installation, release build or push occurred. Ranking numbers are deliberately excluded, as requested.
 
 ## Changes
 

@@ -526,6 +526,24 @@ internal fun DiscoveryPreviewScreen(
         confirmButton = { NikTvSecondaryActionButton({ experimentSettings = false }) { Text("Close") } })
     if (experiment && scrollVariant.nativeRows && state.detail == null) {
         var nativePopup by remember { mutableStateOf<RailEntry?>(null) }
+        var restoreNativeSelection by remember(app.discoveryNavigationId) { mutableStateOf(nativeNavigationId == app.discoveryNavigationId) }
+        val heroPlayRequester = remember(profile, surface) { FocusRequester() }
+        val heroInfoRequester = remember(profile, surface) { FocusRequester() }
+        val heroCard = state.hero
+        val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout) ({ focused, down, up ->
+            DiscoveryHero(heroCard?.copy(backdrop = null, poster = null, titleLogo = null), rank = null,
+                height = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f).dp,
+                landscape = landscape, compact = true, detail = false,
+                loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,
+                playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
+                play = { heroCard?.let { focused("play"); currentPlayCard(it) } },
+                add = { heroCard?.let { currentToggleFavorite(favorite(it)) } },
+                info = { heroCard?.let { focused("info"); currentDetails(it, "trial-hero:${it.key}") } },
+                onFocus = { focused("play"); restoreNativeSelection = true }, onDown = down, onUp = { up(); true },
+                previous = { vm.rotate(-1) }, next = { vm.rotate(1) },
+                carousel = state.heroes.size > 1, index = state.heroIndex, count = state.heroes.size,
+                portraitPhone = phonePortrait)
+        }) else null
         val recycled = scrollVariant.recycledRows
         val requestedRails = if (recycled) {
             val anchor = visibleRails.indexOfFirst { it.key == nearbyRow }.coerceAtLeast(0)
@@ -577,8 +595,11 @@ internal fun DiscoveryPreviewScreen(
                     }
                     if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
                         .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
-                        up = { runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = scrollVariant.animateNativeFocus,
-                        containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows)
+                        up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = scrollVariant.animateNativeFocus,
+                        containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows,
+                        hero = nativeHero, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
+                            runCatching { (if (id == "info") heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
+                        })
                     else NativeDiscoveryRows(nativeRows, Modifier.weight(1f).fillMaxWidth()
                         .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
                         up = { runCatching { tabRequester.requestFocus() } }, animateFocus = scrollVariant.animateNativeFocus)
