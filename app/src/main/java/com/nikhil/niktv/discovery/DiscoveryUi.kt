@@ -121,6 +121,12 @@ internal fun DiscoveryPreviewScreen(
     val landscape = !phone
     val compactLandscape = configuration.screenWidthDp > configuration.screenHeightDp && configuration.screenHeightDp < 480
     val profile = app.savedProfile?.cacheKey().orEmpty()
+    val hiddenRowsKey = "hidden:$profile:${surface.name}"
+    var hiddenTrialRows by remember(profile, surface) { mutableStateOf(heroPreferences.getStringSet(hiddenRowsKey, emptySet()).orEmpty().toSet()) }
+    fun setHiddenTrialRows(rows: Set<String>) {
+        hiddenTrialRows = rows
+        heroPreferences.edit().putStringSet(hiddenRowsKey, rows).apply()
+    }
     // Nested TMDB details use a different discovery VM; they must not rebind the
     // underlying collection or retain another profile's catalogue in memory.
     val providerVm: ProviderDiscoveryViewModel = viewModel(key = "provider-discovery:$profile:${System.identityHashCode(vm)}")
@@ -463,8 +469,8 @@ internal fun DiscoveryPreviewScreen(
             if (state.related.isNotEmpty()) add(Rail("related", "Related", state.related.map { cardEntry(it, "related") }))
         }
     } }
-    val visibleRails = remember(rails, state.feeds, providerState.pages, scrollVariant) { rails.take(scrollVariant.rowLimit).filterNot { row ->
-        row.section?.let { it in state.feeds && state.feeds[it].isNullOrEmpty() } == true ||
+    val visibleRails = remember(rails, state.feeds, providerState.pages, scrollVariant, experiment, hiddenTrialRows) { rails.take(scrollVariant.rowLimit).filterNot { row ->
+        (experiment && row.key in hiddenTrialRows) || row.section?.let { it in state.feeds && state.feeds[it].isNullOrEmpty() } == true ||
             row.providerCategory?.let { category -> providerDiscoverySources(listOf(category)).all { source ->
                 val page = providerState.pages[category.type]?.get(source.id)
                 page != null && page.page > 0 && !page.hasMore && !page.truncated && page.items.isEmpty()
@@ -516,6 +522,9 @@ internal fun DiscoveryPreviewScreen(
                 })
             }
             Text("Off skips optional hero detail lookups and title logos. Opening Info still loads details.", style = MaterialTheme.typography.bodySmall)
+            if (hiddenTrialRows.isNotEmpty()) NikTvSecondaryActionButton({ setHiddenTrialRows(emptySet()) }) {
+                Text("Restore hidden rows (${hiddenTrialRows.size})")
+            }
             Text("Browse source", style = MaterialTheme.typography.labelMedium)
             val openExperiment = LocalOpenDiscoveryExperimentSurface.current
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -660,9 +669,11 @@ internal fun DiscoveryPreviewScreen(
                 if (recycled && (row.providerType != null || row.section != null)) listOf(NativeDiscoveryItem("${row.key}:all", "Search / All", row.title, onClick = {
                     row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
                         ?: row.section?.let(openSection)
-                })) else if (recycled && row.recommendation != null && dismissRecommendation != null)
-                    listOf(NativeDiscoveryItem("${row.key}:dismiss", "Dismiss recommendations", row.title,
-                        onClick = { dismissRecommendation(row.recommendation) })) else emptyList())
+                })) else emptyList(), actionLabel = if (recycled) "Remove ${row.title}" else null,
+                action = if (!recycled) null else ({
+                    if (row.recommendation != null && dismissRecommendation != null) dismissRecommendation(row.recommendation)
+                    else setHiddenTrialRows(hiddenTrialRows + row.key)
+                }))
         } }
         CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { experimentSettings = true }) {
             Column(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -1148,10 +1159,19 @@ internal fun DiscoveryPreviewScreen(
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(pair.title, Modifier.weight(1f), fontSize = 13.sp)
                             listOf(pair.hollywood, pair.bollywood).forEach { section ->
-                                NikTvSecondaryActionButton(onClick = { vm.configure(if (section in state.sections) state.sections - section else state.sections + section) },
+                                val trialKeys = setOf("section:${section.name}") + when (section) {
+                                    TmdbHomeSection.TRENDING_MOVIES -> setOf("daily-movies")
+                                    TmdbHomeSection.TRENDING_SERIES -> setOf("daily-series")
+                                    else -> emptySet()
+                                }
+                                val selected = section in state.sections && (!experiment || trialKeys.none { it in hiddenTrialRows })
+                                NikTvSecondaryActionButton(onClick = {
+                                    if (experiment) setHiddenTrialRows(if (selected) hiddenTrialRows + trialKeys else hiddenTrialRows - trialKeys)
+                                    vm.configure(if (selected) state.sections - section else state.sections + section)
+                                },
                                     modifier = Modifier.width(84.dp).heightIn(min = 44.dp).semantics { contentDescription = section.title },
                                     contentPadding = PaddingValues(2.dp)) {
-                                    Checkbox(section in state.sections, onCheckedChange = null)
+                                    Checkbox(selected, onCheckedChange = null)
                                 }
                             }
                         }

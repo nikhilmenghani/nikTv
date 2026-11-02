@@ -28,6 +28,42 @@ class RecycledDiscoveryDeviceTest {
     @Test fun heroScrollsWithFeedAndKeepsHeaderAndDetailReturn() = verify(true, true, true)
     @Test fun exactNativeHeroBoundsPreserveNavigationAndReturn() = verify(true, true, true, true)
     @Test fun heldRemoteActivationDoesNotPlayOrLeakRelease() = verify(true, true, exerciseHold = true)
+    @Test fun rowActionsRemoveNeighborsWithoutLosingRemoteFocus() {
+        val i = InstrumentationRegistry.getInstrumentation()
+        val c = i.targetContext
+        check(c.packageName.endsWith(".regression"))
+        val host = i.startActivitySync(Intent(c, PlaybackFixtureHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val remaining = mutableStateOf(listOf("a", "b", "c"))
+        val entry = FocusRequester()
+        fun awaitTag(expected: String) {
+            val end = SystemClock.uptimeMillis() + 6000
+            while (SystemClock.uptimeMillis() < end) {
+                var tag: String? = null
+                i.runOnMainSync { tag = host.currentFocus?.tag as? String }
+                if (tag == expected) return
+                Thread.sleep(30)
+            }
+            fail("Expected native focus $expected after row action")
+        }
+        try {
+            i.setInTouchMode(false)
+            i.runOnMainSync { host.setContent { MaterialTheme {
+                RecycledDiscoveryRows(remaining.value.map { id -> NativeDiscoveryRow(id, id,
+                    listOf(NativeDiscoveryItem("first", id, onClick = {})), actionLabel = "Remove $id",
+                    action = { remaining.value = remaining.value - id }) }, Modifier.fillMaxSize(), entry, {})
+            } } }
+            i.waitForIdleSync()
+            i.runOnMainSync { entry.requestFocus() }
+            awaitTag("a:first")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT); awaitTag("a:action")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER); awaitTag("b:first")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("c:first")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_MENU); awaitTag("c:action")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER); awaitTag("b:first")
+            i.runOnMainSync { remaining.value = listOf("a", "b", "c") }
+            awaitTag("b:first")
+        } finally { i.runOnMainSync { host.finish() } }
+    }
     private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext

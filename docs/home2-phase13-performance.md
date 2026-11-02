@@ -32,4 +32,4 @@ The preceding tablet Phase 12 median was 16 ms in each profile: this sample is â
 
 Actual-app held-menu/Back checks passed on both devices. On tablet, touch-selecting View description displayed the nested dialog and Back restored the white outline to the originating Spider-Man tile. The Nikhil RRR item has no description action; that absence is expected rather than a popup failure.
 
-`python tools/check-source-secrets.py`: zero findings. `git diff --check`: clean. The applicable lint result is recorded with this phase's build evidence; existing project errors remain a separate limitation and are not suppressed.
+`python tools/check-source-secrets.py`: zero findings. `git diff --check`: clean. `:app:lintDebug -PperformanceBuild=true -PskipLocalGithubToken=true` failed with the same 22 existing project errors (350 warnings, 3 hints); none are in this phase's changed files. Findings are not suppressed. Evidence: `lint.log` and the XML report.

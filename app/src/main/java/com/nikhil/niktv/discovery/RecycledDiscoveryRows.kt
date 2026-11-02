@@ -73,7 +73,7 @@ private fun NativeDiscoveryItem.samePresentation(other: NativeDiscoveryItem) =
 private val rowDiff = object : DiffUtil.ItemCallback<NativeDiscoveryRow>() {
     override fun areItemsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) = a.id == b.id
     override fun areContentsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) =
-        a.isHero == b.isHero && a.title == b.title && a.items.size == b.items.size &&
+        a.isHero == b.isHero && a.title == b.title && a.actionLabel == b.actionLabel && a.items.size == b.items.size &&
             a.items.indices.all { a.items[it].samePresentation(b.items[it]) }
 }
 private val cardDiff = object : DiffUtil.ItemCallback<NativeDiscoveryItem>() {
@@ -185,6 +185,15 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     fun update(rows: List<NativeDiscoveryRow>) {
         if (submitted === rows) return
+        val previous = rowAdapter.currentList.map { it.id }
+        val replacement = nativeRowReplacement(previous, rows.map { it.id }, position.row)
+        if (hasFocus() && position.row in previous && position.row != replacement && replacement != null) {
+            // Park inside this island while DiffUtil removes its focused holder.
+            val policy = descendantFocusability
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS; requestFocus(); descendantFocusability = policy
+            pending = replacement to (position.columns[replacement] ?: rows.first { it.id == replacement }.items.firstOrNull()?.id.orEmpty())
+            position.row = replacement; position.item = pending!!.second
+        }
         submitted = rows
         models = rows.associateBy { it.id }
         rowAdapter.submitList(rows.toList())
@@ -268,8 +277,12 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private fun selected(row: String, item: String) { position.row = row; position.item = item; position.columns[row] = item }
     private fun horizontal(row: String, item: String, direction: Int) {
         val items = models[row]?.items.orEmpty()
-        items.getOrNull(items.indexOfFirst { it.id == item } + direction)?.let { reveal(row, it.id) }
+        val next = items.indexOfFirst { it.id == item } + direction
+        if (next < 0 && models[row]?.action != null) focusRowAction(row)
+        else items.getOrNull(next)?.let { reveal(row, it.id) }
     }
+    private fun focusRowAction(row: String): Boolean =
+        (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == row }) as? RowHolder)?.focusAction() == true
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
         if (event.action == KeyEvent.ACTION_DOWN) lastInputAt = android.os.SystemClock.uptimeMillis()
@@ -291,6 +304,25 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         private val title = TextView(context).apply {
             textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(3), dp(5), 0, dp(6)); ViewCompat.setAccessibilityHeading(this, true)
+        }
+        private val action = TextView(context).apply {
+            text = "×"; textSize = 21f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
+            isFocusable = true; isSoundEffectsEnabled = false
+            setOnFocusChangeListener { _, focused ->
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(7).toFloat(); setColor(if (focused) Color.rgb(229,9,37) else Color.rgb(29,33,42))
+                    setStroke(dp(if (focused) 2 else 1), if (focused) Color.WHITE else Color.rgb(55,61,73))
+                }
+            }
+            setOnClickListener { models[rowId]?.action?.invoke() }
+            setOnKeyListener { _, key, event ->
+                if (event.action != KeyEvent.ACTION_DOWN) false else when (key) {
+                    KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN -> { reveal(rowId, this@RailRecycler.position.columns[rowId] ?: cards.currentList.firstOrNull()?.id.orEmpty()); true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { adjacent(rowId, -1); true }
+                    KeyEvent.KEYCODE_DPAD_LEFT -> true
+                    else -> false
+                }
+            }
         }
         private val horizontal = RecyclerView(context).apply {
             layoutManager = LinearLayoutManager(context, HORIZONTAL, false).apply {
@@ -324,7 +356,11 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     }, { adjacent(HERO_ROW, 1) }, { onUp() }) }
                 }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2))
             } else {
-            (itemView as LinearLayout).addView(title)
+            (itemView as LinearLayout).addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                addView(action, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(7) })
+                addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+            })
             (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1, dp(if (homeTileProportions) 167 else 172 + (48 * resources.configuration.fontScale).toInt())))
             horizontal.adapter = cards
             title.setOnFocusChangeListener { _, focused -> if (focused) { epoch++; pending = null; selected(rowId, "") } }
@@ -342,6 +378,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             val wasLoadingFocus = title.isFocused
             if (rowId != row.id) { cards.submitList(emptyList()); horizontal.stopScroll(); horizontal.scrollToPosition(0) }
             rowId = row.id; title.text = row.title; title.tag = "${row.id}:loading"
+            action.visibility = if (row.action == null) View.GONE else View.VISIBLE
+            action.contentDescription = row.actionLabel; action.tag = "${row.id}:action"
             title.isFocusable = row.items.isEmpty(); cards.submitList(row.items.toList())
             if (wasLoadingFocus && row.items.isNotEmpty()) reveal(row.id, row.items.first().id)
             if (!warmed) {
@@ -362,6 +400,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 }
             }
         }
+        fun focusAction(): Boolean = action.visibility == View.VISIBLE && action.requestFocus()
         fun cancelRemoteInput() {
             for (index in 0 until horizontal.childCount) (horizontal.getChildViewHolder(horizontal.getChildAt(index)) as? CardHolder)?.cancelRemoteInput()
         }
@@ -463,6 +502,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     }
                     true
                 } else if (e.action != KeyEvent.ACTION_DOWN) false else when (key) {
+                    KeyEvent.KEYCODE_MENU -> focusRowAction(row)
                     KeyEvent.KEYCODE_DPAD_UP -> { adjacent(row, -1); true }
                     KeyEvent.KEYCODE_DPAD_DOWN -> { adjacent(row, 1); true }
                     KeyEvent.KEYCODE_DPAD_LEFT -> { horizontal(row, identity, -1); true }

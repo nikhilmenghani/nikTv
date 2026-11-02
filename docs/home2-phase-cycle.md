@@ -11,8 +11,8 @@ Phases 1–12 and their individual findings are linked from [rollout](recycled-d
 | Step | Scope | Status |
 |---|---|---|
 | 13 | Reliable short/held remote activation, popup lifetime and originating-tile focus restoration | Complete: [findings](home2-phase13-performance.md) |
-| 14 | Row/category management and recommendation dismissal parity, stable focus after removal | Next |
-| 15 | Responsive Home-like tile geometry, readable title/subtitle/source/progress placement | Pending |
+| 14 | Row/category management and recommendation dismissal parity, stable focus after removal | Complete: [findings](home2-phase14-performance.md) |
+| 15 | Responsive Home-like tile geometry, readable title/subtitle/source/progress placement | Next |
 | 16 | Hero transitions and on-demand information behavior; measure rather than assume cached work is free | Pending |
 | 17 | TV tile-cache memory/lifecycle limits and sustained navigation; keep tablet path independent | Pending |
 | 18 | End-to-end navigation/action matrix: profiles, categories, Search/All, details/back, touch and D-pad | Pending |
