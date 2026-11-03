@@ -751,6 +751,7 @@ internal fun DiscoveryPreviewScreen(
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         popupAnchor = { nativePopupAnchor = it },
                         showSkeletons = tileSkeletons,
+                        navigationTrace = navigationTrace,
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
                         heroHeightPx = if (nativeHero != null && landscape && !phone) with(LocalDensity.current) {
                             trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeHeroFraming), fontScale).dp.roundToPx()

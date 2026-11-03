@@ -15,7 +15,7 @@ Phases 1–12 and their individual findings are linked from [rollout](recycled-d
 | 15 | Responsive Home-like tile geometry, readable title/subtitle/source/progress placement | Complete: [findings](home2-phase15-performance.md) |
 | 16 | Hero transitions and on-demand information behavior; measure rather than assume cached work is free | Complete, idle tail remains: [findings](home2-phase16-performance.md) |
 | 17 | TV tile-cache memory/lifecycle limits and sustained navigation; keep tablet path independent | Complete: [findings](home2-phase17-performance.md) |
-| 18 | End-to-end navigation/action matrix: profiles, categories, Search/All, details/back, touch and D-pad | Implemented; tablet/TV landscape checks complete, portrait/soak follow-up remains: [findings](home2-phase18-functional-review.md) |
+| 18 | End-to-end navigation/action matrix: profiles, categories, Search/All, details/back, touch and D-pad | Full focused TV/tablet suites pass after return/focus fixes; final real-app/portrait/soak follow-up remains: [findings](home2-phase18-functional-review.md) |
 | 19 | Optional focus-driven artwork last, followed by final cost/benefit review | Pending |
 
 Requested follow-up before phase 19: [static loading placeholders](home2-skeleton-loading.md), with a bounded row drawing and first-media focus handoff fix. Fire TV testing resumed; see the [replacement review](home2-firetv-replacement-readiness.md) for measurements, the cropped-row fix and remaining IPTV-menu return/pressure-focus gaps. Keep original Home available until these are resolved.
@@ -23,3 +23,5 @@ Requested follow-up before phase 19: [static loading placeholders](home2-skeleto
 For each step record APK/build identity, device/profile, feature settings, per-run frame p95 and deadline counters, first-exposure versus repeat results, memory snapshots where relevant, and actual functional outcomes. Do not label histogram timing as input-to-visible-focus latency. Keep recordings/tracing outside timed runs. Preserve personal categories, history and credentials; restore any temporary UI selection changes.
 
 Short runs are regression indicators, not proof of SmartTube parity or a production soak. Failed/blocked checks remain failures, and unsuccessful experiments remain off. Source/cache/stream data and captures stay outside git. Any feature deliberately deferred must remain explicit in the final evaluation.
+
+November 3 blocker work: [resolution and measurements](home2-blocker-resolution.md). Baseline committed as `6d722926`; the navigation follow-up and measurements are recorded in the linked report.

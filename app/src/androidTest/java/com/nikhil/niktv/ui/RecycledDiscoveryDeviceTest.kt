@@ -30,8 +30,11 @@ class RecycledDiscoveryDeviceTest {
     @Test fun homeHeightHeroKeepsReversedFirstRailFullyVisible() = verify(true, true, true, true, tallHero = true)
     @Test fun heldRemoteActivationDoesNotPlayOrLeakRelease() = verify(true, true, exerciseHold = true)
     @Test fun memoryPressureDropsLayersWithoutLosingNavigation() = verify(true, true, exercisePressure = true)
+    @Test fun pressureReversalBurstsKeepTheRequestedTile() = verify(true, true, exercisePressure = true, reversalRounds = 20)
+    @Test fun pendingRowSurvivesTemporaryComposeHostFocus() = verify(true, true, exercisePressure = true, exerciseHostHandoff = true)
     @Test fun rapidHeaderEntryDoesNotReviveAnObsoleteHeroRequest() = verify(true, true, withHero = true, exerciseRapidEntry = true)
     @Test fun detailsReturnPreservesBothViewportAxes() = verify(true, true, withHero = true, exerciseViewport = true)
+    @Test fun fixedHeightHeroReturnPreservesBothViewportAxes() = verify(true, true, withHero = true, fixedHero = true, exerciseViewport = true, tallHero = true)
     @Test fun reducedFocusMotionRetainsNavigationAndRestoration() = verify(true, true, withHero = true, reducedFocusMotion = true)
     @Test fun homeCaptionsFitLongTitlesAndLargerFonts() {
         val i = InstrumentationRegistry.getInstrumentation()
@@ -182,26 +185,29 @@ class RecycledDiscoveryDeviceTest {
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("long:i39")
         } finally { i.runOnMainSync { host.finish() } }
     }
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false, tallHero: Boolean = false) {
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false, tallHero: Boolean = false, reversalRounds: Int = 1, exerciseHostHandoff: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
         val host = i.startActivitySync(Intent(c, PlaybackFixtureHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val navigationEvents = java.util.ArrayDeque<String>()
         fun await(message: String, block: () -> Boolean) {
             val end = SystemClock.uptimeMillis() + 6000
             while (SystemClock.uptimeMillis() < end) { if (block()) return; Thread.sleep(30) }
             var actual: Any? = null
             i.runOnMainSync { actual = host.currentFocus?.let { view ->
                 val rect = Rect(); view.getGlobalVisibleRect(rect)
-                "${view.tag}, visible=$rect, size=${view.width}x${view.height}"
+                "${view.javaClass.simpleName}:${view.tag}, visible=$rect, size=${view.width}x${view.height}"
             } }
+            var trace = ""
+            i.runOnMainSync { trace = navigationEvents.joinToString("\n") }
             i.uiAutomation.takeScreenshot()?.let { bitmap ->
                 java.io.File(c.cacheDir, "phase18-failure.png").outputStream().use {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                 }
                 bitmap.recycle()
             }
-            fail("$message; actual=$actual windowFocused=${host.window.decorView.hasWindowFocus()}")
+            fail("$message; actual=$actual windowFocused=${host.window.decorView.hasWindowFocus()}\n$trace")
         }
         fun focus(): String? { var value: String? = null; i.runOnMainSync { value = host.currentFocus?.tag as? String }; return value }
         fun fullyVisible(): Boolean {
@@ -239,6 +245,10 @@ class RecycledDiscoveryDeviceTest {
                             containedCaptions = containedCaptions, cardShadows = cardShadows, focusRestorer = nativeRestorer,
                             animateFocus = !reducedFocusMotion,
                             cacheTileDrawing = exercisePressure,
+                            navigationTrace = if (exercisePressure && InstrumentationRegistry.getArguments().getString("traceFocus") == "true") ({ event ->
+                                if (navigationEvents.size >= 160) navigationEvents.removeFirst()
+                                navigationEvents.addLast(event)
+                            }) else null,
                             showSkeletons = tallHero,
                             restoreSelection = restoreSelection.value,
                             heroHeightPx = if (fixedHero) (heroHeight * c.resources.displayMetrics.density).toInt() else null,
@@ -371,10 +381,69 @@ class RecycledDiscoveryDeviceTest {
             }
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Header reentry") { focus() == "r0:i15" }
-            repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN) }
-            repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP) }
-            await("Rapid direction reversal retains identity") { focus() == "r0:i15" }
-            await("Reversed card fits the viewport") { fullyVisible() }
+            if (withHero) {
+                Thread.sleep(650)
+                i.runOnMainSync {
+                    var native = host.currentFocus as View
+                    while (native.javaClass.simpleName != "RailRecycler") native = native.parent as View
+                    val recycler = native as RecyclerView
+                    val heroRow = recycler.findViewHolderForAdapterPosition(0)?.itemView
+                    if (heroRow != null) {
+                        val layout = recycler.layoutManager as androidx.recyclerview.widget.LinearLayoutManager
+                        val first = layout.findFirstVisibleItemPosition()
+                        val offset = layout.findViewByPosition(first)!!.top
+                        assertFalse("Late unselected hero must not reveal itself", recycler.requestChildRectangleOnScreen(heroRow, Rect(0, 0, heroRow.width, heroRow.height), true))
+                        assertEquals(first, layout.findFirstVisibleItemPosition())
+                        assertEquals(offset, layout.findViewByPosition(first)!!.top)
+                    }
+                }
+            }
+            if (exerciseHostHandoff) {
+                fun handoff(cancelAtHeader: Boolean, steps: Int = 12) = i.runOnMainSync {
+                    var native = host.currentFocus as View
+                    while (native.javaClass.simpleName != "RailRecycler") native = native.parent as View
+                    fun dispatch(code: Int) {
+                        native.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+                        native.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+                    }
+                    // Queue an offscreen destination before RecyclerView can bind
+                    // it, then reproduce the observed AndroidComposeView parking.
+                    repeat(steps) { dispatch(KeyEvent.KEYCODE_DPAD_DOWN) }
+                    var compose = native.parent as View
+                    while (compose.javaClass.simpleName != "AndroidComposeView") compose = compose.parent as View
+                    val group = compose as ViewGroup; val policy = group.descendantFocusability
+                    val nativeGroup = native as ViewGroup; val nativePolicy = nativeGroup.descendantFocusability
+                    nativeGroup.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    native.isFocusable = false
+                    native.clearFocus()
+                    group.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    compose.requestFocus()
+                    group.descendantFocusability = policy
+                    native.isFocusable = true
+                    nativeGroup.descendantFocusability = nativePolicy
+                    assertTrue("Window keeps focus during host handoff", host.hasWindowFocus())
+                    assertFalse("Native holder is temporarily unfocused", native.hasFocus())
+                    if (cancelAtHeader) repeat(steps + 1) { dispatch(KeyEvent.KEYCODE_DPAD_UP) }
+                }
+                handoff(false, 0)
+                await("Settled row survives temporary host focus without pending work") { focus() == "r0:i15" }
+                handoff(false)
+                await("Pending row survives temporary host focus") { focus() == "r12:i0" }
+                repeat(12) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP) }
+                await("Handoff returns to original media") { focus() == "r0:i15" }
+                handoff(true)
+                await("New Header navigation cancels the parked request") { headerFocused.get() }
+                Thread.sleep(650)
+                assertTrue("Obsolete row must not reclaim Header focus", headerFocused.get())
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Header can reenter after cancellation") { focus() == "r0:i15" }
+            }
+            repeat(reversalRounds) { round ->
+                repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN) }
+                repeat(3) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP) }
+                await("Rapid direction reversal $round retains identity") { focus() == "r0:i15" }
+                await("Reversed card fits the viewport") { fullyVisible() }
+            }
             if (withHero) {
                 i.runOnMainSync { rowsShown.value = false }
                 await("Leave feed for menu navigation") { focus() == null }

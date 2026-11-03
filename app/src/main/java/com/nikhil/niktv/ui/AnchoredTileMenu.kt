@@ -1,6 +1,13 @@
 package com.nikhil.niktv.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.input.InputMode
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -40,9 +47,25 @@ internal fun TileActionsDropdown(expanded: Boolean, onDismissRequest: () -> Unit
                 tileMenuPosition(anchor, windowSize, popupContentSize, with(density) { 8.dp.roundToPx() }, with(density) { 8.dp.roundToPx() })
         } }
         Popup(position, onDismissRequest, PopupProperties(focusable = true)) {
+            val entry = remember { FocusRequester() }
+            var hasMenuFocus by remember { mutableStateOf(false) }
+            var entered by remember { mutableStateOf(false) }
+            val remote = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+            val windowFocused = LocalWindowInfo.current.isWindowFocused
+            LaunchedEffect(remote, windowFocused) {
+                if (remote && windowFocused && !entered) repeat(8) {
+                    withFrameNanos { }
+                    // Automatic popup focus may already have entered the menu.
+                    // Do not reset the user's first arrow to its first option.
+                    if (hasMenuFocus || runCatching { entry.requestFocus() }.getOrDefault(false)) {
+                        entered = true
+                        return@LaunchedEffect
+                    }
+                }
+            }
             BoxWithConstraints {
                 Surface(color = Color(0xFF202020), shape = RoundedCornerShape(12.dp), shadowElevation = 8.dp) {
-                    Column(Modifier.width(IntrinsicSize.Max).widthIn(min = 180.dp, max = 320.dp)
+                    Column(Modifier.onFocusChanged { hasMenuFocus = it.hasFocus }.focusRequester(entry).focusGroup().width(IntrinsicSize.Max).widthIn(min = 180.dp, max = 320.dp)
                         .heightIn(max = maxHeight - 16.dp).verticalScroll(rememberScrollState()).padding(vertical = 8.dp), content = content)
                 }
             }

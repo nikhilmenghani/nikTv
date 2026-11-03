@@ -1,5 +1,7 @@
 # Home 2 Fire TV replacement review
 
+Update 2026-11-03: [blocker follow-up](home2-blocker-resolution.md) records the new focus/return fixes, complete device results and final loading measurements. The November 2 findings below are retained as historical evidence; use the follow-up for the current gate.
+
 2026-11-02. Resumed at the user's request after the pause. **Do not replace/remove Home yet.** Warm Home 2 browsing is substantially faster, but the external IPTV-series return path and an intermittent focus failure under simulated memory pressure remain open. No migration, Release installation, commit or push was performed.
 
 ## Candidate and scope

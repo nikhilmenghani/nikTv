@@ -76,7 +76,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     focusEntry: FocusRequester, up: () -> Unit, visible: (String) -> Unit = {}, animateFocus: Boolean = true,
     containedCaptions: Boolean = false, cardShadows: Boolean = false, homeTileProportions: Boolean = false,
     hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false, focusRestorer: NativeDiscoveryFocusRestorer? = null,
-    popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false) {
+    popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false,
+    navigationTrace: ((String) -> Unit)? = null) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -94,6 +95,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
             view.heroContent = hero; view.heroFocusEntry = heroFocusEntry
             view.onHeroActivity = heroActivity
             view.onPopupAnchor = popupAnchor
+            view.onNavigationTrace = navigationTrace
+            view.focusHost = host
             view.onUp = { view.leave(host, up) }; view.onVisible = visible; view.update(displayedRows)
         })
     }
@@ -118,13 +121,55 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private val containedCaptions: Boolean, private val cardShadows: Boolean, private val homeTileProportions: Boolean, private val heroHeightPx: Int?,
     private val parentComposition: CompositionContext, private val cacheTileDrawing: Boolean, private val showSkeletons: Boolean) : RecyclerView(context), ComponentCallbacks2 {
     private val tileCache = NativeTileCachePolicy(cacheTileDrawing)
+    var focusHost: View? = null
+    var onNavigationTrace: ((String) -> Unit)? = null
+    private fun trace(event: String) {
+        onNavigationTrace?.let { report ->
+            val focused = rootView.findFocus()
+            val first = vertical.findFirstVisibleItemPosition()
+            report("$event epoch=$epoch pending=$pending selected=${position.row}:${position.item} anchor=${position.anchorRow}:${position.anchorOffset} first=$first:${vertical.findViewByPosition(first)?.top} bounds=$top/$height policy=$restoreSelection restoring=$restoringViewport/$restoringSelectionViewport nativeFocus=${hasFocus()} window=${hasWindowFocus()} touch=$isInTouchMode focus=${focused?.javaClass?.simpleName}:${focused?.tag}")
+        }
+    }
     private var callbacksRegistered = false
     private var pressure = false
     private var warmPoolJob: Job? = null
     var onHeroActivity: ((HeroActivity) -> Unit)? = null
     private var touchingHeroFeed = false
     private val scrollingChildren = mutableSetOf<RecyclerView>()
-    private val focusObserver = ViewTreeObserver.OnGlobalFocusChangeListener { _, _ -> reportHeroActivity() }
+    private var ownsRemoteFocus = false
+    private val focusObserver = ViewTreeObserver.OnGlobalFocusChangeListener { old, new ->
+        reportHeroActivity()
+        // A settled selected holder can be recycled after pending was cleared.
+        // Recover only this island's lost focus, never an explicit exit or touch.
+        if (ownsRemoteFocus && (pending?.first ?: position.row) != HERO_ROW && old != null && isDescendant(old) &&
+            (new == null || new === focusHost)) {
+            val ticket = epoch
+            if (isAttachedToWindow && hasWindowFocus() && !isInTouchMode) {
+                // Keep key dispatch in this island during the layout handoff;
+                // otherwise the next arrow can be consumed by Compose's host.
+                val policy = descendantFocusability
+                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                requestFocus()
+                descendantFocusability = policy
+            }
+            postOnAnimation {
+                val focused = rootView.findFocus()
+                if (ticket == epoch && ownsRemoteFocus && pending == null &&
+                    isAttachedToWindow && hasWindowFocus() && !isInTouchMode &&
+                    (focused == null || focused === focusHost || focused === this)) {
+                    reveal(position.row, position.item)
+                }
+            }
+        }
+    }
+    private fun isDescendant(view: View): Boolean {
+        var parent = view.parent
+        while (parent != null) {
+            if (parent === this) return true
+            parent = parent.parent
+        }
+        return view === this
+    }
     private fun reportHeroActivity() {
         val report = onHeroActivity ?: return
         val header = findViewHolderForAdapterPosition(0)?.takeIf { models[rowAdapter.currentList.firstOrNull()?.id]?.isHero == true }?.itemView
@@ -148,6 +193,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
+        if (onNavigationTrace != null) trace("window-focus:$hasWindowFocus")
         tileCache.windowFocus(hasWindowFocus); refreshTileLayers()
         if (!hasWindowFocus) for (index in 0 until childCount) (getChildViewHolder(getChildAt(index)) as? RowHolder)?.cancelRemoteInput()
         if (hasWindowFocus && hasFocus()) pending?.let { reveal(it.first, it.second) }
@@ -170,7 +216,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)
-        if (restoringViewport) {
+        trace("layout")
+        if (restoringViewport && width > 0 && height > 0) {
             restoringViewport = false
             val target = pending; val ticket = epoch
             postOnAnimation { if (target != null && ticket == epoch && pending == target && hasFocus()) reveal(target.first, target.second) }
@@ -189,22 +236,30 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     override fun onScrollStateChanged(state: Int) { super.onScrollStateChanged(state); reportHeroActivity() }
     override fun requestChildRectangleOnScreen(child: View, rect: Rect, immediate: Boolean): Boolean {
-        if (child.hasFocus() && rowAdapter.currentList.firstOrNull()?.isHero == true &&
+        // Android/Compose may temporarily focus a newly attached hero while the
+        // saved card is still binding. Its implicit reveal must not overwrite
+        // the restored row offset. Explicit directional/touch input releases
+        // this guard immediately; successful restoration releases it next frame.
+        if (restoringSelectionViewport) return false
+        if (rowAdapter.currentList.firstOrNull()?.isHero == true &&
             findViewHolderForAdapterPosition(0)?.itemView === child) {
+            // A late hero bring-into-view request is not a new user selection.
+            // External-route remounts can deliver it after the one-frame restore
+            // guard has ended. Only the committed/pending hero may reveal it.
+            if ((pending?.first ?: position.row) != HERO_ROW) return false
+            if (!child.hasFocus()) return false
             stopScroll()
             vertical.scrollToPositionWithOffset(0, 0)
             return true
-        }
-        if (restoringSelectionViewport) {
-            val requested = Rect(rect)
-            offsetDescendantRectToMyCoords(child, requested)
-            if (requested.top >= 0 && requested.bottom <= height && requested.left >= 0 && requested.right <= width) return false
         }
         return super.requestChildRectangleOnScreen(child, rect, immediate)
     }
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> touchingHeroFeed = true
+            MotionEvent.ACTION_DOWN -> {
+                touchingHeroFeed = true; restoringSelectionViewport = false
+                abandonPendingFocus()
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> touchingHeroFeed = false
         }
         val result = super.dispatchTouchEvent(event)
@@ -243,7 +298,16 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private var epoch = 0L
     private val stableIds = mutableMapOf<String, Long>()
     private fun stableId(key: String) = stableIds.getOrPut(key) { stableIds.size.toLong() }
-    private val vertical = LinearLayoutManager(context)
+    private val vertical = object : LinearLayoutManager(context) {
+        override fun onRequestChildFocus(parent: RecyclerView, state: RecyclerView.State, child: View, focused: View?): Boolean {
+            // RecyclerView's internal focus reveal calls the LayoutManager
+            // directly, bypassing requestChildRectangleOnScreen below. During
+            // restoration/explicit navigation the row coordinator owns reveal;
+            // a competing smooth scroll would overwrite its saved viewport.
+            return restoringViewport || restoringSelectionViewport || pending != null ||
+                super.onRequestChildFocus(parent, state, child, focused)
+        }
+    }
     private val motion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
     private val rowAdapter = object : ListAdapter<NativeDiscoveryRow, RowHolder>(rowDiff) {
         init { setHasStableIds(true) }
@@ -329,6 +393,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         rowAdapter.submitList(rows.toList())
     }
     override fun onRequestFocusInDescendants(direction: Int, previouslyFocusedRect: Rect?): Boolean {
+        trace("entry")
+        ownsRemoteFocus = true
         val row = if (heroContent != null && !restoreSelection) models[HERO_ROW] else
             models[position.row]?.takeIf { it.isHero || it.items.isNotEmpty() } ?: rowAdapter.currentList.firstOrNull { it.isHero || it.items.isNotEmpty() }
         val target = if (heroContent != null && !restoreSelection) HERO_ROW to "play" else
@@ -356,6 +422,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         return false // Outer native anchor owns entry until the recycled holder is laid out.
     }
     private fun reveal(row: String, item: String) {
+        if (onNavigationTrace != null) trace("reveal:$row:$item")
         if (parkingLoadingFocus && row != loadingEntryRow) {
             parkingLoadingFocus = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         }
@@ -376,14 +443,36 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         val current = findViewHolderForAdapterPosition(index) as? RowHolder
         if (current == null) vertical.scrollToPositionWithOffset(index, dp(8))
         fun retry(attempt: Int) { postOnAnimation {
-            if (ticket != epoch || !isAttachedToWindow || !hasWindowFocus() || !hasFocus()) return@postOnAnimation
+            if (ticket != epoch || pending?.first != row || !isAttachedToWindow || !hasWindowFocus()) {
+                if (onNavigationTrace != null) trace("retry-abort:$row:$item:$ticket:$attempt")
+                return@postOnAnimation
+            }
+            if (!hasFocus()) {
+                // Rebinding/recycling can park native focus on Compose's host.
+                // Keep the latest requested row alive through that handoff,
+                // without competing with touch, another native control, a popup
+                // or a newer request. Explicit exits invalidate epoch/pending.
+                val focused = rootView.findFocus()
+                if (isInTouchMode || (focused != null && focused !== focusHost)) return@postOnAnimation
+                val policy = descendantFocusability
+                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                val acquired = requestFocus()
+                descendantFocusability = policy
+                if (!acquired || !hasFocus()) {
+                    if (attempt < 30) retry(attempt + 1)
+                    return@postOnAnimation
+                }
+            }
             // Async feed updates can insert/remove rows while the target is laying out.
             // Resolve the stable identity again rather than focusing an old numeric slot.
             val currentIndex = rowAdapter.currentList.indexOfFirst { it.id == row }
             if (currentIndex < 0) { pending = null; return@postOnAnimation }
             val holder = findViewHolderForAdapterPosition(currentIndex) as? RowHolder
             if (holder == null) vertical.scrollToPositionWithOffset(currentIndex, dp(8))
-            if (holder == null || !holder.focus(item)) { if (attempt < 30) retry(attempt + 1) }
+            if (holder == null || !holder.focus(item)) {
+                if (attempt < 30) retry(attempt + 1)
+                else if (onNavigationTrace != null) trace("retry-exhausted:$row:$item")
+            }
             else { pending = null; finishViewportRestore() }
         } }
         retry(0)
@@ -404,12 +493,19 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         return false
     }
     fun leave(host: View, action: () -> Unit) {
+        ownsRemoteFocus = false
+        trace("leave")
         if (parkingLoadingFocus) { parkingLoadingFocus = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
         epoch++; pending = null
         val policy = descendantFocusability
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS; isFocusable = false
         clearFocus(); host.requestFocus(); action()
         isFocusable = true; descendantFocusability = policy
+    }
+    private fun abandonPendingFocus() {
+        ownsRemoteFocus = false
+        epoch++; pending = null
+        if (parkingLoadingFocus) { parkingLoadingFocus = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
     }
     private fun selectionFor(row: NativeDiscoveryRow): String =
         position.item.takeIf { position.row == row.id && it.isNotBlank() }
@@ -424,6 +520,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         }
     }
     private fun selected(row: String, item: String) {
+        ownsRemoteFocus = !isInTouchMode
+        if (onNavigationTrace != null) trace("selected:$row:$item")
         loadingEntryRow?.takeIf { it != row }?.let { old ->
             loadingEntryRow = null
             (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == old }) as? RowHolder)?.enableControlsFocus(true)
@@ -446,8 +544,20 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
-        if (event.action == KeyEvent.ACTION_DOWN) lastInputAt = android.os.SystemClock.uptimeMillis()
-        val target = pending
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            lastInputAt = android.os.SystemClock.uptimeMillis()
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> restoringSelectionViewport = false
+            }
+            if (event.keyCode == KeyEvent.KEYCODE_TAB) abandonPendingFocus()
+        }
+        // The committed cursor remains authoritative even while recycling has
+        // parked focus on this outer anchor. Platform focus search would drop
+        // or reinterpret an arrow before the requested holder is attached.
+        val target = pending ?: (position.row to position.item).takeIf {
+            ownsRemoteFocus && it.first != HERO_ROW && models.containsKey(it.first)
+        }
         if (target != null && event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_DOWN -> { adjacent(target.first, 1); return true }
@@ -780,6 +890,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 } ?: false
             }
             itemView.setOnFocusChangeListener { _, focused ->
+                if (onNavigationTrace != null) trace("card-focus:$row:$identity:$focused")
                 if (!focused) { activation.cancel(); itemView.isFocusableInTouchMode = false }
                 frame(focused); itemView.animate().cancel()
                 if (motion && animateFocus && !pressure) {
@@ -828,7 +939,11 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         fun cacheLayer(enabled: Boolean) {
             if (!enabled) {
                 itemView.animate().cancel()
-                if (!itemView.isFocused) { itemView.scaleX = 1f; itemView.scaleY = 1f }
+                // A window handoff can cancel the focus tween before its first
+                // frame. Settle to the intended state rather than retaining an
+                // arbitrary intermediate scale after returning from a popup.
+                val scale = if (itemView.isFocused && motion && animateFocus && !pressure) 1.025f else 1f
+                itemView.scaleX = scale; itemView.scaleY = scale
             }
             val type = if (enabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_NONE
             if (itemView.layerType != type) itemView.setLayerType(type, null)
@@ -865,5 +980,5 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             } } }
         }
     }
-    fun release() { epoch++; work.cancel(); adapter = null; pool.clear(); recycledViewPool.clear() }
+    fun release() { epoch++; focusHost = null; work.cancel(); adapter = null; pool.clear(); recycledViewPool.clear() }
 }

@@ -14,6 +14,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.compose.ui.semantics.getOrNull
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.test.platform.app.InstrumentationRegistry
@@ -28,6 +31,125 @@ import org.junit.Test
 class DiscoveryExperimentDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private var fixture: PlaybackFixtureHostActivity? = null
+
+    @Test fun externalSeriesMenuReturnKeepsScrolledViewport() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        context.getSharedPreferences("home2_presentation", 0).edit().clear().commit()
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        fixture = host
+        val profile = PortalProfile("Return fixture", "https://fixture.invalid", "")
+        val showDetails = mutableStateOf(false)
+        val navigationEvents = java.util.ArrayDeque<String>()
+        val traceEnabled = InstrumentationRegistry.getArguments().getString("traceFocus") == "true"
+        val series = MediaItem("series-1", "Fixture series", null, null)
+        val recent = RecentItem(FavoriteKind.SERIES, series, series, profileKey = profile.cacheKey())
+        val cards = (1..20).map { DiscoveryCard(it, false, "Fixture movie $it", date = "2020-01-01") }
+        val source = object : DiscoveryDataSource {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) = cards.map { it.copy(series = section.series) }
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) = DiscoveryDetails(card)
+            override suspend fun related(card: DiscoveryCard) = emptyList<DiscoveryCard>()
+            override suspend fun collection(id: Int) = emptyList<DiscoveryCard>()
+            override suspend fun reviews(card: DiscoveryCard) = emptyList<DiscoveryReview>()
+            override suspend fun episodes(card: DiscoveryCard, season: Int) = emptyList<DiscoveryEpisode>()
+        }
+        lateinit var vm: DiscoveryViewModel
+        var returnVmReady = false
+        fun key(code: Int) { instrumentation.sendKeyDownUpSync(code); Thread.sleep(160) }
+        fun tag(): String? { var value: String? = null; instrumentation.runOnMainSync { value = host.currentFocus?.tag as? String }; return value }
+        fun bounds(): android.graphics.Rect = android.graphics.Rect().also { rect -> instrumentation.runOnMainSync { host.currentFocus?.let { view ->
+            val parent = view.parent as View
+            val location = IntArray(2); parent.getLocationInWindow(location)
+            rect.set(location[0] + view.left - parent.scrollX, location[1] + view.top - parent.scrollY,
+                location[0] + view.right - parent.scrollX, location[1] + view.bottom - parent.scrollY)
+        } } }
+        fun scale(): Float { var scale = 0f; instrumentation.runOnMainSync { scale = host.currentFocus?.scaleX ?: 0f }; return scale }
+        try {
+            instrumentation.runOnMainSync {
+                vm = DiscoveryViewModel(context.applicationContext as Application, source)
+                returnVmReady = true
+                host.window.decorView.isSoundEffectsEnabled = false
+                host.setContent { MaterialTheme {
+                    val saved = rememberSaveableStateHolder()
+                    if (showDetails.value) {
+                        BackHandler { showDetails.value = false }
+                        Text("External series details")
+                    } else saved.SaveableStateProvider("landing") {
+                        CompositionLocalProvider(com.nikhil.niktv.ui.LocalPlayAlternateSource provides {}, LocalDiscoveryExperiment provides true,
+                            LocalDiscoveryNavigationTrace provides if (traceEnabled) ({ event ->
+                                if (navigationEvents.size >= 160) navigationEvents.removeFirst()
+                                navigationEvents.addLast(event)
+                            }) else null,
+                            LocalOpenDiscoverySeries provides { showDetails.value = true }) {
+                            DiscoveryPreviewScreen(
+                                app = NikTvState(savedProfile = profile, homeOpen = true, recentlyPlayed = listOf(recent),
+                                    discoverySurface = DashboardSurface.HOME, tmdbSectionsBySurface = mapOf(DashboardSurface.HOME to emptyList())),
+                                surface = DashboardSurface.HOME, selectSurface = {}, exit = {}, navigate = {},
+                                playCard = {}, playEpisode = { _, _, _ -> }, openRecent = {}, openWatched = { _, _ -> },
+                                toggleFavorite = {}, openCategory = {}, openSection = {}, removeRecent = {},
+                                markWatched = { _, _ -> }, dismissEpisode = { _, _ -> }, vm = vm, experiment = true)
+                        }
+                    }
+                } }
+            }
+            await("Fixture feed is ready") { vm.state.value.feeds[TmdbHomeSection.TRENDING_MOVIES]?.size == 20 }
+            instrumentation.setInTouchMode(false)
+            repeat(6) { key(KeyEvent.KEYCODE_DPAD_UP) }
+            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("First activity tile owns focus") { tag()?.startsWith("continue:") == true }
+            repeat(InstrumentationRegistry.getArguments().getString("externalRuns")?.toIntOrNull()?.coerceIn(1, 20) ?: 1) {
+            repeat(2) { key(KeyEvent.KEYCODE_DPAD_DOWN) }
+            repeat(2) { key(KeyEvent.KEYCODE_DPAD_UP) }
+            await("Activity tile returns after scrolling") { tag()?.startsWith("continue:") == true }
+            Thread.sleep(650)
+            val before = bounds(); val origin = tag(); val beforeScale = scale()
+            val down = SystemClock.uptimeMillis()
+            instrumentation.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout().toLong() + 100)
+            instrumentation.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            await("Open series is available") { semantic("Open series") { true } }
+            await("Menu starts on Play") { semantic("Play") { it.config.getOrNull(SemanticsProperties.Focused) == true } }
+            await("Popup owns input before the first arrow") {
+                !host.hasWindowFocus() && android.view.inspector.WindowInspector.getGlobalWindowViews().any { it.hasWindowFocus() }
+            }
+            instrumentation.waitForIdleSync()
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Alternate source follows Play") { semantic("Play from another source") { it.config.getOrNull(SemanticsProperties.Focused) == true } }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Open series owns focus before activation") { semantic("Open series") { it.config.getOrNull(SemanticsProperties.Focused) == true } }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("External series page opens") { showDetails.value }
+            await("External details own the window after the menu closes") {
+                host.hasWindowFocus() && semantic("External series details") { true }
+            }
+            key(KeyEvent.KEYCODE_BACK)
+            await("Back closes the external series page") { !showDetails.value }
+            await("External series return restores its tile") { tag() == origin }
+            Thread.sleep(650)
+            val after = bounds()
+            assertTrue("External series viewport retained: $before -> $after", kotlin.math.abs(before.top - after.top) <= 2)
+            assertTrue("External series column retained: $before -> $after", kotlin.math.abs(before.left - after.left) <= 2)
+            assertEquals("Focus scale is settled after external return", beforeScale, scale(), .0015f)
+            }
+        } catch (error: AssertionError) {
+            captureReturn(host, "external-failure")
+            instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                java.io.File(context.cacheDir, "external-windows.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+            for (label in listOf("Play", "Play from another source", "Open series")) {
+                var flags = ""
+                semantic(label) { flags += "${it.id}:${it.config.getOrNull(SemanticsProperties.Focused)};"; false }
+                println("MENU $label=$flags")
+            }
+            var diagnostic = ""
+            instrumentation.runOnMainSync { diagnostic = "focus=${host.currentFocus?.javaClass?.simpleName}:${host.currentFocus?.tag}\n" + navigationEvents.joinToString("\n") }
+            throw AssertionError("${error.message}\n$diagnostic", error)
+        } finally {
+            instrumentation.runOnMainSync { if (returnVmReady) vm.viewModelScope.cancel(); host.finish(); fixture = null }
+        }
+    }
 
     @Test fun trialMenuBudgetsDoNotTrimBackingFeedOrAffectOriginalHome() {
         val context = instrumentation.targetContext
@@ -138,6 +260,16 @@ class DiscoveryExperimentDeviceTest {
         val until = SystemClock.uptimeMillis() + 5000
         while (SystemClock.uptimeMillis() < until) { if (predicate()) return; Thread.sleep(30) }
         fail(label)
+    }
+    private fun captureReturn(host: PlaybackFixtureHostActivity, name: String) {
+        val bitmap = android.graphics.Bitmap.createBitmap(host.window.decorView.width, host.window.decorView.height, android.graphics.Bitmap.Config.ARGB_8888)
+        val done = java.util.concurrent.CountDownLatch(1)
+        var status = -1
+        android.view.PixelCopy.request(host.window, bitmap, { status = it; done.countDown() }, android.os.Handler(android.os.Looper.getMainLooper()))
+        assertTrue(done.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(android.view.PixelCopy.SUCCESS, status)
+        java.io.File(instrumentation.targetContext.cacheDir, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
     }
     private fun text(label: String): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
