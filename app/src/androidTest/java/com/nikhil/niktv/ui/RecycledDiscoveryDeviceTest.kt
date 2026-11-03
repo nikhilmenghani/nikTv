@@ -27,6 +27,7 @@ class RecycledDiscoveryDeviceTest {
     @Test fun styledFeedRetainsFocusAndFullyVisibleReturn() = verify(true, true)
     @Test fun heroScrollsWithFeedAndKeepsHeaderAndDetailReturn() = verify(true, true, true)
     @Test fun exactNativeHeroBoundsPreserveNavigationAndReturn() = verify(true, true, true, true)
+    @Test fun homeHeightHeroKeepsReversedFirstRailFullyVisible() = verify(true, true, true, true, tallHero = true)
     @Test fun heldRemoteActivationDoesNotPlayOrLeakRelease() = verify(true, true, exerciseHold = true)
     @Test fun memoryPressureDropsLayersWithoutLosingNavigation() = verify(true, true, exercisePressure = true)
     @Test fun rapidHeaderEntryDoesNotReviveAnObsoleteHeroRequest() = verify(true, true, withHero = true, exerciseRapidEntry = true)
@@ -181,7 +182,7 @@ class RecycledDiscoveryDeviceTest {
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("long:i39")
         } finally { i.runOnMainSync { host.finish() } }
     }
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false) {
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false, tallHero: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -224,6 +225,7 @@ class RecycledDiscoveryDeviceTest {
         val holds = java.util.concurrent.atomic.AtomicInteger()
         val rows = (0 until 80).map { r -> NativeDiscoveryRow("r$r", "Row $r", (0 until 40).map { n ->
             NativeDiscoveryItem("i$n", "Item $r $n", onClick = { rowsShown.value = false }, onLongClick = { holds.incrementAndGet() }) }) }
+        val heroHeight = if (tallHero) trialHeroFrameHeight(trialHeroBaseHeight(c.resources.configuration.screenHeightDp.toFloat(), true), c.resources.configuration.fontScale) else 200f
         try {
             i.setInTouchMode(false)
             i.runOnMainSync { host.setContent { MaterialTheme {
@@ -237,11 +239,12 @@ class RecycledDiscoveryDeviceTest {
                             containedCaptions = containedCaptions, cardShadows = cardShadows, focusRestorer = nativeRestorer,
                             animateFocus = !reducedFocusMotion,
                             cacheTileDrawing = exercisePressure,
+                            showSkeletons = tallHero,
                             restoreSelection = restoreSelection.value,
-                            heroHeightPx = if (fixedHero) (200 * c.resources.displayMetrics.density).toInt() else null,
+                            heroHeightPx = if (fixedHero) (heroHeight * c.resources.displayMetrics.density).toInt() else null,
                             heroActivity = if (withHero) ({ activity.set(it) }) else null,
                             hero = if (withHero) ({ focused, down, up ->
-                                Box(Modifier.height(200.dp)) {
+                                Box(Modifier.height(heroHeight.dp)) {
                                     Button({}, Modifier.focusRequester(heroEntry).onFocusChanged {
                                         heroFocused.set(it.isFocused); if (it.isFocused) focused("play")
                                     }.onPreviewKeyEvent {

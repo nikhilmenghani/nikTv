@@ -117,6 +117,7 @@ internal fun DiscoveryPreviewScreen(
     val heroPreferences = remember(context) { context.getSharedPreferences("home2_presentation", 0) }
     var optionalHeroMetadata by remember { mutableStateOf(heroPreferences.getBoolean("title_metadata", false)) }
     var homeHeroFraming by remember { mutableStateOf(heroPreferences.getBoolean("home_hero_framing", true)) }
+    var tileSkeletons by remember { mutableStateOf(heroPreferences.getBoolean("tile_skeletons", true)) }
     val profile = app.savedProfile?.cacheKey().orEmpty()
     var activityCollection by rememberSaveable(profile, surface, experiment) { mutableStateOf<String?>(null) }
     val variantKey = "presenter:$profile:${if (television) "tv" else "touch"}"
@@ -541,6 +542,10 @@ internal fun DiscoveryPreviewScreen(
                 Text("Home-style hero framing", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 Switch(homeHeroFraming, { homeHeroFraming = it; heroPreferences.edit().putBoolean("home_hero_framing", it).apply() })
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Loading placeholders", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Switch(tileSkeletons, { tileSkeletons = it; heroPreferences.edit().putBoolean("tile_skeletons", it).apply() })
+            }
             if (hiddenTrialRows.isNotEmpty()) NikTvSecondaryActionButton({ setHiddenTrialRows(emptySet()) }) {
                 Text("Restore hidden rows (${hiddenTrialRows.size})")
             }
@@ -686,7 +691,13 @@ internal fun DiscoveryPreviewScreen(
                     }
                 }
         }
-        val nativeRows = remember(visibleRails, scrollVariant) { visibleRails.map { row ->
+        val loadingRows = remember(visibleRails, state.feeds, state.errors, providerState) {
+            visibleRails.filter { row -> row.entries.isEmpty() && (
+                row.section?.let { discoverySectionSkeleton(it, state) } == true ||
+                    row.providerCategory?.let { discoveryProviderSkeleton(profile, it, providerState) } == true)
+            }.mapTo(mutableSetOf()) { it.key }
+        }
+        val nativeRows = remember(visibleRails, scrollVariant, loadingRows) { visibleRails.map { row ->
             val all: () -> Unit = {
                 restoreNativeSelection = true
                 row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
@@ -700,7 +711,7 @@ internal fun DiscoveryPreviewScreen(
                 action = if (!recycled || row.key in setOf("continue", "episodes")) null else ({
                     if (row.recommendation != null && dismissRecommendation != null) dismissRecommendation(row.recommendation)
                     else setHiddenTrialRows(hiddenTrialRows + row.key)
-                }), viewAll = all.takeIf { recycled })
+                }), viewAll = all.takeIf { recycled }, loading = row.key in loadingRows)
         } }
         if (activityCollection != null) {
             val row = rails.firstOrNull { it.key == activityCollection }
@@ -739,6 +750,7 @@ internal fun DiscoveryPreviewScreen(
                         up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = discoveryNativeFocusMotion(scrollVariant, television),
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         popupAnchor = { nativePopupAnchor = it },
+                        showSkeletons = tileSkeletons,
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
                         heroHeightPx = if (nativeHero != null && landscape && !phone) with(LocalDensity.current) {
                             trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeHeroFraming), fontScale).dp.roundToPx()

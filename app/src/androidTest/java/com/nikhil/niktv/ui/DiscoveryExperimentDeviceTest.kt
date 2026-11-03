@@ -92,6 +92,16 @@ class DiscoveryExperimentDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Down enters the first media directly: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
+            repeat(3) { key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_UP) }
+            await("First media returns after repeated row reversal") { nativeTag()?.startsWith("daily-movies:") == true }
+            await("Full hero shell keeps the returned media entirely visible") {
+                var visible = false
+                instrumentation.runOnMainSync { host.currentFocus?.let { view ->
+                    val rect = android.graphics.Rect()
+                    visible = view.getGlobalVisibleRect(rect) && rect.height() >= view.height - 2 && rect.width() >= view.width - 2
+                } }
+                visible
+            }
             repeat(8) { key(KeyEvent.KEYCODE_DPAD_UP) }
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Rapid Up returns through the tab and hero exactly once: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }

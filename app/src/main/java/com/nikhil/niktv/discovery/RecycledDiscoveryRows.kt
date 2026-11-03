@@ -76,7 +76,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     focusEntry: FocusRequester, up: () -> Unit, visible: (String) -> Unit = {}, animateFocus: Boolean = true,
     containedCaptions: Boolean = false, cardShadows: Boolean = false, homeTileProportions: Boolean = false,
     hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false, focusRestorer: NativeDiscoveryFocusRestorer? = null,
-    popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}) {
+    popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -84,9 +84,9 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
         if (hero != null) listOf(NativeDiscoveryRow(HERO_ROW, "", emptyList(), isHero = true)) + rows else rows
     }
     val configuration = LocalConfiguration.current
-    key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing,
+    key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing, showSkeletons,
         configuration.screenWidthDp, configuration.screenHeightDp, configuration.fontScale) {
-    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing) }, modifier = modifier.focusRequester(focusEntry),
+    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing, showSkeletons) }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
             focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
             view.animateFocus = animateFocus
@@ -105,7 +105,7 @@ private fun NativeDiscoveryItem.samePresentation(other: NativeDiscoveryItem) =
 private val rowDiff = object : DiffUtil.ItemCallback<NativeDiscoveryRow>() {
     override fun areItemsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) = a.id == b.id
     override fun areContentsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) =
-        a.isHero == b.isHero && a.title == b.title && a.actionLabel == b.actionLabel && (a.action != null) == (b.action != null) &&
+        a.isHero == b.isHero && a.title == b.title && a.loading == b.loading && a.actionLabel == b.actionLabel && (a.action != null) == (b.action != null) &&
             (a.viewAll != null) == (b.viewAll != null) && a.items.size == b.items.size &&
             a.items.indices.all { a.items[it].samePresentation(b.items[it]) }
 }
@@ -116,7 +116,7 @@ private val cardDiff = object : DiffUtil.ItemCallback<NativeDiscoveryItem>() {
 
 private class RailRecycler(context: Context, private val position: RecycledPosition,
     private val containedCaptions: Boolean, private val cardShadows: Boolean, private val homeTileProportions: Boolean, private val heroHeightPx: Int?,
-    private val parentComposition: CompositionContext, private val cacheTileDrawing: Boolean) : RecyclerView(context), ComponentCallbacks2 {
+    private val parentComposition: CompositionContext, private val cacheTileDrawing: Boolean, private val showSkeletons: Boolean) : RecyclerView(context), ComponentCallbacks2 {
     private val tileCache = NativeTileCachePolicy(cacheTileDrawing)
     private var callbacksRegistered = false
     private var pressure = false
@@ -234,6 +234,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private var pending: Pair<String, String>? = null
     private var loadingFocusRow: String? = null
     private var loadingEntryRow: String? = null
+    private var parkingLoadingFocus = false
     private val savedAnchorRow = position.anchorRow
     private val savedAnchorOffset = position.anchorOffset
     private var viewportInitialized = false
@@ -303,8 +304,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             loadingEntryRow = loaded.id
             (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == loaded.id }) as? RowHolder)?.enableControlsFocus(false)
             // Park before DiffUtil/layout disables or recycles the loading heading.
-            val policy = descendantFocusability
-            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS; requestFocus(); descendantFocusability = policy
+            parkingLoadingFocus = true
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS; requestFocus()
         }
         val previous = rowAdapter.currentList.map { it.id }
         val replacement = nativeRowReplacement(previous, rows.map { it.id }, position.row)
@@ -355,6 +356,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         return false // Outer native anchor owns entry until the recycled holder is laid out.
     }
     private fun reveal(row: String, item: String) {
+        if (parkingLoadingFocus && row != loadingEntryRow) {
+            parkingLoadingFocus = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
         val index = rowAdapter.currentList.indexOfFirst { it.id == row }
         if (index < 0) return
         if (restoringViewport) { pending = row to item; epoch++; return }
@@ -400,6 +404,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         return false
     }
     fun leave(host: View, action: () -> Unit) {
+        if (parkingLoadingFocus) { parkingLoadingFocus = false; descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
         epoch++; pending = null
         val policy = descendantFocusability
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS; isFocusable = false
@@ -459,6 +464,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         var rowId = ""
         private var restoreHorizontal = false
         private var horizontalLayoutPending = false
+        private var awaitingSkeletonCards = false
         private val title = TextView(context).apply {
             textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(3), dp(5), 0, dp(6)); ViewCompat.setAccessibilityHeading(this, true)
@@ -485,6 +491,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             setRecycledViewPool(pool); itemAnimator = null; setItemViewCacheSize(1)
             setPadding(dp(4), dp(5), dp(4), dp(10)); clipToPadding = false; isFocusable = false
         }
+        private val skeleton = if (showSkeletons) DiscoveryRowSkeleton(context,
+            if (polishedCaptions) px(posterGeometry.width) else dp(104)).apply { visibility = View.GONE } else null
         val cards = object : ListAdapter<NativeDiscoveryItem, ViewHolder>(cardDiff) {
             init { setHasStableIds(true) }
             override fun getItemId(position: Int) = stableId("card:$rowId:${getItem(position).id}")
@@ -500,7 +508,14 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 }
             }
             override fun onViewRecycled(holder: ViewHolder) { (holder as? CardHolder)?.cancel() }
-            override fun onViewAttachedToWindow(holder: ViewHolder) { (holder as? CardHolder)?.cacheLayer(tileCache.enabled) }
+            override fun onViewAttachedToWindow(holder: ViewHolder) {
+                (holder as? CardHolder)?.let {
+                    it.cacheLayer(tileCache.enabled)
+                    if (awaitingSkeletonCards && (it.itemView.tag as? String)?.startsWith("$rowId:") == true) {
+                        awaitingSkeletonCards = false; skeleton?.visibility = View.GONE
+                    }
+                }
+            }
             override fun onViewDetachedFromWindow(holder: ViewHolder) { (holder as? CardHolder)?.apply { cacheLayer(false); cancelRemoteInput() } }
             override fun onFailedToRecycleView(holder: ViewHolder): Boolean { (holder as? CardHolder)?.cancel(); return true }
         }
@@ -514,10 +529,16 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2))
             } else {
             (itemView as LinearLayout).addView(title, LinearLayout.LayoutParams(-1, -2))
-            (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1,
+            val rail: View = if (skeleton == null) horizontal else FrameLayout(context).apply {
+                addView(horizontal, FrameLayout.LayoutParams(-1, -1))
+                addView(skeleton, FrameLayout.LayoutParams(-1, -1))
+            }
+            (itemView as LinearLayout).addView(rail, LinearLayout.LayoutParams(-1,
                 if (polishedCaptions) px(posterGeometry.railHeight) else dp(if (homeTileProportions) 167 else 172 + (48 * resources.configuration.fontScale).toInt())))
             horizontal.adapter = cards
-            title.setOnFocusChangeListener { _, focused -> if (focused) { epoch++; pending = null; selected(rowId, "") } }
+            title.setOnFocusChangeListener { _, focused ->
+                if (focused && (pending == null || pending?.first == rowId)) { epoch++; pending = null; selected(rowId, "") }
+            }
             title.setOnKeyListener { _, key, event ->
                 if (event.action != KeyEvent.ACTION_DOWN) false else when (key) {
                     KeyEvent.KEYCODE_DPAD_DOWN -> { adjacent(rowId, 1); true }
@@ -532,15 +553,20 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             val wasLoadingFocus = title.isFocused
             if (rowId != row.id) { restoreHorizontal = true; horizontalLayoutPending = false; cards.submitList(emptyList()); horizontal.stopScroll(); horizontal.scrollToPosition(0) }
             rowId = row.id; title.text = row.title; title.tag = "${row.id}:loading"
+            val pendingContent = showSkeletons && row.loading && row.items.isEmpty()
+            skeleton?.tag = "${row.id}:skeleton"
+            awaitingSkeletonCards = !pendingContent && row.items.isNotEmpty() && skeleton?.visibility == View.VISIBLE
+            if (pendingContent) skeleton?.visibility = View.VISIBLE
+            else if (!awaitingSkeletonCards) skeleton?.visibility = View.GONE
+            title.contentDescription = if (pendingContent) "${row.title}. Loading titles" else row.title
             enableControlsFocus(loadingEntryRow != row.id)
             if (wasLoadingFocus && row.items.isNotEmpty()) {
                 // Disabling the loading heading first lets Android choose a tail
                 // button before the first asynchronous card is attached.
                 pending = row.id to (this@RailRecycler.position.columns[row.id] ?: row.items.first().id)
-                val policy = this@RailRecycler.descendantFocusability
+                parkingLoadingFocus = true
                 this@RailRecycler.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
                 this@RailRecycler.requestFocus()
-                this@RailRecycler.descendantFocusability = policy
             }
             title.isFocusable = row.items.isEmpty()
             cards.submitList(railItems[row.id].orEmpty()) {
@@ -604,7 +630,12 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         fun focus(id: String, scroll: Boolean = true, fromTouch: Boolean = false): Boolean {
             if (hero) return runCatching { heroFocusEntry(id) }.getOrDefault(false)
             if (restoreHorizontal || horizontalLayoutPending) return false
-            if (cards.currentList.isEmpty()) return title.requestFocus()
+            if (cards.currentList.isEmpty()) {
+                if (models[rowId]?.items?.isNotEmpty() == true) return false
+                return title.requestFocus().also { focused ->
+                if (focused) itemView.requestRectangleOnScreen(Rect(0, 0, itemView.width, itemView.height), false)
+                }
+            }
             val index = cards.currentList.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: 0
             val holder = horizontal.findViewHolderForAdapterPosition(index)
             if (holder == null) { if (scroll) horizontal.scrollToPosition(index); return false }
@@ -623,11 +654,18 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             }
             if (dx != 0 && horizontal.canScrollHorizontally(if (dx > 0) 1 else -1)) horizontal.scrollBy(dx, 0)
             val target = (holder as? ControlHolder)?.button ?: holder.itemView
+            val releaseParking = parkingLoadingFocus && loadingEntryRow == rowId
+            if (releaseParking) { parkingLoadingFocus = false; this@RailRecycler.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
             if (fromTouch) target.isFocusableInTouchMode = true
             val focused = target.requestFocus()
+            if (!focused && releaseParking) { parkingLoadingFocus = true; this@RailRecycler.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS }
             if (fromTouch && !focused) target.isFocusableInTouchMode = false
-            if (focused) holder.itemView.requestRectangleOnScreen(
-                Rect(0, 0, holder.itemView.width, holder.itemView.height), false)
+            // Horizontal visibility is already resolved above. Reveal the whole
+            // category directly in the vertical owner, including its heading and
+            // focus padding. A card's nested rectangle can leave the first rail
+            // clipped beneath a tall hero after a vertical reversal.
+            if (focused) itemView.requestRectangleOnScreen(
+                Rect(0, 0, itemView.width, itemView.height), false)
             return focused
         }
     }
@@ -686,6 +724,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }) {
         private var row = ""; private var identity = ""; private var imageJob: Job? = null
         private var artwork: String? = null
+        private val artworkPlaceholder = if (showSkeletons) GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            intArrayOf(0xFF293342.toInt(), 0xFF171D27.toInt())) else null
         private val activation = NativeTileActivation()
         private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         private val progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -793,7 +833,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             val type = if (enabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_NONE
             if (itemView.layerType != type) itemView.setLayerType(type, null)
         }
-        fun cancel() { activation.cancel(); imageJob?.cancel(); imageJob = null; cacheLayer(false); image.setImageDrawable(null); row = ""; identity = ""; artwork = null }
+        fun cancel() { activation.cancel(); imageJob?.cancel(); imageJob = null; cacheLayer(false); image.setImageDrawable(null); image.background = null; row = ""; identity = ""; artwork = null }
         fun bind(rowId: String, item: NativeDiscoveryItem) {
             val replacement = row != rowId || identity != item.id || artwork != item.artwork
             if (replacement) { cancel(); itemView.scaleX = 1f; itemView.scaleY = 1f }
@@ -811,13 +851,17 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             progress.visibility = if (item.progress == null) View.INVISIBLE else View.VISIBLE
             progress.progress = ((item.progress ?: 0f).coerceIn(0f,1f) * 1000).toInt()
             if (!replacement) return
+            image.background = artworkPlaceholder.takeIf { showSkeletons && !item.artwork.isNullOrBlank() }
             item.artwork?.let { url -> imageJob = work.launch { images.withPermit {
                 try {
                     val w = if (polishedCaptions) px(posterGeometry.width - 8f) else dp(104)
                     val h = if (polishedCaptions) px(posterGeometry.posterHeight) else dp(147)
                     val result = withContext(Dispatchers.IO) { context.imageLoader.execute(ImageRequest.Builder(context).data(thumbnailArtworkUrl(url, w)).size(w,h).build()) }
-                    ensureActive(); if (result is SuccessResult) image.setImageDrawable(result.image.asDrawable(resources))
-                } catch (c: CancellationException) { throw c } catch (_: Exception) { }
+                    ensureActive(); image.background = null
+                    if (result is SuccessResult) image.setImageDrawable(result.image.asDrawable(resources))
+                } catch (c: CancellationException) { throw c } catch (_: Exception) {
+                    if (isActive && row == rowId && identity == item.id && artwork == url) image.background = null
+                }
             } } }
         }
     }
