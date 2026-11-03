@@ -25,3 +25,5 @@ For each step record APK/build identity, device/profile, feature settings, per-r
 Short runs are regression indicators, not proof of SmartTube parity or a production soak. Failed/blocked checks remain failures, and unsuccessful experiments remain off. Source/cache/stream data and captures stay outside git. Any feature deliberately deferred must remain explicit in the final evaluation.
 
 November 3 blocker work: [resolution and measurements](home2-blocker-resolution.md). Baseline committed as `6d722926`; the navigation follow-up and measurements are recorded in the linked report.
+
+November 3 bulk-arrival follow-up: [progress-strip optimization and controlled reversal](home2-bulk-loading-performance.md). Final Fire TV stress batch has no UI-work frame over 50 ms, but frame p95 is not consistently improved. Focused functional suite 21/21; units 227/227; lint still fails. Original Home and default startup remain unchanged; phone/long-session readiness gates remain.

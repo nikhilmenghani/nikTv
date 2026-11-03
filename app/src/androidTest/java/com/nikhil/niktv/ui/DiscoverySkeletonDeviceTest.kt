@@ -69,6 +69,46 @@ class DiscoverySkeletonDeviceTest {
         host.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
         host.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
     }
+    @Test fun passiveProgressRetainsFractionDirectionAndReservedSpace() {
+        i.runOnMainSync {
+            // The app manifest currently disables RTL. Opt this local drawing
+            // fixture in so the mirrored strip is exercised as well.
+            val context = object : android.content.ContextWrapper(i.targetContext) {
+                override fun getApplicationInfo() = android.content.pm.ApplicationInfo(super.getApplicationInfo()).apply {
+                    flags = flags or android.content.pm.ApplicationInfo.FLAG_SUPPORTS_RTL
+                }
+            }
+            val strip = NativeDiscoveryProgress(context)
+            strip.layout(0, 0, 100, 3)
+            val bitmap = Bitmap.createBitmap(100, 3, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bitmap)
+            try {
+                assertEquals(View.INVISIBLE, strip.visibility)
+                assertFalse(strip.isFocusable)
+                strip.fraction = .25f
+                strip.draw(canvas)
+                assertEquals(View.VISIBLE, strip.visibility)
+                assertEquals(Color.rgb(229, 9, 37), bitmap.getPixel(24, 1))
+                assertEquals(0x4DFFFFFF, bitmap.getPixel(25, 1))
+                val accessibility = strip.createAccessibilityNodeInfo()
+                assertEquals("android.widget.ProgressBar", accessibility.className)
+                assertEquals(.25f, accessibility.rangeInfo.current, 0f)
+                accessibility.recycle()
+                bitmap.eraseColor(Color.TRANSPARENT)
+                strip.layoutDirection = View.LAYOUT_DIRECTION_RTL
+                assertEquals(View.LAYOUT_DIRECTION_RTL, strip.layoutDirection)
+                strip.draw(canvas)
+                assertEquals(0x4DFFFFFF, bitmap.getPixel(74, 1))
+                assertEquals(Color.rgb(229, 9, 37), bitmap.getPixel(75, 1))
+                strip.fraction = 2f; assertEquals(1f, strip.fraction)
+                strip.fraction = -1f; assertEquals(0f, strip.fraction)
+                strip.fraction = Float.NaN; assertEquals(View.INVISIBLE, strip.visibility)
+                strip.fraction = .5f; strip.fraction = null
+                assertEquals(View.INVISIBLE, strip.visibility)
+                assertEquals(3, strip.height)
+            } finally { bitmap.recycle() }
+        }
+    }
     @Test fun loadingRowsAreNonInteractiveAndResolveWithoutFocusOrHeightJump() {
         val host = host(); val loaded = mutableStateOf(false); val failed = mutableStateOf(false)
         val entry = FocusRequester(); val clicks = AtomicInteger()
@@ -158,18 +198,31 @@ class DiscoverySkeletonDeviceTest {
     }
     @Test fun measureStaticSkeletonLoadingCost() {
         assumeTrue("Opt-in deterministic performance run", InstrumentationRegistry.getArguments().getString("measure") == "true")
+        val args = InstrumentationRegistry.getArguments()
+        val sampleMethods = args.getString("sampleMethods") == "true"
+        val detailFrames = args.getString("detailFrames") == "true"
+        val rounds = args.getString("bulkRounds")?.toIntOrNull()?.coerceIn(1, 3) ?: 3
         val host = host(); val entry = FocusRequester()
-        val tvCache = host.packageManager.hasSystemFeature("android.software.leanback")
+        val tvCache = args.getString("cacheTiles")?.toBooleanStrictOrNull()
+            ?: host.packageManager.hasSystemFeature("android.software.leanback")
+        val methodTrace = File(i.targetContext.cacheDir, "bulk-arrival-sampled.trace")
+        var methodSampling = false
         val mode = mutableStateOf(false); val generation = mutableIntStateOf(0); val ready = mutableStateOf(false)
         val laidOut = AtomicInteger(-1)
         val dataset = (0..24).map { row -> NativeDiscoveryRow("r$row", "Category $row", (0..29).map { NativeDiscoveryItem("i$it", "Title $row $it", onClick = {}) }) }
         val thread = HandlerThread("skeleton-frame-metrics").apply { start() }
         val sampling = AtomicBoolean(false); val start = AtomicLong(Long.MAX_VALUE); val drops = AtomicInteger()
         val totals = Collections.synchronizedList(mutableListOf<Long>()); val ui = Collections.synchronizedList(mutableListOf<Long>())
+        val detailed = Collections.synchronizedList(mutableListOf<JSONObject>())
         val listener = Window.OnFrameMetricsAvailableListener { _, metrics, missed -> if (sampling.get() && metrics.getMetric(FrameMetrics.INTENDED_VSYNC_TIMESTAMP) >= start.get()) {
             metrics.getMetric(FrameMetrics.TOTAL_DURATION).takeIf { it > 0 }?.let(totals::add)
             val phases = intArrayOf(FrameMetrics.INPUT_HANDLING_DURATION, FrameMetrics.ANIMATION_DURATION, FrameMetrics.LAYOUT_MEASURE_DURATION, FrameMetrics.DRAW_DURATION).map(metrics::getMetric)
             if (phases.all { it >= 0 }) ui.add(phases.sum()); drops.addAndGet(missed)
+            if (detailFrames && detailed.size < 2000) detailed.add(JSONObject()
+                .put("atMs", (metrics.getMetric(FrameMetrics.INTENDED_VSYNC_TIMESTAMP) - start.get()) / 1_000_000.0)
+                .put("totalMs", metrics.getMetric(FrameMetrics.TOTAL_DURATION) / 1_000_000.0)
+                .put("inputMs", phases[0] / 1_000_000.0).put("animationMs", phases[1] / 1_000_000.0)
+                .put("layoutMs", phases[2] / 1_000_000.0).put("drawMs", phases[3] / 1_000_000.0))
         } }
         val arrival = Runnable { ready.value = true }; val main = Handler(Looper.getMainLooper()); val result = JSONArray()
         try {
@@ -182,7 +235,7 @@ class DiscoverySkeletonDeviceTest {
                         animateFocus = true, cacheTileDrawing = tvCache, showSkeletons = mode.value)
                 } } }
             }
-            for ((phase, enabled) in listOf(false, true, false).withIndex()) repeat(3) { round ->
+            for ((phase, enabled) in listOf(false, true, false).withIndex()) repeat(rounds) { round ->
                 var ticket = 0
                 i.runOnMainSync { mode.value = enabled; ready.value = false; generation.intValue++; ticket = generation.intValue }
                 await("New sample is laid out") { laidOut.get() == ticket && host.hasWindowFocus() }
@@ -192,27 +245,48 @@ class DiscoverySkeletonDeviceTest {
                 totals.clear(); ui.clear(); drops.set(0); start.set(System.nanoTime()); sampling.set(true)
                 Thread.sleep(400); sampling.set(false)
                 val idleFrames = totals.size
-                totals.clear(); ui.clear(); drops.set(0); start.set(System.nanoTime()); sampling.set(true)
+                totals.clear(); ui.clear(); detailed.clear(); drops.set(0)
+                if (sampleMethods && phase == 0 && round == 0) {
+                    Debug.startMethodTracingSampling(methodTrace.absolutePath, 8 * 1024 * 1024, 1000)
+                    methodSampling = true
+                }
+                start.set(System.nanoTime()); sampling.set(true)
                 i.runOnMainSync { main.postDelayed(arrival, 1200) }
                 val begin = SystemClock.uptimeMillis()
                 (List(8) { KeyEvent.KEYCODE_DPAD_DOWN } + List(8) { KeyEvent.KEYCODE_DPAD_UP }).forEachIndexed { index, code ->
                     key(host, code); Thread.sleep((begin + (index + 1) * 160L - SystemClock.uptimeMillis()).coerceAtLeast(0))
                 }
                 Thread.sleep(500); sampling.set(false); i.runOnMainSync { main.removeCallbacks(arrival) }
+                if (methodSampling) { Debug.stopMethodTracing(); methodSampling = false }
                 await("Sample returns to original media") { tag(host) == "r0:i0" }
                 val total = synchronized(totals) { totals.toList() }; val work = synchronized(ui) { ui.toList() }
                 assertTrue("Physical frame callbacks required", total.isNotEmpty())
                 result.put(JSONObject().put("phase", phase).put("round", round).put("skeletons", enabled)
                     .put("frame", statistics(total)).put("uiWork", statistics(work)).put("idleFrames400ms", idleFrames)
-                    .put("pssKbAfter", Debug.getPss()).put("droppedCallbacks", drops.get()))
+                    .put("pssKbAfter", Debug.getPss()).put("droppedCallbacks", drops.get())
+                    .put("details", if (detailFrames) JSONArray(synchronized(detailed) { detailed.toList() }) else JSONObject.NULL))
             }
             val report = JSONObject().put("device", Build.MODEL).put("providerNetwork", false).put("recording", false)
                 .put("debugCode", com.nikhil.niktv.BuildConfig.DEBUG)
+                .put("methodSampling", sampleMethods).put("detailedFrames", detailFrames).put("diagnosticOnly", sampleMethods || detailFrames)
                 .put("rows", 25).put("mediaPerLoadedRow", 30).put("arrivalDelayMs", 1200).put("images", false).put("tvTileCache", tvCache)
                 .put("input", "Local activity dispatch, 8 Down/8 Up, requested 160 ms").put("samples", result).put("pssKbAfter", Debug.getPss())
             File(i.targetContext.cacheDir, "skeleton-performance.json").writeText(report.toString(2))
             i.sendStatus(2, Bundle().apply { putString("stream", "\nSKELETON_PERFORMANCE ${report}\n") })
+            if (sampleMethods) {
+                check(methodTrace.isFile && methodTrace.length() in 1..(16L * 1024 * 1024))
+                methodTrace.inputStream().buffered().use { input ->
+                    val bytes = ByteArray(16 * 1024); var index = 0
+                    while (true) {
+                        val count = input.read(bytes); if (count < 0) break
+                        val data = android.util.Base64.encodeToString(bytes, 0, count, android.util.Base64.NO_WRAP)
+                        i.sendStatus(2, Bundle().apply { putString("stream", "\nBULK_TRACE_CHUNK index=${index++} data=$data\n") })
+                    }
+                }
+                i.sendStatus(2, Bundle().apply { putString("stream", "\nBULK_TRACE_END bytes=${methodTrace.length()}\n") })
+            }
         } finally {
+            if (methodSampling) Debug.stopMethodTracing()
             sampling.set(false); i.runOnMainSync { main.removeCallbacks(arrival); host.window.removeOnFrameMetricsAvailableListener(listener); host.finish() }
             thread.quitSafely(); thread.join(1000)
         }

@@ -838,9 +838,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             intArrayOf(0xFF293342.toInt(), 0xFF171D27.toInt())) else null
         private val activation = NativeTileActivation()
         private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        private val progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 1000; progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(229,9,37))
-        }
+        private val progress = NativeDiscoveryProgress(context)
         private val title = TextView(context).apply {
             textSize = if (polishedCaptions) 10f * posterGeometry.textScale else if (homeTileProportions) 8.7f else 12f
             setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
@@ -963,8 +961,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 source.background = GradientDrawable().apply { cornerRadius = dp(5).toFloat(); setColor(tag.background.toArgb()); setStroke(dp(1), tag.foreground.copy(alpha = .45f).toArgb()) }
             }
             itemView.contentDescription = listOfNotNull(item.title, item.source?.label, item.subtitle.takeIf(String::isNotBlank)).joinToString(", ")
-            progress.visibility = if (item.progress == null) View.INVISIBLE else View.VISIBLE
-            progress.progress = ((item.progress ?: 0f).coerceIn(0f,1f) * 1000).toInt()
+            progress.fraction = item.progress
             if (!replacement) return
             image.background = artworkPlaceholder.takeIf { showSkeletons && !item.artwork.isNullOrBlank() }
             item.artwork?.let { url -> imageJob = work.launch { images.withPermit {
