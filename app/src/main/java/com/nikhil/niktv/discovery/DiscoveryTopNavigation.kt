@@ -49,6 +49,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     val configure = LocalConfigureProviderDiscovery.current
     val experimentSettings = LocalDiscoveryExperimentSettings.current
     val isExperiment = LocalDiscoveryExperiment.current
+    val trialOptionsFocus = remember { FocusRequester() }
     val options = LocalDiscoveryLibraryOptions.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
@@ -56,10 +57,11 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     var categoryTrigger by remember { mutableIntStateOf(0) }
     if (phone && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
-        DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true) { change(true) }
+        DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true,
+            modifier = if (isExperiment) Modifier.focusRequester(trialOptionsFocus) else Modifier) { change(true) }
         DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
             if (isExperiment) NikDropdownMenuItem(text = { Text("Performance experiment") },
-                onClick = { change(false); experimentSettings() })
+                onClick = { change(false); experimentSettings { runCatching { trialOptionsFocus.requestFocus() }.getOrDefault(false) } })
             if (phone) NikDropdownMenuItem(text = { Text("Home 2 · performance trial") },
                 onClick = { change(false); navigate("Home 2") })
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },

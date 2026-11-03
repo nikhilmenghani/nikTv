@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.key.*
@@ -100,8 +101,8 @@ internal fun DiscoveryPreviewScreen(
     parentModalOpen: Boolean = false,
     experiment: Boolean = false
 ) {
-    var experimentVariant by rememberSaveable(app.savedProfile?.cacheKey(), experiment) { mutableStateOf(DiscoveryScrollVariant.RECYCLED_BASELINE) }
     var experimentSettings by remember { mutableStateOf(false) }
+    var experimentSettingsReturn by remember { mutableStateOf<(() -> Boolean)?>(null) }
     var nativeNavigationId by rememberSaveable(app.savedProfile?.cacheKey(), surface, experiment) { mutableLongStateOf(-1L) }
     val context = LocalContext.current
     val hostView = LocalView.current
@@ -115,12 +116,24 @@ internal fun DiscoveryPreviewScreen(
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, television)
     val heroPreferences = remember(context) { context.getSharedPreferences("home2_presentation", 0) }
     var optionalHeroMetadata by remember { mutableStateOf(heroPreferences.getBoolean("title_metadata", false)) }
+    var homeHeroFraming by remember { mutableStateOf(heroPreferences.getBoolean("home_hero_framing", true)) }
+    val profile = app.savedProfile?.cacheKey().orEmpty()
+    var activityCollection by rememberSaveable(profile, surface, experiment) { mutableStateOf<String?>(null) }
+    val variantKey = "presenter:$profile:${if (television) "tv" else "touch"}"
+    var experimentVariant by rememberSaveable(profile, experiment, television) {
+        mutableStateOf(discoveryInitialVariant(experiment, heroPreferences.getString(variantKey, null), television))
+    }
+    fun selectExperimentVariant(variant: DiscoveryScrollVariant) {
+        experimentVariant = variant
+        if (experiment) heroPreferences.edit().putString(variantKey, variant.name).apply()
+        experimentSettingsReturn?.invoke()
+        experimentSettings = false
+    }
     val scrollVariant = discoveryVariantForRoute(experiment, experimentVariant)
     val phonePortrait = phone && configuration.screenHeightDp >= configuration.screenWidthDp
     val remoteNavigation = context.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val landscape = !phone
     val compactLandscape = configuration.screenWidthDp > configuration.screenHeightDp && configuration.screenHeightDp < 480
-    val profile = app.savedProfile?.cacheKey().orEmpty()
     val hiddenRowsKey = "hidden:$profile:${surface.name}"
     var hiddenTrialRows by remember(profile, surface) { mutableStateOf(heroPreferences.getStringSet(hiddenRowsKey, emptySet()).orEmpty().toSet()) }
     fun setHiddenTrialRows(rows: Set<String>) {
@@ -376,12 +389,12 @@ internal fun DiscoveryPreviewScreen(
     val rails = remember(profile, surface, state.detail?.key, state.feeds, state.sections,
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
-        app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant) { buildList {
+        app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection) { buildList {
         val detail = state.detail
         if (detail == null) {
             val recents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
                 it.kind == if (surface == DashboardSurface.MOVIES) FavoriteKind.MOVIE else FavoriteKind.SERIES) }
-                .filterNot { it.media.isAdult }.distinctRecentContent().take(scrollVariant.tileLimit)
+                .filterNot { it.media.isAdult }.distinctRecentContent().take(if (activityCollection == "continue") Int.MAX_VALUE else scrollVariant.tileLimit)
             if (recents.isNotEmpty()) add(Rail("continue", "Continue Watching", recents.map { recent ->
                 val progress = progressLookup?.recent(recent)
                 RailEntry("continue:${recent.contentIdentity()}", providerDisplayTitle(recent.media.title, if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES), recent.media.logo,
@@ -409,7 +422,7 @@ internal fun DiscoveryPreviewScreen(
             }))
             if (surface != DashboardSurface.MOVIES) {
                 val episodes = newEpisodeGroups(app.watchedSeries, profile)
-                if (episodes.isNotEmpty()) add(Rail("episodes", "New Episodes", episodes.take(scrollVariant.tileLimit).map { group ->
+                if (episodes.isNotEmpty()) add(Rail("episodes", "New Episodes", episodes.take(if (activityCollection == "episodes") Int.MAX_VALUE else scrollVariant.tileLimit).map { group ->
                     val episode = group.latest
                     RailEntry("episodes:${group.key}", providerDisplayTitle(group.watched.series.title, CatalogType.SERIES), group.watched.series.logo,
                         providerMedia = group.watched.series, providerType = CatalogType.SERIES,
@@ -511,7 +524,8 @@ internal fun DiscoveryPreviewScreen(
         }
         return
     }
-    if (experimentSettings && experiment) AlertDialog(onDismissRequest = { experimentSettings = false },
+    fun closeExperimentSettings() { experimentSettingsReturn?.invoke(); experimentSettings = false }
+    if (experimentSettings && experiment) AlertDialog(onDismissRequest = ::closeExperimentSettings,
         title = { Text("Home 2 · performance experiment") },
         text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
             Text("Home stays unchanged. Compare each stage with the preceding stage using the same content and input pattern.", style = MaterialTheme.typography.bodySmall)
@@ -523,6 +537,10 @@ internal fun DiscoveryPreviewScreen(
                 })
             }
             Text("Off skips optional hero detail lookups and title logos. Opening Info still loads details.", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Home-style hero framing", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Switch(homeHeroFraming, { homeHeroFraming = it; heroPreferences.edit().putBoolean("home_hero_framing", it).apply() })
+            }
             if (hiddenTrialRows.isNotEmpty()) NikTvSecondaryActionButton({ setHiddenTrialRows(emptySet()) }) {
                 Text("Restore hidden rows (${hiddenTrialRows.size})")
             }
@@ -541,20 +559,21 @@ internal fun DiscoveryPreviewScreen(
             (recycledDiscoveryStages + listOf(DiscoveryScrollVariant.RECYCLED_TV_FOCUS, DiscoveryScrollVariant.RECYCLED_TV_LAYERS, DiscoveryScrollVariant.RECYCLED_HERO_METADATA, DiscoveryScrollVariant.RECYCLED_HERO_WORKER, DiscoveryScrollVariant.RECYCLED_ISOLATED_HERO, DiscoveryScrollVariant.RECYCLED_HOME_TILES, DiscoveryScrollVariant.RECYCLED_PREPARED_HERO, DiscoveryScrollVariant.RECYCLED_STABLE_HERO, DiscoveryScrollVariant.RECYCLED_NATIVE_HERO_BOUNDS)).forEach { variant ->
                 NikDropdownMenuItem(text = { Text(variant.title) },
                     leadingIcon = if (variant == experimentVariant) ({ Icon(Icons.Default.Check, null) }) else null,
-                    onClick = { experimentVariant = variant; experimentSettings = false })
+                    onClick = { selectExperimentVariant(variant) })
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("Original-renderer comparisons", style = MaterialTheme.typography.labelMedium)
             DiscoveryScrollVariant.entries.filterNot { it.recycledRows }.forEach { variant ->
                 NikDropdownMenuItem(text = { Text(variant.title) },
                     leadingIcon = if (variant == experimentVariant) ({ Icon(Icons.Default.Check, null) }) else null,
-                    onClick = { experimentVariant = variant; experimentSettings = false })
+                    onClick = { selectExperimentVariant(variant) })
             }
         } },
-        confirmButton = { NikTvSecondaryActionButton({ experimentSettings = false }) { Text("Close") } })
+        confirmButton = { NikTvSecondaryActionButton(::closeExperimentSettings) { Text("Close") } })
     if (experiment && scrollVariant.nativeRows && state.detail == null) {
         var nativePopup by remember(profile, surface) { mutableStateOf<RailEntry?>(null) }
         var nativePopupOpen by remember(profile, surface) { mutableStateOf(false) }
+        var nativePopupAnchor by remember(profile, surface) { mutableStateOf<IntRect?>(null) }
         fun ownsNativePopupRoute() = focusRouteOwner.owns(focusRouteToken) &&
             vm.state.value.ownsFocusRoute(profile, surface, "landing")
         val nativeFocusRestorer = remember(profile, surface) { NativeDiscoveryFocusRestorer() }
@@ -590,7 +609,7 @@ internal fun DiscoveryPreviewScreen(
         }
         val heroPlayRequester = remember(profile, surface) { FocusRequester() }
         val heroInfoRequester = remember(profile, surface) { FocusRequester() }
-        val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout) ({ focused, down, up ->
+        val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout && surface == DashboardSurface.HOME) ({ focused, down, up ->
             val heroState by vm.state.collectAsStateWithLifecycle()
             val heroCard = heroState.takeIf { it.profile == profile && it.surface == surface }?.hero
             LaunchedEffect(scrollVariant.prepareNextHero, mayRotateHero, heroCard?.key) {
@@ -609,8 +628,9 @@ internal fun DiscoveryPreviewScreen(
             }
             DisposableEffect(vm) { onDispose { vm.pauseHeroMetadata() } }
             val heroLogo = discoveryTrialHeroLogo(heroCard, heroState.heroPresentation, optionalHeroMetadata && scrollVariant.heroTitleArtwork)
-            val baseHeroHeight = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f)
-            Box(Modifier.fillMaxWidth().then(
+            val homeFrame = homeHeroFraming && landscape && !phone
+            val baseHeroHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeFrame)
+            Box(Modifier.fillMaxWidth().clipToBounds().then(
                 if (landscape && !phone)
                     Modifier.height(trialHeroFrameHeight(baseHeroHeight, LocalDensity.current.fontScale).dp)
                 else Modifier)) {
@@ -628,13 +648,16 @@ internal fun DiscoveryPreviewScreen(
                             if (!scrollVariant.heroArtworkFade || artworkReady) 1f else 0f,
                             tween(if (reduceMotion) 0 else 300), label = "trialHeroArtwork")
                         AsyncImage(request, null,
-                            Modifier.matchParentSize().graphicsLayer { alpha = artworkAlpha },
-                            contentScale = ContentScale.Crop,
+                            (if (homeFrame) Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).aspectRatio(16f / 9f)
+                                .align(Alignment.TopCenter) else Modifier.matchParentSize()).graphicsLayer { alpha = artworkAlpha },
+                            contentScale = if (homeFrame) ContentScale.FillWidth else ContentScale.Crop,
                             onSuccess = { artworkReady = true }, onError = { artworkReady = false })
                     }
+                    if (homeFrame) Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                        0f to Color.Transparent, .65f to Color.Transparent, 1f to Background)))
                 }
                 DiscoveryHero(heroCard?.copy(backdrop = null, poster = null, titleLogo = heroLogo), rank = null,
-                    height = (configuration.screenHeightDp * .45f).coerceIn(200f, 300f).dp,
+                    height = baseHeroHeight.dp,
                     landscape = landscape, compact = true, detail = false,
                     loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,
                     playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
@@ -664,20 +687,32 @@ internal fun DiscoveryPreviewScreen(
                 }
         }
         val nativeRows = remember(visibleRails, scrollVariant) { visibleRails.map { row ->
+            val all: () -> Unit = {
+                restoreNativeSelection = true
+                row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
+                    ?: row.section?.let(openSection) ?: run { activityCollection = row.key }
+            }
             NativeDiscoveryRow(row.key, row.title, row.entries.map { entry -> NativeDiscoveryItem(
                 entry.key, entry.title, entry.subtitle,
-                entry.artwork, entry.open, entry.popup?.let { { nativePopup = entry; nativePopupOpen = true } }, entry.progress.takeIf { scrollVariant.progressIndicators },
-                source = entry.displaySource.takeIf { scrollVariant.sourceCaptions }) } +
-                if (recycled && (row.providerType != null || row.section != null)) listOf(NativeDiscoveryItem("${row.key}:all", "Search / All", row.title, onClick = {
-                    row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
-                        ?: row.section?.let(openSection)
-                })) else emptyList(), actionLabel = if (recycled) "Remove ${row.title}" else null,
-                action = if (!recycled) null else ({
+                entry.artwork, { restoreNativeSelection = true; entry.open() }, entry.popup?.let { { restoreNativeSelection = true; nativePopup = entry; nativePopupOpen = true } }, entry.progress.takeIf { scrollVariant.progressIndicators },
+                source = entry.displaySource.takeIf { scrollVariant.sourceCaptions }) },
+                actionLabel = if (recycled && row.key !in setOf("continue", "episodes")) "Remove ${row.title}" else null,
+                action = if (!recycled || row.key in setOf("continue", "episodes")) null else ({
                     if (row.recommendation != null && dismissRecommendation != null) dismissRecommendation(row.recommendation)
                     else setHiddenTrialRows(hiddenTrialRows + row.key)
-                }))
+                }), viewAll = all.takeIf { recycled })
         } }
-        CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { experimentSettings = true }) {
+        if (activityCollection != null) {
+            val row = rails.firstOrNull { it.key == activityCollection }
+            if (row != null) {
+                DisposableEffect(Unit) { detailVisibilityChanged(true); onDispose { detailVisibilityChanged(false) } }
+                saved.SaveableStateProvider("activity:$profile:$surface:$activityCollection") {
+                    DiscoveryActivityCollection(row, reduceMotion) { activityCollection = null }
+                }
+                return
+            } else LaunchedEffect(activityCollection) { activityCollection = null }
+        }
+        CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { restore -> experimentSettingsReturn = restore; experimentSettings = true }) {
             Column(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
                 if (phone) DiscoveryPhoneHeader(surface, false, tabRequester, playRequester,
                     back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute,
@@ -685,7 +720,7 @@ internal fun DiscoveryPreviewScreen(
                     profile = app.savedProfile?.name.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
                     categoryPopupChanged = { categoryPopup = it })
                 else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
-                    back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute, headerFocus = {},
+                    back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute, headerFocus = { restoreNativeSelection = false },
                     menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null,
                     categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = false,
                     categoryPopupChanged = { categoryPopup = it })
@@ -703,9 +738,10 @@ internal fun DiscoveryPreviewScreen(
                         .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
                         up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = discoveryNativeFocusMotion(scrollVariant, television),
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
+                        popupAnchor = { nativePopupAnchor = it },
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
-                        heroHeightPx = if (scrollVariant.heroLayout && landscape && !phone) with(LocalDensity.current) {
-                            trialHeroFrameHeight((configuration.screenHeightDp * .45f).coerceIn(200f, 300f), fontScale).dp.roundToPx()
+                        heroHeightPx = if (nativeHero != null && landscape && !phone) with(LocalDensity.current) {
+                            trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeHeroFraming), fontScale).dp.roundToPx()
                         } else null,
                         hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
                             runCatching { (if (id == "info") heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
@@ -715,11 +751,13 @@ internal fun DiscoveryPreviewScreen(
                         up = { runCatching { tabRequester.requestFocus() } }, animateFocus = scrollVariant.animateNativeFocus)
                 }
             }
-            nativePopup?.let { entry -> entry.popup?.invoke(nativePopupOpen, dismissNativePopup, restoreNativePopupFocus) }
+            CompositionLocalProvider(LocalTileMenuAnchor provides nativePopupAnchor) {
+                nativePopup?.let { entry -> entry.popup?.invoke(nativePopupOpen, dismissNativePopup, restoreNativePopupFocus) }
+            }
         }
     } else {
     // TV pivot scrolling must not compete with explicit vertical row alignment.
-    CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { experimentSettings = true },
+    CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { restore -> experimentSettingsReturn = restore; experimentSettings = true },
         LocalSimpleDiscoveryTiles provides (scrollVariant.simpleFocus || scrollVariant.tvPresentation),
         LocalDiscoveryWideCards provides scrollVariant.wideCards,
         LocalDiscoveryPosterArtwork provides scrollVariant.posterArtwork) {
@@ -1604,5 +1642,61 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
             } else if (!iconOnly) Text(visualLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
+    }
+}
+
+
+/** Button-driven activity collection: only the requested activity rail expands its snapshot. */
+@Composable
+private fun DiscoveryActivityCollection(row: Rail, reduceMotion: Boolean, close: () -> Unit) {
+    val configuration = LocalConfiguration.current
+    val tv = LocalContext.current.isTvLikeDevice(configuration)
+    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, tv)
+    val remote = tv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val width = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp)
+        else discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat())
+    val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val requesters = remember { mutableMapOf<String, FocusRequester>() }
+    val back = remember { FocusRequester() }
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var entered by remember { mutableStateOf(false) }
+    BackHandler(onBack = close)
+    Column(Modifier.fillMaxSize().background(Background).safeDrawingPadding()) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, modifier = Modifier.focusRequester(back), onClick = close)
+            Text(row.title, style = MaterialTheme.typography.titleLarge, color = Color.White, modifier = Modifier.weight(1f))
+            Text("${row.entries.size} titles", color = Color.LightGray)
+        }
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(androidx.compose.foundation.lazy.grid.GridCells.FixedSize(width.dp),
+            Modifier.weight(1f).fillMaxWidth(), state = grid, contentPadding = PaddingValues(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(row.entries.size, key = { row.entries[it].key }) { index ->
+                val entry = row.entries[index]
+                val requester = remember(entry.key) { requesters.getOrPut(entry.key) { FocusRequester() } }
+                DisposableEffect(requester) { onDispose { requesters.remove(entry.key) } }
+                var popup by remember { mutableStateOf(false) }
+                Box {
+                    DiscoveryPosterTile(entry.title, entry.artwork, entry.subtitle, width.dp,
+                        modifier = Modifier.focusRequester(requester), reduceMotion = reduceMotion,
+                        source = entry.displaySource, progress = entry.progress,
+                        onFocus = { selected = entry.key }, onClick = entry.open, onLongClick = { popup = true })
+                    entry.popup?.invoke(popup, { popup = false; runCatching { requester.requestFocus() } },
+                        { runCatching { requester.requestFocus() }.getOrDefault(false) })
+                }
+            }
+        }
+    }
+    LaunchedEffect(remote, row.entries.isNotEmpty()) {
+        if (remote && !entered) repeat(12) {
+            withFrameNanos { }
+            // A nonempty collection must wait for its media holder, never focus
+            // Back transiently while the lazy grid is attaching its first item.
+            val target = if (row.entries.isEmpty()) back
+                else requesters[selected ?: row.entries.first().key] ?: return@repeat
+            if (runCatching { target.requestFocus() }.getOrDefault(false)) {
+                entered = true; return@LaunchedEffect
+            }
+        }
     }
 }

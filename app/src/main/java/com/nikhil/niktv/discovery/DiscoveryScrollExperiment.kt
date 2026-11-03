@@ -8,7 +8,7 @@ internal val LocalDiscoveryPosterArtwork = staticCompositionLocalOf { true }
 internal val LocalDiscoveryExperiment = staticCompositionLocalOf { false }
 internal val LocalOpenDiscoveryExperiment = staticCompositionLocalOf<() -> Unit> { {} }
 internal val LocalOpenDiscoveryExperimentSurface = staticCompositionLocalOf<(com.nikhil.niktv.model.DashboardSurface) -> Unit> { {} }
-internal val LocalDiscoveryExperimentSettings = staticCompositionLocalOf<() -> Unit> { {} }
+internal val LocalDiscoveryExperimentSettings = staticCompositionLocalOf<((() -> Boolean) -> Unit)> { { _ -> } }
 
 /** Trial-only budgets: full catalogues remain available through View all/Search. */
 internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int = Int.MAX_VALUE,
@@ -83,6 +83,12 @@ internal fun DiscoveryState.recycledFeedState(isolated: Boolean): DiscoveryState
 internal fun trialHeroFrameHeight(base: Float, fontScale: Float): Float =
     maxOf(base, 216f * fontScale.coerceAtLeast(1f) + 24f)
 
+/** Same landscape height policy as Home; the compact frame remains an A/B control. */
+internal fun trialHeroBaseHeight(screenHeight: Float, homeFraming: Boolean): Float =
+    if (!homeFraming) (screenHeight * .45f).coerceIn(200f, 300f)
+    else if (screenHeight < 480f) (screenHeight * .52f).coerceIn(165f, 230f)
+    else (screenHeight * .55f).coerceIn(235f, 355f)
+
 /** Keep the TV rendering experiment out of touch devices and original routes. */
 internal fun discoveryNativeFocusMotion(variant: DiscoveryScrollVariant, television: Boolean): Boolean =
     variant.animateNativeFocus && !(television && variant.tvImmediateFocus)
@@ -93,3 +99,8 @@ internal fun discoveryCacheTileDrawing(variant: DiscoveryScrollVariant, televisi
 /** Hero-only updates must not submit an unchanged recycled feed again. */
 internal fun discoveryIsolateHero(experiment: Boolean, variant: DiscoveryScrollVariant): Boolean =
     experiment && (variant.isolateHero || (variant.recycledRows && variant.heroLayout))
+
+internal fun discoveryInitialVariant(experiment: Boolean, stored: String?, television: Boolean): DiscoveryScrollVariant =
+    if (!experiment) DiscoveryScrollVariant.CONTROL else
+        DiscoveryScrollVariant.entries.firstOrNull { it.name == stored }
+            ?: if (television) DiscoveryScrollVariant.RECYCLED_TV_LAYERS else DiscoveryScrollVariant.RECYCLED_HERO_ROTATION

@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiscoveryScrollExperimentTest {
+    @Test fun trialDefaultsToFullPresenterAndRetainsExplicitDiagnosticChoice() {
+        assertEquals(DiscoveryScrollVariant.RECYCLED_HERO_ROTATION, discoveryInitialVariant(true, null, false))
+        assertEquals(DiscoveryScrollVariant.RECYCLED_TV_LAYERS, discoveryInitialVariant(true, "obsolete", true))
+        assertEquals(DiscoveryScrollVariant.RECYCLED_BASELINE, discoveryInitialVariant(true, "RECYCLED_BASELINE", true))
+        assertEquals(DiscoveryScrollVariant.CONTROL, discoveryInitialVariant(false, "RECYCLED_TV_LAYERS", true))
+    }
     @Test fun nativeHeroIsolationCannotChangeOriginalHome() {
         assertFalse(discoveryIsolateHero(false, DiscoveryScrollVariant.RECYCLED_HERO_ROTATION))
         assertFalse(discoveryIsolateHero(true, DiscoveryScrollVariant.CONTROL))

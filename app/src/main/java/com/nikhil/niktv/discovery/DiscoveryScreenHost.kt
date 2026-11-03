@@ -495,6 +495,8 @@ internal fun DiscoveryScreenHost(
     }
 
     @Composable fun LibraryContent(modifier: Modifier = Modifier) {
+        CompositionLocalProvider(LocalDiscoveryExperiment provides (LocalDiscoveryExperiment.current ||
+            (state.discoveryExperiment && state.modernTmdbSection != null))) {
         Box(modifier) {
             if (discoveryMatches) com.nikhil.niktv.discovery.DiscoveryMatchScreen(
                 state, close = ::closeMatches,
@@ -533,6 +535,7 @@ internal fun DiscoveryScreenHost(
                     }
                 }
             else MainContent(Modifier.fillMaxSize())
+        }
         }
     }
     if (state.settingsOpen) {

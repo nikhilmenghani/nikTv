@@ -1,6 +1,7 @@
 package com.nikhil.niktv.discovery.components
 
 import com.nikhil.niktv.ui.*
+import com.nikhil.niktv.discovery.LocalDiscoveryExperiment
 
 import androidx.compose.material.icons.filled.SportsCricket
 
@@ -2424,13 +2425,7 @@ internal fun ModernTileActionsMenu(
                 com.nikhil.niktv.TrailerPlayerActivity::class.java)
                 .putExtra("video_key", key).putExtra("title", trailerItem.title))
         }, dismiss = { trailerOpen = false })
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = dismiss,
-        modifier = Modifier,
-        containerColor = Color(0xFF202020),
-        shape = RoundedCornerShape(12.dp)
-    ) {
+    TileActionsDropdown(expanded = expanded, onDismissRequest = dismiss) {
         playAction?.let { action ->
             NikDropdownMenuItem(text = { Text("Play") },
                 leadingIcon = { Icon(Icons.Default.PlayArrow, null) },
@@ -2643,6 +2638,7 @@ private fun ModernTmdbCollection(
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
+    val trialCollection = LocalDiscoveryExperiment.current
     val remoteNavigationActive = isTv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     // Own Back in the visible destination, including after its saved state is
     // restored on older TV Android versions. Popup handlers still take priority.
@@ -2671,7 +2667,10 @@ private fun ModernTmdbCollection(
         if (section.series) state.modernTmdbSeries.map { it.tmdb.asMediaItem() }
         else state.modernTmdbMovies.map { it.tmdb.asMediaItem() })
     val currentEnrichTmdbFocus by rememberUpdatedState(enrichFocusedMetadata)
-    LaunchedEffect(section) {
+    LaunchedEffect(section, trialCollection) {
+        // Trial collections keep supplementary cast/description work explicit.
+        // The existing hold/info actions still request it when the user chooses.
+        if (trialCollection) return@LaunchedEffect
         snapshotFlow { currentTmdbFocusItems.getOrNull(focusedPosterIndex)?.id }.collectLatest { id ->
             if (id != null) {
                 delay(450L)
