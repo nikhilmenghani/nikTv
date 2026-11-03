@@ -354,7 +354,7 @@ class DiscoveryQuietPerformanceTest {
                     silence(fixture.host!!.fixtureWindow.decorView)
                 }
                 fixture.awaitRendering { draws.get() > 0 }
-                await(fixture, "Initial Home focus") { snapshot(fixture)?.hasLabel("Home 2") == true }
+                await(fixture, "Initial Home focus") { snapshot(fixture)?.hasLabel("Home") == true }
                 fixture.capturePreview()?.let { diagnostic("QUIET_PREVIEW ${it.absolutePath}") }
                 // Avoid judging first process/class/image initialization as warm navigation.
                 Thread.sleep(500)

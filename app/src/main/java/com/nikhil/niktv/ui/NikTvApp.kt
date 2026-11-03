@@ -365,6 +365,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         LocalRefreshProviderCategories provides { type -> vm.refreshProviderCategories(type) },
         com.nikhil.niktv.discovery.LocalOpenDiscovery provides vm::openDiscovery,
         com.nikhil.niktv.discovery.LocalOpenDiscoveryExperiment provides vm::openHomeExperiment,
+        com.nikhil.niktv.discovery.LocalOpenPreviousHome provides vm::openPreviousHome,
         com.nikhil.niktv.discovery.LocalOpenDiscoveryExperimentSurface provides vm::openDiscoveryExperiment,
         com.nikhil.niktv.discovery.LocalOpenWatchProviders provides vm::openWatchProviders,
         com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode provides vm::openDiscoveryEpisode,
@@ -380,7 +381,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         com.nikhil.niktv.discovery.LocalProviderDetailNavigation provides com.nikhil.niktv.discovery.ProviderDetailNavigation(
             openDiscovery = vm::openDiscovery,
             navigate = { label -> when (label) {
-                "Home" -> vm.openHome(); "Home 2" -> vm.openHomeExperiment(); "Live TV" -> vm.openCatalogType(CatalogType.LIVE_TV)
+                "Home" -> vm.openHome(); "Home 2" -> vm.openHomeExperiment(); "Previous Home" -> vm.openPreviousHome(); "Live TV" -> vm.openCatalogType(CatalogType.LIVE_TV)
                 "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
                 "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileSwitcher()

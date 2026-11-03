@@ -115,19 +115,19 @@ class ProfileDashboardStartupTest {
         assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
     }
 
-    @Test fun homeExperimentIsSeparateAndNormalNavigationRestoresOriginalExperience() = runTest(scheduler) {
+    @Test fun optimizedHomeIsDefaultAndPreviousHomeRemainsAnExplicitDestination() = runTest(scheduler) {
         vm.openHome()
-        assertFalse(vm.state.value.discoveryExperiment)
-        val originalNavigation = vm.state.value.discoveryNavigationId
-        vm.openHomeExperiment()
-        assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
         assertTrue(vm.state.value.discoveryExperiment)
+        val originalNavigation = vm.state.value.discoveryNavigationId
+        vm.openPreviousHome()
+        assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
+        assertFalse(vm.state.value.discoveryExperiment)
         assertTrue(vm.state.value.discoveryNavigationId > originalNavigation)
         vm.openDiscovery(DashboardSurface.MOVIES)
         assertFalse(vm.state.value.discoveryExperiment)
         vm.openHomeExperiment()
         vm.openHome()
-        assertFalse(vm.state.value.discoveryExperiment)
+        assertTrue(vm.state.value.discoveryExperiment)
         assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
     }
 
@@ -139,7 +139,7 @@ class ProfileDashboardStartupTest {
             val navigation = vm.state.value.discoveryNavigationId
             vm.openDiscovery(surface)
             assertEquals(surface, vm.state.value.discoverySurface)
-            assertFalse(vm.state.value.discoveryExperiment)
+            assertEquals(surface == DashboardSurface.HOME, vm.state.value.discoveryExperiment)
             assertTrue(vm.state.value.discoveryNavigationId > navigation)
         }
     }

@@ -60,10 +60,10 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
         DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true,
             modifier = if (isExperiment) Modifier.focusRequester(trialOptionsFocus) else Modifier) { change(true) }
         DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
-            if (isExperiment) NikDropdownMenuItem(text = { Text("Performance experiment") },
+            if (isExperiment) NikDropdownMenuItem(text = { Text("Home display options") },
                 onClick = { change(false); experimentSettings { runCatching { trialOptionsFocus.requestFocus() }.getOrDefault(false) } })
-            if (phone) NikDropdownMenuItem(text = { Text("Home 2 · performance trial") },
-                onClick = { change(false); navigate("Home 2") })
+            NikDropdownMenuItem(text = { Text("Previous Home") },
+                onClick = { change(false); navigate("Previous Home") })
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
             if (phone && surface != DashboardSurface.HOME && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
@@ -123,15 +123,10 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         verticalAlignment = Alignment.CenterVertically) {
                         trialSurfaces.forEach { tab ->
                             DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
-                                selected = !searchActive && library == null && surface == tab && !experiment, horizontalPadding = 12.dp,
+                                selected = !searchActive && library == null && surface == tab, horizontalPadding = 12.dp,
                                 modifier = Modifier.semantics { contentDescription = tab.trialTitle() }
-                                    .then(if (!searchActive && library == null && tab == surface && !experiment) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
+                                    .then(if (!searchActive && library == null && tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
                                 onFocus = headerFocus) { if (experiment) navigate(tab.trialTitle()) else select(tab) }
-                            if (tab == DashboardSurface.HOME) DiscoveryAction("Home 2", visualLabel = "Home 2",
-                                selected = !searchActive && library == null && experiment, horizontalPadding = 12.dp,
-                                modifier = Modifier.semantics { contentDescription = "Home 2" }
-                                    .then(if (!searchActive && library == null && experiment) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
-                                onFocus = headerFocus) { navigate("Home 2") }
                         }
                         DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,

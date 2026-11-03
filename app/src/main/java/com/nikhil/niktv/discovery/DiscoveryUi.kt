@@ -527,7 +527,7 @@ internal fun DiscoveryPreviewScreen(
     }
     fun closeExperimentSettings() { experimentSettingsReturn?.invoke(); experimentSettings = false }
     if (experimentSettings && experiment) AlertDialog(onDismissRequest = ::closeExperimentSettings,
-        title = { Text("Home 2 · performance experiment") },
+        title = { Text("Home display options") },
         text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
             Text("Home stays unchanged. Compare each stage with the preceding stage using the same content and input pattern.", style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {

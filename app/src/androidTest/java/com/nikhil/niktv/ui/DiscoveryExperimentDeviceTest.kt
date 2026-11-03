@@ -231,8 +231,8 @@ class DiscoveryExperimentDeviceTest {
             click("Performance experiment")
             click("Close")
             await("Trial settings restores its originating Options button") { focused("Options") }
-            repeat(12) { if (!focused("Home 2")) key(KeyEvent.KEYCODE_DPAD_LEFT) }
-            await("Left reaches active Home 2 tab") { focused("Home 2") }
+            repeat(12) { if (!focused("Home")) key(KeyEvent.KEYCODE_DPAD_LEFT) }
+            await("Left reaches active Home tab") { focused("Home") }
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Closing trial settings retains direct media entry: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
             click("Options"); click("Performance experiment")

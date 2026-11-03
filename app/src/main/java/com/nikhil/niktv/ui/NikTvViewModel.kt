@@ -444,7 +444,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 session = session,
                 savedProfile = session.profile,
                 homeOpen = true,
-                watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, discoveryExperiment = false,
+                watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, discoveryExperiment = true,
                 favoritesOpen = false,
                 settingsOpen = false,
                 offlineDownloadsOpen = false,
@@ -7872,7 +7872,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             modernIptvCategory = null, modernTmdbSection = null, selectedCategory = null, playbackReturnFocusId = null,
             searchQuery = "", searchResults = emptyList(), searchLocalLoading = false, searchServerLoading = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true,
-            watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, discoveryExperiment = false, offlineDownloadsOpen = false,
+            watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, discoveryExperiment = true, offlineDownloadsOpen = false,
             categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList(),
@@ -7973,7 +7973,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Discovery navigation never resolves provider titles in the background. */
 
-    fun openDiscovery(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = false)
+    fun openDiscovery(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = surface == DashboardSurface.HOME)
+    fun openPreviousHome() = openDiscoveryRoute(DashboardSurface.HOME, experiment = false)
     fun openHomeExperiment() = openDiscoveryExperiment(DashboardSurface.HOME)
     fun openDiscoveryExperiment(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = true)
 

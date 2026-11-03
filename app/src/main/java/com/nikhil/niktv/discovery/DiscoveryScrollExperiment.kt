@@ -7,6 +7,7 @@ internal val LocalSimpleDiscoveryTiles = staticCompositionLocalOf { false }
 internal val LocalDiscoveryPosterArtwork = staticCompositionLocalOf { true }
 internal val LocalDiscoveryExperiment = staticCompositionLocalOf { false }
 internal val LocalOpenDiscoveryExperiment = staticCompositionLocalOf<() -> Unit> { {} }
+internal val LocalOpenPreviousHome = staticCompositionLocalOf<() -> Unit> { {} }
 internal val LocalOpenDiscoveryExperimentSurface = staticCompositionLocalOf<(com.nikhil.niktv.model.DashboardSurface) -> Unit> { {} }
 internal val LocalDiscoveryExperimentSettings = staticCompositionLocalOf<((() -> Boolean) -> Unit)> { { _ -> } }
 

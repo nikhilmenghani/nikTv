@@ -234,6 +234,7 @@ internal fun DiscoveryScreenHost(
         (state.modernTmdbSection != null || state.modernIptvCategory != null)
     val openTrial = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
     val openHomeExperiment = com.nikhil.niktv.discovery.LocalOpenDiscoveryExperiment.current
+    val openPreviousHome = com.nikhil.niktv.discovery.LocalOpenPreviousHome.current
     fun landingHome() { openTrial(DashboardSurface.HOME) }
     val playTrialEpisode = com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode.current
     val openProviders = com.nikhil.niktv.discovery.LocalOpenWatchProviders.current
@@ -265,6 +266,7 @@ internal fun DiscoveryScreenHost(
         "Providers" -> openProviders()
         "Home" -> openTrial(DashboardSurface.HOME)
         "Home 2" -> openHomeExperiment()
+        "Previous Home" -> openPreviousHome()
         "Movies" -> openTrial(DashboardSurface.MOVIES)
         "Series" -> openTrial(DashboardSurface.SERIES)
         "Live TV" -> { libraryMenuEpoch++; if (!state.searchOpen && libraryBrowseAll && !state.favoritesOpen) libraryBrowseAll = false else if (state.searchOpen || state.homeOpen || state.favoritesOpen || state.selectedType != CatalogType.LIVE_TV || modernSectionOpen) selectType(CatalogType.LIVE_TV) }
@@ -425,7 +427,7 @@ internal fun DiscoveryScreenHost(
                         if (state.discoverySurface == DashboardSurface.HOME) exitConfirmationOpen = true
                         else landingHome()
                     }, navigate = { label -> when (label) {
-                        "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Live TV" -> selectType(CatalogType.LIVE_TV)
+                        "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Previous Home" -> openPreviousHome(); "Live TV" -> selectType(CatalogType.LIVE_TV)
                         "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                         "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                         "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
@@ -445,7 +447,7 @@ internal fun DiscoveryScreenHost(
                     com.nikhil.niktv.discovery.DiscoveryProviderCategory(state, requireNotNull(state.modernIptvCategory),
                         close = closeModernSection, selectSurface = openTrial,
                         navigate = { label -> when (label) {
-                            "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
+                            "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Previous Home" -> openPreviousHome(); "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                             "Live TV" -> selectType(CatalogType.LIVE_TV); "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                             "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
                         } }, open = { item, queue, filter -> playInContext?.invoke(item, queue, filter) ?: play(item) },
