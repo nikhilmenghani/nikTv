@@ -3781,10 +3781,12 @@ internal fun modernPosterColumns(
     else -> 2
 }
 
-private fun modernCollectionPosterColumns(
+internal fun modernCollectionPosterColumns(
     configuration: Configuration,
     isTv: Boolean
 ): Int = when {
+    !isTv && configuration.smallestScreenWidthDp < 600 -> com.nikhil.niktv.discovery.discoveryCollectionColumns(
+        configuration.screenWidthDp.toFloat(), com.nikhil.niktv.discovery.phoneDiscoveryPosterWidth(configuration.screenWidthDp))
     !isTv -> modernPosterColumns(configuration, false)
     configuration.screenWidthDp >= 1400 -> 7
     configuration.screenWidthDp >= 1100 -> 6

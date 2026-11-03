@@ -4,9 +4,15 @@ internal data class NativePosterGeometry(val width: Float, val posterHeight: Flo
     val railHeight get() = posterHeight + 23f // contained focus inset + rail padding
 }
 
-/** Same responsive width/type scale as Home; make room for accessibility fonts. */
-internal fun nativePosterGeometry(width: Float, height: Float, fontScale: Float): NativePosterGeometry {
-    val tile = discoveryPosterWidth(width, height)
+/** Compact wide-screen posters; larger phone posters with the same artwork/caption design. */
+internal fun nativePosterGeometry(width: Float, height: Float, fontScale: Float, phone: Boolean = false): NativePosterGeometry {
+    val tile = if (phone) {
+        val portraitWidth = phoneDiscoveryPosterWidth(width.toInt())
+        // A short landscape phone still needs room for the header, navigation
+        // and row heading. Do not apply this phone policy to tablets or TVs.
+        val heightLimit = ((height - 224f).coerceAtLeast(132f) / 1.5f + 8f)
+        minOf(portraitWidth, heightLimit)
+    } else discoveryPosterWidth(width, height)
     val scale = (tile / 120f).coerceIn(.85f, 1.15f)
     return NativePosterGeometry(tile, maxOf((tile - 8f) * 1.5f,
         114f * scale * fontScale.coerceAtLeast(1f) + 36f), scale)

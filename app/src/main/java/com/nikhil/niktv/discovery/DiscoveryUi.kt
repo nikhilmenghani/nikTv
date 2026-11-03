@@ -1681,7 +1681,9 @@ private fun DiscoveryActivityCollection(row: Rail, reduceMotion: Boolean, close:
             Text(row.title, style = MaterialTheme.typography.titleLarge, color = Color.White, modifier = Modifier.weight(1f))
             Text("${row.entries.size} titles", color = Color.LightGray)
         }
-        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(androidx.compose.foundation.lazy.grid.GridCells.FixedSize(width.dp),
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            if (phone) androidx.compose.foundation.lazy.grid.GridCells.Adaptive(width.dp)
+            else androidx.compose.foundation.lazy.grid.GridCells.FixedSize(width.dp),
             Modifier.weight(1f).fillMaxWidth(), state = grid, contentPadding = PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(row.entries.size, key = { row.entries[it].key }) { index ->
@@ -1689,14 +1691,16 @@ private fun DiscoveryActivityCollection(row: Rail, reduceMotion: Boolean, close:
                 val requester = remember(entry.key) { requesters.getOrPut(entry.key) { FocusRequester() } }
                 DisposableEffect(requester) { onDispose { requesters.remove(entry.key) } }
                 var popup by remember { mutableStateOf(false) }
-                Box {
-                    DiscoveryPosterTile(entry.title, entry.artwork, entry.subtitle, width.dp,
+                @Composable fun CollectionTile(tileWidth: Dp) {
+                    DiscoveryPosterTile(entry.title, entry.artwork, entry.subtitle, tileWidth,
                         modifier = Modifier.focusRequester(requester), reduceMotion = reduceMotion,
                         source = entry.displaySource, progress = entry.progress,
                         onFocus = { selected = entry.key }, onClick = entry.open, onLongClick = { popup = true })
                     entry.popup?.invoke(popup, { popup = false; runCatching { requester.requestFocus() } },
                         { runCatching { requester.requestFocus() }.getOrDefault(false) })
                 }
+                if (phone) BoxWithConstraints { CollectionTile(maxWidth) }
+                else Box { CollectionTile(width.dp) }
             }
         }
     }

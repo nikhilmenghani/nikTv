@@ -31,11 +31,25 @@ class DiscoveryPhoneLayoutTest {
         assertFalse(usesDiscoveryPhoneLayout(480, true))
     }
 
-    @Test fun threePortraitPostersFitPhoneWidthsWithoutChangingTheirRatio() {
+    @Test fun twoLargerPortraitPostersFitPhoneWidthsWithoutChangingTheirRatio() {
         listOf(280, 320, 360, 384, 411, 480).forEach { width ->
             val poster = phoneDiscoveryPosterWidth(width)
-            assertTrue("Three posters with insets and gaps must fit $width", poster * 3 + 52 <= width + .01f)
-            assertTrue(poster >= 76f)
+            assertTrue("Two posters with insets and gaps must fit $width", poster * 2 + 48 <= width + .01f)
+            assertTrue(poster >= 100f)
+            assertEquals(poster, nativePosterGeometry(width.toFloat(), 800f, 1f, phone = true).width, .01f)
         }
+    }
+
+    @Test fun phoneCollectionsUseTwoColumnsAndPreserveTabletAndTvColumns() {
+        for (width in listOf(320, 360, 411, 480)) {
+            val configuration = android.content.res.Configuration().apply {
+                screenWidthDp = width; smallestScreenWidthDp = width
+            }
+            assertEquals(2, com.nikhil.niktv.discovery.components.modernCollectionPosterColumns(configuration, false))
+        }
+        val tablet = android.content.res.Configuration().apply { screenWidthDp = 800; smallestScreenWidthDp = 800 }
+        assertEquals(4, com.nikhil.niktv.discovery.components.modernCollectionPosterColumns(tablet, false))
+        val tv = android.content.res.Configuration().apply { screenWidthDp = 960; smallestScreenWidthDp = 540 }
+        assertEquals(5, com.nikhil.niktv.discovery.components.modernCollectionPosterColumns(tv, true))
     }
 }

@@ -68,7 +68,8 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
             else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tab, heroPlay,
                 back = close, select = selectSurface, navigate = navigate, headerFocus = {},
                 menu = menu, changeMenu = { menu = it }, customize = null)
-            LazyVerticalGrid(GridCells.Adaptive(if (configuration.smallestScreenWidthDp >= 600) 112.dp else 92.dp),
+            LazyVerticalGrid(if (phone) GridCells.Adaptive(phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp)
+                else GridCells.Adaptive(if (configuration.smallestScreenWidthDp >= 600) 112.dp else 92.dp),
                 Modifier.fillMaxSize(), state = grid, contentPadding = PaddingValues(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item("hero", span = { GridItemSpan(maxLineSpan) }) {

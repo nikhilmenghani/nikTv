@@ -122,7 +122,7 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
             if (type in state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val columns = discoveryCollectionColumns(maxWidth.value, tileWidth)
-            LazyVerticalGrid(GridCells.FixedSize(tileWidth.dp),
+            LazyVerticalGrid(if (phone) GridCells.Adaptive(tileWidth.dp) else GridCells.FixedSize(tileWidth.dp),
                 Modifier.fillMaxSize().onPreviewKeyEvent { event ->
                     if (!remote || event.type != KeyEventType.KeyDown) false else {
                         val index = items.indexOfFirst { it.id == selected }

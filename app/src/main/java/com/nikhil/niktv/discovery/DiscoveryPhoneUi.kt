@@ -59,7 +59,7 @@ internal fun phoneDiscoveryHeroHeight(): Dp {
 }
 
 /** Geometry is device-width based; text scale never changes artwork ratios. */
-internal fun phoneDiscoveryPosterWidth(widthDp: Int) = ((widthDp - 52f) / 3f).coerceIn(76f, 144f)
+internal fun phoneDiscoveryPosterWidth(widthDp: Int) = ((widthDp - 48f) / 2.25f).coerceIn(100f, 176f)
 internal fun usesDiscoveryPhoneLayout(smallestWidthDp: Int, television: Boolean) = smallestWidthDp < 600 && !television
 
 @Composable

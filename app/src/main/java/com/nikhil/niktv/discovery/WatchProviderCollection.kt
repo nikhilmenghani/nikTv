@@ -103,8 +103,9 @@ internal fun WatchProviderCollection(provider: WatchProvider, region: String, se
             // Reserve progress space so tile positions do not shift on each page request.
             Box(Modifier.fillMaxWidth().height(4.dp)) { if (row.loading) LinearProgressIndicator(Modifier.fillMaxWidth()) }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                val columns = if (phone) 3 else discoveryCollectionColumns(maxWidth.value,
-                    discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()))
+                val columns = discoveryCollectionColumns(maxWidth.value,
+                    if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp)
+                    else discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()))
                 LazyVerticalGrid(GridCells.Fixed(columns), state = grid,
                     modifier = Modifier.fillMaxSize().onPreviewKeyEvent { event ->
                         val index = shown.indexOfFirst { it.key == selected }

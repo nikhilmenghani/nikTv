@@ -28,6 +28,7 @@ import coil3.asDrawable
 import coil3.imageLoader
 import coil3.request.*
 import com.nikhil.niktv.data.thumbnailArtworkUrl
+import com.nikhil.niktv.ui.isTvLikeDevice
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -86,7 +87,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     }
     val configuration = LocalConfiguration.current
     key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing, showSkeletons,
-        configuration.screenWidthDp, configuration.screenHeightDp, configuration.fontScale) {
+        configuration.screenWidthDp, configuration.screenHeightDp, configuration.fontScale,
+        configuration.smallestScreenWidthDp, configuration.uiMode) {
     AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing, showSkeletons) }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
             focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
@@ -347,7 +349,10 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private fun dp(n: Int) = (n * resources.displayMetrics.density + .5f).toInt()
     private fun px(n: Float) = (n * resources.displayMetrics.density + .5f).toInt()
     private val polishedCaptions = containedCaptions && !homeTileProportions
-    private val posterGeometry = resources.configuration.let { nativePosterGeometry(it.screenWidthDp.toFloat(), it.screenHeightDp.toFloat(), it.fontScale) }
+    private val posterGeometry = resources.configuration.let {
+        nativePosterGeometry(it.screenWidthDp.toFloat(), it.screenHeightDp.toFloat(), it.fontScale,
+            phone = usesDiscoveryPhoneLayout(it.smallestScreenWidthDp, context.isTvLikeDevice(it)))
+    }
     init {
         layoutManager = vertical; adapter = rowAdapter; itemAnimator = null
         recycledViewPool.setMaxRecycledViews(0, 4)

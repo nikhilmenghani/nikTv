@@ -148,10 +148,10 @@ internal fun DiscoveryFavoritesContent(
     LazyVerticalGrid(
         // Match the dashboard's Continue Watching geometry. The old adaptive
         // 180dp rule collapsed compact phones to one nearly full-width poster.
-        columns = if (discoveryCards) GridCells.FixedSize((if (configuration.smallestScreenWidthDp < 600 && !isTv)
-            com.nikhil.niktv.discovery.phoneDiscoveryPosterWidth(configuration.screenWidthDp)
-            else com.nikhil.niktv.discovery.discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat())).dp)
-            else GridCells.Fixed(posterColumns),
+        columns = if (!discoveryCards) GridCells.Fixed(posterColumns)
+            else if (configuration.smallestScreenWidthDp < 600 && !isTv)
+                GridCells.Adaptive(com.nikhil.niktv.discovery.phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp)
+            else GridCells.FixedSize(com.nikhil.niktv.discovery.discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp),
         state = gridState,
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 32.dp),

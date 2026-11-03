@@ -20,7 +20,7 @@ class DiscoveryPosterGeometryTest {
         assertEquals(105.333f, tv, .001f)
         assertEquals(8, discoveryCollectionColumns(960f, tv))
         assertEquals(132f, discoveryPosterWidth(1280f, 800f), .001f)
-        assertEquals(3, discoveryCollectionColumns(400f, phoneDiscoveryPosterWidth(400)))
+        assertEquals(2, discoveryCollectionColumns(400f, phoneDiscoveryPosterWidth(400)))
     }
     @Test fun gridNavigationPreservesColumnsAndPartialLastRows() {
         assertEquals(11, discoveryGridTarget(3, 8, 8, 19))
