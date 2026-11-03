@@ -101,9 +101,9 @@ class RecycledDiscoveryDeviceTest {
             i.waitForIdleSync()
             i.runOnMainSync { entry.requestFocus() }
             awaitTag("a:first")
-            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT); awaitTag("a:action")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT); awaitTag("a:first")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("a:action")
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER); awaitTag("b:first")
-            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("c:action")
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("c:first")
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_MENU); awaitTag("c:action")
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER); awaitTag("b:first")
@@ -111,7 +111,7 @@ class RecycledDiscoveryDeviceTest {
             awaitTag("b:first")
         } finally { i.runOnMainSync { host.finish() } }
     }
-    @Test fun rowHeaderControlsAndLateTilesKeepFocusStable() {
+    @Test fun rowTailControlsAndLateTilesKeepFocusStable() {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -137,17 +137,17 @@ class RecycledDiscoveryDeviceTest {
                 RecycledDiscoveryRows(listOf(
                     NativeDiscoveryRow("continue", "Continue Watching", listOf(NativeDiscoveryItem("one", "One", onClick = {})), viewAll = { opened.incrementAndGet() }),
                     NativeDiscoveryRow("new", "New category", if (loaded.value) listOf(NativeDiscoveryItem("first", "First", onClick = {})) else emptyList(),
-                        actionLabel = "Remove", action = {}, viewAll = { opened.incrementAndGet() })
+                        actionLabel = "Remove", action = {}, viewAll = { opened.incrementAndGet() }),
+                    NativeDiscoveryRow("long", "Long category", (0..39).map { NativeDiscoveryItem("i$it", "Item $it", onClick = {}) },
+                        actionLabel = "Remove long", action = {}, viewAll = { opened.incrementAndGet() })
                 ), Modifier.fillMaxSize(), entry, {})
             } } }
             i.waitForIdleSync(); i.runOnMainSync { entry.requestFocus() }
             awaitTag("continue:one")
-            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP); awaitTag("continue:all")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("continue:all")
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             assertEquals(1, opened.get())
-            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("continue:one")
-            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("new:all")
-            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("new:action")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT); awaitTag("continue:one")
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("new:loading")
             val handoff = mutableListOf<String>()
             val observer = android.view.ViewTreeObserver.OnGlobalFocusChangeListener { _, next -> (next?.tag as? String)?.let(handoff::add) }
@@ -155,11 +155,30 @@ class RecycledDiscoveryDeviceTest {
             awaitTag("new:first")
             i.runOnMainSync {
                 host.window.decorView.viewTreeObserver.removeOnGlobalFocusChangeListener(observer)
-                assertFalse("Loading must not visit a header control: $handoff", handoff.any { it == "new:all" || it == "new:action" })
+                assertFalse("Loading must not visit a tail control: $handoff", handoff.any { it == "new:all" || it == "new:action" })
             }
             Thread.sleep(250); awaitTag("new:first")
-            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP); awaitTag("new:all")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("new:all")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("new:action")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT); awaitTag("new:all")
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP); awaitTag("continue:one")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("new:first")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("long:i0")
+            for (index in 1..39) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("long:i$index") }
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("long:all")
+            i.runOnMainSync {
+                val button = host.currentFocus!!
+                val rect = Rect(); assertTrue(button.getGlobalVisibleRect(rect))
+                assertEquals("Tail focus is fully visible", button.width, rect.width())
+                val holder = button.parent as View
+                val rail = holder.parent as RecyclerView
+                val last = rail.findViewHolderForAdapterPosition(39)!!.itemView
+                val lastBounds = Rect(); last.getGlobalVisibleRect(lastBounds)
+                assertTrue("View all appears after the last media", rect.left >= lastBounds.right)
+            }
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); awaitTag("long:action")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP); awaitTag("new:first")
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("long:i39")
         } finally { i.runOnMainSync { host.finish() } }
     }
     private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false) {

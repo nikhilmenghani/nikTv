@@ -229,6 +229,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private var lastInputAt = 0L
     private val pool = RecycledViewPool().apply { setMaxRecycledViews(0, 16) }
     private var models = emptyMap<String, NativeDiscoveryRow>()
+    private var railItems = emptyMap<String, List<NativeDiscoveryItem>>()
     private var submitted: List<NativeDiscoveryRow>? = null
     private var pending: Pair<String, String>? = null
     private var loadingFocusRow: String? = null
@@ -300,7 +301,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             pending = loaded.id to (position.columns[loaded.id] ?: loaded.items.first().id)
             loadingFocusRow = null
             loadingEntryRow = loaded.id
-            (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == loaded.id }) as? RowHolder)?.enableHeaderFocus(false)
+            (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == loaded.id }) as? RowHolder)?.enableControlsFocus(false)
             // Park before DiffUtil/layout disables or recycles the loading heading.
             val policy = descendantFocusability
             descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS; requestFocus(); descendantFocusability = policy
@@ -316,6 +317,14 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         }
         submitted = rows
         models = rows.associateBy { it.id }
+        railItems = rows.associate { row -> row.id to buildList {
+            addAll(row.items)
+            // Loading categories have no selectable tail until media is ready.
+            if (row.items.isNotEmpty()) {
+                row.viewAll?.let { add(NativeDiscoveryItem(ROW_ALL, "View all", onClick = it)) }
+                row.action?.let { add(NativeDiscoveryItem(ROW_REMOVE, "×", onClick = it)) }
+            }
+        } }
         rowAdapter.submitList(rows.toList())
     }
     override fun onRequestFocusInDescendants(direction: Int, previouslyFocusedRect: Rect?): Boolean {
@@ -397,50 +406,47 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         clearFocus(); host.requestFocus(); action()
         isFocusable = true; descendantFocusability = policy
     }
-    private fun headerItem(row: NativeDiscoveryRow): String? = when {
-        row.viewAll != null -> ROW_ALL
-        row.action != null -> ROW_REMOVE
-        else -> null
-    }
     private fun selectionFor(row: NativeDiscoveryRow): String =
         position.item.takeIf { position.row == row.id && it.isNotBlank() }
             ?: position.columns[row.id] ?: if (row.isHero) "play" else row.items.firstOrNull()?.id.orEmpty()
-    private fun adjacent(row: String, step: Int, fromHeader: Boolean = false) {
+    private fun adjacent(row: String, step: Int) {
         val list = rowAdapter.currentList
         val source = pending?.first ?: row
-        val current = list.firstOrNull { it.id == source }
-        if (!fromHeader && step < 0 && current != null && !current.isHero) headerItem(current)?.let { reveal(source, it); return }
         val index = list.indexOfFirst { it.id == source } + step
         if (index < 0) onUp()
         else list.getOrNull(index)?.let {
-            reveal(it.id, (if (step > 0) headerItem(it) else null) ?: position.columns[it.id] ?: if (it.isHero) "play" else it.items.firstOrNull()?.id.orEmpty())
+            reveal(it.id, position.columns[it.id] ?: if (it.isHero) "play" else it.items.firstOrNull()?.id.orEmpty())
         }
     }
     private fun selected(row: String, item: String) {
         loadingEntryRow?.takeIf { it != row }?.let { old ->
             loadingEntryRow = null
-            (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == old }) as? RowHolder)?.enableHeaderFocus(true)
+            (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == old }) as? RowHolder)?.enableControlsFocus(true)
         }
         loadingFocusRow = row.takeIf { item.isBlank() && models[row]?.items.isNullOrEmpty() }
         position.row = row; position.item = item.ifBlank { position.columns[row].orEmpty() }
         if (item.isNotBlank() && item != ROW_ALL && item != ROW_REMOVE) position.columns[row] = item
     }
     private fun horizontal(row: String, item: String, direction: Int) {
-        val items = models[row]?.items.orEmpty()
+        val items = railItems[row].orEmpty()
         val next = items.indexOfFirst { it.id == item } + direction
-        if (next < 0 && models[row]?.action != null) focusRowAction(row)
-        else items.getOrNull(next)?.let { reveal(row, it.id) }
+        items.getOrNull(next)?.let { reveal(row, it.id) }
     }
-    private fun focusRowAction(row: String): Boolean =
-        (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == row }) as? RowHolder)?.focusAction() == true
+    private fun focusRowAction(row: String): Boolean {
+        val model = models[row] ?: return false
+        val item = if (model.action != null) ROW_REMOVE else if (model.viewAll != null) ROW_ALL else return false
+        if (model.items.isEmpty()) return false
+        reveal(row, item)
+        return true
+    }
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
         if (event.action == KeyEvent.ACTION_DOWN) lastInputAt = android.os.SystemClock.uptimeMillis()
         val target = pending
         if (target != null && event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_DOWN -> { if (target.second == ROW_ALL || target.second == ROW_REMOVE) reveal(target.first, position.columns[target.first].orEmpty()) else adjacent(target.first, 1); return true }
-                KeyEvent.KEYCODE_DPAD_UP -> { adjacent(target.first, -1, target.second == ROW_ALL || target.second == ROW_REMOVE); return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { adjacent(target.first, 1); return true }
+                KeyEvent.KEYCODE_DPAD_UP -> { adjacent(target.first, -1); return true }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> { horizontal(target.first, target.second, 1); return true }
                 KeyEvent.KEYCODE_DPAD_LEFT -> { horizontal(target.first, target.second, -1); return true }
             }
@@ -456,39 +462,6 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         private val title = TextView(context).apply {
             textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(3), dp(5), 0, dp(6)); ViewCompat.setAccessibilityHeading(this, true)
-        }
-        private val action: TextView = headerButton("×", ROW_REMOVE).apply {
-            textSize = 20f
-            setOnClickListener { models[rowId]?.action?.invoke() }
-        }
-        private val viewAll: TextView = headerButton("View all", ROW_ALL).apply {
-            textSize = 12f
-            setOnClickListener { models[rowId]?.viewAll?.invoke() }
-        }
-        private fun headerButton(label: String, identity: String): TextView = TextView(context).apply {
-            text = label; gravity = Gravity.CENTER; includeFontPadding = false; setTextColor(Color.WHITE)
-            isFocusable = true; isSoundEffectsEnabled = false
-            fun frame(focused: Boolean) {
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(7).toFloat(); setColor(if (focused) Color.rgb(229,9,37) else Color.rgb(29,33,42))
-                    setStroke(dp(if (focused) 2 else 1), if (focused) Color.WHITE else Color.rgb(55,61,73))
-                }
-            }
-            frame(false)
-            setOnFocusChangeListener { _, focused ->
-                val valid = pending == null || pending == (rowId to identity)
-                frame(focused && valid)
-                if (focused && valid) { epoch++; pending = null; selected(rowId, identity) }
-            }
-            setOnKeyListener { _, key, event ->
-                if (event.action != KeyEvent.ACTION_DOWN) false else when (key) {
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> { if (identity == ROW_ALL && action.visibility == View.VISIBLE) action.requestFocus(); true }
-                    KeyEvent.KEYCODE_DPAD_LEFT -> { if (identity == ROW_REMOVE && viewAll.visibility == View.VISIBLE) viewAll.requestFocus(); true }
-                    KeyEvent.KEYCODE_DPAD_DOWN -> { reveal(rowId, this@RailRecycler.position.columns[rowId] ?: cards.currentList.firstOrNull()?.id.orEmpty()); true }
-                    KeyEvent.KEYCODE_DPAD_UP -> { adjacent(rowId, -1, fromHeader = true); true }
-                    else -> false
-                }
-            }
         }
         private val horizontal = object : RecyclerView(context) {
             override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
@@ -512,15 +485,24 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             setRecycledViewPool(pool); itemAnimator = null; setItemViewCacheSize(1)
             setPadding(dp(4), dp(5), dp(4), dp(10)); clipToPadding = false; isFocusable = false
         }
-        val cards = object : ListAdapter<NativeDiscoveryItem, CardHolder>(cardDiff) {
+        val cards = object : ListAdapter<NativeDiscoveryItem, ViewHolder>(cardDiff) {
             init { setHasStableIds(true) }
             override fun getItemId(position: Int) = stableId("card:$rowId:${getItem(position).id}")
-            override fun onCreateViewHolder(parent: ViewGroup, type: Int) = CardHolder()
-            override fun onBindViewHolder(holder: CardHolder, index: Int) { holder.bind(rowId, getItem(index)) }
-            override fun onViewRecycled(holder: CardHolder) { holder.cancel() }
-            override fun onViewAttachedToWindow(holder: CardHolder) { holder.cacheLayer(tileCache.enabled) }
-            override fun onViewDetachedFromWindow(holder: CardHolder) { holder.cacheLayer(false); holder.cancelRemoteInput() }
-            override fun onFailedToRecycleView(holder: CardHolder): Boolean { holder.cancel(); return true }
+            override fun getItemViewType(position: Int): Int {
+                val id = getItem(position).id
+                return if (id == ROW_ALL || id == ROW_REMOVE) 1 else 0
+            }
+            override fun onCreateViewHolder(parent: ViewGroup, type: Int): ViewHolder = if (type == 1) ControlHolder() else CardHolder()
+            override fun onBindViewHolder(holder: ViewHolder, index: Int) {
+                when (holder) {
+                    is CardHolder -> holder.bind(rowId, getItem(index))
+                    is ControlHolder -> holder.bind(rowId, getItem(index))
+                }
+            }
+            override fun onViewRecycled(holder: ViewHolder) { (holder as? CardHolder)?.cancel() }
+            override fun onViewAttachedToWindow(holder: ViewHolder) { (holder as? CardHolder)?.cacheLayer(tileCache.enabled) }
+            override fun onViewDetachedFromWindow(holder: ViewHolder) { (holder as? CardHolder)?.apply { cacheLayer(false); cancelRemoteInput() } }
+            override fun onFailedToRecycleView(holder: ViewHolder): Boolean { (holder as? CardHolder)?.cancel(); return true }
         }
         init {
             if (hero) {
@@ -531,12 +513,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     }, { adjacent(HERO_ROW, 1) }, { onUp() }) }
                 }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2))
             } else {
-            (itemView as LinearLayout).addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(viewAll, LinearLayout.LayoutParams(dp(76), dp(34)).apply { marginEnd = dp(6) })
-                addView(action, LinearLayout.LayoutParams(dp(34), dp(34)))
-            })
+            (itemView as LinearLayout).addView(title, LinearLayout.LayoutParams(-1, -2))
             (itemView as LinearLayout).addView(horizontal, LinearLayout.LayoutParams(-1,
                 if (polishedCaptions) px(posterGeometry.railHeight) else dp(if (homeTileProportions) 167 else 172 + (48 * resources.configuration.fontScale).toInt())))
             horizontal.adapter = cards
@@ -555,13 +532,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             val wasLoadingFocus = title.isFocused
             if (rowId != row.id) { restoreHorizontal = true; horizontalLayoutPending = false; cards.submitList(emptyList()); horizontal.stopScroll(); horizontal.scrollToPosition(0) }
             rowId = row.id; title.text = row.title; title.tag = "${row.id}:loading"
-            action.visibility = if (row.action == null) View.GONE else View.VISIBLE
-            action.contentDescription = row.actionLabel; action.tag = "${row.id}:action"
-            viewAll.visibility = if (row.viewAll == null) View.GONE else View.VISIBLE
-            viewAll.contentDescription = "View all ${row.title}"; viewAll.tag = "${row.id}:all"
-            enableHeaderFocus(loadingEntryRow != row.id)
+            enableControlsFocus(loadingEntryRow != row.id)
             if (wasLoadingFocus && row.items.isNotEmpty()) {
-                // Disabling the loading heading first lets Android choose a header
+                // Disabling the loading heading first lets Android choose a tail
                 // button before the first asynchronous card is attached.
                 pending = row.id to (this@RailRecycler.position.columns[row.id] ?: row.items.first().id)
                 val policy = this@RailRecycler.descendantFocusability
@@ -570,7 +543,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 this@RailRecycler.descendantFocusability = policy
             }
             title.isFocusable = row.items.isEmpty()
-            cards.submitList(row.items.toList()) {
+            cards.submitList(railItems[row.id].orEmpty()) {
                 if (restoreHorizontal && rowId == row.id) {
                     val saved = this@RailRecycler.position.horizontal[row.id]
                     val index = cards.currentList.indexOfFirst { it.id == saved?.item }
@@ -600,12 +573,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 }
             }
         }
-        fun focusAction(): Boolean = when {
-            action.visibility == View.VISIBLE -> action.requestFocus()
-            viewAll.visibility == View.VISIBLE -> viewAll.requestFocus()
-            else -> false
+        fun enableControlsFocus(enabled: Boolean) {
+            for (index in 0 until horizontal.childCount) (horizontal.getChildViewHolder(horizontal.getChildAt(index)) as? ControlHolder)?.button?.isFocusable = enabled
         }
-        fun enableHeaderFocus(enabled: Boolean) { action.isFocusable = enabled; viewAll.isFocusable = enabled }
         private fun rememberHorizontalViewport() {
             if (rowId.isBlank() || restoreHorizontal || horizontalLayoutPending) return
             val layout = horizontal.layoutManager as LinearLayoutManager
@@ -633,12 +603,10 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         }
         fun focus(id: String, scroll: Boolean = true, fromTouch: Boolean = false): Boolean {
             if (hero) return runCatching { heroFocusEntry(id) }.getOrDefault(false)
-            if (id == ROW_ALL && viewAll.visibility == View.VISIBLE) return viewAll.requestFocus()
-            if (id == ROW_REMOVE && action.visibility == View.VISIBLE) return action.requestFocus()
             if (restoreHorizontal || horizontalLayoutPending) return false
             if (cards.currentList.isEmpty()) return title.requestFocus()
             val index = cards.currentList.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: 0
-            val holder = horizontal.findViewHolderForAdapterPosition(index) as? CardHolder
+            val holder = horizontal.findViewHolderForAdapterPosition(index)
             if (holder == null) { if (scroll) horizontal.scrollToPosition(index); return false }
             if (pending?.first == rowId) pending = rowId to cards.currentList[index].id
             // A holder can be attached but only a few pixels visible after a fast
@@ -654,12 +622,61 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                 else -> 0
             }
             if (dx != 0 && horizontal.canScrollHorizontally(if (dx > 0) 1 else -1)) horizontal.scrollBy(dx, 0)
-            if (fromTouch) holder.itemView.isFocusableInTouchMode = true
-            val focused = holder.itemView.requestFocus()
-            if (fromTouch && !focused) holder.itemView.isFocusableInTouchMode = false
+            val target = (holder as? ControlHolder)?.button ?: holder.itemView
+            if (fromTouch) target.isFocusableInTouchMode = true
+            val focused = target.requestFocus()
+            if (fromTouch && !focused) target.isFocusableInTouchMode = false
             if (focused) holder.itemView.requestRectangleOnScreen(
                 Rect(0, 0, holder.itemView.width, holder.itemView.height), false)
             return focused
+        }
+    }
+    /** Compact, image-free controls recycle with the rail after its last media. */
+    private inner class ControlHolder : ViewHolder(FrameLayout(context).apply {
+        layoutParams = LayoutParams(dp(88), LayoutParams.MATCH_PARENT).apply { marginEnd = dp(6) }
+    }) {
+        private var row = ""
+        private var identity = ""
+        val button = TextView(context).apply {
+            gravity = Gravity.CENTER; includeFontPadding = false; setTextColor(Color.WHITE)
+            isFocusable = true; isSoundEffectsEnabled = false
+            setOnClickListener {
+                selected(row, identity)
+                if (identity == ROW_ALL) models[row]?.viewAll?.invoke() else models[row]?.action?.invoke()
+            }
+            setOnFocusChangeListener { _, focused ->
+                val valid = pending == null || pending == (row to identity)
+                frame(focused && valid)
+                if (focused && valid) { epoch++; pending = null; selected(row, identity) }
+                if (!focused) isFocusableInTouchMode = false
+            }
+            setOnKeyListener { _, key, event ->
+                if (event.action != KeyEvent.ACTION_DOWN) false else when (key) {
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> { horizontal(row, identity, 1); true }
+                    KeyEvent.KEYCODE_DPAD_LEFT -> { horizontal(row, identity, -1); true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { adjacent(row, -1); true }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { adjacent(row, 1); true }
+                    else -> false
+                }
+            }
+        }
+        init { (itemView as FrameLayout).addView(button, FrameLayout.LayoutParams(dp(76), dp(40), Gravity.CENTER)) }
+        private fun frame(focused: Boolean) {
+            button.background = GradientDrawable().apply {
+                cornerRadius = dp(7).toFloat(); setColor(if (focused) Color.rgb(229,9,37) else Color.rgb(29,33,42))
+                setStroke(dp(if (focused) 2 else 1), if (focused) Color.WHITE else Color.rgb(55,61,73))
+            }
+        }
+        fun bind(rowId: String, item: NativeDiscoveryItem) {
+            row = rowId; identity = item.id
+            val all = identity == ROW_ALL
+            button.text = item.title; button.textSize = if (all) 12f else 20f
+            button.tag = "$row:${if (all) "all" else "action"}"
+            button.contentDescription = if (all) "View all ${models[row]?.title.orEmpty()}" else models[row]?.actionLabel
+            button.isFocusable = loadingEntryRow != row
+            itemView.layoutParams = itemView.layoutParams.apply { width = dp(if (all) 88 else 52) }
+            button.layoutParams = button.layoutParams.apply { width = dp(if (all) 76 else 40) }
+            frame(button.isFocused)
         }
     }
     private inner class CardHolder : ViewHolder(FrameLayout(context).apply {
@@ -735,7 +752,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     epoch++; pending = null; selected(row, identity)
                     if (loadingEntryRow == row) {
                         loadingEntryRow = null
-                        (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == row }) as? RowHolder)?.enableHeaderFocus(true)
+                        (findViewHolderForAdapterPosition(rowAdapter.currentList.indexOfFirst { it.id == row }) as? RowHolder)?.enableControlsFocus(true)
                     }
                 }
             }

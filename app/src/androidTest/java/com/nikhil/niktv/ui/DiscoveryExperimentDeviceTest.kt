@@ -77,7 +77,7 @@ class DiscoveryExperimentDeviceTest {
                 }
             }
             await("Fixture Home feed is ready") { vm.state.value.feeds[TmdbHomeSection.TRENDING_MOVIES]?.size == 20 }
-            // Exercise the real preview shell + Compose hero + native headers together.
+            // Exercise the real preview shell + Compose hero + native rails together.
             // The renderer-only fixture cannot detect focus handoff regressions here.
             instrumentation.setInTouchMode(false)
             fun nativeTag(): String? { var tag: String? = null; instrumentation.runOnMainSync { tag = host.currentFocus?.tag as? String }; return tag }
@@ -91,12 +91,10 @@ class DiscoveryExperimentDeviceTest {
             repeat(8) { key(KeyEvent.KEYCODE_DPAD_UP) }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down enters the first row's View all: ${nativeTag()}") { nativeTag() == "daily-movies:all" }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Next Down enters first media") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
+            await("Down enters the first media directly: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
             repeat(8) { key(KeyEvent.KEYCODE_DPAD_UP) }
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Rapid Up returns through the tab and hero exactly once: ${nativeTag()}") { nativeTag() == "daily-movies:all" }
+            await("Rapid Up returns through the tab and hero exactly once: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
             click("Options")
             click("Performance experiment")
             click("Close")
@@ -104,7 +102,7 @@ class DiscoveryExperimentDeviceTest {
             repeat(12) { if (!focused("Home 2")) key(KeyEvent.KEYCODE_DPAD_LEFT) }
             await("Left reaches active Home 2 tab") { focused("Home 2") }
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Closing trial settings retains a usable row-header path: ${nativeTag()}") { nativeTag() == "daily-movies:all" }
+            await("Closing trial settings retains direct media entry: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
             click("Options"); click("Performance experiment")
             await("The baseline stage chooser is ready") { semantic(DiscoveryScrollVariant.RECYCLED_BASELINE.title) { true } || text(DiscoveryScrollVariant.RECYCLED_BASELINE.title)?.isVisibleToUser == true }
             // The chooser scrolls as experiments are added; offscreen options need not be composed.

@@ -2,6 +2,19 @@
 
 Preceding commit `798519f3`. Original Home stays unchanged; optimized Dev only. APKs, raw measurements and captures stay outside git in `D:/workspace/niktv-playback-tests/home2-phase18/`.
 
+**Follow-up correction:** the user found header action stops disruptive. View all and Close now follow the last media in each horizontal rail. Up/Down moves directly between media rows and remembers media independently from the tail controls. Continue Watching/New Episodes still have no Close. The historical header-stop behavior and six-key measurements below describe the original phase 18 commit; the corrected three-row round trip requires three Down/three Up. Tail controls use small image-free recycled holders and add no artwork/provider requests. Three targeted tablet device tests pass, including late media handoff, 40-item tail reachability, full focus visibility, direct vertical entry, row removal and original Home isolation. Follow-up evidence uses the `tail-controls-*` and `tablet-tail-controls-*` prefixes in the external evidence directory.
+
+Follow-up verification: optimized Dev build and **38 relevant native/motion/bookmark unit tests pass**, alongside the **three targeted tablet device tests**. Final Dev is installed on tablet and TV; temporary regression apps were removed. Real-app checks confirm tail positioning on both, and tablet View all/Back restores the tail button. Lint still fails with **22 existing errors**, now 357 warnings and 3 hints (`tail-controls-lint.log`). Source credential scan: zero findings. These edits do not change original Home.
+
+Follow-up TV Wio three-Down/three-Up probe: p95 **34/30/17 ms**, deadline misses **7/2/2**, frames **128/130/129** (`tv/wio-tail-controls-v*`). Run 2 contains a **147.7 ms draw** / 148.0 ms UI-work sample; its cause is unproven. A rapid return capture also showed the first card partly below the viewport; a controlled single Down/Up returned it fully visible. These observations remain follow-up performance/rapid-visibility work, not a claim of smoothness or a matched causal regression from tail controls. Do not compare this Wio three-key workload directly with the earlier Nikhil six-key 8 ms runs. A rapid Menu press during an unsettled row handoff was not used as proof of tail reachability; the settled Menu path and ordinary Right/Left reachability pass.
+
+Follow-up commands:
+
+```powershell
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest --tests 'com.nikhil.niktv.discovery.Native*' --tests 'com.nikhil.niktv.discovery.RecycledPositionTest' --tests 'com.nikhil.niktv.discovery.DiscoveryScrollExperimentTest' --tests 'com.nikhil.niktv.discovery.DiscoveryMotionTest' -PperformanceBuild=true -PskipLocalGithubToken=true --console=plain
+adb -s 6889f3db shell am instrument -w -r -e class com.nikhil.niktv.ui.RecycledDiscoveryDeviceTest#rowTailControlsAndLateTilesKeepFocusStable,com.nikhil.niktv.ui.RecycledDiscoveryDeviceTest#rowActionsRemoveNeighborsWithoutLosingRemoteFocus,com.nikhil.niktv.ui.DiscoveryExperimentDeviceTest com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner
+```
+
 ## Implemented fixes
 
 - Fresh Home 2 starts with its full presenter. Explicit choices persist by profile/device class; original routes always use Control.
