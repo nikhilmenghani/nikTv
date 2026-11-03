@@ -7014,7 +7014,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         type: CatalogType,
         supplied: List<MediaItem>
     ): List<MediaItem> {
-        if (supplied.isNotEmpty()) return orderedPlayerQueue(supplied)
+        if (supplied.isNotEmpty()) return providerPlayerQueue(supplied)
 
         val snapshot = _state.value
         val visible = snapshot.items.distinctBy { it.id }
@@ -7155,7 +7155,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     ): List<MediaItem> {
         val snapshot = _state.value
         // The committed queue owns navigation, not whichever browse screen updated last.
-        val providerOrder = playing.episodeQueue.ifEmpty { listOf(playing.media) }.distinctBy { it.id }
+        val providerOrder = providerPlayerQueue(playing.episodeQueue.ifEmpty { listOf(playing.media) })
         if (playing.catalogType != CatalogType.LIVE_TV) return providerOrder
         val profileKey = snapshot.session?.profile?.cacheKey()
             ?: snapshot.savedProfile?.cacheKey()

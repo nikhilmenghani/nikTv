@@ -572,7 +572,7 @@ fun PlayerScreen(
     val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
-        val unique = media.episodeQueue.distinctBy { it.id }
+        val unique = providerPlayerQueue(media.episodeQueue)
         if (unique.any { it.id == media.media.id }) unique
         else listOf(media.media) + unique
     }

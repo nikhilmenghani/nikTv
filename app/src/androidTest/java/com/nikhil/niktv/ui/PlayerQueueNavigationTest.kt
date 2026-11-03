@@ -164,6 +164,7 @@ class PlayerQueueNavigationTest {
         check(context.packageName.endsWith(".regression"))
         val activity = instrumentation.startActivitySync(Intent(context, PlayerQueueRegressionActivity::class.java)
             .putExtra("layout", "LIST").putExtra("pinnedId", "65").putExtra("playingId", "64")
+            .putExtra("browseHandoff", true)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         fun awaitSelection(id: String, index: Int) {
             val until = System.currentTimeMillis() + 8000
@@ -189,6 +190,9 @@ class PlayerQueueNavigationTest {
             repeat(67) { key(KeyEvent.KEYCODE_DPAD_UP); Thread.sleep(220) }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitSelection("65", 0)
+            key(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(250)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitSelection("0", 1) // The shortcut must not be followed by another copy of channel 65.
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 

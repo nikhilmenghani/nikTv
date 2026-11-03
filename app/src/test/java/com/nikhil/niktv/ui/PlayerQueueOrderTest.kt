@@ -65,4 +65,20 @@ class PlayerQueueOrderTest {
         assertEquals("66", ids[adjacentQueueIndex(65, ids.size, 1, true)!!])
     }
 
+    @Test fun browseToPlayerHandoffKeepsOneShortcutAndTheOriginalPosition() {
+        val provider = (1..100).map { channel(it.toString()) }
+        val pins = listOf("65", "80")
+        val browse = listOf(provider[64], provider[79]) + provider
+        // Keep the browse prefix intact until extracting provider occurrences; distinctBy
+        // here would retain both pins at the front and permanently lose their positions.
+        val committedQueue = providerPlayerQueue(browse)
+        assertEquals(provider, committedQueue)
+        val displayed = orderedPlayerQueue(committedQueue, pins)
+        assertEquals(listOf("65", "80", "1", "2"), displayed.take(4).map { it.id })
+        assertEquals(listOf(0, 66), displayed.indices.filter { displayed[it].id == "65" })
+        assertEquals(listOf("64", "65", "66"), displayed.slice(65..67).map { it.id })
+        assertEquals(displayed, orderedPlayerQueue(providerPlayerQueue(displayed), pins))
+        assertEquals(provider, providerPlayerQueue(displayed))
+    }
+
 }

@@ -288,7 +288,7 @@ internal fun VlcPlayerScreen(
     var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile != null) }
     var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
-        val unique = media.episodeQueue.distinctBy { it.id }
+        val unique = providerPlayerQueue(media.episodeQueue)
         if (unique.any { it.id == media.media.id }) unique
         else listOf(media.media) + unique
     }

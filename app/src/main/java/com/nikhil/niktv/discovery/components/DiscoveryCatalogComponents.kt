@@ -3688,7 +3688,7 @@ internal fun ModernIptvCollection(
                     },
                     onClick = {
                         focusedPosterIndex = index
-                        if (playInContext != null) playInContext(media, matchingItems.distinctBy { it.id },
+                        if (playInContext != null) playInContext(media, providerPlayerQueue(matchingItems),
                             com.nikhil.niktv.model.PlaybackQueueFilter(trimmedChannelQuery, filteredSourceIds,
                                 pinnedIds = if (trimmedChannelQuery.isBlank()) null else emptyList(),
                                 selectedOrdinal = displayedItems.take(index).count { it.id == media.id },
@@ -3711,7 +3711,7 @@ internal fun ModernIptvCollection(
                 subtitle = media.description.orEmpty(),
                 trailerSeries = category.type == CatalogType.SERIES,
                 onClick = {
-                    if (playInContext != null) playInContext(media, matchingItems.distinctBy { it.id },
+                    if (playInContext != null) playInContext(media, providerPlayerQueue(matchingItems),
                             com.nikhil.niktv.model.PlaybackQueueFilter(trimmedChannelQuery, filteredSourceIds,
                                 pinnedIds = if (trimmedChannelQuery.isBlank()) null else emptyList(),
                                 selectedOrdinal = displayedItems.take(index).count { it.id == media.id },

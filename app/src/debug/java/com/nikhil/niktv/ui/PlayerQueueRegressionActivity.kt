@@ -25,6 +25,11 @@ class PlayerQueueRegressionActivity : ComponentActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (android.os.Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(true); setTurnScreenOn(true) }
         PlayerQueuePreferences.setLayout(this, PlayerQueueLayout.valueOf(intent.getStringExtra("layout") ?: "GRID"))
+        val provider = (0..99).map { MediaItem("$it", "Fixture channel $it", null, null,
+            liveProgramme = if (it % 2 == 0) LiveProgramme("Current programme $it", System.currentTimeMillis() - 60000, System.currentTimeMillis() + 60000) else null) }
+        val pins = intent.getStringExtra("pinnedId")?.let { listOf(it) }.orEmpty()
+        val browse = if (intent.getBooleanExtra("browseHandoff", false)) pins.mapNotNull { id -> provider.find { it.id == id } } + provider else provider
+        val queue = providerPlayerQueue(browse)
         setContent {
             val tv = Configuration(LocalConfiguration.current).apply {
                 if (!intent.getBooleanExtra("touchRail", false)) {
@@ -36,10 +41,9 @@ class PlayerQueueRegressionActivity : ComponentActivity() {
             CompositionLocalProvider(LocalConfiguration provides tv) {
                 MaterialTheme {
                     PlayerQueueOverlay(
-                        items = (0..99).map { MediaItem("$it", "Fixture channel $it", null, null,
-                            liveProgramme = if (it % 2 == 0) LiveProgramme("Current programme $it", System.currentTimeMillis() - 60000, System.currentTimeMillis() + 60000) else null) },
+                        items = queue,
                         playingId = intent.getStringExtra("playingId") ?: "0", onTogglePin = {},
-                        pinnedIds = intent.getStringExtra("pinnedId")?.let { listOf(it) }.orEmpty(),
+                        pinnedIds = pins,
                         onDismiss = { finish() }, onSelect = { item, index -> selected = true; selectedId = item.id; selectedIndex = index }
                     )
                 }
