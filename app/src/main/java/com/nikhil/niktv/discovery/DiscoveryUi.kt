@@ -749,7 +749,7 @@ private fun DiscoveryPreviewContent(
                 DiscoveryHero(heroCard?.let { if (phonePortrait && scrollVariant.heroArtwork) it.copy(titleLogo = heroLogo) else it.copy(backdrop = null, poster = null, titleLogo = heroLogo) }, rank = null,
                     height = if (phonePortrait) phoneDiscoveryHeroHeight() - LocalHeroNavigationInset.current else baseHeroHeight.dp + LocalHeroNavigationInset.current,
                     contentInset = if (landscape && !phone && !sceneArtwork) 18.dp else 0.dp,
-                    landscape = landscape, compact = if (sceneArtwork) compactLandscape else true, detail = false,
+                    landscape = landscape, compact = true, detail = false,
                     loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,
                     playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
                     play = { heroCard?.let { focused("play"); currentPlayCard(it) } },
