@@ -199,6 +199,9 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 header?.invoke()
                 Spacer(Modifier.height(navigationInset))
                 Spacer(Modifier.height(if (compactDetail) 52.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .10f).coerceIn(20.dp, 30.dp)))
+                // Move the content into the space previously occupied by the
+                // carousel row, keeping the hero and first rail at the same height.
+                if (!detail) Spacer(Modifier.height(56.dp))
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compactDetail) 10.dp else if (!detail) 12.dp else 20.dp),
                     horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compactDetail || !detail) 8.dp else 12.dp)) {
                     // Keep rank/loading in one fixed slot: content arrival must not move actions.
@@ -280,7 +283,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                             }) { actions() }
                     }
-                    if (carousel || !detail) Row(Modifier.heightIn(min = 48.dp).onPreviewKeyEvent {
+                    if (carousel && detail) Row(Modifier.heightIn(min = 48.dp).onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                     }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         PhoneHeroIcon("Previous featured title", Icons.Default.ChevronLeft, carousel, previous,
@@ -292,10 +295,35 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                     }
                 }
             }
+            if (!detail && carousel) {
+                PhoneHeroCarouselArrow("Previous featured title", Icons.Default.ChevronLeft, previous,
+                    Modifier.align(Alignment.CenterStart).padding(start = 4.dp), onFocus)
+                PhoneHeroCarouselArrow("Next featured title", Icons.Default.ChevronRight, next,
+                    Modifier.align(Alignment.CenterEnd).padding(end = 4.dp), onFocus)
+                Text("${index + 1} / $count", Modifier.align(Alignment.TopCenter)
+                    .padding(top = (if (header != null) 64.dp else navigationInset) + 12.dp).background(Color.Black.copy(alpha = .35f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp), color = Color.LightGray, fontSize = 11.sp)
+            }
         }
         if (detail && showSynopsis && !card?.overview.isNullOrBlank()) Text(card?.overview.orEmpty(),
             Modifier.padding(horizontal = 20.dp, vertical = 12.dp), color = Color(0xFFD6D6DC), fontSize = 15.sp, lineHeight = 23.sp)
     }
+    }
+}
+
+@Composable
+private fun PhoneHeroCarouselArrow(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector,
+    click: () -> Unit, modifier: Modifier, onFocus: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(onClick = click, modifier = modifier.size(48.dp).onFocusChanged {
+        focused = it.isFocused
+        if (it.isFocused) onFocus()
+    }.semantics { contentDescription = label }, color = Color.Transparent, shape = RoundedCornerShape(10.dp)) {
+        Box(contentAlignment = Alignment.Center) {
+            DiscoveryMobileGlassContainer(Modifier.size(32.dp), focused = focused) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(20.dp)) }
+            }
+        }
     }
 }
 
