@@ -148,7 +148,8 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     reduceMotion: Boolean, onFocus: () -> Unit, onDown: () -> Unit, header: (@Composable () -> Unit)? = null,
     showSynopsis: Boolean = true, compactDetail: Boolean = false, categoryActions: (@Composable () -> Unit)? = null, showListAction: Boolean = true,
     artworkAlignment: Alignment = Alignment.Center, shadeArtworkBounds: Boolean = false, leftAligned: Boolean = false,
-    supportingTitle: Boolean = false, fitArtwork: Boolean = false) {
+    supportingTitle: Boolean = false, fitArtwork: Boolean = false, trailerMedia: com.nikhil.niktv.model.MediaItem? = null,
+    emptyTitle: String = "Discover something to watch") {
     val context = LocalContext.current
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     var drag by remember { mutableFloatStateOf(0f) }
@@ -204,7 +205,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                             Box(Modifier.width(220.dp).height(18.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF252B35)))
                             Box(Modifier.width(150.dp).height(12.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF252B35)))
                         }
-                        else if (supportingTitle || !logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
+                        else if (supportingTitle || !logoReady) Text(card?.title ?: emptyTitle, color = Color.White,
                             fontSize = if (supportingTitle) 17.sp else if (compactDetail) 24.sp else 28.sp, lineHeight = if (supportingTitle) 22.sp else if (compactDetail) 28.sp else 32.sp, fontWeight = if (supportingTitle) FontWeight.Medium else FontWeight.Bold,
                             textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = if (supportingTitle) 2 else 3, overflow = TextOverflow.Ellipsis)
                         if (!supportingTitle && !card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
@@ -257,8 +258,8 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         }
                         if (detail) Box(Modifier.size(48.dp)) {
                             DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, compactLabel = compactDetail,
-                                modifier = Modifier.fillMaxSize().heightIn(min = 48.dp))
-                        } else DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus)
+                                modifier = Modifier.fillMaxSize().heightIn(min = 48.dp), mediaOverride = trailerMedia)
+                        } else DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, mediaOverride = trailerMedia)
                         if (detail && compactDetail) LocalProviderSynopsisActions.current?.invoke()
                         if (!detail) PhoneHeroIcon("Info", Icons.Default.Info, card != null, info,
                             Modifier.focusRequester(infoRequester).onFocusChanged { if (it.isFocused) onFocus() })

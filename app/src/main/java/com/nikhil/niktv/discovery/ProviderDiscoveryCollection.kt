@@ -16,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.key.*
 import android.provider.Settings
 import androidx.compose.ui.input.InputMode
@@ -42,6 +43,11 @@ internal fun providerDiscoveryProgress(app: NikTvState, type: CatalogType, item:
     return discoveryProgressFraction(discoveryRecentProgress(recent, app.playbackProgress))
 }
 
+/** Loading changes the VM binding identity; a collection visit keeps the same saved UI identity. */
+internal data class ProviderCollectionUiIdentity(val profile: String, val type: CatalogType, val categoryIds: List<String>)
+internal fun providerCollectionUiIdentity(state: ProviderDiscoveryState, type: CatalogType) =
+    ProviderCollectionUiIdentity(state.profile, type, state.categories[type].orEmpty().map { it.id })
+
 @Composable
 internal fun ProviderDiscoveryCollectionRoute(type: CatalogType, categories: List<Category>, title: String,
     app: NikTvState, close: () -> Unit, favorite: (FavoriteItem) -> Unit) {
@@ -62,17 +68,18 @@ internal fun ProviderDiscoveryCollectionRoute(type: CatalogType, categories: Lis
 @Composable
 internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDiscoveryState, app: NikTvState,
     load: (Boolean) -> Unit, close: () -> Unit, favorite: (FavoriteItem) -> Unit,
-    title: String = "Your IPTV ${type.title}") {
+    title: String = "Your IPTV ${type.title}", focusObserved: ((String) -> Unit)? = null) {
     val configuration = LocalConfiguration.current
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
     val remote = LocalContext.current.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val open = LocalOpenProviderDiscovery.current
     val play = LocalPlayProviderDiscovery.current
     val download = LocalDownloadProviderDiscovery.current
-    var query by rememberSaveable(state.identity, type) { mutableStateOf("") }
-    var selected by rememberSaveable(state.identity, type) { mutableStateOf<String?>(null) }
+    val uiIdentity = remember(state.profile, type, state.categories[type]) { providerCollectionUiIdentity(state, type) }
+    var query by rememberSaveable(uiIdentity) { mutableStateOf("") }
+    var selected by rememberSaveable(uiIdentity) { mutableStateOf<String?>(null) }
     val grid = rememberLazyGridState()
-    var contentPositionEstablished by rememberSaveable(state.identity, type) { mutableStateOf(false) }
+    var contentPositionEstablished by rememberSaveable(uiIdentity) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val coordinator = remember(scope) { DiscoveryScrollCoordinator(scope) }
     val context = LocalContext.current
@@ -82,21 +89,29 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
     DisposableEffect(coordinator) { onDispose { coordinator.cancel() } }
     val back = remember { FocusRequester() }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
-    var entryHandled by remember { mutableStateOf(false) }
+    var entryHandled by remember(uiIdentity) { mutableStateOf(false) }
+    var entryPositionReady by remember(uiIdentity, remote) { mutableStateOf(!remote) }
+    // Capture only the selection restored for this visit. A transient framework focus
+    // fallback during cache arrival must not become the new entry destination.
+    val restoredEntrySelection = remember(uiIdentity) { selected }
     val all = state.items[type].orEmpty()
     val progressLookup = rememberDiscoveryProgressLookup(app.savedProfile?.cacheKey(), app.recentlyPlayed, app.playbackProgress)
     val items by produceState(all, all, query) {
         if (query.isNotBlank()) delay(100)
         value = withContext(Dispatchers.Default) { searchProviderDiscovery(all, query) }
     }
-    LaunchedEffect(items.isNotEmpty()) {
-        if (items.isNotEmpty() && !contentPositionEstablished) {
+    LaunchedEffect(items.isNotEmpty(), remote) {
+        if (!remote && items.isNotEmpty() && !contentPositionEstablished) {
             coordinator.cancel()
             grid.scrollToItem(0)
             contentPositionEstablished = true
         }
     }
     val categoryTitles = remember(state.categories, type) { state.categories[type].orEmpty().associate { it.id to it.title } }
+    val entryTarget = if (entryHandled) null else restoredEntrySelection?.takeIf { saved -> items.any { it.id == saved } }
+        ?: items.firstOrNull()?.id.takeIf { !entryHandled && (restoredEntrySelection == null || state.ready) }
+    val headerFocusAllowed = !remote || entryHandled
+    val fallbackReady = state.ready && items.isEmpty() && (!state.hasMore(type) || type in state.errors)
     val currentMore by rememberUpdatedState { load(false) }
     val canAutoLoad = state.ready && type !in state.loading && type !in state.errors && state.hasMore(type) && query.isBlank() &&
         app.nowPlaying == null && app.providerMovieDetails == null && app.selectedSeries == null && !app.loading
@@ -109,11 +124,16 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
         Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
-                    modifier = Modifier.focusRequester(back), onClick = close)
+                    modifier = Modifier.focusRequester(back).focusProperties {
+                        canFocus = headerFocusAllowed || (entryPositionReady && fallbackReady)
+                    }, onFocus = { focusObserved?.invoke("header:back") }, onClick = close)
                 Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f).padding(top = 6.dp))
-                DiscoveryCollectionSearch(query, { query = it }, compact = phone, onActivate = { entryHandled = true })
-                DiscoveryAction("Refresh", Icons.Default.Refresh, iconOnly = true, enabled = type !in state.loading) { load(true) }
+                Box(Modifier.focusProperties { canFocus = headerFocusAllowed }) {
+                    DiscoveryCollectionSearch(query, { query = it }, compact = phone, onActivate = { entryHandled = true })
+                }
+                DiscoveryAction("Refresh", Icons.Default.Refresh, iconOnly = true, enabled = type !in state.loading,
+                    modifier = Modifier.focusProperties { canFocus = headerFocusAllowed }) { load(true) }
             }
             Text("${items.size} titles · ${state.categories[type].orEmpty().size} categories" +
                 if (state.hasMore(type)) " · More titles available" else "",
@@ -123,7 +143,7 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val columns = discoveryCollectionColumns(maxWidth.value, tileWidth)
             LazyVerticalGrid(if (phone) GridCells.Adaptive(tileWidth.dp) else GridCells.FixedSize(tileWidth.dp),
-                Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+                Modifier.fillMaxSize().alpha(if (remote && !entryHandled && !entryPositionReady) 0f else 1f).onPreviewKeyEvent { event ->
                     if (!remote || event.type != KeyEventType.KeyDown) false else {
                         val index = items.indexOfFirst { it.id == selected }
                         val delta = when (event.key) {
@@ -155,13 +175,21 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
                         val click = { selected = item.id; open(type, item, items) }
                         val subtitle = categoryTitles[item.portalCategoryId].orEmpty()
                         val progress = progressLookup?.provider(type, item.id)
+                        val entryFocus = Modifier.focusRequester(requester).focusProperties {
+                            canFocus = !remote || entryHandled || (entryPositionReady && item.id == entryTarget)
+                        }
+                        val itemFocused: () -> Unit = {
+                            selected = item.id
+                            if (entryPositionReady && item.id == entryTarget) entryHandled = true
+                            focusObserved?.invoke(item.id)
+                        }
                         if (phone) DiscoveryPhoneMediaCard(providerDisplayTitle(item.title, type), item.logo, subtitle, maxWidth, false,
                             source = DiscoveryTileSource.IPTV,
-                            modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
+                            modifier = entryFocus, progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = itemFocused)
                         else DiscoveryPosterTile(providerDisplayTitle(item.title, type), item.logo, subtitle, maxWidth, reduceMotion = reduceMotion,
                             source = DiscoveryTileSource.IPTV,
                             focusVerticalInset = discoveryPosterFocusInset(maxWidth.value).dp,
-                            modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
+                            modifier = entryFocus, progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = itemFocused)
                         ModernTileActionsMenu(popup, app.favorites.any { it.key == saved.key },
                             dismiss = { popup = false; runCatching { requester.requestFocus() } },
                             toggleFavorite = { favorite(saved) }, clear = null, trailerItem = item, trailerSeries = type == CatalogType.SERIES,
@@ -176,19 +204,39 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
                         if (type in state.capped) Text("Showing ${ProviderDiscoveryViewModel.MAX_ITEMS} cached titles. Select fewer categories to narrow this collection.", color = Color.LightGray)
                         if (items.isEmpty() && type !in state.loading) Text(if (query.isBlank()) "No titles available yet" else "No matches in the loaded titles", color = Color.LightGray)
                         if ((state.hasMore(type) || type in state.errors) && type !in state.loading)
-                            DiscoveryAction(if (type in state.errors) "Retry" else "Load more titles", onClick = { load(false) })
+                            DiscoveryAction(if (type in state.errors) "Retry" else "Load more titles",
+                                modifier = Modifier.focusProperties { canFocus = headerFocusAllowed }, onClick = { load(false) })
                     }
                 }
             }
             }
         }
     }
-    LaunchedEffect(state.ready, items.isNotEmpty(), remote) {
-        if (!remote || entryHandled || !state.ready || (items.isEmpty() && state.hasMore(type))) return@LaunchedEffect
-        repeat(12) {
-            withFrameNanos { }
-            val target = requesters[selected ?: items.firstOrNull()?.id] ?: back
-            if (runCatching { target.requestFocus() }.getOrDefault(false)) { entryHandled = true; return@LaunchedEffect }
+    LaunchedEffect(uiIdentity, state.ready, items.isNotEmpty(), remote) {
+        if (!remote || entryHandled || !state.ready || (items.isEmpty() && state.hasMore(type) && type !in state.errors)) return@LaunchedEffect
+        val targetId = entryTarget
+        val index = items.indexOfFirst { it.id == targetId }
+        coordinator.cancel()
+        // Removing the native rail footer can leave an implicit relocation in flight.
+        // Position the new grid before exposing it, and suppress that old reveal until
+        // its first focused item has been laid out in the collection's own viewport.
+        coordinator.withAutomaticRevealSuppressed {
+            if (index >= 0) {
+                grid.scrollToItem(index)
+                withFrameNanos { }
+                contentPositionEstablished = true
+            }
+            entryPositionReady = true
+            repeat(12) {
+                withFrameNanos { }
+                if (entryHandled) return@withAutomaticRevealSuppressed
+                val target = if (targetId == null) back else requesters[targetId]
+                if (target != null && runCatching { target.requestFocus() }.getOrDefault(false)) {
+                    entryHandled = true
+                    withFrameNanos { }
+                    return@withAutomaticRevealSuppressed
+                }
+            }
         }
     }
 }

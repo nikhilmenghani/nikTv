@@ -71,9 +71,9 @@ internal fun boundProviderDiscoveryPages(pages: Map<String, ProviderDiscoveryPag
     var remaining = ProviderDiscoveryViewModel.MAX_ITEMS
     return pages.mapValues { (_, page) ->
         val clipped = page.items.size > remaining
-        page.copy(items = page.items.take(remaining),
+        (if (!clipped) page else page.copy(items = page.items.take(remaining),
             page = if (clipped) 0 else page.page, hasMore = page.hasMore || clipped,
-            cachedAt = if (clipped) 0 else page.cachedAt, truncated = page.truncated || clipped).also { remaining -= it.items.size }
+            cachedAt = if (clipped) 0 else page.cachedAt, truncated = page.truncated || clipped)).also { remaining -= it.items.size }
     }
 }
 
@@ -157,14 +157,30 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
     private val network = Mutex()
     private var diskJob: Job? = null
     private var nextCategory = mutableMapOf<CatalogType, Int>()
+    private var previewWindow: Map<CatalogType, Set<String>>? = null
+    private var windowGeneration = 0L
+    private var hydratedWindowGeneration = -1L
+    private val loadGenerations = mutableMapOf<CatalogType, Long>()
+    private val previewRecency = linkedSetOf<Pair<CatalogType, String>>()
     fun bind(session: PortalSession?, categories: Map<CatalogType, List<Category>>, ttlMillis: Long, preview: Boolean = false,
-        pageLoader: ProviderDiscoveryPageLoader? = null) {
+        pageLoader: ProviderDiscoveryPageLoader? = null, initialPreviewWindow: Map<CatalogType, Set<String>>? = null) {
+        val sessionChanged = this.session != session
         this.session = session
         this.pageLoader = pageLoader
         ttl = ttlMillis.coerceAtLeast(60_000L)
         val profile = session?.profile?.cacheKey().orEmpty()
         if (mutable.value.profile != profile) retainedRows = "" to emptyMap()
         val selected = categories.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
+        if (preview && initialPreviewWindow != null) {
+            val identity = "$profile:windowed:" + selected.entries.sortedBy { it.key.name }.joinToString { (type, values) -> "$type:${values.map { it.id }}" }
+            if (mutable.value.identity != identity) {
+                pause(); nextCategory.clear(); previewRecency.clear(); previewWindow = emptyMap()
+                mutable.value = ProviderDiscoveryState(identity, profile, selected, preview = true)
+            } else if (sessionChanged) pause()
+            updatePreviewWindow(initialPreviewWindow)
+            return
+        }
+        previewWindow = null
         val identity = "$profile:$preview:" + selected.entries.sortedBy { it.key.name }.joinToString { (type, values) -> "$type:${values.map { it.id }}" }
         if (mutable.value.identity == identity && mutable.value.ready) return
         pause(); val token = generation
@@ -192,20 +208,102 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
                 capped = pages.filterValues { records -> records.values.sumOf { it.items.size } >= MAX_ITEMS }.keys) }
         }
     }
+    /** Scroll demand changes independently of the complete selection and hydrated rows. */
+    fun updatePreviewWindow(requested: Map<CatalogType, Set<String>>) {
+        val previous = previewWindow ?: return
+        val snapshot = mutable.value
+        val window = snapshot.categories.mapValues { (type, cats) ->
+            cats.map { it.id }.filterTo(linkedSetOf()) { it in requested[type].orEmpty() }
+        }.filterValues { it.isNotEmpty() }
+        if (window == previous && (hydratedWindowGeneration == windowGeneration || diskJob?.isActive == true)) return
+        previewWindow = window
+        val affected = (previous.keys + window.keys).filter { previous[it] != window[it] }
+        affected.forEach { type ->
+            loadGenerations[type] = (loadGenerations[type] ?: 0) + 1
+            jobs.remove(type)?.cancel()
+        }
+        val token = generation; val request = ++windowGeneration
+        diskJob?.cancel()
+        window.forEach { (type, ids) -> ids.forEach { id -> previewRecency.remove(type to id); previewRecency.add(type to id) } }
+        val needsCache = window.any { (type, ids) -> ids.any {
+            !providerDiscoveryFresh(snapshot.pages[type]?.get(it), System.currentTimeMillis(), ttl)
+        } }
+        mutable.update { it.copy(loading = it.loading - affected.toSet(), errors = it.errors - affected.toSet(),
+            ready = it.ready && !needsCache) }
+        diskJob = viewModelScope.launch {
+            val loaded = window.mapValues { (type, ids) ->
+                val missing = snapshot.categories[type].orEmpty().filter { it.id in ids &&
+                    !providerDiscoveryFresh(snapshot.pages[type]?.get(it.id), System.currentTimeMillis(), ttl) }
+                if (missing.isEmpty()) emptyMap() else try {
+                    withContext(Dispatchers.IO) { source.cached(snapshot.profile, type, missing, true) }
+                        .filterKeys { id -> missing.any { it.id == id } }
+                } catch (c: CancellationException) { throw c } catch (_: Exception) { emptyMap() }
+            }
+            ensureActive()
+            if (token != generation || request != windowGeneration || mutable.value.profile != snapshot.profile) return@launch
+            for (type in snapshot.categories.keys) {
+                mergePreviewPages(type, loaded[type].orEmpty(), networkResult = false) {
+                    token == generation && request == windowGeneration
+                }
+            }
+            if (token == generation && request == windowGeneration) {
+                hydratedWindowGeneration = request
+                mutable.update { it.copy(ready = true) }
+            }
+        }
+    }
+    private suspend fun mergePreviewPages(type: CatalogType, additions: Map<String, ProviderDiscoveryPage>, networkResult: Boolean,
+        current: () -> Boolean): Map<String, ProviderDiscoveryPage>? {
+        while (current()) {
+            val before = mutable.value
+            val window = previewWindow ?: return null
+            val recency = previewRecency.toList()
+            val pages = withContext(Dispatchers.Default) {
+                val records = before.pages[type].orEmpty().toMutableMap()
+                val now = System.currentTimeMillis()
+                fun timestamp(value: Long) = value.takeIf { it in 1..now } ?: Long.MIN_VALUE
+                additions.forEach { (id, page) ->
+                    if (networkResult || timestamp(page.cachedAt) >= timestamp(records[id]?.cachedAt ?: 0)) {
+                        val bounded = page.copy(items = page.items.take(PREVIEW_ITEMS), truncated = page.truncated || page.items.size > PREVIEW_ITEMS)
+                        records[id] = if (providerDiscoveryFresh(bounded, now, ttl)) bounded else bounded.copy(hasMore = true)
+                    }
+                }
+                retainPreviewPages(type, records, window, recency)
+            }
+            val items = withContext(Dispatchers.Default) { providerDiscoveryItems(before.categories[type].orEmpty(), pages) }
+            currentCoroutineContext().ensureActive()
+            if (!current()) return null
+            val after = before.copy(pages = before.pages + (type to pages), items = before.items + (type to items),
+                capped = if (items.size >= MAX_ITEMS) before.capped + type else before.capped - type)
+            if (mutable.compareAndSet(before, after)) return pages
+        }
+        return null
+    }
+    private fun retainPreviewPages(type: CatalogType, records: Map<String, ProviderDiscoveryPage>, window: Map<CatalogType, Set<String>>,
+        recency: List<Pair<CatalogType, String>>): Map<String, ProviderDiscoveryPage> {
+        val active = window[type].orEmpty()
+        val retained = active + recency.asReversed().filter { it.first == type }.map { it.second }
+            .filter { it !in active }.take((100 - active.size).coerceAtLeast(0))
+        return boundProviderDiscoveryPages(records.filterKeys { it in retained })
+    }
     fun pause(release: Boolean = false) {
-        generation++; jobs.values.forEach { it.cancel() }; jobs.clear(); diskJob?.cancel()
-        if (release) { session = null; mutable.value = ProviderDiscoveryState(); retainedRows = "" to emptyMap() }
+        generation++; windowGeneration++; jobs.values.forEach { it.cancel() }; jobs.clear(); diskJob?.cancel()
+        if (release) { session = null; previewWindow = null; previewRecency.clear(); mutable.value = ProviderDiscoveryState(); retainedRows = "" to emptyMap() }
         else mutable.update { it.copy(loading = emptySet()) }
     }
     fun load(type: CatalogType, refresh: Boolean = false, categoryIds: Set<String>? = null) {
         val active = session ?: return
         val snapshot = mutable.value
-        if (!snapshot.ready || jobs[type]?.isActive == true || snapshot.categories[type].isNullOrEmpty() || (!refresh && type in snapshot.capped)) return
+        if ((!snapshot.ready && !(previewWindow != null && refresh)) || jobs[type]?.isActive == true || snapshot.categories[type].isNullOrEmpty() || (!refresh && type in snapshot.capped)) return
         val token = generation
+        val loadToken = (loadGenerations[type] ?: 0) + 1
+        loadGenerations[type] = loadToken
+        fun current() = token == generation && loadGenerations[type] == loadToken
         jobs[type] = viewModelScope.launch {
             mutable.update { it.copy(loading = it.loading + type, errors = it.errors - type) }
             try {
-                val cats = snapshot.categories.getValue(type).filter { categoryIds == null || it.id in categoryIds }
+                val cats = snapshot.categories.getValue(type).filter { (categoryIds == null || it.id in categoryIds) &&
+                    (previewWindow == null || it.id in previewWindow?.get(type).orEmpty()) }
                 if (cats.isEmpty()) return@launch
                 var pages = snapshot.pages[type].orEmpty().let { pages ->
                     if (refresh) pages.mapValues { (id, page) ->
@@ -222,8 +320,13 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
                     val fresh = providerDiscoveryFresh(old, System.currentTimeMillis(), ttl)
                     if (!refresh && fresh && (old?.hasMore == false || snapshot.preview)) continue
                     val requested = if (refresh || !fresh || old?.truncated == true) 1 else (old?.page ?: 0) + 1
-                    val result = network.withLock { pageLoader?.invoke(active, category, requested, snapshot.preview) ?: source.page(active, category, requested) }
-                    ensureActive(); if (token != generation) return@launch
+                    val result = network.withLock {
+                        if (previewWindow != null) withContext(Dispatchers.IO) {
+                            pageLoader?.invoke(active, category, requested, snapshot.preview) ?: source.page(active, category, requested)
+                        } else pageLoader?.invoke(active, category, requested, snapshot.preview) ?: source.page(active, category, requested)
+                    }
+                    ensureActive(); if (!current()) return@launch
+                    if (previewWindow != null) pages = mutable.value.pages[type].orEmpty()
                     val merged = withContext(Dispatchers.Default) {
                         ((if (requested > 1) old?.items.orEmpty() else emptyList()) + result.items).distinctBy { it.id }
                     }
@@ -231,24 +334,28 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
                     val room = minOf(if (snapshot.preview) PREVIEW_ITEMS else MAX_ITEMS, (MAX_ITEMS - otherCount).coerceAtLeast(0))
                     pages = pages + (category.id to ProviderDiscoveryPage(merged.take(room), result.page,
                         result.hasMore, System.currentTimeMillis(), truncated = merged.size > room))
-                    val items = withContext(Dispatchers.Default) { providerDiscoveryItems(cats, pages) }
-                    if (token != generation) return@launch
-                    mutable.update { it.copy(pages = it.pages + (type to pages), items = it.items + (type to items),
-                        capped = if (items.size >= MAX_ITEMS || (!snapshot.preview && merged.size > room)) it.capped + type else it.capped - type) }
+                    if (previewWindow != null) {
+                        pages = mergePreviewPages(type, mapOf(category.id to pages.getValue(category.id)), networkResult = true, current = ::current) ?: return@launch
+                    } else {
+                        val items = withContext(Dispatchers.Default) { providerDiscoveryItems(cats, pages) }
+                        if (!current()) return@launch
+                        mutable.update { it.copy(pages = it.pages + (type to pages), items = it.items + (type to items),
+                            capped = if (items.size >= MAX_ITEMS || (!snapshot.preview && merged.size > room)) it.capped + type else it.capped - type) }
+                    }
                     requests++
                     if (type in mutable.value.capped) break
                     delay(100) // Yield between provider pages; no concurrent speculative provider requests.
                 }
                 nextCategory[type] = cursor % cats.size
-                if (token == generation && requests > 0) source.save(ProviderDiscoveryCache(snapshot.profile, type, pages, snapshot.preview))
+                if (current() && requests > 0) source.save(ProviderDiscoveryCache(snapshot.profile, type, pages, snapshot.preview))
             } catch (c: CancellationException) { throw c }
               catch (error: Exception) {
                 val kinds = generateSequence<Throwable>(error) { it.cause }.take(6).map { it.javaClass.simpleName }.joinToString(" / ")
                 val status = Regex("HTTP status: (\\d{3})").find(error.message.orEmpty())?.groupValues?.get(1) ?: "unknown"
                 Log.w("NikTvDiscovery", "$type category metadata failed: $kinds; HTTP=$status")
-                if (token == generation) mutable.update { it.copy(errors = it.errors + (type to providerDiscoveryFailure(error))) }
+                if (current()) mutable.update { it.copy(errors = it.errors + (type to providerDiscoveryFailure(error))) }
               }
-            finally { if (token == generation) mutable.update { it.copy(loading = it.loading - type) } }
+            finally { if (current()) mutable.update { it.copy(loading = it.loading - type) } }
         }
     }
     companion object { const val MAX_ITEMS = 12_000; const val PREVIEW_ITEMS = 30 }

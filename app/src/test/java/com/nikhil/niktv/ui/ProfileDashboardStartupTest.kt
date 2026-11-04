@@ -124,6 +124,8 @@ class ProfileDashboardStartupTest {
         assertFalse(vm.state.value.discoveryExperiment)
         assertTrue(vm.state.value.discoveryNavigationId > originalNavigation)
         vm.openDiscovery(DashboardSurface.MOVIES)
+        assertTrue(vm.state.value.discoveryExperiment)
+        vm.openPreviousDiscovery(DashboardSurface.MOVIES)
         assertFalse(vm.state.value.discoveryExperiment)
         vm.openHomeExperiment()
         vm.openHome()
@@ -131,7 +133,7 @@ class ProfileDashboardStartupTest {
         assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
     }
 
-    @Test fun experimentalSurfaceNavigationDoesNotReplaceNormalMoviesOrSeries() = runTest(scheduler) {
+    @Test fun optimizedMoviesDoNotEnableSeriesBeforeItsMigration() = runTest(scheduler) {
         for (surface in listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)) {
             vm.openDiscoveryExperiment(surface)
             assertEquals(surface, vm.state.value.discoverySurface)
@@ -139,7 +141,7 @@ class ProfileDashboardStartupTest {
             val navigation = vm.state.value.discoveryNavigationId
             vm.openDiscovery(surface)
             assertEquals(surface, vm.state.value.discoverySurface)
-            assertEquals(surface == DashboardSurface.HOME, vm.state.value.discoveryExperiment)
+            assertEquals(surface != DashboardSurface.SERIES, vm.state.value.discoveryExperiment)
             assertTrue(vm.state.value.discoveryNavigationId > navigation)
         }
     }

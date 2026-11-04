@@ -19,6 +19,159 @@ import java.time.Duration
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class ProviderDiscoveryTest {
+    private fun hydration(vm: ProviderDiscoveryViewModel): Job = ProviderDiscoveryViewModel::class.java
+        .getDeclaredField("diskJob").apply { isAccessible = true }.get(vm) as Job
+    private fun bindWindow(vm: ProviderDiscoveryViewModel, window: Set<String>, profile: String = "window") {
+        vm.bind(session(profile), mapOf(CatalogType.MOVIES to listOf("a", "b", "c").map(::category)), 60_000,
+            preview = true, initialPreviewWindow = mapOf(CatalogType.MOVIES to window))
+        waitFor { vm.state.value.ready }
+    }
+    @Test fun previewWindowRetainsRowsAndSelectionWithoutRebindingFreshCategories() {
+        val reads = mutableListOf<List<String>>()
+        val source = object : Source() {
+            override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                reads += categories.map { it.id }
+                return categories.associate { it.id to ProviderDiscoveryPage(listOf(item(it.id, category = it.id)), 1, false, System.currentTimeMillis()) }
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source)
+        bindWindow(vm, setOf("a"))
+        val identity = vm.state.value.identity
+        val a = vm.state.value.pages.getValue(CatalogType.MOVIES).getValue("a")
+        vm.updatePreviewWindow(mapOf(CatalogType.MOVIES to setOf("b")))
+        waitFor { vm.state.value.pages[CatalogType.MOVIES]?.containsKey("b") == true }
+        assertEquals(identity, vm.state.value.identity)
+        assertEquals(listOf("a", "b", "c"), vm.state.value.categories.getValue(CatalogType.MOVIES).map { it.id })
+        assertSame(a, vm.state.value.pages.getValue(CatalogType.MOVIES).getValue("a"))
+        vm.updatePreviewWindow(mapOf(CatalogType.MOVIES to setOf("a")))
+        waitFor { vm.state.value.loading.isEmpty() }
+        assertEquals(listOf(listOf("a"), listOf("b")), reads)
+        assertTrue(source.calls.isEmpty())
+        vm.pause(release = true)
+    }
+    @Test fun failedWindowCacheReadPreservesOtherRowsAndAllowsNormalProviderAttempt() {
+        val source = object : Source() {
+            override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                if (categories.any { it.id == "b" }) error("cache unavailable")
+                return mapOf("a" to ProviderDiscoveryPage(listOf(item("kept")), 1, false, System.currentTimeMillis()))
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source); bindWindow(vm, setOf("a"))
+        vm.updatePreviewWindow(mapOf(CatalogType.MOVIES to setOf("b")))
+        waitFor { hydration(vm).isCompleted }
+        vm.load(CatalogType.MOVIES, categoryIds = setOf("b"))
+        waitFor { source.saved.isNotEmpty() }
+        assertEquals(listOf("b" to 1), source.calls)
+        assertEquals("kept", vm.state.value.pages.getValue(CatalogType.MOVIES).getValue("a").items.single().id)
+        assertTrue(vm.state.value.pages.getValue(CatalogType.MOVIES).containsKey("b"))
+        assertTrue(vm.state.value.errors.isEmpty())
+        vm.pause(release = true)
+    }
+    @Test fun failedObsoleteWindowDoesNotBlockDemandInTheNewWindow() {
+        val source = object : Source() {
+            override suspend fun page(session: PortalSession, category: Category, page: Int): PortalCatalogPage {
+                if (category.id == "a") error("offline")
+                return super.page(session, category, page)
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source); bindWindow(vm, setOf("a"))
+        vm.load(CatalogType.MOVIES, categoryIds = setOf("a"))
+        waitFor { vm.state.value.errors.isNotEmpty() }
+        vm.updatePreviewWindow(mapOf(CatalogType.MOVIES to setOf("b")))
+        assertTrue(vm.state.value.errors.isEmpty())
+        waitFor { hydration(vm).isCompleted }
+        vm.load(CatalogType.MOVIES, categoryIds = setOf("b"))
+        waitFor { source.saved.isNotEmpty() }
+        assertEquals("b", source.calls.last().first)
+        vm.pause(release = true)
+    }
+    @Test fun pausedWindowHydrationResumesCacheFirstWithoutClearingReadyRows() {
+        val gate = CompletableDeferred<Unit>()
+        val bReads = java.util.concurrent.atomic.AtomicInteger()
+        val source = object : Source() {
+            override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                if (categories.any { it.id == "b" } && bReads.incrementAndGet() == 1) withContext(NonCancellable) { gate.await() }
+                return categories.associate { it.id to ProviderDiscoveryPage(listOf(item(it.id)), 1, false, System.currentTimeMillis()) }
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source); bindWindow(vm, setOf("a"))
+        vm.updatePreviewWindow(mapOf(CatalogType.MOVIES to setOf("b")))
+        waitFor { bReads.get() == 1 }; val old = hydration(vm)
+        vm.pause(); bindWindow(vm, setOf("b"))
+        waitFor { vm.state.value.pages[CatalogType.MOVIES]?.containsKey("b") == true }
+        gate.complete(Unit); waitFor { old.isCompleted }
+        assertEquals(2, bReads.get())
+        assertTrue(vm.state.value.pages.getValue(CatalogType.MOVIES).containsKey("a"))
+        assertTrue(source.calls.isEmpty())
+        vm.pause(release = true)
+    }
+    @Test fun newWindowChecksItsCacheBeforeAutomaticNetworkDemand() {
+        val gate = CompletableDeferred<Unit>(); val started = java.util.concurrent.atomic.AtomicBoolean()
+        val source = object : Source() {
+            override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                if (categories.any { it.id == "b" }) { started.set(true); gate.await() }
+                return categories.associate { it.id to ProviderDiscoveryPage(listOf(item("cached-${it.id}")), 1, false, System.currentTimeMillis()) }
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source); bindWindow(vm, setOf("a"))
+        vm.updatePreviewWindow(mapOf(CatalogType.MOVIES to setOf("b")))
+        waitFor { started.get() }
+        vm.load(CatalogType.MOVIES, categoryIds = setOf("b"))
+        assertTrue(source.calls.isEmpty())
+        assertFalse(vm.state.value.ready)
+        assertEquals("cached-a", vm.state.value.pages.getValue(CatalogType.MOVIES).getValue("a").items.single().id)
+        gate.complete(Unit); waitFor { vm.state.value.ready }
+        vm.load(CatalogType.MOVIES, categoryIds = setOf("b"))
+        waitFor { vm.state.value.loading.isEmpty() }
+        assertTrue(source.calls.isEmpty())
+        assertEquals("cached-b", vm.state.value.pages.getValue(CatalogType.MOVIES).getValue("b").items.single().id)
+        vm.pause(release = true)
+    }
+    @Test fun slowWindowCacheCannotReplaceNewerNetworkData() {
+        val gate = CompletableDeferred<Unit>()
+        val started = java.util.concurrent.atomic.AtomicBoolean()
+        val source = object : Source() {
+            override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                if (categories.any { it.id == "b" }) {
+                    started.set(true); gate.await()
+                    return mapOf("b" to ProviderDiscoveryPage(listOf(item("stale-b", category = "b")), 1, false, 1))
+                }
+                return mapOf("a" to ProviderDiscoveryPage(listOf(item("a")), 1, false, System.currentTimeMillis()))
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source); bindWindow(vm, setOf("a"))
+        vm.updatePreviewWindow(mapOf(CatalogType.MOVIES to setOf("b")))
+        waitFor { started.get() }
+        vm.load(CatalogType.MOVIES, refresh = true, categoryIds = setOf("b"))
+        waitFor { source.saved.isNotEmpty() }
+        val network = vm.state.value.pages.getValue(CatalogType.MOVIES).getValue("b")
+        val disk = hydration(vm)
+        gate.complete(Unit)
+        waitFor { disk.isCompleted }
+        assertEquals(network, vm.state.value.pages.getValue(CatalogType.MOVIES).getValue("b"))
+        assertFalse(vm.state.value.items.getValue(CatalogType.MOVIES).any { it.id == "stale-b" })
+        assertTrue(vm.state.value.pages.getValue(CatalogType.MOVIES).containsKey("a"))
+        vm.pause(release = true)
+    }
+    @Test fun changingProfilesRejectsLateWindowHydration() {
+        val gate = CompletableDeferred<Unit>(); val started = java.util.concurrent.atomic.AtomicBoolean()
+        val oldProfile = session("old-window").profile.cacheKey()
+        val source = object : Source() {
+            override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                if (profile == oldProfile) { started.set(true); withContext(NonCancellable) { gate.await() } }
+                return mapOf("a" to ProviderDiscoveryPage(listOf(item(if (profile == oldProfile) "old" else "new")), 1, false, System.currentTimeMillis()))
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source)
+        vm.bind(session("old-window"), mapOf(CatalogType.MOVIES to listOf(category("a"))), 60_000, preview = true,
+            initialPreviewWindow = mapOf(CatalogType.MOVIES to setOf("a")))
+        waitFor { started.get() }; val oldDisk = hydration(vm)
+        bindWindow(vm, setOf("a"), "new-window")
+        gate.complete(Unit); waitFor { oldDisk.isCompleted }
+        assertEquals("new", vm.state.value.items.getValue(CatalogType.MOVIES).single().id)
+        assertEquals(session("new-window").profile.cacheKey(), vm.state.value.profile)
+        vm.pause(release = true)
+    }
     @Test fun returningToLandingKeepsReadyRowsWithoutReparsingTheDiskCache() {
         var cacheReads = 0
         val source = object : Source() {

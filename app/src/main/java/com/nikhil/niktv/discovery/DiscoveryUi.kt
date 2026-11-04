@@ -28,6 +28,7 @@ import androidx.compose.runtime.saveable.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.key.*
@@ -75,14 +76,14 @@ private val Accent = Color(0xFFE50925)
 internal val trialSurfaces = listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)
 internal fun DashboardSurface.trialTitle() = when (this) { DashboardSurface.MOVIES -> "Movies"; DashboardSurface.SERIES -> "Series"; else -> "Home" }
 
-private data class RailEntry(val key: String, val title: String, val artwork: String?, val card: DiscoveryCard? = null,
+internal data class RailEntry(val key: String, val title: String, val artwork: String?, val card: DiscoveryCard? = null,
     val subtitle: String = "", val progress: Float? = null, val open: () -> Unit,
     val matchCount: Int? = null, val providerMedia: MediaItem? = null, val providerType: CatalogType? = null,
     val popup: (@Composable (Boolean, () -> Unit, () -> Boolean) -> Unit)? = null,
     val source: DiscoveryTileSource? = null) {
     val displaySource get() = source ?: if (card != null) DiscoveryTileSource.TMDB else providerMedia?.discoveryCatalogSource()
 }
-private data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
+internal data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
     val section: TmdbHomeSection? = null, val providerType: CatalogType? = null, val providerCategory: Category? = null,
     val recommendation: com.nikhil.niktv.data.HistoryRecommendationRow? = null)
 
@@ -115,13 +116,16 @@ internal fun DiscoveryPreviewScreen(
     val television = remember(context, configuration.uiMode) { context.isTvLikeDevice(configuration) }
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, television)
     val heroPreferences = remember(context) { context.getSharedPreferences("home2_presentation", 0) }
-    var optionalHeroMetadata by remember { mutableStateOf(heroPreferences.getBoolean("title_metadata", false)) }
-    var homeHeroFraming by remember { mutableStateOf(heroPreferences.getBoolean("home_hero_framing", true)) }
-    var tileSkeletons by remember { mutableStateOf(heroPreferences.getBoolean("tile_skeletons", true)) }
     val profile = app.savedProfile?.cacheKey().orEmpty()
+    val metadataKey = discoveryPresentationOptionKey("title_metadata", profile, surface, television)
+    val framingKey = discoveryPresentationOptionKey("home_hero_framing", profile, surface, television)
+    val skeletonKey = discoveryPresentationOptionKey("tile_skeletons", profile, surface, television)
+    var optionalHeroMetadata by remember(profile, surface, television) { mutableStateOf(heroPreferences.getBoolean(metadataKey, false)) }
+    var homeHeroFraming by remember(profile, surface, television) { mutableStateOf(heroPreferences.getBoolean(framingKey, true)) }
+    var tileSkeletons by remember(profile, surface, television) { mutableStateOf(heroPreferences.getBoolean(skeletonKey, true)) }
     var activityCollection by rememberSaveable(profile, surface, experiment) { mutableStateOf<String?>(null) }
-    val variantKey = "presenter:$profile:${if (television) "tv" else "touch"}"
-    var experimentVariant by rememberSaveable(profile, experiment, television) {
+    val variantKey = discoveryPresenterKey(profile, surface, television)
+    var experimentVariant by rememberSaveable(profile, surface, experiment, television) {
         mutableStateOf(discoveryInitialVariant(experiment, heroPreferences.getString(variantKey, null), television))
     }
     fun selectExperimentVariant(variant: DiscoveryScrollVariant) {
@@ -169,20 +173,27 @@ internal fun DiscoveryPreviewScreen(
                 discoveryRecycledProviderScope(categories, nearbyRow?.removePrefix("provider:${type.name}:"))
             }
     }
-    val expectedProviderCategories = remember(providerBindingSelections) {
-        providerBindingSelections.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
+    val windowedProviderPreview = experiment && surface == DashboardSurface.MOVIES && scrollVariant.recycledRows
+    val providerBindingScope = if (windowedProviderPreview) providerSelections else providerBindingSelections
+    val previewWindow = remember(providerBindingSelections) {
+        providerBindingSelections.mapValues { providerDiscoverySources(it.value).mapTo(linkedSetOf()) { category -> category.id } }
+    }
+    val expectedProviderCategories = remember(providerBindingScope) {
+        providerBindingScope.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
     }
     val providerState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
         ?: ProviderDiscoveryState(profile = profile, categories = expectedProviderCategories)
     val providerQueues by produceState(providerVm.retainedRows.takeIf { it.first == profile }
         ?: (profile to emptyMap<String, List<MediaItem>>()), profile, providerSelections, providerState.pages, scrollVariant) {
         val retained = providerVm.retainedRows.takeIf { it.first == profile }?.second.orEmpty()
+        val previous = value.takeIf { it.first == profile }?.second.orEmpty()
         value = profile to withContext(Dispatchers.Default) {
             buildMap { providerSelections.forEach { (type, categories) -> categories.forEach { category ->
                 val key = "provider:${type.name}:${category.id}"
                 val sources = providerDiscoverySources(listOf(category))
                 val pages = providerState.pages[type].orEmpty()
-                put(key, if (!scrollVariant.recycledRows || sources.any { it.id in pages }) providerDiscoveryItems(sources, pages) else retained[key].orEmpty())
+                val items = if (!scrollVariant.recycledRows || sources.any { it.id in pages }) providerDiscoveryItems(sources, pages) else retained[key].orEmpty()
+                put(key, if (windowedProviderPreview) previous[key]?.takeIf { it == items } ?: items else items)
             } } }
         }
     }
@@ -196,15 +207,20 @@ internal fun DiscoveryPreviewScreen(
     var providerCollection by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
     var providerCollectionVisit by rememberSaveable(profile, surface) { mutableIntStateOf(0) }
     var providerCollectionCategory by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
-    LaunchedEffect(profile, app.session, providerBindingSelections, app.cacheIntervalMinutes) {
-        providerVm.bind(app.session, providerBindingSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
+    LaunchedEffect(profile, app.session, providerBindingScope, app.cacheIntervalMinutes, windowedProviderPreview) {
+        providerVm.bind(app.session, providerBindingScope, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true,
+            pageLoader = providerPageLoader, initialPreviewWindow = previewWindow.takeIf { windowedProviderPreview })
+    }
+    LaunchedEffect(profile, providerState.identity, previewWindow, windowedProviderPreview) {
+        if (windowedProviderPreview) providerVm.updatePreviewWindow(previewWindow)
     }
     // Keep bounded landing previews for an immediate return from details; nested detail
     // routes release their private catalogue copies. No network work survives disposal.
     DisposableEffect(providerVm) { onDispose { providerVm.pause(release = vm.state.value.detail != null) } }
     val providerLifecycle = LocalLifecycleOwner.current.lifecycle
     val bindProvider by rememberUpdatedState {
-        providerVm.bind(app.session, providerBindingSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
+        providerVm.bind(app.session, providerBindingScope, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader,
+            initialPreviewWindow = previewWindow.takeIf { windowedProviderPreview })
     }
     DisposableEffect(providerLifecycle, providerVm) {
         val observer = LifecycleEventObserver { _, event ->
@@ -387,6 +403,9 @@ internal fun DiscoveryPreviewScreen(
     // sort episode backlogs or allocate every tile callback on the UI thread.
     val progressLookup = rememberDiscoveryProgressLookup(profile, app.recentlyPlayed, app.playbackProgress)
     val today = currentDiscoveryDate()
+    val providerRailModels = remember(profile, surface, windowedProviderPreview, progressLookup, scrollVariant.tileLimit) {
+        linkedMapOf<String, Pair<List<Any?>, Rail>>()
+    }
     val rails = remember(profile, surface, state.detail?.key, state.feeds, state.sections,
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
@@ -460,7 +479,10 @@ internal fun DiscoveryPreviewScreen(
                 categories.forEach { category ->
                 val rowKey = "provider:${type.name}:${category.id}"
                 val queue = providerQueues.second[rowKey].orEmpty().takeIf { providerQueues.first == profile }.orEmpty()
-                if (size < scrollVariant.rowLimit) add(Rail(rowKey, category.title, queue.take(scrollVariant.tileLimit).map { item ->
+                if (size < scrollVariant.rowLimit) {
+                val signature = listOf(category, queue)
+                val retained = if (windowedProviderPreview) providerRailModels[rowKey]?.takeIf { it.first == signature }?.second else null
+                val model = retained ?: Rail(rowKey, category.title, queue.take(scrollVariant.tileLimit).map { item ->
                     val saved = FavoriteItem(if (type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
                         item, profileKey = profile, categoryTitle = category.title)
                     RailEntry("$rowKey:${item.id}", providerDisplayTitle(item.title, type), item.logo,
@@ -475,7 +497,13 @@ internal fun DiscoveryPreviewScreen(
                                 onTrailerReturned = restore, playAction = { currentPlayProvider(type, item, queue) },
                                 downloadAction = if (type == CatalogType.MOVIES) ({ currentDownloadProvider(type, item) }) else null)
                         })
-                }, providerType = type, providerCategory = category))
+                }, providerType = type, providerCategory = category)
+                if (windowedProviderPreview && queue.isNotEmpty()) {
+                    providerRailModels[rowKey] = signature to model
+                    while (providerRailModels.size > 100) providerRailModels.remove(providerRailModels.keys.first())
+                }
+                add(model)
+                }
                 }
             }
 
@@ -527,24 +555,26 @@ internal fun DiscoveryPreviewScreen(
     }
     fun closeExperimentSettings() { experimentSettingsReturn?.invoke(); experimentSettings = false }
     if (experimentSettings && experiment) AlertDialog(onDismissRequest = ::closeExperimentSettings,
-        title = { Text("Home display options") },
+        title = { Text("${surface.trialTitle()} display options") },
         text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
             Text("Home stays unchanged. Compare each stage with the preceding stage using the same content and input pattern.", style = MaterialTheme.typography.bodySmall)
+            if (surface == DashboardSurface.HOME) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Hero title artwork and metadata", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 Switch(checked = optionalHeroMetadata, onCheckedChange = {
                     optionalHeroMetadata = it
-                    heroPreferences.edit().putBoolean("title_metadata", it).apply()
+                    heroPreferences.edit().putBoolean(metadataKey, it).apply()
                 })
             }
             Text("Off skips optional hero detail lookups and title logos. Opening Info still loads details.", style = MaterialTheme.typography.bodySmall)
+            } else Text("IPTV headers use provider artwork and already cached metadata. Browsing never searches TMDB.", style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Home-style hero framing", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                Switch(homeHeroFraming, { homeHeroFraming = it; heroPreferences.edit().putBoolean("home_hero_framing", it).apply() })
+                Switch(homeHeroFraming, { homeHeroFraming = it; heroPreferences.edit().putBoolean(framingKey, it).apply() })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Loading placeholders", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                Switch(tileSkeletons, { tileSkeletons = it; heroPreferences.edit().putBoolean("tile_skeletons", it).apply() })
+                Switch(tileSkeletons, { tileSkeletons = it; heroPreferences.edit().putBoolean(skeletonKey, it).apply() })
             }
             if (hiddenTrialRows.isNotEmpty()) NikTvSecondaryActionButton({ setHiddenTrialRows(emptySet()) }) {
                 Text("Restore hidden rows (${hiddenTrialRows.size})")
@@ -614,6 +644,12 @@ internal fun DiscoveryPreviewScreen(
         }
         val heroPlayRequester = remember(profile, surface) { FocusRequester() }
         val heroInfoRequester = remember(profile, surface) { FocusRequester() }
+        val providerFavorites = remember(app.favorites, profile, surface) {
+            if (surface == DashboardSurface.MOVIES) providerHeroFavoriteIds(app.favorites, profile, FavoriteKind.MOVIE) else emptySet()
+        }
+        val providerHeroPresentation = if (surface == DashboardSurface.MOVIES) rememberUpdatedState(
+            ProviderHeroPresentation(providerFavorites, progressLookup, presentationActive, mayRotateHero,
+                scrollVariant.heroArtwork, scrollVariant.heroArtworkFade, scrollVariant.heroAutoRotate, scrollVariant.prepareNextHero)) else null
         val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout && surface == DashboardSurface.HOME) ({ focused, down, up ->
             val heroState by vm.state.collectAsStateWithLifecycle()
             val heroCard = heroState.takeIf { it.profile == profile && it.surface == surface }?.hero
@@ -674,13 +710,25 @@ internal fun DiscoveryPreviewScreen(
                     carousel = state.heroes.size > 1, index = heroState.heroIndex, count = heroState.heroes.size,
                     portraitPhone = phonePortrait)
             }
+        }) else if (scrollVariant.heroLayout && surface == DashboardSurface.MOVIES) ({ focused, down, up ->
+            ProviderDiscoveryHero(profile, CatalogType.MOVIES, providerSelections[CatalogType.MOVIES].orEmpty(),
+                providerVm, landscape, phone, phonePortrait, homeHeroFraming, reduceMotion,
+                presentation = providerHeroPresentation!!,
+                playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
+                play = { item, queue -> currentPlayProvider(CatalogType.MOVIES, item, queue) },
+                add = { item -> currentToggleFavorite(FavoriteItem(FavoriteKind.MOVIE, item, profileKey = profile)) },
+                info = { item, queue -> currentOpenProvider(CatalogType.MOVIES, item, queue) },
+                focused = { focused(it); restoreNativeSelection = true }, down = down, up = up,
+                categoryActions = { DiscoveryCategoryAccess(surface, app.categoryManagerOpen,
+                    popupChanged = { categoryPopup = it }, onFocus = { focused("play") }) })
         }) else null
         val recycled = scrollVariant.recycledRows
         val requestedRails = if (recycled) {
             val anchor = visibleRails.indexOfFirst { it.key == nearbyRow }.coerceAtLeast(0)
             visibleRails.drop((anchor - 1).coerceAtLeast(0)).take(3)
         } else visibleRails
-        LaunchedEffect(providerState.identity, providerState.ready, providerState.pages, providerState.loading, providerState.errors, nearbyRow) {
+        LaunchedEffect(providerState.identity, providerState.ready, providerState.pages, providerState.loading, providerState.errors, nearbyRow, if (windowedProviderPreview) presentationActive else true) {
+            if (windowedProviderPreview && !presentationActive) return@LaunchedEffect
             requestedRails.forEach { row -> row.section?.let(vm::loadFeed) }
             if (providerState.ready) requestedRails.filter { it.providerCategory != null && it.providerType != null }
                 .groupBy { it.providerType!! }.forEach { (type, rows) ->
@@ -751,6 +799,8 @@ internal fun DiscoveryPreviewScreen(
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         popupAnchor = { nativePopupAnchor = it },
                         showSkeletons = tileSkeletons,
+                        restoreTouchSelection = surface == DashboardSurface.MOVIES,
+                        reconcileSkeletons = surface == DashboardSurface.MOVIES,
                         navigationTrace = navigationTrace,
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
                         heroHeightPx = if (nativeHero != null && landscape && !phone) with(LocalDensity.current) {
@@ -1314,14 +1364,15 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     playLabel: String = "Play", playEnabled: Boolean = true,
     phoneHeader: (@Composable () -> Unit)? = null, portraitPhone: Boolean = false,
     showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false },
-    categoryActions: (@Composable () -> Unit)? = null) {
+    categoryActions: (@Composable () -> Unit)? = null, trailerMedia: MediaItem? = null,
+    emptyTitle: String = "Discover something to watch") {
     if (portraitPhone) {
         val context = LocalContext.current
         val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         DiscoveryPhoneHero(card, rank, height.coerceAtLeast(if (compactDetail) 280.dp else 480.dp), detail, loading, inList,
             playRequester, infoRequester, play, add, info, previous, next, carousel, index, count,
             playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail, categoryActions,
-            shadeArtworkBounds = compactDetail)
+            shadeArtworkBounds = compactDetail, trailerMedia = trailerMedia, emptyTitle = emptyTitle)
         return
     }
     var drag by remember { mutableFloatStateOf(0f) }
@@ -1342,7 +1393,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             if (loading && card == null) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.width(280.dp).height(20.dp).background(Color.White.copy(alpha = .10f), RoundedCornerShape(4.dp)))
                 Box(Modifier.width(180.dp).height(16.dp).background(Color.White.copy(alpha = .07f), RoundedCornerShape(4.dp)))
-            } else if (!logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
+            } else if (!logoReady) Text(card?.title ?: emptyTitle, color = Color.White,
                 fontSize = if (landscape && !compact) 32.sp else 26.sp, lineHeight = if (landscape && !compact) 36.sp else 30.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (!card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
                 Modifier.widthIn(max = 400.dp).fillMaxHeight().graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
@@ -1377,7 +1428,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             }
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
                 iconOnly = !detail, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier, enabled = card != null, onFocus = onFocus, onClick = add)
-            DiscoveryTrailerAction(card, onFocus = onFocus, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier)
+            DiscoveryTrailerAction(card, onFocus = onFocus, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier, mediaOverride = trailerMedia)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()
@@ -1420,11 +1471,12 @@ private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Uni
 }
 
 @Composable
-private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>, navigationIndex: Int, phone: Boolean = false,
+internal fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>, navigationIndex: Int, phone: Boolean = false,
     popupChanged: (Boolean) -> Unit,
     prefetch: Boolean, trackPresentation: Boolean, presentationEnabled: Boolean, skeleton: Boolean,
     register: (suspend () -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
-    present: (RailEntry) -> Unit, move: (Int) -> Boolean, reenter: () -> Unit, viewAll: (() -> Unit)?, dismissRow: (() -> Unit)? = null) {
+    present: (RailEntry) -> Unit, move: (Int) -> Boolean, reenter: () -> Unit, viewAll: (() -> Unit)?, dismissRow: (() -> Unit)? = null,
+    highlightedDraw: ((String) -> Unit)? = null) {
     val rowState = rememberLazyListState()
     val dismissRequester = remember(row.key) { FocusRequester() }
     val popupScope = rememberCoroutineScope()
@@ -1530,6 +1582,7 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
                         else DiscoveryPosterTile(entry.title, if (wideCards) entry.card?.backdrop ?: entry.artwork else entry.artwork,
                             entry.subtitle, tileWidth, aspect = if (wideCards) 16f / 9f else 2f / 3f, reduceMotion = reduceMotion,
                             modifier = Modifier.focusRequester(requester), progress = entry.progress, matchCount = entry.matchCount, source = entry.displaySource,
+                            highlightedDraw = highlightedDraw?.let { report -> { report(entry.key) } },
                             onClick = entry.open, onLongClick = entry.popup?.let { { popupOpen = true } },
                             onFocus = { selected = entry.key; lastPoster = entry.key; if (trackPresentation) focusedCard = entry; focused(entry) })
                         var restoreJob by remember(entry.key) { mutableStateOf<Job?>(null) }
@@ -1567,7 +1620,7 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
 internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: String, width: Dp,
     modifier: Modifier = Modifier, aspect: Float = 2f / 3f, reduceMotion: Boolean = false, progress: Float? = null, matchCount: Int? = null,
     onClick: () -> Unit, onLongClick: (() -> Unit)? = null, onFocus: () -> Unit = {}, focusVerticalInset: Dp = 0.dp,
-    source: DiscoveryTileSource? = null) {
+    source: DiscoveryTileSource? = null, highlightedDraw: (() -> Unit)? = null) {
     var focused by remember { mutableStateOf(false) }
     var artworkFailed by remember(artwork) { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1590,7 +1643,13 @@ internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: Stri
     }
     // Scale the legacy overlay treatment to these deliberately smaller posters.
     val textScale = (width.value / 120f).coerceIn(.85f, 1.15f)
-    Column(modifier.width(width).semantics {
+    // Optional fixture hook; normal callers add no drawing modifier or callback.
+    val drawingProbe = if (highlightedDraw == null) Modifier else Modifier.drawWithContent {
+        drawContent()
+        if (focused && border.value > 0f && !drawContext.canvas.nativeCanvas.quickReject(0f, 0f, size.width, size.height,
+                android.graphics.Canvas.EdgeType.AA)) highlightedDraw()
+    }
+    Column(modifier.then(drawingProbe).width(width).semantics {
         if (source != null || matchCount != null) stateDescription = discoveryTileStateDescription(source, matchCount)
     }
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }

@@ -55,18 +55,20 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
     val suggestedArtwork by rememberSuggestedArtwork()
     var categoryTrigger by remember { mutableIntStateOf(0) }
-    if (phone && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
+    if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
         DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true,
             modifier = if (isExperiment) Modifier.focusRequester(trialOptionsFocus) else Modifier) { change(true) }
         DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
-            if (isExperiment) NikDropdownMenuItem(text = { Text("Home display options") },
+            if (isExperiment) NikDropdownMenuItem(text = { Text("${surface.trialTitle()} display options") },
                 onClick = { change(false); experimentSettings { runCatching { trialOptionsFocus.requestFocus() }.getOrDefault(false) } })
             NikDropdownMenuItem(text = { Text("Previous Home") },
                 onClick = { change(false); navigate("Previous Home") })
+            if (surface == DashboardSurface.MOVIES) NikDropdownMenuItem(text = { Text("Previous Movies") },
+                onClick = { change(false); navigate("Previous Movies") })
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
-            if (phone && surface != DashboardSurface.HOME && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
+            if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); categoryTrigger++ })
             customize?.let { action -> NikDropdownMenuItem(text = { Text("TMDB categories") },
                 onClick = { change(false); action() }) }

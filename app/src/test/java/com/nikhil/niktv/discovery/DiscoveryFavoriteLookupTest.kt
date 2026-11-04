@@ -7,6 +7,16 @@ import org.junit.Test
 class DiscoveryFavoriteLookupTest {
     private val media = MediaItem("same-id", "Fixture", null, null)
 
+    @Test fun providerHeroDoesNotTreatAnotherCatalogKindOrProfileAsSaved() {
+        val movie = FavoriteItem(FavoriteKind.MOVIE, media, profileKey = "one")
+        val series = movie.copy(kind = FavoriteKind.SERIES)
+        val otherProfile = movie.copy(profileKey = "two", media = media.copy(id = "other-id"))
+        assertTrue(providerHeroFavoriteIds(listOf(series, otherProfile), "one", FavoriteKind.MOVIE).isEmpty())
+        assertEquals(setOf(media.id), providerHeroFavoriteIds(listOf(movie, series, otherProfile), "one", FavoriteKind.MOVIE))
+        assertEquals(setOf(media.id), providerHeroFavoriteIds(listOf(series, otherProfile), "one", FavoriteKind.SERIES))
+        assertTrue(providerHeroFavoriteIds(listOf(movie), "one", FavoriteKind.SERIES).isEmpty())
+    }
+
     @Test fun exactKeyPreservesKindAndProfileIdentityWithoutConsideringSourceCategoryOrTime() {
         val first = FavoriteItem(FavoriteKind.MOVIE, media, addedAtMillis = 1, profileKey = "one", categoryTitle = "First")
         val otherPresentation = first.copy(addedAtMillis = 2, categoryTitle = "Second", source = FavoriteSource.TMDB)

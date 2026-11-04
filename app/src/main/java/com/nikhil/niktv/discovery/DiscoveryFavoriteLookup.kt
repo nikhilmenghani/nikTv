@@ -18,3 +18,7 @@ internal fun discoveryFavoriteLookup(favorites: List<FavoriteItem>, profile: Str
 
 internal fun discoveryFavoriteKey(profile: String, kind: FavoriteKind, mediaId: String): String =
     "$profile:${kind.name}:$mediaId"
+
+/** Provider identifiers can overlap across catalog kinds; keep the new header exact. */
+internal fun providerHeroFavoriteIds(favorites: List<FavoriteItem>, profile: String, kind: FavoriteKind): Set<String> =
+    favorites.asSequence().filter { it.profileKey == profile && it.kind == kind }.map { it.media.id }.toSet()

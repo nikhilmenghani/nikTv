@@ -11,6 +11,21 @@ class ProviderMetadataTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun movie(title: String = "Movie (2020)", id: Int? = null) =
         MediaItem("private-provider-id", title, null, "private-provider-stream-secret", externalTmdbId = id)
+    @Test fun headerCacheMissDoesNotWriteOrMatchAndStaleDetailsRemainReadable() = runBlocking {
+        val directory = temporary.newFolder()
+        var now = 0L
+        val cache = DiscoveryCache(directory, now = { now })
+        assertNull(readProviderHeroMetadata(cache, movie(), CatalogType.MOVIES))
+        assertTrue(directory.listFiles().orEmpty().isEmpty())
+        val card = DiscoveryCard(42, false, "Cached movie", backdrop = "https://example.invalid/backdrop.jpg")
+        cachedProviderMetadata(cache, movie(), CatalogType.MOVIES) { card }
+        cache.write("detail-v4:${card.key}", kotlinx.serialization.json.Json.encodeToString(DiscoveryDetails.serializer(), DiscoveryDetails(card)))
+        now = DiscoveryCache.DETAIL_TTL + 1
+        assertEquals(card, readProviderHeroMetadata(cache, movie(), CatalogType.MOVIES))
+        assertNull(readProviderHeroMetadata(cache, movie(), CatalogType.SERIES))
+        assertNull(readProviderHeroMetadata(cache, movie(id = 99), CatalogType.MOVIES))
+        assertFalse(directory.listFiles().orEmpty().joinToString { it.readText() }.contains("private-provider"))
+    }
     @Test fun broadcasterMissDoesNotBlockCleanSeriesLookup() = runBlocking {
         val cache = DiscoveryCache(temporary.newFolder())
         val decorated = movie("Star Plus Hindi : Anupama")

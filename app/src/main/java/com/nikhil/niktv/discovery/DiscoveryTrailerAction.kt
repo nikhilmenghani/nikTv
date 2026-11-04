@@ -13,10 +13,13 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import com.nikhil.niktv.ui.TrailerDialog
+import com.nikhil.niktv.model.MediaItem
+
+private data class OpenedDiscoveryTrailer(val card: DiscoveryCard, val media: MediaItem)
 
 @Composable
 internal fun DiscoveryTrailerAction(card: DiscoveryCard?, iconOnly: Boolean = false, onFocus: () -> Unit = {}, compactLabel: Boolean = false,
-    modifier: Modifier = Modifier) {
+    modifier: Modifier = Modifier, mediaOverride: MediaItem? = null) {
     val context = LocalContext.current
     val focus = remember { FocusRequester() }
     val view = LocalView.current
@@ -27,15 +30,16 @@ internal fun DiscoveryTrailerAction(card: DiscoveryCard?, iconOnly: Boolean = fa
             if (view.hasWindowFocus() && runCatching { focus.requestFocus() }.getOrDefault(false)) return@launch
         }
     } }
-    var opened by remember { mutableStateOf<DiscoveryCard?>(null) }
+    var opened by remember { mutableStateOf<OpenedDiscoveryTrailer?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         restore()
     }
     DiscoveryAction("Watch trailer", Icons.Default.SmartDisplay, iconOnly = iconOnly, visualLabel = if (compactLabel) "Trailer" else "Watch trailer",
         modifier = modifier.focusRequester(focus), enabled = card != null && !card.adult,
-        onFocus = onFocus) { opened = card }
-    opened?.let { selected ->
-        TrailerDialog(selected.media, selected.series, launch = { key ->
+        onFocus = onFocus) { opened = card?.let { OpenedDiscoveryTrailer(it, mediaOverride ?: it.media) } }
+    opened?.let { selection ->
+        val selected = selection.card
+        TrailerDialog(selection.media, selected.series, launch = { key ->
             launcher.launch(Intent(context, com.nikhil.niktv.TrailerPlayerActivity::class.java)
                 .putExtra("video_key", key).putExtra("title", selected.title))
         }, dismiss = { opened = null; restore() })

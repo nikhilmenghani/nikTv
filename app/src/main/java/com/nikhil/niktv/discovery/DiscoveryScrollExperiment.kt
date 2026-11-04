@@ -8,6 +8,7 @@ internal val LocalDiscoveryPosterArtwork = staticCompositionLocalOf { true }
 internal val LocalDiscoveryExperiment = staticCompositionLocalOf { false }
 internal val LocalOpenDiscoveryExperiment = staticCompositionLocalOf<() -> Unit> { {} }
 internal val LocalOpenPreviousHome = staticCompositionLocalOf<() -> Unit> { {} }
+internal val LocalOpenPreviousDiscovery = staticCompositionLocalOf<(com.nikhil.niktv.model.DashboardSurface) -> Unit> { {} }
 internal val LocalOpenDiscoveryExperimentSurface = staticCompositionLocalOf<(com.nikhil.niktv.model.DashboardSurface) -> Unit> { {} }
 internal val LocalDiscoveryExperimentSettings = staticCompositionLocalOf<((() -> Boolean) -> Unit)> { { _ -> } }
 
@@ -55,6 +56,19 @@ internal enum class DiscoveryScrollVariant(val title: String, val rowLimit: Int 
 /** Home 2 is the only route allowed to choose an experimental presenter. */
 internal fun discoveryVariantForRoute(experiment: Boolean, selected: DiscoveryScrollVariant) =
     if (experiment) selected else DiscoveryScrollVariant.CONTROL
+
+internal fun optimizedDiscoverySurface(surface: com.nikhil.niktv.model.DashboardSurface) =
+    surface == com.nikhil.niktv.model.DashboardSurface.HOME || surface == com.nikhil.niktv.model.DashboardSurface.MOVIES
+
+internal fun discoveryPresenterKey(profile: String, surface: com.nikhil.niktv.model.DashboardSurface, television: Boolean): String =
+    "presenter:$profile:" + (if (surface == com.nikhil.niktv.model.DashboardSurface.HOME) "" else "${surface.name}:") +
+        if (television) "tv" else "touch"
+
+internal fun discoveryPresentationOptionKey(option: String, profile: String, surface: com.nikhil.niktv.model.DashboardSurface, television: Boolean): String =
+    if (surface == com.nikhil.niktv.model.DashboardSurface.HOME) option else "$option:$profile:${surface.name}:${if (television) "tv" else "touch"}"
+
+internal fun discoverySurfaceVmKey(profile: String?, surface: com.nikhil.niktv.model.DashboardSurface?, optimized: Boolean): String =
+    "discovery2:$profile:$optimized" + if (optimized && surface != com.nikhil.niktv.model.DashboardSurface.HOME) ":$surface" else ""
 
 internal val recycledDiscoveryStages = listOf(DiscoveryScrollVariant.RECYCLED_BASELINE,
     DiscoveryScrollVariant.RECYCLED_MORE_CARDS, DiscoveryScrollVariant.RECYCLED_MORE_ROWS,

@@ -36,6 +36,10 @@ class RecycledDiscoveryDeviceTest {
     @Test fun detailsReturnPreservesBothViewportAxes() = verify(true, true, withHero = true, exerciseViewport = true)
     @Test fun fixedHeightHeroReturnPreservesBothViewportAxes() = verify(true, true, withHero = true, fixedHero = true, exerciseViewport = true, tallHero = true)
     @Test fun reducedFocusMotionRetainsNavigationAndRestoration() = verify(true, true, withHero = true, reducedFocusMotion = true)
+    @Test fun touchDetailsReturnHardwareEntryKeepsTouchedMovieAndModalFocus() =
+        verify(true, true, withHero = true, exerciseTouchReentry = true)
+    @Test fun touchHardwareEntryKeepsTouchedMovieWhenFeedStaysMounted() =
+        verify(true, true, withHero = true, exerciseTouchReentry = true, touchFeedRetained = true)
     @Test fun homeCaptionsFitLongTitlesAndLargerFonts() {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
@@ -185,7 +189,55 @@ class RecycledDiscoveryDeviceTest {
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); awaitTag("long:i39")
         } finally { i.runOnMainSync { host.finish() } }
     }
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false, tallHero: Boolean = false, reversalRounds: Int = 1, exerciseHostHandoff: Boolean = false) {
+    @Test fun cachedCardsRemoveSkeletonWithoutAnotherAttachCallback() {
+        val i = InstrumentationRegistry.getInstrumentation()
+        val c = i.targetContext
+        check(c.packageName.endsWith(".regression"))
+        val host = i.startActivitySync(Intent(c, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val entry = FocusRequester()
+        val ready = NativeDiscoveryRow("cached", "Cached category", (0..29).map { NativeDiscoveryItem("i$it", "Cached title $it", onClick = {}) })
+        fun waitFor(message: String, predicate: () -> Boolean) {
+            val end = SystemClock.uptimeMillis() + 6000
+            while (SystemClock.uptimeMillis() < end) { if (predicate()) return; Thread.sleep(25) }
+            fail(message)
+        }
+        try {
+            i.setInTouchMode(false)
+            i.runOnMainSync { host.setContent { MaterialTheme {
+                RecycledDiscoveryRows(listOf(ready), Modifier.fillMaxSize(), entry, {},
+                    containedCaptions = true, homeTileProportions = true, showSkeletons = true, reconcileSkeletons = true)
+            } } }
+            waitFor("Cached cards attached") {
+                var mounted = false
+                i.runOnMainSync { mounted = host.window.decorView.findViewWithTag<View>("cached:i0")?.isShown == true }
+                mounted
+            }
+            i.runOnMainSync {
+                var view = host.window.decorView.findViewWithTag<View>("cached:i0")!!
+                while (view.javaClass.simpleName != "RailRecycler") view = view.parent as View
+                val recycler = view as RecyclerView
+                val holder = recycler.findViewHolderForAdapterPosition(0)!!
+                val update = view.javaClass.getDeclaredMethod("update", List::class.java).apply { isAccessible = true }
+                val bind = holder.javaClass.getDeclaredMethod("bind", NativeDiscoveryRow::class.java).apply { isAccessible = true }
+                val loading = ready.copy(items = emptyList(), loading = true)
+                // The ready list supersedes the empty diff in one UI turn. Existing
+                // cached holders stay attached, so a new attach callback is not promised.
+                update.invoke(view, listOf(loading)); bind.invoke(holder, loading)
+                assertEquals(View.VISIBLE, host.window.decorView.findViewWithTag<View>("cached:skeleton")!!.visibility)
+                update.invoke(view, listOf(ready)); bind.invoke(holder, ready)
+            }
+            waitFor("Ready cached cards must not remain covered by a loading skeleton") {
+                var clear = false
+                i.runOnMainSync {
+                    clear = host.window.decorView.findViewWithTag<View>("cached:skeleton")?.visibility == View.GONE &&
+                        host.window.decorView.findViewWithTag<View>("cached:i0")?.isShown == true
+                }
+                clear
+            }
+        } finally { i.runOnMainSync { host.finish() } }
+    }
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false, tallHero: Boolean = false, reversalRounds: Int = 1, exerciseHostHandoff: Boolean = false, exerciseTouchReentry: Boolean = false, touchFeedRetained: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -229,8 +281,12 @@ class RecycledDiscoveryDeviceTest {
         val restoreSelection = mutableStateOf(true)
         val nativeRestorer = NativeDiscoveryFocusRestorer()
         val holds = java.util.concurrent.atomic.AtomicInteger()
+        val touchCaptured = java.util.concurrent.atomic.AtomicBoolean()
+        var keepTouchFeed = touchFeedRetained
         val rows = (0 until 80).map { r -> NativeDiscoveryRow("r$r", "Row $r", (0 until 40).map { n ->
-            NativeDiscoveryItem("i$n", "Item $r $n", onClick = { rowsShown.value = false }, onLongClick = { holds.incrementAndGet() }) }) }
+            NativeDiscoveryItem("i$n", "Item $r $n", onClick = {
+                if (keepTouchFeed) touchCaptured.set(true) else rowsShown.value = false
+            }, onLongClick = { holds.incrementAndGet() }) }) }
         val heroHeight = if (tallHero) trialHeroFrameHeight(trialHeroBaseHeight(c.resources.configuration.screenHeightDp.toFloat(), true), c.resources.configuration.fontScale) else 200f
         try {
             i.setInTouchMode(false)
@@ -243,9 +299,11 @@ class RecycledDiscoveryDeviceTest {
                     if (rowsShown.value) saved.SaveableStateProvider("feed") {
                         RecycledDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, { header.requestFocus() },
                             containedCaptions = containedCaptions, cardShadows = cardShadows, focusRestorer = nativeRestorer,
+                            homeTileProportions = exerciseTouchReentry,
+                            restoreTouchSelection = exerciseTouchReentry,
                             animateFocus = !reducedFocusMotion,
                             cacheTileDrawing = exercisePressure,
-                            navigationTrace = if (exercisePressure && InstrumentationRegistry.getArguments().getString("traceFocus") == "true") ({ event ->
+                            navigationTrace = if (exerciseTouchReentry || (exercisePressure && InstrumentationRegistry.getArguments().getString("traceFocus") == "true")) ({ event ->
                                 if (navigationEvents.size >= 160) navigationEvents.removeFirst()
                                 navigationEvents.addLast(event)
                             }) else null,
@@ -289,6 +347,58 @@ class RecycledDiscoveryDeviceTest {
                 i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             }
             await("First card") { focus() == "r0:i0" }
+            if (exerciseTouchReentry) {
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Keyboard selects a different movie before touch") { focus() == "r0:i1" }
+                val bounds = Rect()
+                i.runOnMainSync {
+                    val touched = host.window.decorView.findViewWithTag<View>("r0:i0")!!
+                    val location = IntArray(2); touched.getLocationOnScreen(location)
+                    bounds.set(location[0], location[1], location[0] + touched.width, location[1] + touched.height)
+                }
+                i.setInTouchMode(true)
+                val time = SystemClock.uptimeMillis()
+                val down = android.view.MotionEvent.obtain(time, time, android.view.MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+                val up = android.view.MotionEvent.obtain(time, time + 40, android.view.MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+                try { i.sendPointerSync(down); i.sendPointerSync(up) } finally { down.recycle(); up.recycle() }
+                if (touchFeedRetained) await("Physical touch callback keeps feed mounted") { touchCaptured.get() }
+                else {
+                    await("Physical touch opens local details") { !rowsShown.value }
+                    await("Local details has removed the native feed") {
+                        var removed = false
+                        i.runOnMainSync { removed = host.window.decorView.findViewWithTag<View>("r0:i0") == null }
+                        removed
+                    }
+                    i.runOnMainSync { rowsShown.value = true }
+                }
+                await("Source mounts again without a remote focus request") {
+                    var mounted = false
+                    i.runOnMainSync { mounted = host.window.decorView.findViewWithTag<View>("r0:i0")?.isShown == true }
+                    mounted
+                }
+                // Real Back preserves touch mode. Do not call the focus restorer or
+                // request entry: the first hardware arrow must enter at the saved item.
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("First hardware arrow restores the physically touched movie") { focus() == "r0:i0" }
+                await("Restored touch selection is fully visible") { fullyVisible() }
+                i.runOnMainSync { keepTouchFeed = false }
+                lateinit var dialog: android.app.Dialog
+                i.runOnMainSync { dialog = android.app.Dialog(host) }
+                try {
+                    i.runOnMainSync {
+                        val buttons = android.widget.LinearLayout(host)
+                        val first = android.widget.Button(host).apply { text = "Modal first"; tag = "modal:first" }
+                        val second = android.widget.Button(host).apply { text = "Modal second"; tag = "modal:second" }
+                        buttons.addView(first); buttons.addView(second); dialog.setContentView(buttons); dialog.show(); first.requestFocus()
+                    }
+                    await("Local modal owns the window") { dialog.window?.decorView?.hasWindowFocus() == true }
+                    i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("Native saved entry must not steal modal navigation") { dialog.window?.decorView?.findFocus()?.tag == "modal:second" }
+                    Thread.sleep(150)
+                    assertEquals("Modal remains focused after native entry work settles", "modal:second", dialog.window?.decorView?.findFocus()?.tag)
+                } finally { i.runOnMainSync { dialog.dismiss() } }
+                await("Source keeps its selected movie after modal dismissal") { focus() == "r0:i0" }
+            }
             if (reducedFocusMotion) i.runOnMainSync { assertEquals(1f, host.currentFocus!!.scaleX, 0f) }
             if (exercisePressure) {
                 i.runOnMainSync {

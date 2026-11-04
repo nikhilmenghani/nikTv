@@ -7973,8 +7973,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Discovery navigation never resolves provider titles in the background. */
 
-    fun openDiscovery(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = surface == DashboardSurface.HOME)
-    fun openPreviousHome() = openDiscoveryRoute(DashboardSurface.HOME, experiment = false)
+    fun openDiscovery(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = com.nikhil.niktv.discovery.optimizedDiscoverySurface(surface))
+    fun openPreviousHome() = openPreviousDiscovery(DashboardSurface.HOME)
+    fun openPreviousDiscovery(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = false)
     fun openHomeExperiment() = openDiscoveryExperiment(DashboardSurface.HOME)
     fun openDiscoveryExperiment(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = true)
 
