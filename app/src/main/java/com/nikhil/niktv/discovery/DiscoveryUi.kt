@@ -504,11 +504,6 @@ private fun DiscoveryPreviewContent(
                         })
                 }))
             }
-            if (surface == DashboardSurface.HOME && experiment && (watchProviders.loading || watchProviders.providers.isNotEmpty() || watchProviders.error != null))
-                add(Rail("watch-providers", "Providers", watchProviders.providers.map { provider ->
-                    RailEntry("watch-provider:${provider.id}", provider.name, provider.logo,
-                        open = { chosenWatchProvider = provider })
-                }, viewAll = openWatchProviders))
             if (surface == DashboardSurface.HOME) add(Rail("daily-movies", "Trending Movies Today",
                 state.feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty().take(minOf(10, scrollVariant.tileLimit)).map { cardEntry(it, "daily-movies") }, true, TmdbHomeSection.TRENDING_MOVIES))
             if (surface == DashboardSurface.HOME) add(Rail("daily-series", "Trending Series Today",
@@ -551,6 +546,12 @@ private fun DiscoveryPreviewContent(
                 }
                 }
             }
+
+            if (surface == DashboardSurface.HOME && experiment && (watchProviders.loading || watchProviders.providers.isNotEmpty() || watchProviders.error != null))
+                add(Rail("watch-providers", "Providers", watchProviders.providers.map { provider ->
+                    RailEntry("watch-provider:${provider.id}", provider.name, provider.logo,
+                        open = { chosenWatchProvider = provider })
+                }, viewAll = openWatchProviders))
 
         } else {
             if (state.collection.isNotEmpty()) add(Rail("collection", state.details?.collection?.title ?: "Collection", state.collection.map { cardEntry(it, "collection") }))
