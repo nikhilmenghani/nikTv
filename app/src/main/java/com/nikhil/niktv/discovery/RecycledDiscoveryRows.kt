@@ -79,7 +79,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     containedCaptions: Boolean = false, cardShadows: Boolean = false, homeTileProportions: Boolean = false,
     hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false, focusRestorer: NativeDiscoveryFocusRestorer? = null,
     popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false,
-    navigationTrace: ((String) -> Unit)? = null, restoreTouchSelection: Boolean = false, reconcileSkeletons: Boolean = false) {
+    navigationTrace: ((String) -> Unit)? = null, restoreTouchSelection: Boolean = false, reconcileSkeletons: Boolean = false,
+    transparentBackground: Boolean = false) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -95,6 +96,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
         onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
             focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
             view.navigationInsetPx = navigationInsetPx
+            view.setBackgroundColor(if (transparentBackground) Color.TRANSPARENT else Color.rgb(9, 11, 16))
             view.animateFocus = animateFocus
             view.restoreSelection = restoreSelection
             view.heroContent = hero; view.heroFocusEntry = heroFocusEntry

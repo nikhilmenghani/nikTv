@@ -106,7 +106,7 @@ internal suspend fun prefetchDiscoveryArtwork(context: Context, posters: List<St
 }
 
 /** Trial only: one idle, bounded next-backdrop request; never blocks navigation. */
-internal suspend fun prepareTrialHeroArtwork(context: Context, url: String?) {
+internal suspend fun prepareTrialHeroArtwork(context: Context, url: String?, sceneArtwork: Boolean = false) {
     if (url.isNullOrBlank()) return
     withContext(Dispatchers.IO) {
         speculativeImages.withPermit {
@@ -115,7 +115,7 @@ internal suspend fun prepareTrialHeroArtwork(context: Context, url: String?) {
             try {
                 val result = context.imageLoader.execute(ImageRequest.Builder(context)
                     .data(thumbnailArtworkUrl(url, 1280)).size(1280, 720)
-                    .transformations(DiscoveryBackdropTransformation(verticalShade = false)).build())
+                    .transformations(DiscoveryBackdropTransformation(verticalShade = sceneArtwork)).build())
                 ensureActive()
                 if (result is coil3.request.SuccessResult) {
                     (result.image.asDrawable(context.resources) as? android.graphics.drawable.BitmapDrawable)?.bitmap?.prepareToDraw()

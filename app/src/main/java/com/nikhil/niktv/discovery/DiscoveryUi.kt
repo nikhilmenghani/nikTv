@@ -691,11 +691,12 @@ private fun DiscoveryPreviewContent(
         val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout && surface == DashboardSurface.HOME) ({ focused, down, up ->
             val heroState by vm.state.collectAsStateWithLifecycle()
             val heroCard = heroState.takeIf { it.profile == profile && it.surface == surface }?.hero
+            val sceneArtwork = LocalDiscoverySceneArtwork.current
             LaunchedEffect(scrollVariant.prepareNextHero, mayRotateHero, heroCard?.key) {
                 if (scrollVariant.prepareNextHero && mayRotateHero && heroState.heroes.size > 1) {
                     delay(1_000)
                     val next = heroState.heroes[(heroState.heroIndex + 1) % heroState.heroes.size]
-                    prepareTrialHeroArtwork(context, next.backdrop ?: next.poster)
+                    prepareTrialHeroArtwork(context, next.backdrop ?: next.poster, sceneArtwork)
                 }
             }
             // Trial-only: defer optional public metadata; never enable focused/provider presentation.
@@ -714,12 +715,12 @@ private fun DiscoveryPreviewContent(
             val baseHeroHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeFrame, television)
             Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp).clipToBounds().onGloballyPositioned {
                 heroGlassBounds = it.boundsInWindow()
-                if (!phonePortrait) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow(), topAligned = homeFrame, fillWidth = homeFrame))
+                if (!phonePortrait) publishGlass(MobileGlassSource(headerArtwork.takeIf { scrollVariant.heroArtwork }, it.boundsInWindow(), topAligned = homeFrame, fillWidth = homeFrame))
             }.then(
                 if (landscape && !phone)
                     Modifier.height(trialHeroFrameHeight(baseHeroHeight, LocalDensity.current.fontScale).dp + LocalHeroNavigationInset.current)
                 else Modifier)) {
-                if (scrollVariant.heroArtwork && !phonePortrait) {
+                if (scrollVariant.heroArtwork && !phonePortrait && !sceneArtwork) {
                     // One identity-scoped image: never retain the previous title's artwork while loading.
                     key(heroCard?.key, heroCard?.backdrop ?: heroCard?.poster) {
                         val artwork = heroCard?.backdrop ?: heroCard?.poster
@@ -741,13 +742,14 @@ private fun DiscoveryPreviewContent(
                     DiscoveryHeroShade(Modifier.matchParentSize())
                 }
         CompositionLocalProvider(LocalMobileGlassEnabled provides true,
-            LocalMobileGlassArtwork provides headerArtwork, LocalMobileGlassBounds provides heroGlassBounds,
-            LocalMobileGlassTopAligned provides homeFrame,
-            LocalMobileGlassFillWidth provides homeFrame) {
+            LocalMobileGlassArtwork provides headerArtwork,
+            LocalMobileGlassBounds provides (if (sceneArtwork) LocalDiscoverySceneBounds.current else heroGlassBounds),
+            LocalMobileGlassTopAligned provides (homeFrame && !sceneArtwork),
+            LocalMobileGlassFillWidth provides (homeFrame && !sceneArtwork)) {
                 DiscoveryHero(heroCard?.let { if (phonePortrait && scrollVariant.heroArtwork) it.copy(titleLogo = heroLogo) else it.copy(backdrop = null, poster = null, titleLogo = heroLogo) }, rank = null,
                     height = if (phonePortrait) phoneDiscoveryHeroHeight() else baseHeroHeight.dp + LocalHeroNavigationInset.current,
-                    contentInset = if (landscape && !phone) 18.dp else 0.dp,
-                    landscape = landscape, compact = true, detail = false,
+                    contentInset = if (landscape && !phone && !sceneArtwork) 18.dp else 0.dp,
+                    landscape = landscape, compact = if (sceneArtwork) compactLandscape else true, detail = false,
                     loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,
                     playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
                     play = { heroCard?.let { focused("play"); currentPlayCard(it) } },
@@ -825,7 +827,8 @@ private fun DiscoveryPreviewContent(
             } else LaunchedEffect(activityCollection) { activityCollection = null }
         }
         CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { restore -> experimentSettingsReturn = restore; experimentSettings = true }) {
-            DiscoveryArtworkShell(nativeHero != null, phone, header = {
+            DiscoveryArtworkShell(nativeHero != null, phone,
+                backdropBehindRows = nativeHero != null && landscape && !phone, reduceMotion = reduceMotion, header = {
                 if (phone) DiscoveryPhoneHeader(surface, false, tabRequester, playRequester,
                     back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute,
                     menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null,
@@ -861,6 +864,7 @@ private fun DiscoveryPreviewContent(
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         popupAnchor = { nativePopupAnchor = it },
                         showSkeletons = tileSkeletons,
+                        transparentBackground = LocalDiscoverySceneArtwork.current,
                         restoreTouchSelection = providerCatalog != null,
                         reconcileSkeletons = providerCatalog != null,
                         navigationTrace = navigationTrace,
@@ -1397,8 +1401,13 @@ private fun DiscoverySupplementStatus(section: String, state: DiscoveryState, vm
 
 @Composable
 internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center, shaded: Boolean = true, viewportShade: Boolean = false) {
+    DiscoveryBackdropArtwork(card?.backdrop?.let { thumbnailArtworkUrl(it, 1280) }, reduceMotion, alignment, shaded, viewportShade)
+}
+
+@Composable
+internal fun DiscoveryBackdropArtwork(requested: String?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center,
+    shaded: Boolean = true, viewportShade: Boolean = false) {
     val context = LocalContext.current
-    val requested = card?.backdrop?.let { thumbnailArtworkUrl(it, 1280) }
     var ready by remember { mutableStateOf(requested) }
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
