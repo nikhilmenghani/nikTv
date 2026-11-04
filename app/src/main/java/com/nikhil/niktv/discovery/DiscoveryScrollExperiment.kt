@@ -58,7 +58,14 @@ internal fun discoveryVariantForRoute(experiment: Boolean, selected: DiscoverySc
     if (experiment) selected else DiscoveryScrollVariant.CONTROL
 
 internal fun optimizedDiscoverySurface(surface: com.nikhil.niktv.model.DashboardSurface) =
-    surface == com.nikhil.niktv.model.DashboardSurface.HOME || surface == com.nikhil.niktv.model.DashboardSurface.MOVIES
+    surface == com.nikhil.niktv.model.DashboardSurface.HOME || discoveryProviderCatalog(surface) != null
+
+/** The provider adapter is shared by catalog tabs; Home keeps its TMDB presentation. */
+internal fun discoveryProviderCatalog(surface: com.nikhil.niktv.model.DashboardSurface): com.nikhil.niktv.model.CatalogType? = when (surface) {
+    com.nikhil.niktv.model.DashboardSurface.MOVIES -> com.nikhil.niktv.model.CatalogType.MOVIES
+    com.nikhil.niktv.model.DashboardSurface.SERIES -> com.nikhil.niktv.model.CatalogType.SERIES
+    else -> null
+}
 
 internal fun discoveryPresenterKey(profile: String, surface: com.nikhil.niktv.model.DashboardSurface, television: Boolean): String =
     "presenter:$profile:" + (if (surface == com.nikhil.niktv.model.DashboardSurface.HOME) "" else "${surface.name}:") +

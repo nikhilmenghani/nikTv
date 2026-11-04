@@ -66,6 +66,8 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
                 onClick = { change(false); navigate("Previous Home") })
             if (surface == DashboardSurface.MOVIES) NikDropdownMenuItem(text = { Text("Previous Movies") },
                 onClick = { change(false); navigate("Previous Movies") })
+            if (surface == DashboardSurface.SERIES) NikDropdownMenuItem(text = { Text("Previous Series") },
+                onClick = { change(false); navigate("Previous Series") })
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
             if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },

@@ -133,7 +133,7 @@ class ProfileDashboardStartupTest {
         assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
     }
 
-    @Test fun optimizedMoviesDoNotEnableSeriesBeforeItsMigration() = runTest(scheduler) {
+    @Test fun optimizedCatalogsRetainExplicitPreviousRoutes() = runTest(scheduler) {
         for (surface in listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)) {
             vm.openDiscoveryExperiment(surface)
             assertEquals(surface, vm.state.value.discoverySurface)
@@ -141,7 +141,10 @@ class ProfileDashboardStartupTest {
             val navigation = vm.state.value.discoveryNavigationId
             vm.openDiscovery(surface)
             assertEquals(surface, vm.state.value.discoverySurface)
-            assertEquals(surface != DashboardSurface.SERIES, vm.state.value.discoveryExperiment)
+            assertTrue(vm.state.value.discoveryExperiment)
+            vm.openPreviousDiscovery(surface)
+            assertEquals(surface, vm.state.value.discoverySurface)
+            assertFalse(vm.state.value.discoveryExperiment)
             assertTrue(vm.state.value.discoveryNavigationId > navigation)
         }
     }

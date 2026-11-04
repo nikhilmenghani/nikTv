@@ -269,6 +269,7 @@ internal fun DiscoveryScreenHost(
         "Home 2" -> openHomeExperiment()
         "Previous Home" -> openPreviousHome()
         "Previous Movies" -> openPreviousDiscovery(DashboardSurface.MOVIES)
+        "Previous Series" -> openPreviousDiscovery(DashboardSurface.SERIES)
         "Movies" -> openTrial(DashboardSurface.MOVIES)
         "Series" -> openTrial(DashboardSurface.SERIES)
         "Live TV" -> { libraryMenuEpoch++; if (!state.searchOpen && libraryBrowseAll && !state.favoritesOpen) libraryBrowseAll = false else if (state.searchOpen || state.homeOpen || state.favoritesOpen || state.selectedType != CatalogType.LIVE_TV || modernSectionOpen) selectType(CatalogType.LIVE_TV) }
@@ -431,6 +432,7 @@ internal fun DiscoveryScreenHost(
                     }, navigate = { label -> when (label) {
                         "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Previous Home" -> openPreviousHome(); "Live TV" -> selectType(CatalogType.LIVE_TV)
                         "Previous Movies" -> openPreviousDiscovery(DashboardSurface.MOVIES)
+                        "Previous Series" -> openPreviousDiscovery(DashboardSurface.SERIES)
                         "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                         "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                         "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
@@ -452,6 +454,7 @@ internal fun DiscoveryScreenHost(
                         navigate = { label -> when (label) {
                             "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Previous Home" -> openPreviousHome(); "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                             "Previous Movies" -> openPreviousDiscovery(DashboardSurface.MOVIES)
+                            "Previous Series" -> openPreviousDiscovery(DashboardSurface.SERIES)
                             "Live TV" -> selectType(CatalogType.LIVE_TV); "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                             "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
                         } }, open = { item, queue, filter -> playInContext?.invoke(item, queue, filter) ?: play(item) },

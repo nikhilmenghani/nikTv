@@ -384,6 +384,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             navigate = { label -> when (label) {
                 "Home" -> vm.openHome(); "Home 2" -> vm.openHomeExperiment(); "Previous Home" -> vm.openPreviousHome(); "Live TV" -> vm.openCatalogType(CatalogType.LIVE_TV)
                 "Previous Movies" -> vm.openPreviousDiscovery(DashboardSurface.MOVIES)
+                "Previous Series" -> vm.openPreviousDiscovery(DashboardSurface.SERIES)
                 "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
                 "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileSwitcher()

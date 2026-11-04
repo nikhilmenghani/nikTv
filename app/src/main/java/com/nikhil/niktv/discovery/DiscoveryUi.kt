@@ -204,7 +204,8 @@ private fun DiscoveryPreviewContent(
                 discoveryRecycledProviderScope(categories, nearbyRow?.removePrefix("provider:${type.name}:"))
             }
     }
-    val windowedProviderPreview = experiment && surface == DashboardSurface.MOVIES && scrollVariant.recycledRows
+    val providerCatalog = discoveryProviderCatalog(surface)
+    val windowedProviderPreview = experiment && providerCatalog != null && scrollVariant.recycledRows
     val providerBindingScope = if (windowedProviderPreview) providerSelections else providerBindingSelections
     val previewWindow = remember(providerBindingSelections) {
         providerBindingSelections.mapValues { providerDiscoverySources(it.value).mapTo(linkedSetOf()) { category -> category.id } }
@@ -433,6 +434,10 @@ private fun DiscoveryPreviewContent(
     // Focus and prepared-backdrop publications must not rebuild every row, rescan progress,
     // sort episode backlogs or allocate every tile callback on the UI thread.
     val progressLookup = rememberDiscoveryProgressLookup(profile, app.recentlyPlayed, app.playbackProgress)
+    val currentSeriesHeroPlayback by rememberUpdatedState { item: MediaItem, queue: List<MediaItem> ->
+        playProviderSeriesHero(profile, item, app.recentlyPlayed, { progressLookup?.recent(it) },
+            resume = currentOpenRecent, open = { currentPlayProvider(CatalogType.SERIES, it, queue) })
+    }
     val today = currentDiscoveryDate()
     val providerRailModels = remember(profile, surface, windowedProviderPreview, progressLookup, scrollVariant.tileLimit) {
         linkedMapOf<String, Pair<List<Any?>, Rail>>()
@@ -676,11 +681,13 @@ private fun DiscoveryPreviewContent(
         val heroPlayRequester = remember(profile, surface) { FocusRequester() }
         val heroInfoRequester = remember(profile, surface) { FocusRequester() }
         val providerFavorites = remember(app.favorites, profile, surface) {
-            if (surface == DashboardSurface.MOVIES) providerHeroFavoriteIds(app.favorites, profile, FavoriteKind.MOVIE) else emptySet()
+            providerCatalog?.let { providerHeroFavoriteIds(app.favorites, profile,
+                if (it == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE) }.orEmpty()
         }
-        val providerHeroPresentation = if (surface == DashboardSurface.MOVIES) rememberUpdatedState(
+        val providerHeroPresentation = if (providerCatalog != null) rememberUpdatedState(
             ProviderHeroPresentation(providerFavorites, progressLookup, presentationActive, mayRotateHero,
-                scrollVariant.heroArtwork, scrollVariant.heroArtworkFade, scrollVariant.heroAutoRotate, scrollVariant.prepareNextHero)) else null
+                scrollVariant.heroArtwork, scrollVariant.heroArtworkFade, scrollVariant.heroAutoRotate, scrollVariant.prepareNextHero,
+                seriesRecents = if (providerCatalog == CatalogType.SERIES) app.recentlyPlayed else emptyList())) else null
         val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout && surface == DashboardSurface.HOME) ({ focused, down, up ->
             val heroState by vm.state.collectAsStateWithLifecycle()
             val heroCard = heroState.takeIf { it.profile == profile && it.surface == surface }?.hero
@@ -744,14 +751,18 @@ private fun DiscoveryPreviewContent(
                     carousel = state.heroes.size > 1, index = heroState.heroIndex, count = heroState.heroes.size,
                     portraitPhone = phonePortrait)
             }
-        }) else if (scrollVariant.heroLayout && surface == DashboardSurface.MOVIES) ({ focused, down, up ->
-            ProviderDiscoveryHero(profile, CatalogType.MOVIES, providerSelections[CatalogType.MOVIES].orEmpty(),
+        }) else if (scrollVariant.heroLayout && providerCatalog != null) ({ focused, down, up ->
+            ProviderDiscoveryHero(profile, providerCatalog, providerSelections[providerCatalog].orEmpty(),
                 providerVm, landscape, phone, phonePortrait, homeHeroFraming, reduceMotion,
                 presentation = providerHeroPresentation!!,
                 playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
-                play = { item, queue -> currentPlayProvider(CatalogType.MOVIES, item, queue) },
-                add = { item -> currentToggleFavorite(FavoriteItem(FavoriteKind.MOVIE, item, profileKey = profile)) },
-                info = { item, queue -> currentOpenProvider(CatalogType.MOVIES, item, queue) },
+                play = { item, queue ->
+                    if (providerCatalog == CatalogType.SERIES) currentSeriesHeroPlayback(item, queue)
+                    else currentPlayProvider(providerCatalog, item, queue)
+                },
+                add = { item -> currentToggleFavorite(FavoriteItem(
+                    if (providerCatalog == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE, item, profileKey = profile)) },
+                info = { item, queue -> currentOpenProvider(providerCatalog, item, queue) },
                 focused = { focused(it); restoreNativeSelection = true }, down = down, up = up,
                 categoryActions = { DiscoveryCategoryAccess(surface, app.categoryManagerOpen,
                     popupChanged = { categoryPopup = it }, onFocus = { focused("play") }) })
@@ -824,8 +835,16 @@ private fun DiscoveryPreviewContent(
                         nativeNavigationId = app.discoveryNavigationId
                         repeat(12) {
                             withFrameNanos { }
-                            val target = if (menuEntry) tabRequester else playRequester
-                            if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                            // The phone bottom bar also participates in Android focus search.
+                            // Restore the committed Series card itself on detail return;
+                            // focusing only the Compose/native bridge leaves the next arrow
+                            // free to enter that bar. Fresh menu entry still belongs to its tab.
+                            if (!menuEntry && providerCatalog == CatalogType.SERIES && restoreNativeSelection) {
+                                if (nativeFocusRestorer.restore()) return@LaunchedEffect
+                            } else {
+                                val target = if (menuEntry) tabRequester else playRequester
+                                if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                            }
                         }
                     }
                     if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.fillMaxSize()
@@ -834,8 +853,8 @@ private fun DiscoveryPreviewContent(
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         popupAnchor = { nativePopupAnchor = it },
                         showSkeletons = tileSkeletons,
-                        restoreTouchSelection = surface == DashboardSurface.MOVIES,
-                        reconcileSkeletons = surface == DashboardSurface.MOVIES,
+                        restoreTouchSelection = providerCatalog != null,
+                        reconcileSkeletons = providerCatalog != null,
                         navigationTrace = navigationTrace,
                         containedCaptions = scrollVariant.containedCaptions, cardShadows = scrollVariant.cardShadows, homeTileProportions = scrollVariant.homeTileProportions,
                         heroHeightPx = if (nativeHero != null && landscape && !phone) with(LocalDensity.current) {

@@ -33,7 +33,7 @@ internal data class ProviderHeroEntry(val item: MediaItem, val queue: List<Media
 /** Snapshot read by the nested hero composition, independently of recycled-row submissions. */
 internal data class ProviderHeroPresentation(val favoriteIds: Set<String>, val progress: DiscoveryProgressLookup?,
     val active: Boolean, val mayRotate: Boolean, val artwork: Boolean, val fadeArtwork: Boolean,
-    val rotate: Boolean, val prepareNext: Boolean)
+    val rotate: Boolean, val prepareNext: Boolean, val seriesRecents: List<RecentItem> = emptyList())
 
 internal fun providerHeroWaiting(profile: String, type: CatalogType, categories: List<Category>,
     state: ProviderDiscoveryState, poolPrepared: Boolean): Boolean {
@@ -57,7 +57,7 @@ internal fun appendProviderHeroes(existing: List<ProviderHeroEntry>, categories:
     return if (result.size == existing.size) existing else result
 }
 
-/** Movies-only island. Page arrivals update this header without rebinding Home's TMDB hero. */
+/** Provider catalog island. Page arrivals do not rebind Home's TMDB hero. */
 @Composable
 internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categories: List<Category>,
     providerVm: ProviderDiscoveryViewModel, landscape: Boolean, phone: Boolean, portraitPhone: Boolean, homeFrame: Boolean,
@@ -96,6 +96,11 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
         if (display.active) cached = selected?.item?.let { readProviderHeroMetadata(cache, it, type) }
     }
     val card = cached ?: fallback
+    val seriesResume = remember(profile, type, selected?.item, display.seriesRecents, display.progress) {
+        selected?.item?.takeIf { type == CatalogType.SERIES }?.let { item ->
+            providerSeriesResumeRecent(profile, item, display.seriesRecents) { display.progress?.recent(it) }
+        }
+    }
     LaunchedEffect(display.rotate, display.active, display.mayRotate, selectedId, entries.size, reduceMotion) {
         if (display.rotate && display.active && display.mayRotate && !reduceMotion && entries.size > 1) {
             delay(8_000); rotateBy(1)
@@ -141,7 +146,8 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
             onFocus = { focused("play") }, onDown = down, onUp = { up(); true },
             previous = { rotateBy(-1) }, next = { rotateBy(1) }, carousel = entries.size > 1,
             index = index, count = entries.size, playEnabled = selected != null,
-            playLabel = if (selected?.item?.let { (display.progress?.provider(type, it.id) ?: 0f) > 0f } == true) "Resume" else "Play",
+            playLabel = if (if (type == CatalogType.SERIES) seriesResume != null
+                else selected?.item?.let { (display.progress?.provider(type, it.id) ?: 0f) > 0f } == true) "Resume" else "Play",
             portraitPhone = portraitPhone, categoryActions = if (phone) null else categoryActions,
             trailerMedia = selected?.item,
             emptyTitle = if (categories.isEmpty()) "Choose IPTV categories" else "No titles available in these categories")
