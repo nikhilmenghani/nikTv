@@ -47,10 +47,12 @@ internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }
 internal val LocalMobileGlassBounds = staticCompositionLocalOf { Rect.Zero }
 internal val LocalMobileGlassArtwork = staticCompositionLocalOf<String?> { null }
 @Composable
-internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focused: Boolean = false, content: @Composable () -> Unit) {
+internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focused: Boolean = false,
+    artworkOpacity: Float = .68f, tint: Color = Color(0x71101520), content: @Composable () -> Unit) {
     if (LocalMobileGlassEnabled.current) CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         DiscoveryGlassPanel(modifier, LocalMobileGlassArtwork.current, LocalMobileGlassBounds.current,
             focused = focused,
+            artworkOpacity = artworkOpacity, tint = tint,
             fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
             fillWidth = LocalMobileGlassFillWidth.current) { content() }
     }
@@ -69,7 +71,8 @@ internal fun discoveryHeaderWidths(available: Float, desiredMenu: Float, desired
 @Composable
 internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropBounds: Rect,
     focused: Boolean = false, fitArtwork: Boolean = false, topAligned: Boolean = false, fillWidth: Boolean = false,
-    baseColor: Color = Color(0x77171B24), content: @Composable BoxScope.() -> Unit) {
+    baseColor: Color = Color(0x77171B24), artworkOpacity: Float = .68f, tint: Color = Color(0x71101520),
+    content: @Composable BoxScope.() -> Unit) {
     val context = LocalContext.current
     var position by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     // MemoryInfo is a system-service call; never put that IPC on a focus/scroll frame.
@@ -97,10 +100,10 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
             if (imageRect != null) clipRect(backdropBounds.left - position.x, backdropBounds.top - position.y,
                 backdropBounds.right - position.x, backdropBounds.bottom - position.y) {
                 withTransform({ translate(imageRect.left - position.x, imageRect.top - position.y) }) {
-                    with(painter) { draw(Size(imageRect.width, imageRect.height), alpha = .68f) }
+                    with(painter) { draw(Size(imageRect.width, imageRect.height), alpha = artworkOpacity) }
                 }
             }
-            drawRect(Color(0x71101520))
+            drawRect(tint)
             drawRect(glassHighlight)
         }
         content()

@@ -320,7 +320,8 @@ private fun PhoneHeroCarouselArrow(label: String, icon: androidx.compose.ui.grap
         if (it.isFocused) onFocus()
     }.semantics { contentDescription = label }, color = Color.Transparent, shape = RoundedCornerShape(10.dp)) {
         Box(contentAlignment = Alignment.Center) {
-            DiscoveryMobileGlassContainer(Modifier.size(32.dp), focused = focused) {
+            DiscoveryMobileGlassContainer(Modifier.size(32.dp), focused = focused,
+                artworkOpacity = .85f, tint = Color(0x33101520)) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(20.dp)) }
             }
         }
