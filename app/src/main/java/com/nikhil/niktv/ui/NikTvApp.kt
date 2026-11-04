@@ -398,6 +398,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun NikTvAppContent(vm: NikTvViewModel) {
     val pairingInvite = com.nikhil.niktv.data.PairingInvites.pending

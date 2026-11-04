@@ -15,6 +15,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.recyclerview.widget.RecyclerView
 import androidx.test.platform.app.InstrumentationRegistry
@@ -276,6 +277,7 @@ class RecycledDiscoveryDeviceTest {
         val heroEntry = FocusRequester()
         val activity = java.util.concurrent.atomic.AtomicReference<HeroActivity>()
         val heroFocused = java.util.concurrent.atomic.AtomicBoolean(false)
+        val heroLaidOut = java.util.concurrent.atomic.AtomicBoolean(false)
         val headerFocused = java.util.concurrent.atomic.AtomicBoolean(false)
         val rowsShown = mutableStateOf(true)
         val restoreSelection = mutableStateOf(true)
@@ -312,7 +314,9 @@ class RecycledDiscoveryDeviceTest {
                             heroHeightPx = if (fixedHero) (heroHeight * c.resources.displayMetrics.density).toInt() else null,
                             heroActivity = if (withHero) ({ activity.set(it) }) else null,
                             hero = if (withHero) ({ focused, down, up ->
-                                Box(Modifier.height(heroHeight.dp)) {
+                                Box(Modifier.height(heroHeight.dp).onGloballyPositioned {
+                                    heroLaidOut.set(it.size.width > 0 && it.size.height > 0)
+                                }) {
                                     Button({}, Modifier.focusRequester(heroEntry).onFocusChanged {
                                         heroFocused.set(it.isFocused); if (it.isFocused) focused("play")
                                     }.onPreviewKeyEvent {
@@ -329,6 +333,12 @@ class RecycledDiscoveryDeviceTest {
                 }
             } } }
             await("Active initial layout") { host.window.decorView.isLaidOut && host.window.decorView.hasWindowFocus() }
+            if (exerciseViewport) {
+                // This case verifies restoration of an already mounted viewport.
+                // The native parent can lay out before its nested Compose hero.
+                // Early entry/cancellation is covered by the separate rapid-entry case.
+                await("Hero viewport is mounted before restoration checks") { heroLaidOut.get() }
+            }
             if (exerciseRapidEntry) {
                 // Both requests occur before the deferred hero entry frame runs.
                 i.runOnMainSync {

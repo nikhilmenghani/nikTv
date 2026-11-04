@@ -809,12 +809,13 @@ internal fun ModernSettingsScreen(
         SettingsSection("Parental controls") {
             ParentalControlsSettings()
         }
-        if (activePage in setOf(SettingsPage.CATALOG_UPDATES, SettingsPage.CATALOG_MEDIA_TYPES, SettingsPage.CATALOG_TOOLS))
-        SettingsSection("Data and sync", page = activePage) {
-            SettingsGroupHeading("Local catalog", "Choose a profile, build its catalog and review scan progress.")
-            if (catalogProfile == null) SettingsControlRow("Add a profile", description = "A connection is needed before building a catalog.", onClick = addProfile)
-            else CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
-                catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
+        if (activePage in setOf(SettingsPage.CATALOG_UPDATES, SettingsPage.CATALOG_MEDIA_TYPES, SettingsPage.CATALOG_TOOLS)) {
+            SettingsSection("Data and sync", page = activePage) {
+                SettingsGroupHeading("Local catalog", "Choose a profile, build its catalog and review scan progress.")
+                if (catalogProfile == null) SettingsControlRow("Add a profile", description = "A connection is needed before building a catalog.", onClick = addProfile)
+                else CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
+                    catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
+                }
             }
         }
         SettingsSection("Backup destination") {
@@ -2405,10 +2406,8 @@ internal fun LiveTvPlaybackScreen(
                                     playing.media.id
 
                         val itemFocusRequester =
-                            channelFocusRequesters.getOrPut(
-                                item.id
-                            ) {
-                                FocusRequester()
+                            remember(channelFocusRequesters, item.id) {
+                                channelFocusRequesters.getOrPut(item.id) { FocusRequester() }
                             }
 
                         ModernMediaListCard(

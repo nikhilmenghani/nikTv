@@ -2037,7 +2037,7 @@ private fun ModernContinueRow(
                 },
                 homeCardScale = 0.82f,
                 modifier = Modifier.focusRequester(
-                    requesters.getOrPut(focusId) { FocusRequester() }
+                    remember(requesters, focusId) { requesters.getOrPut(focusId) { FocusRequester() } }
                 )
             )
         }
@@ -2846,8 +2846,8 @@ private fun ModernTmdbCollection(
                             if (it.hasFocus) focusedPosterIndex = index
                         }
                         .focusRequester(
-                            itemFocusRequesters.getOrPut(media.id) {
-                                FocusRequester()
+                            remember(itemFocusRequesters, media.id) {
+                                itemFocusRequesters.getOrPut(media.id) { FocusRequester() }
                             }
                         ),
                     subtitle = buildList {
@@ -2917,8 +2917,8 @@ private fun ModernTmdbCollection(
                             if (it.hasFocus) focusedPosterIndex = index
                         }
                         .focusRequester(
-                            itemFocusRequesters.getOrPut(media.id) {
-                                FocusRequester()
+                            remember(itemFocusRequesters, media.id) {
+                                itemFocusRequesters.getOrPut(media.id) { FocusRequester() }
                             }
                         ),
                     subtitle = buildList {
@@ -3642,8 +3642,8 @@ internal fun ModernIptvCollection(
                     }
                 }
                 .focusRequester(
-                    itemFocusRequesters.getOrPut(focusIds[index]) {
-                        FocusRequester()
+                    remember(itemFocusRequesters, focusIds[index]) {
+                        itemFocusRequesters.getOrPut(focusIds[index]) { FocusRequester() }
                     }
                 )
 

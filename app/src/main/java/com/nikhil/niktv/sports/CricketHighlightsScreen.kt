@@ -278,7 +278,7 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
                         val key = "${section.id}:${video.id}"
                         val tileModifier = Modifier.width(if (compact) 268.dp else 300.dp)
                             .then(if (rowIndex == 0 && index == 0) Modifier.focusRequester(entry) else Modifier)
-                            .focusRequester(requesters.getOrPut(key) { FocusRequester() })
+                            .focusRequester(remember(requesters, key) { requesters.getOrPut(key) { FocusRequester() } })
                             .onFocusChanged { if (it.isFocused) onFocused(key) }
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {

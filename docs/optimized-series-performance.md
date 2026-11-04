@@ -2,9 +2,9 @@
 
 ## Status — November 4, 2026
 
-Series is implemented on `codex/optimized-series`, based on `791abc71`, and the optimized non-debuggable Dev APK is installed on Xiaomi Pad 5 and Poco X3 Pro. Home and Movies retain their existing behavior. Previous Series remains available in Options.
+Series is implemented on `codex/optimized-series`, based on `791abc71`. The optimized non-debuggable Dev APK is installed on Xiaomi Pad 5 and Poco X3 Pro; the subsequent lint-fixed Dev build is installed on Fire TV. Home and Movies retain their existing behavior. Previous Series remains available in Options.
 
-This checkpoint records the completed tablet/Poco implementation and measurements. The user requested committing it on November 4, then fixing lint and beginning Fire TV validation. The full rollout gate is not complete: TV checks, remaining mobile/profile coverage and the unmeasured metrics listed below still require follow-up. This checkpoint does not certify those pending gates. No push, Release installation or publication has been made.
+This checkpoint records the completed tablet/Poco implementation and measurements. The user requested committing it on November 4, then fixing lint and beginning Fire TV validation. The full rollout gate is not complete: the remaining mobile/profile coverage, faster-cadence TV timing and unmeasured metrics listed below still require follow-up. This checkpoint does not certify those pending gates. No push, Release installation or publication has been made.
 
 ## Implementation
 
@@ -15,7 +15,7 @@ This checkpoint records the completed tablet/Poco implementation and measurement
 - Series enables the existing provider touch-selection and skeleton-reconciliation behavior. No playback engine, episode loading, parental authorization or download implementation changed.
 - A real Poco detail-return check exposed an integration gap: the old entry effect accepted focus on the Compose/native container, allowing the first arrow to enter the phone bottom bar. Series detail return now retries actual native card restoration; fresh menu entry still focuses its tab. The hook runs on route entry, not each tile movement. Home and Movies do not use this new branch.
 
-## Builds and checks
+## Overnight checkpoint checks (before the lint follow-up)
 
 All commands run from `D:/workspace/android/nikTv-optimized-series` with JDK 17. Build preparation uses the existing tasks; tracked changes were checked after building. No integrated sources or unrelated player changes were modified.
 
@@ -112,9 +112,62 @@ Both final-Dev checks completed after approximately 909 seconds, with two backgr
 
 These are functional/memory checks with both devices operating concurrently, not precise timing trials. Samples show warm-up reclamation and bounded fluctuation during this window, not proof that no longer-term leak exists. No streams or audio were launched. The owned regression packages were removed afterward; the regular Dev APK and personal data remain. Tablet was restored to its original Wio profile with Series open.
 
+## November 4 follow-up: lint and Fire TV validation
+
+The Series checkpoint was committed as `4611ecd2`. The user then explicitly requested fixing lint and starting TV validation, superseding the earlier no-TV restriction. The lint fixes and TV follow-up below are subsequent, currently uncommitted work. No push or Release installation was made.
+
+### Fresh host checks
+
+- `:app:lintDebug`: **PASS, zero errors, 370 warnings**. The original 22 errors are corrected without new suppressions. These involved FocusRequester allocation during composition, locale observation, an extracted Media3 opt-in, misleading Settings indentation, and overriding a restricted Activity API. Trailer remote interception now lives in the root view, with focused-child media-key and delegation tests.
+- `:app:testDebugUnitTest --tests 'com.nikhil.niktv.TrailerPlayerActivityTest' --tests 'com.nikhil.niktv.discovery.*' --tests 'com.nikhil.niktv.ui.*Settings*Test' --tests 'com.nikhil.niktv.ui.CategoryPickerPolicyTest' --tests 'com.nikhil.niktv.ui.VideoAppearanceScheduleTest'`: **273 tests, zero failures/errors/skips**.
+- `:app:assembleDebug`: **PASS**. Combined final host check took 1m33s; log: `series-resumed/lint-fixes-final-checks.log`. Flags: `-PperformanceBuild=true -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true --max-workers=2 --continue --console=plain`.
+- `:app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true` with the same performance/credential flags: **PASS** (1m18s). Preparation writes generated build outputs, not integrated sources.
+- `python tools/check-source-secrets.py`: **PASS, zero findings**. `git diff --check`: **PASS**.
+
+### TV setup and test-harness findings
+
+Fire TV AFTKRT (Android 11/API 30, 32-bit ARM, logical 1920×1080) received the non-debuggable armv7 **Dev** APK, preserving existing data. Release was untouched. All fixture networking uses isolated/local fake data; no media/audio was started.
+
+The first combined fixture run had three failures. Two came from the instrumentation APK shipping a reduced `j$.util.DesugarTimeZone` that shadowed the app copy and lacked `getTimeZone(String)`; an explicit Java/networking linkage regression fixes the test APK reachability. Settings also needed fresh ancestor accessibility reads on API 30 and remote traversal past existing Watching preference rows. The normal app did not show the linkage exception.
+
+An intermediate combined run passed seven of eight tests; the viewport-restoration test intermittently requested initial focus before the nested Compose hero was laid out. It now waits for that test precondition, while a separate rapid-entry/cancellation case retains coverage before deferred entry finishes. The fresh combined run **passes all nine distinct TV fixtures**: Series provider header/actions/resume eligibility, full-height hero reversal, held remote release, both-axis viewport restoration, rapid-entry cancellation, Settings picker/nested Back, trailer fallback, original/optimized startup, and Java runtime linkage. Raw earlier failed runs remain retained; no production renderer was changed to make these fixtures pass.
+
+Fire OS initially returned a null UI hierarchy, and an older host probe could read a leftover XML file. Those probes were discarded. The TV driver now removes only its own temporary XML before each dump and refuses unsuccessful dumps. Screenshots and closed poster-border/artwork identity checks are collected outside timed windows.
+
+Wio TV A–B–B–A measurements (three warm trials per block, six per renderer) now show:
+
+| Path | Previous p95 / p99 | Optimized p95 / p99 | Previous missed deadlines / frames | Optimized missed deadlines / frames |
+|---|---:|---:|---:|---:|
+| Horizontal | 22 / 22 ms | 6 / 11 ms | 11 / 24 | 1 / 504 |
+| Vertical category round trip | 26 / 26 ms | 6 / 9 ms | 22 / 71 | 2 / 252 |
+
+Horizontal uses 24 directional inputs per renderer. Vertical uses six logical category round trips: 24 keys on Previous (heading/card stops) and 12 on optimized (direct row entry). The renderers draw different numbers of animation frames; these pipeline metrics are not visible-focus latency or FPS. Optimized vertical p95 ranges 6–27 ms; both first trials after reopening are slower than later trials. The original final vertical block initially returned to a different category from a lower viewport; it was excluded, realigned to the earlier top viewport and repeated. Both failed and corrected trials remain available. No >50 ms UI-work span appeared in the bounded final framestats rings of accepted Wio samples.
+
+Nikhil also completed A–B–B–A horizontal comparisons, six warm trials per renderer on the same Dance Deewane / BIGG BOSS / Kapil row:
+
+| Path | Previous p95 / p99 | Optimized p95 / p99 | Previous missed deadlines / frames | Optimized missed deadlines / frames |
+|---|---:|---:|---:|---:|
+| Nikhil horizontal | 21 / 21 ms | 6 / 11.5 ms | 14 / 27 | 0 / 512 |
+
+Both renderers use 24 input events. Previous p95 ranges 19–25 ms, optimized 5–9 ms. Exact screenshot digests, rather than permissive image similarity, verify native endpoints because these provider titles have no artwork. Do not compare this cohort directly with artwork-heavy Wio. No >50 ms UI-work span appeared in these bounded final framestats rings. Nikhil vertical was not benchmarked.
+
+Real Nikhil Dance Deewane details opened; Back restored the same native tile, and Right moved to BIGG BOSS rather than the navigation bar. Held OK opened the popup beside Dance Deewane, and Back restored it without activating Play. Forty Right inputs reached the category close control; Left reached View All. View All opened the modern provider collection (95 loaded titles and further pagination available), and Back returned to the same View All control. Forty Left inputs restored the first fully visible Dance Deewane tile. The close/remove control was never activated; category choices and My List were preserved.
+
+The final combined fixture run passed nine distinct tests in 27.01s. A second three-test confirmation (Series header, both-axis restoration, rapid entry) passed in 10.868s. Regression packages were removed afterward. The final Dev build completed the finite navigation test from 09:58:54 to 10:14:08 Toronto: **94 cycles**, two background returns, one unchanged process and a fully visible Dance Deewane tile still selected. Each cycle is Right/Right/Left/Left/Down/Up; the adjacent Netflix row includes provider artwork. Final viewport differs from the initial bottom-row position because the test explicitly navigates between rows; this is not an exact viewport-restoration benchmark. No media/audio was started.
+
+PSS: 171.9 → 143.0 MB, range 140.8–171.9 MB. Graphics: 34.0 → 40.8 MB, maximum 40.9 MB; it stabilized after the first background return. This window shows no steadily rising PSS and no repeated graphics step after the second return; it does not rule out a longer-term leak or certify an artwork-heavy Wio endurance run.
+
+**Cadence limitation:** input JSON shows the host foreground guard plus Android shell startup stretched the nominal 400 ms spacing to a median **953–953.5 ms**, matched across old/new and both profiles (range 921–1,000 ms). These are controlled warm single-step/slow-reversal comparisons, not fast-repeat performance. The separate forty-key horizontal burst exercised functional traversal, not measured frame latency. Fast-cadence TV benchmarking and an in-app dispatch/highlight probe remain required before certifying rapid-input smoothness or the two-display-period target.
+
+The final locale helper observes `LocalResources`, rather than the process-wide Compose locale snapshot. A fresh combined host command again passed lint (zero errors) and all 273 unit tests, but its first APK packaging attempt failed without a detailed cause. An unchanged `:app:assembleDebug --stacktrace` rerun passed in 20s; the cause of the one-off packaging failure remains unproven. No check was suppressed. Final armv7 Dev SHA-256: `a52c553901a7d4be7898e3e49ebdd421df2609597629cb4926e18c80e0c42b38`. Wio timed comparisons used `5d6483b072aa70ec0315434ed47b1f522927fe09173f5e4294061f02bcbfe6f3`; the subsequent production change only affects playback date/locale observation.
+
+Wio was restored after the test; a focused normal-app Home/Series route smoke check completed, and Fire TV was left on optimized Series with the final Dev APK. No Release package was changed.
+
+Artifacts: `D:/workspace/niktv-playback-tests/series-tv-validation-20261104/` (`verification-manifest.json`, per-trial input/navigation/frame JSON, `wio-summary.json`, `nikhil-summary.json`, `endurance-summary.json`, screenshots and all pass/failure logs).
+
 ## Remaining gates and limits
 
-- Fire TV has not been touched. Its Series comparison, D-pad/return checks and sustained run remain pending.
+- Fire TV warm horizontal comparisons on both profiles, Wio vertical comparison, targeted fixtures and the 15-minute Nikhil navigation/background-return run are complete as described above. Nikhil vertical timing, a heavy-artwork Wio sustained run and faster-cadence timing remain unmeasured. The combined hero fixture passes after correcting its viewport-readiness precondition; early-entry cancellation is tested separately.
 - Poco has no configured Nikhil profile; no Nikhil phone result is claimed. Samsung and opposite physical orientations remain untested in this Series session.
 - Real input-to-highlighted-draw latency, first usable tile time, artwork readiness and provider-request counts are not instrumented here. Shell timing and gfxinfo are not substitutes. The two-display-period focus target is therefore not certified.
 - Renderer-only versus actual provider-header cost has not been isolated. The before/after tables include the header and all current actions.

@@ -8,19 +8,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 /** Local device date/time, visible only alongside the playback controls. */
 @Composable
 internal fun PlayerDateTime(compact: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val locale = configuration.locales[0] ?: Locale.getDefault()
+    val locale = rememberPlayerLocale()
     val now by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
             value = System.currentTimeMillis()

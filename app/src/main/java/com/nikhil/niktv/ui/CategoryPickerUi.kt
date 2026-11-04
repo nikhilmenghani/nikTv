@@ -69,8 +69,11 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     val cancel = remember { FocusRequester() }
     val bulk = remember { FocusRequester() }
     val clear = remember { FocusRequester() }
-    val requesters = remember(profile, type) { mutableMapOf<String, FocusRequester>() }
-    raw.forEach { requesters.getOrPut(it.id) { FocusRequester() } }
+    val retainedRequesters = remember(profile, type) { mutableMapOf<String, FocusRequester>() }
+    val requesters = remember(retainedRequesters, raw) {
+        raw.forEach { retainedRequesters.getOrPut(it.id) { FocusRequester() } }
+        retainedRequesters
+    }
     var lastFocused by rememberSaveable(profile, type) { mutableStateOf<String?>(null) }
     var focusJob by remember { mutableStateOf<Job?>(null) }
     var entered by remember(profile, type) { mutableStateOf(false) }

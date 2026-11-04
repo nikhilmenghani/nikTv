@@ -193,7 +193,7 @@ internal fun <T> ModernRail(
                     modifier = Modifier
                         .width(cardWidth)
                         .onFocusChanged { if (it.hasFocus) focusedDetails = media(entry).title to subtitle(entry).orEmpty() }
-                        .focusRequester(itemFocusRequesters.getOrPut(itemKey) { FocusRequester() }),
+                        .focusRequester(remember(itemFocusRequesters, itemKey) { itemFocusRequesters.getOrPut(itemKey) { FocusRequester() } }),
                     progress = progress(entry),
                     onClick = { open(entry) },
                     titleMaxLines = titleMaxLines.coerceAtLeast(1),

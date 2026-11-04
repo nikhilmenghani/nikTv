@@ -78,7 +78,13 @@ class CompactSettingsDeviceTest {
     }
     private fun focused(text: String): Boolean {
         var node = find(text)
-        repeat(8) { if (node?.isFocused == true) return true; node = node?.parent }
+        repeat(8) {
+            // API 30 keeps ancestor focus snapshots after the picker opens.
+            // Refresh the actual node instead of accepting an old cached value.
+            node?.refresh()
+            if (node?.isFocused == true) return true
+            node = node?.parent
+        }
         return false
     }
     private fun screenshot(name: String) {
@@ -173,7 +179,14 @@ class CompactSettingsDeviceTest {
         screenshot("settings-tv-compact.png")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Player media browser")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Default season")
-        move(KeyEvent.KEYCODE_DPAD_DOWN, "Compatibility")
+        // Watching preferences may insert additional rows before this link.
+        // Traverse with the remote without activating or changing those values.
+        for (step in 0 until 12) {
+            if (focused("Compatibility")) break
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            instrumentation.waitForIdleSync()
+        }
+        await("Compatibility link remains reachable") { focused("Compatibility") }
         key(KeyEvent.KEYCODE_DPAD_CENTER)
         await("Compatibility subpage opens") { button("Continue video if audio fails") != null }
         await("New subpage enters its first control") { focused("Continue video if audio fails") }
