@@ -139,6 +139,12 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
     }
 }
 
+// Previous Home's mobile gradient: preserve the middle of the backdrop and
+// blend progressively behind the lower controls, without a side vignette.
+private val phoneHeroShade = Brush.verticalGradient(
+    0f to Color(0xFF090B10), .25f to Color.Transparent,
+    .55f to Color.Transparent, .82f to Color(0x99090B10), 1f to Color(0xFF090B10))
+
 /** A portrait crop and a baked vertical gradient, never a stretched TV backdrop or live blur. */
 @Composable
 internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, detail: Boolean,
@@ -176,7 +182,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                     alignment = if (compactDetail && !portraitPoster) Alignment.TopCenter else artworkAlignment)
             }
             // Shade the viewport, not the source bitmap: a portrait crop must not cut away its fades.
-            if (!detail) DiscoveryHeroShade(Modifier.matchParentSize())
+            if (!detail) Box(Modifier.matchParentSize().background(phoneHeroShade))
             if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                 0f to Color(0xD9090B10), .3f to Color.Transparent, .6f to Color(0x66090B10), 1f to Color(0xFF090B10))))
             if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
@@ -196,7 +202,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compactDetail) 10.dp else if (!detail) 12.dp else 20.dp),
                     horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compactDetail || !detail) 8.dp else 12.dp)) {
                     // Keep rank/loading in one fixed slot: content arrival must not move actions.
-                    if ((!detail && (rank != null || loading)) || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
+                    if (!detail || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
                         contentAlignment = Alignment.Center) {
                         if (loading) LinearProgressIndicator(Modifier.width(110.dp).semantics { contentDescription = "Loading featured title" })
                         else rank?.let { Text("#$it · TRENDING TODAY", color = Color(0xFFE5E5EA), fontSize = 11.sp, lineHeight = 24.sp,

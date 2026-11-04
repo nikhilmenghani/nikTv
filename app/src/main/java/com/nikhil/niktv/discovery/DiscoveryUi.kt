@@ -747,7 +747,7 @@ private fun DiscoveryPreviewContent(
             LocalMobileGlassTopAligned provides (homeFrame && !sceneArtwork),
             LocalMobileGlassFillWidth provides (homeFrame && !sceneArtwork)) {
                 DiscoveryHero(heroCard?.let { if (phonePortrait && scrollVariant.heroArtwork) it.copy(titleLogo = heroLogo) else it.copy(backdrop = null, poster = null, titleLogo = heroLogo) }, rank = null,
-                    height = if (phonePortrait) phoneDiscoveryHeroHeight() else baseHeroHeight.dp + LocalHeroNavigationInset.current,
+                    height = if (phonePortrait) phoneDiscoveryHeroHeight() - LocalHeroNavigationInset.current else baseHeroHeight.dp + LocalHeroNavigationInset.current,
                     contentInset = if (landscape && !phone && !sceneArtwork) 18.dp else 0.dp,
                     landscape = landscape, compact = if (sceneArtwork) compactLandscape else true, detail = false,
                     loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,

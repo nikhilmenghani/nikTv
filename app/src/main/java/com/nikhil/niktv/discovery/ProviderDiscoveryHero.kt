@@ -144,7 +144,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
             LocalMobileGlassTopAligned provides (framed && !sceneArtwork),
             LocalMobileGlassFillWidth provides (framed && !sceneArtwork)) {
         DiscoveryHero(card?.let { if (portraitPhone && display.artwork) it else it.copy(backdrop = null, poster = null) },
-            rank = null, height = baseHeight.dp + inset, landscape = landscape, compact = true, detail = false,
+            rank = null, height = if (portraitPhone) phoneDiscoveryHeroHeight() - inset else baseHeight.dp + inset, landscape = landscape, compact = true, detail = false,
             contentInset = if (landscape && !phone && !sceneArtwork) 18.dp else 0.dp,
             loading = selected == null && providerHeroWaiting(profile, type, categories, provider, poolPrepared),
             inList = selected?.item?.id in display.favoriteIds,

@@ -47,7 +47,8 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
                 LocalMobileGlassTopAligned provides (!backdropBehindRows && artwork?.topAligned == true),
                 LocalMobileGlassFillWidth provides (!backdropBehindRows && artwork?.fillWidth == true)) {
                 Box(Modifier.fillMaxWidth().background(
-                    if (!backdropBehindRows && artwork?.bounds?.top?.let { it < viewportTop - 1f } == true) Color(0xFF090B10) else Color.Transparent
+                    if (!backdropBehindRows && (if (phone) artwork?.bounds?.bottom?.let { it <= viewportTop + with(density) { inset.toPx() } }
+                        else artwork?.bounds?.top?.let { it < viewportTop - 1f }) == true) Color(0xFF090B10) else Color.Transparent
                 ).onSizeChanged { inset = with(density) { it.height.toDp() } }) { header() }
             }
         } else Column(Modifier.fillMaxSize()) {
