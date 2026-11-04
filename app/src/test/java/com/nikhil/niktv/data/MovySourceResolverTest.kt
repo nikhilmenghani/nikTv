@@ -24,14 +24,24 @@ class MovySourceResolverTest {
         var clock: () -> Long = { 1_000L }
         var primaryCode = 200
         var secondaryCode = 200
+        var fallbackCode = 200
         var redirectedApi = false
         var payload = JSONObject().put("sources", JSONArray().put(JSONObject().put("quality", "1080p").put("url", "https://media.example.test/video.m3u8")))
         var body = "#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST\n"
         val resolver get() = MovySourceResolver(read = { request, phase ->
             requests += request
             val url = request.url.toHttpUrl()
-            val code = if (url.encodedPath == "/miami/sources") primaryCode else if (url.encodedPath == "/boise/sources") secondaryCode else 200
-            if (code !in 200..299) throw AlternateSourceException("Unavailable.", if (code == 403) AlternateSourceFailure.AUTHORIZATION else AlternateSourceFailure.SOURCE, phase, code)
+            val code = when (url.encodedPath) {
+                "/miami/sources" -> primaryCode
+                "/boise/sources" -> secondaryCode
+                "/atlanta/sources" -> fallbackCode
+                else -> 200
+            }
+            if (code !in 200..299) throw AlternateSourceException("Unavailable.", when (code) {
+                401, 403 -> AlternateSourceFailure.AUTHORIZATION
+                429 -> AlternateSourceFailure.RATE_LIMIT
+                else -> AlternateSourceFailure.SOURCE
+            }, phase, code)
             val response = when {
                 url.encodedPath == "/seed" -> JSONObject().put("seed", seed).put("ttlMs", ttl).toString()
                 url.host == "api.wecollege.net" -> encode(payload.toString(), seed, url.queryParameter("tmdbId")!!.toInt())
@@ -102,8 +112,40 @@ class MovySourceResolverTest {
 
     @Test fun unavailableServerUsesOnlyOneAdvertisedFallback() = runBlocking {
         val fixture = Fixture().apply { primaryCode = 500 }
-        assertEquals("1080p · Movy Boise", fixture.resolver.resolve(movie).single().label)
-        assertEquals(listOf("/seed", "/miami/sources", "/boise/sources", "/video.m3u8"), fixture.requests.map { it.url.toHttpUrl().encodedPath })
+        assertEquals("1080p \u00b7 Movy Atlanta", fixture.resolver.resolve(movie).single().label)
+        assertEquals(listOf("/seed", "/miami/sources", "/atlanta/sources", "/video.m3u8"), fixture.requests.map { it.url.toHttpUrl().encodedPath })
+    }
+
+    @Test fun friendsSeasonThreeFinaleUsesWorkingAtlantaAfterMiamiFails() = runBlocking {
+        val fixture = Fixture().apply { primaryCode = 500; secondaryCode = 500 }
+        val target = movie.copy(title = "Friends", series = true, tmdbId = 1668, year = null, season = 3, episode = 25)
+        val stream = fixture.resolver.resolve(target).single()
+        assertEquals("1080p \u00b7 Movy Atlanta", stream.label)
+        assertFalse("Atlanta must avoid VLC's native timestamp assertion", stream.vlcCompatible)
+        assertEquals(listOf("/seed", "/miami/sources", "/atlanta/sources", "/video.m3u8"),
+            fixture.requests.map { it.url.toHttpUrl().encodedPath })
+        val fallback = fixture.requests[2].url.toHttpUrl()
+        assertEquals("1668", fallback.queryParameter("tmdbId"))
+        assertEquals("3", fallback.queryParameter("seasonId"))
+        assertEquals("25", fallback.queryParameter("episodeId"))
+    }
+
+    @Test fun fallbackDoesNotBypassRateLimitsOrIdentityChecks() = runBlocking {
+        val limited = Fixture().apply { primaryCode = 500; fallbackCode = 429 }
+        try { limited.resolver.resolve(movie); fail("Rate limit ignored") }
+        catch (error: AlternateSourceException) { assertEquals(AlternateSourceFailure.RATE_LIMIT, error.kind) }
+        assertEquals(3, limited.requests.size)
+        val mismatch = Fixture().apply { primaryCode = 500; secondaryCode = 500; payload.put("tmdbId", 604) }
+        try { mismatch.resolver.resolve(movie); fail("Fallback identity mismatch ignored") }
+        catch (error: AlternateSourceException) { assertEquals(AlternateSourceFailure.IDENTITY, error.kind) }
+        assertEquals(3, mismatch.requests.size)
+    }
+
+    @Test fun allServerFailuresRemainBoundedAndPreserveTheOriginalFailure() = runBlocking {
+        val fixture = Fixture().apply { primaryCode = 500; secondaryCode = 500; fallbackCode = 502 }
+        try { fixture.resolver.resolve(movie); fail("Failed servers accepted") }
+        catch (error: AlternateSourceException) { assertEquals(500, error.httpCode) }
+        assertEquals(4, fixture.requests.size)
     }
 
     @Test fun authorizationIsTerminalAndApiRedirectIsRejected() = runBlocking {

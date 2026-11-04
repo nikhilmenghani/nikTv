@@ -55,7 +55,7 @@ internal fun phoneDiscoveryHeroHeight(): Dp {
     val density = LocalDensity.current
     val safeHeight = LocalWindowInfo.current.containerSize.height -
         WindowInsets.safeDrawing.getTop(density) - WindowInsets.safeDrawing.getBottom(density)
-    return with(density) { safeHeight.toDp() * .67f }.coerceIn(480.dp, 620.dp)
+    return with(density) { safeHeight.toDp() * .34f }.coerceIn(240.dp, 300.dp)
 }
 
 /** Geometry is device-width based; text scale never changes artwork ratios. */
@@ -151,6 +151,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     supportingTitle: Boolean = false, fitArtwork: Boolean = false, trailerMedia: com.nikhil.niktv.model.MediaItem? = null,
     emptyTitle: String = "Discover something to watch") {
     val context = LocalContext.current
+    val navigationInset = LocalHeroNavigationInset.current
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     var drag by remember { mutableFloatStateOf(0f) }
     val dragThreshold = with(LocalDensity.current) { 56.dp.toPx() }
@@ -166,14 +167,16 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
         LocalMobileGlassBounds provides heroBounds, LocalMobileGlassFit provides glassSource.fit,
         LocalMobileGlassTopAligned provides glassSource.topAligned, LocalMobileGlassFillWidth provides glassSource.fillWidth) {
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().heightIn(min = height).onGloballyPositioned { heroBounds = Rect(it.positionInRoot(), it.size.toSize()) }) {
+        Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds = Rect(it.positionInRoot(), it.size.toSize()) }) {
             Crossfade(picture, modifier = Modifier.matchParentSize(), animationSpec = tween(if (reduceMotion) 0 else 250), label = "phoneHeroArtwork") { url ->
                 AsyncImage(ImageRequest.Builder(context).data(url).size(if (portraitPoster) 780 else 1280, if (portraitPoster) 1170 else 720)
-                    .transformations(DiscoveryPhoneBackdropTransformation()).crossfade(false).build(), null,
+                    .apply { if (detail) transformations(DiscoveryPhoneBackdropTransformation()) }.crossfade(false).build(), null,
                     Modifier.fillMaxSize(),
                     contentScale = if (fitArtwork) ContentScale.Fit else if (compactDetail && !portraitPoster) ContentScale.FillWidth else ContentScale.Crop,
                     alignment = if (compactDetail && !portraitPoster) Alignment.TopCenter else artworkAlignment)
             }
+            // Shade the viewport, not the source bitmap: a portrait crop must not cut away its fades.
+            if (!detail) DiscoveryHeroShade(Modifier.matchParentSize())
             if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                 0f to Color(0xD9090B10), .3f to Color.Transparent, .6f to Color(0x66090B10), 1f to Color(0xFF090B10))))
             if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
@@ -188,28 +191,29 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 })
             Column(Modifier.fillMaxWidth()) {
                 header?.invoke()
-                Spacer(Modifier.height(if (compactDetail) 52.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .25f).coerceAtLeast(100.dp)))
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compactDetail) 10.dp else 20.dp),
-                    horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compactDetail) 8.dp else 12.dp)) {
+                Spacer(Modifier.height(navigationInset))
+                Spacer(Modifier.height(if (compactDetail) 52.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .10f).coerceIn(20.dp, 30.dp)))
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compactDetail) 10.dp else if (!detail) 12.dp else 20.dp),
+                    horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compactDetail || !detail) 8.dp else 12.dp)) {
                     // Keep rank/loading in one fixed slot: content arrival must not move actions.
-                    if (!detail || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
+                    if ((!detail && (rank != null || loading)) || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
                         contentAlignment = Alignment.Center) {
                         if (loading) LinearProgressIndicator(Modifier.width(110.dp).semantics { contentDescription = "Loading featured title" })
                         else rank?.let { Text("#$it · TRENDING TODAY", color = Color(0xFFE5E5EA), fontSize = 11.sp, lineHeight = 24.sp,
                             letterSpacing = 1.sp, fontWeight = FontWeight.Bold) }
                     }
                     var logoReady by remember(card?.key, card?.titleLogo) { mutableStateOf(false) }
-                    Box(Modifier.fillMaxWidth().then(if (compactDetail) Modifier.heightIn(min = 56.dp * fontScale) else Modifier.height(82.dp * fontScale)), contentAlignment = if (supportingTitle) Alignment.BottomCenter else if (leftAligned) Alignment.CenterStart else Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().then(if (compactDetail) Modifier.heightIn(min = 56.dp * fontScale) else Modifier.height((if (detail) 82.dp else 56.dp) * fontScale)), contentAlignment = if (supportingTitle) Alignment.BottomCenter else if (leftAligned) Alignment.CenterStart else Alignment.Center) {
                         if (loading && card == null) Column(horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Box(Modifier.width(220.dp).height(18.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF252B35)))
                             Box(Modifier.width(150.dp).height(12.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF252B35)))
                         }
                         else if (supportingTitle || !logoReady) Text(card?.title ?: emptyTitle, color = Color.White,
-                            fontSize = if (supportingTitle) 17.sp else if (compactDetail) 24.sp else 28.sp, lineHeight = if (supportingTitle) 22.sp else if (compactDetail) 28.sp else 32.sp, fontWeight = if (supportingTitle) FontWeight.Medium else FontWeight.Bold,
-                            textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = if (supportingTitle) 2 else 3, overflow = TextOverflow.Ellipsis)
+                            fontSize = if (supportingTitle) 17.sp else if (compactDetail) 24.sp else if (!detail) 22.sp else 28.sp, lineHeight = if (supportingTitle) 22.sp else if (compactDetail) 28.sp else if (!detail) 26.sp else 32.sp, fontWeight = if (supportingTitle) FontWeight.Medium else FontWeight.Bold,
+                            textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = if (supportingTitle || !detail) 2 else 3, overflow = TextOverflow.Ellipsis)
                         if (!supportingTitle && !card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
-                            Modifier.fillMaxWidth().height((if (compactDetail) 56.dp else 82.dp) * fontScale).graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
+                            Modifier.fillMaxWidth().height((if (compactDetail) 56.dp else if (detail) 82.dp else 56.dp) * fontScale).graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
                             onSuccess = { logoReady = true }, onError = { logoReady = false })
                     }
                     val metadata = card?.let { listOfNotNull(if (detail) discoveryReleaseLabel(it) else it.date?.take(4),
@@ -219,7 +223,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                     if (compactDetail && card != null) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         discoveryDetailMetadata(card).forEach { line -> Text(line, Modifier.fillMaxWidth(), color = Color(0xFFCDCDD3), fontSize = 12.sp, lineHeight = 16.sp,
                             textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center) }
-                    } else if (!leftAligned || metadata.isNotBlank()) Box(Modifier.fillMaxWidth().height(36.dp * fontScale), contentAlignment = if (leftAligned) Alignment.CenterStart else Alignment.Center) {
+                    } else if (!leftAligned || metadata.isNotBlank()) Box(Modifier.fillMaxWidth().height((if (detail) 36.dp else 24.dp) * fontScale), contentAlignment = if (leftAligned) Alignment.CenterStart else Alignment.Center) {
                         if (loading && card == null) Box(Modifier.width(160.dp).height(10.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF252B35)))
                         else if (metadata.isNotBlank()) Text(metadata, color = Color(0xFFCDCDD3), fontSize = 13.sp, lineHeight = 18.sp,
                             textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -236,7 +240,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         if (!detail && !showListAction && supportingTitle) Spacer(Modifier.size(48.dp))
                         DiscoveryMobileGlassContainer(if (detail) Modifier.weight(1f).fillMaxHeight() else Modifier) {
                         Surface(onClick = play, enabled = card != null && playEnabled, shape = RoundedCornerShape(10.dp),
-                            color = Color.Transparent, contentColor = Color.White,
+                            color = if (detail) Color.Transparent else Color(0xFFE50925), contentColor = Color.White,
                             modifier = Modifier.then(if (detail) Modifier.fillMaxSize() else Modifier.widthIn(min = 120.dp))
                                 .heightIn(min = 48.dp).focusRequester(playRequester).onFocusChanged { if (it.isFocused) onFocus() }) {
                             Row(Modifier.padding(horizontal = if (compactDetail) 6.dp else 18.dp, vertical = 12.dp),

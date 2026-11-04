@@ -77,6 +77,14 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         }
     }
     val activity = LocalContext.current.findActivity()
+    val edgeDataSource = remember(stream, sourceAttemptId) {
+        if (stream.edgeTokenApi.isBlank() || !sportsSameOrigin(stream.link, stream.edgeTokenApi)) null else {
+            val state = sportsEdgeTokenState(stream.edgeTokenApi, stream.headers)
+            val upstream = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(stream.headers).setConnectTimeoutMs(15_000).setReadTimeoutMs(20_000)
+            androidx.media3.datasource.DataSource.Factory { SportsEdgeTokenDataSource(upstream.createDataSource(), stream.link, state) }
+        }
+    }
     DisposableEffect(activity) {
         val previousOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -84,6 +92,7 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     }
     key(sourceAttemptId) { PlayerScreen(media, onBack = onBack, onRetry = { attempt++ }, onRetryAlternateDecoder = { decoderRecoveries++; attempt++ },
         playbackDomain = com.nikhil.niktv.ui.PlaybackDomain.SPORTS,
+        playbackDataSourceFactory = edgeDataSource,
         onManualRetry = {
             if (onRetryFresh != null) onRetryFresh() else {
                 decoderRecoveries = 0; decoderSession = java.util.UUID.randomUUID().toString(); attempt++

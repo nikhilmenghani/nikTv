@@ -13,6 +13,25 @@ import androidx.compose.ui.focus.*
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.ui.*
 
+@Composable internal fun SportsResolverModeDialog(selected: SportsResolverMode, choose: (SportsResolverMode) -> Unit, close: () -> Unit) {
+    val first = remember { FocusRequester() }
+    AlertDialog(onDismissRequest = close, containerColor = SportsSurface, shape = SportsShape,
+        modifier = Modifier.initialFocusEntry(first), title = { Text("Stream compatibility") }, text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Applies to Sports web-player sources. Reopen the same source after switching to compare. Your current stream stays unchanged.", color = SportsMuted)
+                SportsResolverMode.entries.forEach { mode ->
+                    NikTvSecondaryActionButton({ choose(mode) }, Modifier.fillMaxWidth()
+                        .then(if (mode == selected) Modifier.focusRequester(first) else Modifier)) {
+                        if (mode == selected) { Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
+                        Text(mode.title)
+                    }
+                }
+                Text(if (selected == SportsResolverMode.TOKEN_AWARE) "Renews supported Edge playlist tokens during playback using ExoPlayer or Flow. Other web players use the token-aware handoff."
+                    else "Uses the previous early URL extraction behavior.", color = SportsMuted)
+            }
+        }, confirmButton = { NikTvSecondaryActionButton(close, Modifier.fillMaxWidth()) { Text("Close") } })
+}
+
 @Composable internal fun SportsItemDialog(channel: SportsChannel, favourite: Boolean, toggle: () -> Unit, close: () -> Unit,
     flag: SportsChannelFlag? = null, toggleFlag: () -> Unit = {}) {
     val first = remember { FocusRequester() }

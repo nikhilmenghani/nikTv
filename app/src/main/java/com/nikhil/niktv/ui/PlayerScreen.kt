@@ -442,7 +442,8 @@ fun PlayerScreen(
 
     val effectiveEngine = if (media.separateAudioUrl != null ||
 
-        (requestedEngine == PlaybackEngine.VLC && vlcHeaderOptions(media.streamRequestHeaders) == null)) PlaybackEngine.MEDIA3 else requestedEngine
+        (requestedEngine == PlaybackEngine.VLC && (vlcHeaderOptions(media.streamRequestHeaders) == null ||
+            !alternateSourceSupportsVlc(media.alternateSource)))) PlaybackEngine.MEDIA3 else requestedEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
@@ -539,6 +540,9 @@ fun PlayerScreen(
     LaunchedEffect(requestedEngine, effectiveEngine, media.playbackAttemptId) {
 
         if (requestedEngine == PlaybackEngine.VLC && effectiveEngine == PlaybackEngine.MEDIA3 &&
+            !alternateSourceSupportsVlc(media.alternateSource))
+            modeFeedback = "Using ExoPlayer for this source's stream timing"
+        else if (requestedEngine == PlaybackEngine.VLC && effectiveEngine == PlaybackEngine.MEDIA3 &&
 
             vlcHeaderOptions(media.streamRequestHeaders) == null)
 

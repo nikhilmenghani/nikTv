@@ -10,6 +10,33 @@ import org.junit.Test
 class SportsWebDeviceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun edgePlayerWaitsForTokenAndPreservesTheAuthorizedManifestRequest() = runBlocking {
+        LocalSportsPages(mapOf(
+            "/edge" to """<script>
+                const EDGE = location.origin;
+                const CHANNEL = 'fixture';
+                const SRC = EDGE + '/live/index.m3u8';
+                setTimeout(function() {
+                    fetch('/api/playlist-token?slug=' + CHANNEL).then(function(r) { return r.json(); }).then(function(r) {
+                        fetch(SRC + '?token=' + encodeURIComponent(r.token), {headers: {'X-Playlist-Token': r.token}});
+                    });
+                }, 1500);
+                </script><div data-hls='/live/index.m3u8'></div>""",
+            "/api/playlist-token" to """{"token":"fixture-edge"}""",
+            "/live/index.m3u8" to "#EXTM3U",
+        )).use { server ->
+            val resolver = SportsWebResolver(context)
+            val stream = SportsStream(server.base + "/edge", "Event", 4)
+            val result = resolver.resolve(stream, SportsResolverMode.TOKEN_AWARE)
+            assertEquals(server.base + "/live/index.m3u8?token=fixture-edge", result.link)
+            assertEquals("fixture-edge", result.headers.entries.single { it.key.equals("X-Playlist-Token", true) }.value)
+            assertEquals(server.base + "/edge", result.headers["Referer"])
+            val legacy = resolver.resolve(stream, SportsResolverMode.LEGACY)
+            assertEquals(server.base + "/live/index.m3u8", legacy.link)
+            assertFalse(legacy.headers.keys.any { it.equals("X-Playlist-Token", true) })
+        }
+    }
+
     @Test fun resolvesPlayerApisMetadataEncodedUrlsAndNestedFrames() = runBlocking {
         val sources = mapOf(
             "/jw" to "<script>window.jwplayer=function(){return {getPlaylist:function(){return [{file:'https://media.example.test/' + ['jw','m3u8'].join('.')}];}}};</script>",

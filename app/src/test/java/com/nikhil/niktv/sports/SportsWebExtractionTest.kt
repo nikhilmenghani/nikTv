@@ -6,6 +6,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SportsWebExtractionTest {
+    @Test fun tokenProtectedPagesWaitForTheAuthorizedRequestInsteadOfScrapedTemplates() {
+        val doc = """{"media":["https://cdn.example.test/live/index.m3u8"],"frames":["https://embed.example.test/player"],"tokenProtected":true}"""
+        val result = sportsWebCandidates(Json.encodeToString(doc))
+        assertTrue(result.tokenProtected)
+        assertTrue(result.media.isEmpty())
+        assertEquals(listOf("https://embed.example.test/player"), result.frames)
+        val input = SportsStream("https://page.example.test/", "Event")
+        val headers = sportsWebHeaders(input, input.link, "https://cdn.example.test/live/index.m3u8?token=a+b", mapOf(
+            "X-Playlist-Token" to "fixture-token", "Cookie" to "edge=fixture", "Origin" to "https://page.example.test"))
+        assertEquals("fixture-token", headers["X-Playlist-Token"])
+        assertEquals("edge=fixture", headers["Cookie"])
+        assertEquals("https://page.example.test", headers["Origin"])
+    }
+
     @Test fun decodesWebViewResultAndRejectsNonWebOrCredentialedAddresses() {
         val doc = """{"media":["https://cdn.example.test/master.m3u8?token=a+b","file:///private","javascript:alert(1)","https://user:pass@cdn.example.test/private.m3u8"],"frames":["https://embed.example.test/player"]}"""
         val result = sportsWebCandidates(Json.encodeToString(doc))

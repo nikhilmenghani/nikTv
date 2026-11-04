@@ -228,14 +228,14 @@ class DiscoveryExperimentDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Rapid Up returns through the tab and hero exactly once: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
             click("Options")
-            click("Performance experiment")
+            click("Home display options")
             click("Close")
             await("Trial settings restores its originating Options button") { focused("Options") }
             repeat(12) { if (!focused("Home")) key(KeyEvent.KEYCODE_DPAD_LEFT) }
             await("Left reaches active Home tab") { focused("Home") }
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Closing trial settings retains direct media entry: ${nativeTag()}") { nativeTag()?.startsWith("daily-movies:") == true && nativeTag() != "daily-movies:all" }
-            click("Options"); click("Performance experiment")
+            click("Options"); click("Home display options")
             await("The baseline stage chooser is ready") { semantic(DiscoveryScrollVariant.RECYCLED_BASELINE.title) { true } || text(DiscoveryScrollVariant.RECYCLED_BASELINE.title)?.isVisibleToUser == true }
             // The chooser scrolls as experiments are added; offscreen options need not be composed.
             click(DiscoveryScrollVariant.RECYCLED_BASELINE.title)
@@ -247,8 +247,8 @@ class DiscoveryExperimentDeviceTest {
             instrumentation.runOnMainSync { vm.closeDetails(); experiment.value = false }
             await("Original Home is restored") { vm.state.value.detail == null && (semantic("Options") { true } || text("Options") != null) }
             click("Options")
-            assertFalse("Original Home does not expose trial settings", semantic("Performance experiment") { true })
-            assertNull("Original Home does not expose trial settings", text("Performance experiment"))
+            assertFalse("Original Home does not expose trial settings", semantic("Home display options") { true })
+            assertNull("Original Home does not expose trial settings", text("Home display options"))
             assertEquals(20, vm.state.value.feeds[TmdbHomeSection.TRENDING_MOVIES]?.size)
         } finally {
             legacyPreferences.edit().clear().commit()

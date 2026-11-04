@@ -54,6 +54,7 @@ data class AlternateStream(
     val route: AlternatePlaybackRoute = AlternatePlaybackRoute.NATIVE,
     val sourceVariant: String? = null,
     val abibli: AbibliPlaybackSpec? = null,
+    val vlcCompatible: Boolean = true,
 )
 
 /** Injectable transport keeps source parsing deterministic and never requires a provider profile. */

@@ -354,7 +354,8 @@ fun PlayerScreen(
     onVideoFramesRendered: ((Int) -> Unit)? = null,
     onManualRetry: ((Long) -> Unit)? = null,
     playbackDomain: PlaybackDomain = PlaybackDomain.SPORTS,
-    onTerminalPlaybackFailure: (() -> Unit)? = null
+    onTerminalPlaybackFailure: (() -> Unit)? = null,
+    playbackDataSourceFactory: androidx.media3.datasource.DataSource.Factory? = null,
 ) {
     val context = LocalContext.current
     val cricketScores = rememberCricketScoreController()
@@ -445,10 +446,11 @@ fun PlayerScreen(
     val requestedEngine = sessionEngineOverride ?: configuredEngine
 
     val effectiveEngine = if (media.separateAudioUrl != null ||
-        (media.streamDrm != null && !requestedEngine.isMedia3Player()) ||
+        ((media.streamDrm != null || playbackDataSourceFactory != null) && !requestedEngine.isMedia3Player()) ||
 
-        (requestedEngine == PlaybackEngine.VLC && vlcHeaderOptions(media.streamRequestHeaders) == null)) PlaybackEngine.MEDIA3 else requestedEngine
-    val displayedPlayerChoice = if (media.streamDrm != null && selectedPlayerChoice.pickerChoice() !in PROTECTED_PLAYER_ENGINES)
+        (requestedEngine == PlaybackEngine.VLC && (vlcHeaderOptions(media.streamRequestHeaders) == null ||
+            !alternateSourceSupportsVlc(media.alternateSource)))) PlaybackEngine.MEDIA3 else requestedEngine
+    val displayedPlayerChoice = if ((media.streamDrm != null || playbackDataSourceFactory != null) && selectedPlayerChoice.pickerChoice() !in PROTECTED_PLAYER_ENGINES)
         effectiveEngine else selectedPlayerChoice
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
@@ -545,7 +547,12 @@ fun PlayerScreen(
 
     LaunchedEffect(requestedEngine, effectiveEngine, media.playbackAttemptId) {
 
-        if (requestedEngine == PlaybackEngine.VLC && effectiveEngine == PlaybackEngine.MEDIA3 &&
+        if (playbackDataSourceFactory != null && requestedEngine != effectiveEngine)
+            modeFeedback = "Using ExoPlayer to renew this stream's access"
+        else if (requestedEngine == PlaybackEngine.VLC && effectiveEngine == PlaybackEngine.MEDIA3 &&
+            !alternateSourceSupportsVlc(media.alternateSource))
+            modeFeedback = "Using ExoPlayer for this source's stream timing"
+        else if (requestedEngine == PlaybackEngine.VLC && effectiveEngine == PlaybackEngine.MEDIA3 &&
 
             vlcHeaderOptions(media.streamRequestHeaders) == null)
 
@@ -822,7 +829,7 @@ fun PlayerScreen(
         if (playbackDomain == PlaybackDomain.SPORTS) http.setConnectTimeoutMs(15_000).setReadTimeoutMs(20_000)
         val upstream = androidx.media3.datasource.DefaultDataSource.Factory(context, http)
         val signedStreamSources = DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
-            ManifestMimeDataSource(upstream.createDataSource(), android.net.Uri.parse(media.url), detectedManifestMime::set)
+            ManifestMimeDataSource((playbackDataSourceFactory ?: upstream).createDataSource(), android.net.Uri.parse(media.url), detectedManifestMime::set)
         })
         if (!media.offlinePlayback) builder.setMediaSourceFactory(signedStreamSources.apply {
             withStreamDrm(media.streamDrm)
@@ -2962,7 +2969,7 @@ PlayerChromeIconButton(
         )
         if (playerPickerVisible) PlayerEngineQuickOverlay(
             selectedEngine = displayedPlayerChoice,
-            allowedEngines = if (media.streamDrm != null) PROTECTED_PLAYER_ENGINES else null,
+            allowedEngines = if (media.streamDrm != null || playbackDataSourceFactory != null) PROTECTED_PLAYER_ENGINES else null,
             onDismiss = {
                 playerPickerVisible = false
                 controlsVisible = true

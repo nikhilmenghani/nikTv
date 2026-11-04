@@ -29,7 +29,10 @@ internal class MovySourceResolver(
         val expiresAt = now() + ttl
         var probesLeft = 4
         var firstFailure: AlternateSourceException? = null
-        for (server in listOf("miami", "boise")) {
+        // The public player also offers Atlanta. Miami and Boise can both fail
+        // for an available episode. Try Atlanta before Boise to stay within Auto's
+        // shared deadline rather than waiting through two failing backends.
+        for (server in listOf("miami", "atlanta", "boise")) {
             if (now() >= expiresAt) throw AlternateSourceException("The Movy session expired. Retry to obtain a new session.", stage = "Movy guest session")
             try {
                 val url = API.newBuilder().addPathSegments("$server/sources")
@@ -48,7 +51,7 @@ internal class MovySourceResolver(
                 val sources = data.optJSONArray("sources") ?: continue
                 val streams = mutableListOf<AlternateStream>()
                 // Source lists can contain several quality URLs. Probe at most four across
-                // both advertised servers; never fan out over all eighteen site adapters.
+                // the supported servers; never fan out over all eighteen site adapters.
                 val records = (0 until minOf(sources.length(), 16)).mapNotNull(sources::optJSONObject)
                     .distinctBy { it.optString("url") }.take(probesLeft)
                 for ((index, source) in records.withIndex()) {
@@ -84,7 +87,11 @@ internal class MovySourceResolver(
                         if (firstFailure == null) firstFailure = failure
                     }
                 }
-                if (streams.isNotEmpty()) return streams.distinctBy { it.url }.take(12)
+                if (streams.isNotEmpty()) return streams.distinctBy { it.url }.take(12).map {
+                    // Atlanta's discontinuous timestamps can abort LibVLC's native
+                    // adaptive demuxer. Use the Media3 path without changing preferences.
+                    it.copy(vlcCompatible = server != "atlanta")
+                }
                 if (probesLeft <= 0) break
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -46,4 +46,15 @@ class AlternateSourceActionsTest {
         assertNull(unknown.season)
         assertNull(unknown.episode)
     }
+    @Test fun onlyTheSelectedIncompatibleStreamUsesTheVlcFallback() {
+        val target = com.nikhil.niktv.data.AlternateSourceTarget("Friends", true, 1668, season = 3, episode = 25)
+        val regular = com.nikhil.niktv.data.AlternateStream("regular", "Regular", "https://media.example.test/a.m3u8")
+        val atlanta = regular.copy(id = "atlanta", vlcCompatible = false)
+        val source = com.nikhil.niktv.model.AlternatePlaybackSource(target, listOf(regular, atlanta), "regular", "test")
+        assertTrue(alternateSourceSupportsVlc(null))
+        assertTrue(alternateSourceSupportsVlc(source))
+        assertFalse(alternateSourceSupportsVlc(source.copy(selectedId = "atlanta")))
+        assertTrue(alternateSourceSupportsVlc(source.copy(selectedId = "missing")))
+    }
+
 }

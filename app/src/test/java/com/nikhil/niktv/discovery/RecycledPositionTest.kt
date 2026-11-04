@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RecycledPositionTest {
+    @org.junit.Test fun televisionLeavesRoomForFirstPosterRowWithoutChangingTabletHeight() {
+        org.junit.Assert.assertEquals(216f, trialHeroBaseHeight(540f, true, television = true), .01f)
+        org.junit.Assert.assertEquals(240f, trialHeroFrameHeight(trialHeroBaseHeight(540f, true, true), 1f), .01f)
+        org.junit.Assert.assertEquals(355f, trialHeroBaseHeight(750f, true), .01f)
+    }
+
     @Test fun homeHeroFrameMatchesHomeHeightPolicyWithoutGrowingWithTitles() {
         assertEquals(297f, trialHeroBaseHeight(540f, true), .01f)
         assertEquals(355f, trialHeroBaseHeight(750f, true), .01f)

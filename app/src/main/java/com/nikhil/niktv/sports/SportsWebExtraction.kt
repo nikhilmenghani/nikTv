@@ -3,7 +3,7 @@ package com.nikhil.niktv.sports
 import kotlinx.serialization.json.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-internal data class SportsWebCandidates(val media: List<String>, val frames: List<String>)
+internal data class SportsWebCandidates(val media: List<String>, val frames: List<String>, val tokenProtected: Boolean = false)
 
 internal fun sportsWebCandidates(result: String?): SportsWebCandidates {
     val empty = SportsWebCandidates(emptyList(), emptyList())
@@ -16,7 +16,10 @@ internal fun sportsWebCandidates(result: String?): SportsWebCandidates {
             val text = (it as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
             text.toHttpUrlOrNull()?.takeIf { parsed -> parsed.username.isEmpty() && parsed.password.isEmpty() }?.toString()
         }.distinct()
-        SportsWebCandidates(urls("media", 32), urls("frames", 8))
+        val tokenProtected = (obj["tokenProtected"] as? JsonPrimitive)?.booleanOrNull == true
+        // A URL in an Edge player's HTML is only a template. Let the page
+        // obtain its token and capture the resulting request instead.
+        SportsWebCandidates(if (tokenProtected) emptyList() else urls("media", 32), urls("frames", 8), tokenProtected)
     }.getOrDefault(empty)
 }
 

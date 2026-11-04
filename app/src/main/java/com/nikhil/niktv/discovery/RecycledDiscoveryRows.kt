@@ -16,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.toArgb
@@ -82,6 +83,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
+    val navigationInsetPx = with(LocalDensity.current) { LocalHeroNavigationInset.current.roundToPx() }
     val displayedRows = remember(rows, hero != null) {
         if (hero != null) listOf(NativeDiscoveryRow(HERO_ROW, "", emptyList(), isHero = true)) + rows else rows
     }
@@ -92,6 +94,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing, showSkeletons, restoreTouchSelection, reconcileSkeletons) }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
             focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
+            view.navigationInsetPx = navigationInsetPx
             view.animateFocus = animateFocus
             view.restoreSelection = restoreSelection
             view.heroContent = hero; view.heroFocusEntry = heroFocusEntry
@@ -124,6 +127,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private val parentComposition: CompositionContext, private val cacheTileDrawing: Boolean, private val showSkeletons: Boolean,
     private val restoreTouchSelection: Boolean, private val reconcileSkeletons: Boolean) : RecyclerView(context), ComponentCallbacks2 {
     private val tileCache = NativeTileCachePolicy(cacheTileDrawing)
+    var navigationInsetPx = 0
     var focusHost: View? = null
     var onNavigationTrace: ((String) -> Unit)? = null
     private fun trace(event: String) {
@@ -272,7 +276,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             vertical.scrollToPositionWithOffset(0, 0)
             return true
         }
-        return super.requestChildRectangleOnScreen(child, rect, immediate)
+        val visibleRect = if (navigationInsetPx > 0) Rect(rect).apply { top -= navigationInsetPx } else rect
+        return super.requestChildRectangleOnScreen(child, visibleRect, immediate)
     }
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -480,7 +485,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         requestFocus()
         descendantFocusability = policy
         val current = findViewHolderForAdapterPosition(index) as? RowHolder
-        if (current == null) vertical.scrollToPositionWithOffset(index, dp(8))
+        if (current == null) vertical.scrollToPositionWithOffset(index, navigationInsetPx + dp(8))
         fun retry(attempt: Int) { postOnAnimation {
             if (ticket != epoch || pending?.first != row || !isAttachedToWindow || !hasWindowFocus()) {
                 if (onNavigationTrace != null) trace("retry-abort:$row:$item:$ticket:$attempt")
@@ -507,7 +512,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             val currentIndex = rowAdapter.currentList.indexOfFirst { it.id == row }
             if (currentIndex < 0) { pending = null; return@postOnAnimation }
             val holder = findViewHolderForAdapterPosition(currentIndex) as? RowHolder
-            if (holder == null) vertical.scrollToPositionWithOffset(currentIndex, dp(8))
+            if (holder == null) vertical.scrollToPositionWithOffset(currentIndex, navigationInsetPx + dp(8))
             if (holder == null || !holder.focus(item)) {
                 if (attempt < 30) retry(attempt + 1)
                 else if (onNavigationTrace != null) trace("retry-exhausted:$row:$item")

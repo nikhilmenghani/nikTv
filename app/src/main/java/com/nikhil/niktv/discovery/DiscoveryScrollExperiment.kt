@@ -99,8 +99,9 @@ internal fun trialHeroFrameHeight(base: Float, fontScale: Float): Float =
     maxOf(base, 216f * fontScale.coerceAtLeast(1f) + 24f)
 
 /** Same landscape height policy as Home; the compact frame remains an A/B control. */
-internal fun trialHeroBaseHeight(screenHeight: Float, homeFraming: Boolean): Float =
-    if (!homeFraming) (screenHeight * .45f).coerceIn(200f, 300f)
+internal fun trialHeroBaseHeight(screenHeight: Float, homeFraming: Boolean, television: Boolean = false): Float =
+    if (television) (screenHeight * .4f).coerceIn(180f, 235f)
+    else if (!homeFraming) (screenHeight * .45f).coerceIn(200f, 300f)
     else if (screenHeight < 480f) (screenHeight * .52f).coerceIn(165f, 230f)
     else (screenHeight * .55f).coerceIn(235f, 355f)
 

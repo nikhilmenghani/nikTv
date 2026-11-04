@@ -18,11 +18,28 @@ import kotlin.coroutines.resume
 internal class SportsWebResolver(private val context: Context) {
     private val extractionScript by lazy { context.assets.open("sports/extract-media.js").bufferedReader().use { it.readText() } }
 
-    suspend fun resolve(stream: SportsStream): SportsStream {
+    suspend fun resolve(stream: SportsStream): SportsStream = resolve(stream, SportsResolverPreferences(context).read())
+
+    internal suspend fun resolve(stream: SportsStream, mode: SportsResolverMode): SportsStream {
         if (stream.link.toHttpUrlOrNull()?.let { it.username.isEmpty() && it.password.isEmpty() } != true) {
             throw SportsException("This source returned an invalid web-player address.")
         }
-        val script = withContext(Dispatchers.IO) { extractionScript }
+        val tokenAware = mode == SportsResolverMode.TOKEN_AWARE
+        if (tokenAware) {
+            val direct = stream.link.toHttpUrlOrNull()!!
+            if (direct.encodedPath.endsWith(".m3u8", true) &&
+                stream.api.toHttpUrlOrNull()?.encodedPath?.endsWith("/api/playlist-token") == true &&
+                sportsSameOrigin(stream.link, stream.api)) return stream.copy(edgeTokenApi = stream.api)
+            val response = try { SportsHttpTransport().get(stream.link, sportsWebHeaders(stream, stream.link)) }
+                catch (_: java.io.IOException) { null }
+            response?.let { page -> sportsEdgePlayer(page.body, page.url)?.let { edge ->
+                val headers = sportsWebHeaders(stream, page.url, edge.manifest)
+                    .filterKeys { !it.equals("Origin", true) && !it.equals("Referer", true) } +
+                    mapOf("Origin" to edge.origin, "Referer" to "${edge.origin}/")
+                return stream.copy(link = edge.manifest, edgeTokenApi = edge.tokenApi, headers = headers)
+            } }
+        }
+        val script = withContext(Dispatchers.IO) { "window.__nikTvTokenAware = $tokenAware;\n$extractionScript" }
         return withContext(Dispatchers.Main.immediate) { withTimeout(15_000) {
             var view: WebView? = null
             val handler = Handler(Looper.getMainLooper())
@@ -63,7 +80,7 @@ internal class SportsWebResolver(private val context: Context) {
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = request.url.scheme !in setOf("https", "http")
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                             val url = request.url.toString()
-                            if (sportsMediaRequest(url)) {
+                            if ((!tokenAware || request.method == "GET") && sportsMediaRequest(url)) {
                                 val captured = request.requestHeaders.toMap()
                                 val referringPage = captured.entries.firstOrNull { it.key.equals("Referer", true) }?.value ?: page
                                 handler.post { complete(url, referringPage, captured) }
@@ -82,7 +99,7 @@ internal class SportsWebResolver(private val context: Context) {
                                     val found = sportsWebCandidates(value)
                                     if (found.media.isNotEmpty()) { complete(found.media.first()); return@evaluateJavascript }
                                     found.frames.filter { it !in visited && it !in nested }.forEach { nested.add(it) }
-                                    if (pageFinished && ++polls >= 3 && nested.isNotEmpty() && visited.size < 5) {
+                                    if (!found.tokenProtected && pageFinished && ++polls >= 3 && nested.isNotEmpty() && visited.size < 5) {
                                         val next = nested.removeFirst()
                                         val referringPage = page
                                         visited.add(next)

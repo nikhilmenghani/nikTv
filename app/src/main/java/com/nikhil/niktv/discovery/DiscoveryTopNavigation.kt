@@ -108,7 +108,8 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     val widths = discoveryHeaderWidths(maxWidth.value, maxWidth.value, naturalProfile.value)
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
-        DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), backdrop, backdropBounds) {
+        DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), backdrop ?: LocalMobileGlassArtwork.current,
+            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds) {
             CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
             Row(Modifier.fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -146,7 +147,8 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
             }
         }
         Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
-        DiscoveryClockProfile(profile, Modifier.width(widths.profile.dp).height(height), backdrop, backdropBounds) { navigate("Profile") }
+        DiscoveryClockProfile(profile, Modifier.width(widths.profile.dp).height(height), backdrop ?: LocalMobileGlassArtwork.current,
+            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds) { navigate("Profile") }
     }
     }
 }

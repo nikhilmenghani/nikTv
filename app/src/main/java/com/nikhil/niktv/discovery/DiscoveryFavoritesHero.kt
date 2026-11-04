@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -89,6 +91,9 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
             }
         }
     }
+    val navigationInset = LocalHeroNavigationInset.current
+    val publishGlass = LocalPublishMobileGlassSource.current
+    val headerArtwork = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, 1280)
     val localPlay = remember { FocusRequester() }
     val localInfo = remember { FocusRequester() }
     val play = playRequester ?: localPlay
@@ -98,7 +103,7 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         else if (favorite.source == FavoriteSource.TMDB) open(favorite)
         else details(requireNotNull(entry).type, favorite.media, listOf(favorite.media))
     }
-    Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
+    Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInRoot())) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             touching = true
@@ -109,10 +114,9 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
             // Artwork belongs to this scrolling header, never behind the saved rows.
             Box(Modifier.matchParentSize().clipToBounds()) {
                 DiscoveryBackdrop(card?.let { it.copy(backdrop = it.backdrop?.takeIf(String::isNotBlank) ?: it.poster) }, reduced)
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-                    0f to Color.Transparent, .65f to Color.Transparent, 1f to Color(0xFF090B10))))
+                DiscoveryHeroShade(Modifier.fillMaxSize())
             }
-            DiscoveryHero(card, null, (configuration.screenHeightDp.dp * .55f).coerceIn(235.dp, 355.dp),
+            DiscoveryHero(card, null, trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), true, context.isTvLikeDevice(configuration)).dp + navigationInset,
                 landscape = true, compact = false, detail = false, loading = cached == null,
                 inList = true, playRequester = play, infoRequester = info,
                 play = { open(favorite) }, add = { removal = favorite }, info = openInfo,
@@ -124,8 +128,8 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
             previous = { move(-1) }, next = { move(1) }, carousel = favorites.size > 1,
             index = index, count = favorites.size, playLabel = "Open", playEnabled = true,
             reduceMotion = reduced, onFocus = {}, onDown = {},
-            header = { Spacer(Modifier.height(64.dp)) },
-            artworkAlignment = Alignment.TopCenter, shadeArtworkBounds = true, supportingTitle = true, fitArtwork = true)
+            header = null,
+            artworkAlignment = Alignment.TopCenter, shadeArtworkBounds = false, supportingTitle = true, fitArtwork = true)
     }
     removal?.let { pending -> LibraryRemoveDialog(pending, { removal = null }, {
         removal = null

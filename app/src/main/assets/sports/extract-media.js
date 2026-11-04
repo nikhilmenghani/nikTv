@@ -1,5 +1,6 @@
 (function () {
-    var media = [], frames = [], known = {}, visited = [], budget = 700;
+    var media = [], frames = [], known = {}, visited = [], budget = 700, tokenProtected = false;
+    var tokenAware = window.__nikTvTokenAware !== false;
     function absolute(value, base) {
         if (typeof value !== 'string' || value.length > 16384) return '';
         try {
@@ -40,6 +41,12 @@
         if (depth > 2) return;
         var doc, base;
         try { doc = win.document; base = doc.baseURI || win.location.href; } catch (_) { return; }
+        // Cricfy 7.4 Edge pages authorize their playlist at runtime. Scraping
+        // SRC or a performance entry loses request headers/cookies and can
+        // race the token response. The WebView request observer handles these.
+        try {
+            if (tokenAware && (doc.documentElement.innerHTML || '').indexOf('/api/playlist-token') >= 0) tokenProtected = true;
+        } catch (_) {}
         try {
             Array.prototype.slice.call(doc.querySelectorAll('video,audio,video source,audio source'), 0, 30).forEach(function (node) { add(node.currentSrc || node.src || node.getAttribute('src'), base, true); });
         } catch (_) {}
@@ -99,5 +106,5 @@
         function rank(url) { return /\.(m3u8|mpd)([?#]|$)/i.test(url) ? 0 : /\.(ts)([?#]|$)/i.test(url) ? 2 : 1; }
         return rank(a) - rank(b);
     });
-    return JSON.stringify({media: media, frames: frames});
+    return JSON.stringify({media: tokenProtected ? [] : media, frames: frames, tokenProtected: tokenProtected});
 })()

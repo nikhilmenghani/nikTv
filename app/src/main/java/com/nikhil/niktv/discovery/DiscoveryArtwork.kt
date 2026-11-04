@@ -46,14 +46,14 @@ internal class DiscoveryGlassTransformation : Transformation() {
 
 /** Shade both ends of portrait artwork so top actions and bottom text remain readable. */
 internal class DiscoveryPhoneBackdropTransformation : Transformation() {
-    override val cacheKey = "niktv-discovery-phone-shaded-v2"
+    override val cacheKey = "niktv-discovery-phone-shaded-v3"
     override suspend fun transform(input: android.graphics.Bitmap, size: Size): android.graphics.Bitmap = withContext(Dispatchers.Default) {
         val output = android.graphics.Bitmap.createBitmap(input.width, input.height, android.graphics.Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(output)
         canvas.drawBitmap(input, 0f, 0f, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
         val paint = android.graphics.Paint().apply {
             shader = android.graphics.LinearGradient(0f, 0f, 0f, output.height.toFloat(),
-                intArrayOf(0xF5090B10.toInt(), 0x18090B10, 0xA6090B10.toInt(), 0xFF090B10.toInt()),
+                intArrayOf(0x99090B10.toInt(), 0x00090B10, 0x55090B10, 0xFF090B10.toInt()),
                 floatArrayOf(0f, .35f, .7f, 1f), android.graphics.Shader.TileMode.CLAMP)
         }
         canvas.drawRect(0f, 0f, output.width.toFloat(), output.height.toFloat(), paint)
@@ -63,7 +63,7 @@ internal class DiscoveryPhoneBackdropTransformation : Transformation() {
 
 /** Bake static gradients once off-thread instead of shading the entire TV display every frame. */
 internal class DiscoveryBackdropTransformation : Transformation() {
-    override val cacheKey = "niktv-discovery-shaded-backdrop-v2"
+    override val cacheKey = "niktv-discovery-shaded-backdrop-v3"
     override suspend fun transform(input: android.graphics.Bitmap, size: Size): android.graphics.Bitmap = withContext(Dispatchers.Default) {
         val output = android.graphics.Bitmap.createBitmap(input.width, input.height, android.graphics.Bitmap.Config.ARGB_8888)
         output.setHasAlpha(false)
@@ -72,10 +72,10 @@ internal class DiscoveryBackdropTransformation : Transformation() {
         canvas.drawBitmap(input, 0f, 0f, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
         val paint = android.graphics.Paint()
         paint.shader = android.graphics.LinearGradient(0f, 0f, output.width.toFloat(), 0f,
-            intArrayOf(0xED090B10.toInt(), 0x73090B10, 0x33090B10), null, android.graphics.Shader.TileMode.CLAMP)
+            intArrayOf(0xA6090B10.toInt(), 0x26090B10, 0x00090B10), null, android.graphics.Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, output.width.toFloat(), output.height.toFloat(), paint)
         paint.shader = android.graphics.LinearGradient(0f, 0f, 0f, output.height.toFloat(),
-            intArrayOf(0xF5090B10.toInt(), 0x26090B10, 0xFF090B10.toInt()), floatArrayOf(0f, .35f, 1f), android.graphics.Shader.TileMode.CLAMP)
+            intArrayOf(0x99090B10.toInt(), 0x00090B10, 0xFF090B10.toInt()), floatArrayOf(0f, .55f, 1f), android.graphics.Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, output.width.toFloat(), output.height.toFloat(), paint)
         output
     }

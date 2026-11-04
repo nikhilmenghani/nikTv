@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -21,6 +23,7 @@ import coil3.compose.AsyncImage
 import coil3.request.*
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.model.*
+import com.nikhil.niktv.ui.isTvLikeDevice
 import kotlinx.coroutines.*
 import java.io.File
 
@@ -106,9 +109,14 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
         }
     }
     val framed = homeFrame && landscape && !phone
-    val baseHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), framed)
-    Box(Modifier.fillMaxWidth().clipToBounds().then(if (landscape && !phone)
-        Modifier.height(trialHeroFrameHeight(baseHeight, density.fontScale).dp) else Modifier)) {
+    val inset = LocalHeroNavigationInset.current
+    val publishGlass = LocalPublishMobileGlassSource.current
+    val headerArtwork = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, 1280)
+    val baseHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), framed, context.isTvLikeDevice(configuration))
+    Box(Modifier.fillMaxWidth().clipToBounds().onGloballyPositioned {
+        if (!portraitPhone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInRoot(), topAligned = framed, fillWidth = framed))
+    }.then(if (landscape && !phone)
+        Modifier.height(trialHeroFrameHeight(baseHeight, density.fontScale).dp + inset) else Modifier)) {
         if (display.artwork && !portraitPhone) key(selectedId, card?.backdrop ?: card?.poster) {
             val picture = card?.backdrop ?: card?.poster
             val request = remember(picture) { ImageRequest.Builder(context).data(thumbnailArtworkUrl(picture, 1280))
@@ -120,11 +128,10 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
                 .aspectRatio(16f / 9f).align(Alignment.TopCenter) else Modifier.matchParentSize()).graphicsLayer { this.alpha = alpha },
                 contentScale = if (framed) ContentScale.FillWidth else ContentScale.Crop,
                 onSuccess = { ready = true })
-            Box(Modifier.matchParentSize().background(Brush.verticalGradient(
-                0f to Color.Transparent, .65f to Color.Transparent, 1f to Color(0xFF090B10))))
+            DiscoveryHeroShade(Modifier.matchParentSize())
         }
         DiscoveryHero(card?.let { if (portraitPhone && display.artwork) it else it.copy(backdrop = null, poster = null) },
-            rank = null, height = baseHeight.dp, landscape = landscape, compact = true, detail = false,
+            rank = null, height = baseHeight.dp + inset, landscape = landscape, compact = true, detail = false,
             loading = selected == null && providerHeroWaiting(profile, type, categories, provider, poolPrepared),
             inList = selected?.item?.id in display.favoriteIds,
             playRequester = playRequester, infoRequester = infoRequester,

@@ -27,6 +27,9 @@ internal val LocalChooseIptvMovieVersion = staticCompositionLocalOf<((com.nikhil
 
 internal val LocalPlayAlternateSource = staticCompositionLocalOf<((AlternateSourceRequest) -> Unit)?> { null }
 
+internal fun alternateSourceSupportsVlc(source: com.nikhil.niktv.model.AlternatePlaybackSource?): Boolean =
+    source?.streams?.firstOrNull { it.id == source.selectedId }?.vlcCompatible != false
+
 /** Explicit live context wins over a surrounding movie/series screen's inferred type. */
 internal fun alternateSourceRequest(
     item: MediaItem,

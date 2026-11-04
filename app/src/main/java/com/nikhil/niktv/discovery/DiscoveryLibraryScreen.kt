@@ -54,22 +54,16 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
         LocalMobileGlassBounds provides (glassSource?.bounds ?: androidx.compose.ui.geometry.Rect.Zero),
         LocalMobileGlassFit provides (glassSource?.fit ?: false), LocalMobileGlassTopAligned provides (glassSource?.topAligned ?: false),
         LocalMobileGlassFillWidth provides (glassSource?.fillWidth ?: false), LocalPublishMobileGlassSource provides publishGlass) {
-    val phoneHero = !trialCollection && phone && destination == DiscoveryLibraryDestination.MY_LIST &&
+    val artworkHero = !trialCollection && destination == DiscoveryLibraryDestination.MY_LIST &&
         libraryFavoriteHeroes(state.favorites, state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()).isNotEmpty()
-    if (phoneHero) Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-        Box(Modifier.fillMaxSize().focusRequester(body).focusGroup()) { content() }
-        Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(
-            listOf(Color(0xE6090B10), Color(0x99090B10), Color.Transparent)))) {
-            DiscoveryPhoneNavigation(navigationSurface, tab, body, back, select, navigate,
-                menu, { menu = it }, library = navigationLibrary, profile = state.savedProfile?.name.orEmpty())
-        }
-    } else Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+    DiscoveryArtworkShell(artworkHero, phone, header = {
         if (phone) DiscoveryPhoneNavigation(navigationSurface, tab, body, back, select, navigate,
             menu, { menu = it }, library = navigationLibrary, profile = state.savedProfile?.name.orEmpty())
         else DiscoveryTopNavigation(navigationSurface, state.savedProfile?.name.orEmpty(), tab, body,
             back, select, navigate, {}, menu, { menu = it }, null, library = navigationLibrary)
-        Box(Modifier.weight(1f).fillMaxWidth().focusRequester(body).focusGroup()) { content() }
-    }
+    }, content = {
+        Box(Modifier.fillMaxSize().focusRequester(body).focusGroup()) { content() }
+    })
     }
     }
 }

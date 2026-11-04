@@ -71,6 +71,10 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     var addOpen by rememberSaveable { mutableStateOf(false) }
     var groupsOpen by remember { mutableStateOf(false) }
     var availabilityOpen by remember { mutableStateOf(false) }
+    var resolverOpen by remember { mutableStateOf(false) }
+    val resolverContext = LocalContext.current
+    val resolverPreferences = remember(resolverContext) { SportsResolverPreferences(resolverContext) }
+    var resolverMode by remember { mutableStateOf(resolverPreferences.read()) }
     var group by rememberSaveable { mutableStateOf("All groups") }
     var contextItem by remember { mutableStateOf<SportsChannel?>(null) }
     var contextCategory by remember { mutableStateOf<SportsCategory?>(null) }
@@ -114,6 +118,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 dismissLibraryError(); addOpen = true
             })
             add(SportsHeaderAction("Refresh sports", Icons.Default.Refresh, onClick = refresh))
+            add(SportsHeaderAction("Stream compatibility: ${resolverMode.title}", Icons.Default.Settings) { resolverOpen = true })
         }
         SportsHeader("Sports", back, headerActions, backFocus, optionsAction) { modifier ->
             Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -269,6 +274,9 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             toggleChannelFlag(item); contextItem = null
             restore(if (selected == null && !remainsVisible) availabilityAction else restoreTile)
         }) }
+    if (resolverOpen) SportsResolverModeDialog(resolverMode, {
+        resolverPreferences.set(it); resolverMode = it; resolverOpen = false; restore(optionsAction)
+    }, { resolverOpen = false; restore(optionsAction) })
     if (availabilityOpen) SportsAvailabilityFilterDialog(state.availabilityFilter, {
         setAvailabilityFilter(it); availabilityOpen = false; restore(availabilityAction)
     }, { availabilityOpen = false; restore(availabilityAction) })
