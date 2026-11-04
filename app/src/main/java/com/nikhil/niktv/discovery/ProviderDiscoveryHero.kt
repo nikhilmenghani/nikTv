@@ -28,7 +28,9 @@ import kotlinx.coroutines.*
 import java.io.File
 
 /** Presentation never supplies playback identity: actions always retain the provider item/queue. */
-internal data class ProviderHeroEntry(val item: MediaItem, val queue: List<MediaItem>)
+internal data class ProviderHeroEntry(val item: MediaItem, val queue: List<MediaItem>, val recent: RecentItem? = null) {
+    val artwork get() = recent?.media?.logo?.takeIf(String::isNotBlank) ?: item.logo
+}
 
 /** Snapshot read by the nested hero composition, independently of recycled-row submissions. */
 internal data class ProviderHeroPresentation(val favoriteIds: Set<String>, val progress: DiscoveryProgressLookup?,
@@ -43,18 +45,38 @@ internal fun providerHeroWaiting(profile: String, type: CatalogType, categories:
 }
 
 internal fun appendProviderHeroes(existing: List<ProviderHeroEntry>, categories: List<Category>,
-    pages: Map<String, ProviderDiscoveryPage>): List<ProviderHeroEntry> {
+    pages: Map<String, ProviderDiscoveryPage>, random: kotlin.random.Random? = null): List<ProviderHeroEntry> {
     if (existing.size >= 10) return existing
     val seen = existing.mapTo(mutableSetOf()) { it.item.id }
     val result = existing.toMutableList()
+    val candidates = buildList {
     for (category in categories) {
         val queue = providerDiscoveryItems(providerDiscoverySources(listOf(category)), pages)
         for (item in queue) {
-            if (seen.add(item.id)) result.add(ProviderHeroEntry(item, queue))
-            if (result.size == 10) return result
+            if (seen.add(item.id)) add(ProviderHeroEntry(item, queue))
         }
     }
+    }
+    result.addAll((if (random == null) candidates else candidates.shuffled(random)).take(10 - result.size))
     return if (result.size == existing.size) existing else result
+}
+
+/** Continue Watching drives presentation; provider IDs/commands still own all actions. */
+internal fun preferredProviderHeroes(profile: String, type: CatalogType, recents: List<RecentItem>,
+    fallback: List<ProviderHeroEntry>): List<ProviderHeroEntry> {
+    if (profile.isBlank()) return fallback
+    val kind = when (type) { CatalogType.MOVIES -> FavoriteKind.MOVIE; CatalogType.SERIES -> FavoriteKind.SERIES; else -> return fallback }
+    val seen = mutableSetOf<String>()
+    val recent = recents.asSequence().filter { it.profileKey == profile && it.kind == kind && it.alternateTarget == null }
+        .sortedByDescending { it.playedAtMillis }.mapNotNull { entry ->
+            val item = if (type == CatalogType.SERIES) entry.series ?: entry.media else entry.media
+            if (item.isAdult || entry.media.isAdult || item.discoveryCatalogSource() != DiscoveryTileSource.IPTV || !seen.add(item.id)) null
+            else {
+                val loaded = fallback.firstOrNull { it.item.id == item.id }
+                ProviderHeroEntry(loaded?.item ?: item, loaded?.queue ?: listOf(item), entry)
+            }
+        }.take(10).toList()
+    return recent.ifEmpty { fallback }
 }
 
 /** Provider catalog island. Page arrivals do not rebind Home's TMDB hero. */
@@ -77,21 +99,26 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     // A changed profile or selected-category set creates a new pool. Window movement does not.
     key(profile, type, provider.identity) {
     var entries by remember { mutableStateOf(emptyList<ProviderHeroEntry>()) }
+    var fallbackEntries by remember { mutableStateOf(emptyList<ProviderHeroEntry>()) }
+    val fallbackRandom = remember { kotlin.random.Random(kotlin.random.Random.nextInt()) }
     var poolPrepared by remember { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
-    LaunchedEffect(provider.pages[type], categories, provider.profile) {
+    LaunchedEffect(provider.pages[type], categories, provider.profile, display.seriesRecents) {
         if (provider.profile != profile) return@LaunchedEffect
-        val next = withContext(Dispatchers.Default) { appendProviderHeroes(entries, categories, provider.pages[type].orEmpty()) }
-        entries = next
+        val (fallback, next) = withContext(Dispatchers.Default) {
+            val fallback = appendProviderHeroes(fallbackEntries, categories, provider.pages[type].orEmpty(), fallbackRandom)
+            fallback to preferredProviderHeroes(profile, type, display.seriesRecents, fallback)
+        }
+        fallbackEntries = fallback; entries = next
         poolPrepared = true
-        if (selectedId == null) selectedId = next.firstOrNull()?.item?.id
+        if (next.none { it.item.id == selectedId }) selectedId = next.firstOrNull()?.item?.id
     }
     val index = entries.indexOfFirst { it.item.id == selectedId }.coerceAtLeast(0)
     val selected = entries.getOrNull(index)
     fun rotateBy(direction: Int) {
         if (entries.isNotEmpty()) selectedId = entries[Math.floorMod(index + direction, entries.size)].item.id
     }
-    val fallback = remember(selected?.item, type) { selected?.item?.let { providerDetailFallback(it, type) } }
+    val fallback = remember(selected, type) { selected?.let { providerDetailFallback(it.item, type).copy(poster = it.artwork) } }
     var cached by remember(selected?.item?.id) { mutableStateOf<DiscoveryCard?>(null) }
     LaunchedEffect(selected?.item, display.active) {
         if (display.active) cached = selected?.item?.let { readProviderHeroMetadata(cache, it, type) }
@@ -111,7 +138,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
         if (display.prepareNext && display.active && display.mayRotate && entries.size > 1) {
             delay(1_000)
             // One adjacent artwork only; no provider URL resolution or metadata lookup.
-            prepareTrialHeroArtwork(context, entries[(index + 1) % entries.size].item.logo, sceneArtwork)
+            prepareTrialHeroArtwork(context, entries[(index + 1) % entries.size].artwork, sceneArtwork)
         }
     }
     val framed = homeFrame && landscape && !phone

@@ -703,7 +703,7 @@ private fun DiscoveryPreviewContent(
         val providerHeroPresentation = if (providerCatalog != null) rememberUpdatedState(
             ProviderHeroPresentation(providerFavorites, progressLookup, presentationActive, mayRotateHero,
                 scrollVariant.heroArtwork, scrollVariant.heroArtworkFade, scrollVariant.heroAutoRotate, scrollVariant.prepareNextHero,
-                seriesRecents = if (providerCatalog == CatalogType.SERIES) app.recentlyPlayed else emptyList())) else null
+                seriesRecents = app.recentlyPlayed)) else null
         val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout && surface == DashboardSurface.HOME) ({ focused, down, up ->
             val heroState by vm.state.collectAsStateWithLifecycle()
             val heroCard = heroState.takeIf { it.profile == profile && it.surface == surface }?.hero
