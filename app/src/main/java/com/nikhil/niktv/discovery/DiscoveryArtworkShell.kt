@@ -7,7 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 
@@ -22,7 +22,7 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     var viewportTop by remember { mutableFloatStateOf(0f) }
     var artwork by remember { mutableStateOf<MobileGlassSource?>(null) }
     val publish = remember { { value: MobileGlassSource? -> artwork = value } }
-    Box(Modifier.fillMaxSize().background(if (overlay) Color(0xFF090B10) else Color.Transparent).safeDrawingPadding().onGloballyPositioned { viewportTop = it.positionInRoot().y }) {
+    Box(Modifier.fillMaxSize().background(if (overlay) Color(0xFF090B10) else Color.Transparent).safeDrawingPadding().onGloballyPositioned { viewportTop = it.positionInWindow().y }) {
         if (overlay) {
             CompositionLocalProvider(LocalHeroNavigationInset provides inset,
                 LocalPublishMobileGlassSource provides publish) { content() }

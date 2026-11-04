@@ -22,6 +22,7 @@ import com.nikhil.niktv.data.thumbnailArtworkUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** Window coordinates keep native hero islands and the outer glass chrome aligned. */
 internal data class MobileGlassSource(val artwork: String?, val bounds: Rect,
     val fit: Boolean = false, val topAligned: Boolean = false, val fillWidth: Boolean = false)
 internal val LocalPublishMobileGlassSource = staticCompositionLocalOf<(MobileGlassSource?) -> Unit> { {} }
@@ -46,9 +47,10 @@ internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }
 internal val LocalMobileGlassBounds = staticCompositionLocalOf { Rect.Zero }
 internal val LocalMobileGlassArtwork = staticCompositionLocalOf<String?> { null }
 @Composable
-internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focused: Boolean = false, content: @Composable () -> Unit) {
     if (LocalMobileGlassEnabled.current) CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         DiscoveryGlassPanel(modifier, LocalMobileGlassArtwork.current, LocalMobileGlassBounds.current,
+            focused = focused,
             fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
             fillWidth = LocalMobileGlassFillWidth.current) { content() }
     }
@@ -86,7 +88,7 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
     val glassHighlight = remember {
         Brush.verticalGradient(listOf(Color.White.copy(alpha = .12f), Color.Transparent, Color.Black.copy(alpha = .12f)))
     }
-    Box(modifier.onGloballyPositioned { position = it.positionInRoot() }.clip(shape)
+    Box(modifier.onGloballyPositioned { position = it.positionInWindow() }.clip(shape)
         .background(baseColor).border(if (focused) 2.dp else 1.dp,
             if (focused) Color.White else Color(0x777F899B), shape)) {
         Canvas(Modifier.matchParentSize()) {

@@ -25,7 +25,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -167,7 +167,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
         LocalMobileGlassBounds provides heroBounds, LocalMobileGlassFit provides glassSource.fit,
         LocalMobileGlassTopAligned provides glassSource.topAligned, LocalMobileGlassFillWidth provides glassSource.fillWidth) {
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds = Rect(it.positionInRoot(), it.size.toSize()) }) {
+        Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds = Rect(it.positionInWindow(), it.size.toSize()) }) {
             Crossfade(picture, modifier = Modifier.matchParentSize(), animationSpec = tween(if (reduceMotion) 0 else 250), label = "phoneHeroArtwork") { url ->
                 AsyncImage(ImageRequest.Builder(context).data(url).size(if (portraitPoster) 780 else 1280, if (portraitPoster) 1170 else 720)
                     .apply { if (detail) transformations(DiscoveryPhoneBackdropTransformation()) }.crossfade(false).build(), null,

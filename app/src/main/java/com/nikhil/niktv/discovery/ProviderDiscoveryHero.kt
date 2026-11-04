@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -117,15 +117,17 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     val inset = LocalHeroNavigationInset.current
     val publishGlass = LocalPublishMobileGlassSource.current
     val headerArtwork = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, 1280)
+    var heroGlassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val baseHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), framed, context.isTvLikeDevice(configuration))
-    Box(Modifier.fillMaxWidth().clipToBounds().onGloballyPositioned {
-        if (!portraitPhone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInRoot(), topAligned = framed, fillWidth = framed))
+    Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp).clipToBounds().onGloballyPositioned {
+        heroGlassBounds = it.boundsInWindow()
+        if (!portraitPhone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow(), topAligned = framed, fillWidth = framed))
     }.then(if (landscape && !phone)
         Modifier.height(trialHeroFrameHeight(baseHeight, density.fontScale).dp + inset) else Modifier)) {
         if (display.artwork && !portraitPhone) key(selectedId, card?.backdrop ?: card?.poster) {
             val picture = card?.backdrop ?: card?.poster
             val request = remember(picture) { ImageRequest.Builder(context).data(thumbnailArtworkUrl(picture, 1280))
-                .size(1280, 720).transformations(DiscoveryBackdropTransformation()).crossfade(false).build() }
+                .size(1280, 720).transformations(DiscoveryBackdropTransformation(verticalShade = false)).crossfade(false).build() }
             var ready by remember { mutableStateOf(false) }
             val alpha by animateFloatAsState(if (!display.fadeArtwork || ready) 1f else 0f,
                 tween(if (reduceMotion) 0 else 300), label = "providerHeroArtwork")
@@ -135,8 +137,13 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
                 onSuccess = { ready = true })
             DiscoveryHeroShade(Modifier.matchParentSize())
         }
+        CompositionLocalProvider(LocalMobileGlassEnabled provides true,
+            LocalMobileGlassArtwork provides headerArtwork, LocalMobileGlassBounds provides heroGlassBounds,
+            LocalMobileGlassTopAligned provides framed,
+            LocalMobileGlassFillWidth provides framed) {
         DiscoveryHero(card?.let { if (portraitPhone && display.artwork) it else it.copy(backdrop = null, poster = null) },
             rank = null, height = baseHeight.dp + inset, landscape = landscape, compact = true, detail = false,
+            contentInset = if (landscape && !phone) 18.dp else 0.dp,
             loading = selected == null && providerHeroWaiting(profile, type, categories, provider, poolPrepared),
             inList = selected?.item?.id in display.favoriteIds,
             playRequester = playRequester, infoRequester = infoRequester,
@@ -151,6 +158,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
             portraitPhone = portraitPhone, categoryActions = if (phone) null else categoryActions,
             trailerMedia = selected?.item,
             emptyTitle = if (categories.isEmpty()) "Choose IPTV categories" else "No titles available in these categories")
+        }
     }
     }
 }

@@ -383,6 +383,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         // Retain a small neighborhood of prepared rows; avoid rebinding the same
         // posters during short direction reversals without materializing the feed.
         setItemViewCacheSize(4); clipToPadding = false
+        // The hero extends across the row gutters; the recycler's outline still
+        // contains drawing at the screen edge.
+        clipChildren = false
         setPadding(dp(18), dp(10), dp(18), dp(24))
         setBackgroundColor(Color.rgb(9, 11, 16)); outlineProvider = ViewOutlineProvider.BOUNDS; clipToOutline = true
         isFocusable = true; isFocusableInTouchMode = true
@@ -625,6 +628,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     private inner class RowHolder(private val hero: Boolean = false) : ViewHolder(LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL; layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        if (hero) { clipChildren = false; clipToPadding = false }
     }) {
         var rowId = ""
         private var restoreHorizontal = false
@@ -692,7 +696,11 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     setContent { heroContent?.invoke({ item ->
                         if (pending == null || pending == (HERO_ROW to item)) selected(HERO_ROW, item)
                     }, { adjacent(HERO_ROW, 1) }, { onUp() }) }
-                }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2))
+                }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2).apply {
+                    // The hero paints across the rail gutters; controls retain their inset.
+                    leftMargin = -this@RailRecycler.paddingLeft
+                    rightMargin = -this@RailRecycler.paddingRight
+                })
             } else {
             (itemView as LinearLayout).addView(title, LinearLayout.LayoutParams(-1, -2))
             val rail: View = if (skeleton == null) horizontal else FrameLayout(context).apply {

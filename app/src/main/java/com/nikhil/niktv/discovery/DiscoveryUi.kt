@@ -35,7 +35,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.contentDescription
@@ -710,9 +710,11 @@ private fun DiscoveryPreviewContent(
             val homeFrame = homeHeroFraming && landscape && !phone
             val publishGlass = LocalPublishMobileGlassSource.current
             val headerArtwork = thumbnailArtworkUrl(heroCard?.backdrop ?: heroCard?.poster, 1280)
+            var heroGlassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
             val baseHeroHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeFrame, television)
-            Box(Modifier.fillMaxWidth().clipToBounds().onGloballyPositioned {
-                if (!phonePortrait) publishGlass(MobileGlassSource(headerArtwork, it.boundsInRoot(), topAligned = homeFrame, fillWidth = homeFrame))
+            Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp).clipToBounds().onGloballyPositioned {
+                heroGlassBounds = it.boundsInWindow()
+                if (!phonePortrait) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow(), topAligned = homeFrame, fillWidth = homeFrame))
             }.then(
                 if (landscape && !phone)
                     Modifier.height(trialHeroFrameHeight(baseHeroHeight, LocalDensity.current.fontScale).dp + LocalHeroNavigationInset.current)
@@ -723,7 +725,7 @@ private fun DiscoveryPreviewContent(
                         val artwork = heroCard?.backdrop ?: heroCard?.poster
                         val request = remember(context, artwork) {
                             ImageRequest.Builder(context).data(thumbnailArtworkUrl(artwork, 1280))
-                                .size(1280, 720).transformations(DiscoveryBackdropTransformation())
+                                .size(1280, 720).transformations(DiscoveryBackdropTransformation(verticalShade = false))
                                 .crossfade(false).build()
                         }
                         var artworkReady by remember { mutableStateOf(false) }
@@ -738,8 +740,13 @@ private fun DiscoveryPreviewContent(
                     }
                     DiscoveryHeroShade(Modifier.matchParentSize())
                 }
+        CompositionLocalProvider(LocalMobileGlassEnabled provides true,
+            LocalMobileGlassArtwork provides headerArtwork, LocalMobileGlassBounds provides heroGlassBounds,
+            LocalMobileGlassTopAligned provides homeFrame,
+            LocalMobileGlassFillWidth provides homeFrame) {
                 DiscoveryHero(heroCard?.let { if (phonePortrait && scrollVariant.heroArtwork) it.copy(titleLogo = heroLogo) else it.copy(backdrop = null, poster = null, titleLogo = heroLogo) }, rank = null,
                     height = if (phonePortrait) phoneDiscoveryHeroHeight() else baseHeroHeight.dp + LocalHeroNavigationInset.current,
+                    contentInset = if (landscape && !phone) 18.dp else 0.dp,
                     landscape = landscape, compact = true, detail = false,
                     loading = false, inList = heroCard?.media?.id in favorites.profileMediaIds,
                     playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
@@ -750,6 +757,7 @@ private fun DiscoveryPreviewContent(
                     previous = { vm.rotate(-1) }, next = { vm.rotate(1) },
                     carousel = state.heroes.size > 1, index = heroState.heroIndex, count = heroState.heroes.size,
                     portraitPhone = phonePortrait)
+        }
             }
         }) else if (scrollVariant.heroLayout && providerCatalog != null) ({ focused, down, up ->
             ProviderDiscoveryHero(profile, providerCatalog, providerSelections[providerCatalog].orEmpty(),
@@ -880,7 +888,7 @@ private fun DiscoveryPreviewContent(
         LocalDiscoveryPosterArtwork provides scrollVariant.posterArtwork) {
     StableTileFocusViewport {
     BoxWithConstraints(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)
-        .onGloballyPositioned { glassBounds = it.boundsInRoot() }) {
+        .onGloballyPositioned { glassBounds = it.boundsInWindow() }) {
         val screenHeight = maxHeight
         // Keep native owner focus while outgoing lazy items unpin and dispose. This
         // target has no lazy parent, is invisible to accessibility and is never a
@@ -1388,21 +1396,21 @@ private fun DiscoverySupplementStatus(section: String, state: DiscoveryState, vm
 }
 
 @Composable
-internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center, shaded: Boolean = true) {
+internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center, shaded: Boolean = true, viewportShade: Boolean = false) {
     val context = LocalContext.current
     val requested = card?.backdrop?.let { thumbnailArtworkUrl(it, 1280) }
     var ready by remember { mutableStateOf(requested) }
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
         Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else 300), label = "discoveryBackdrop") { url ->
-            val request = remember(context, url, shaded) { ImageRequest.Builder(context).data(url).size(1280, 720)
-                .apply { if (shaded) transformations(DiscoveryBackdropTransformation()) }.crossfade(false).build() }
+            val request = remember(context, url, shaded, viewportShade) { ImageRequest.Builder(context).data(url).size(1280, 720)
+                .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
             AsyncImage(request, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = alignment)
         }
         // Hidden decode layer promotes only the latest successfully prepared backdrop.
         if (requested != null && requested != ready) {
-            val request = remember(context, requested, shaded) { ImageRequest.Builder(context).data(requested).size(1280, 720)
-                .apply { if (shaded) transformations(DiscoveryBackdropTransformation()) }.crossfade(false).build() }
+            val request = remember(context, requested, shaded, viewportShade) { ImageRequest.Builder(context).data(requested).size(1280, 720)
+                .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
             AsyncImage(request, null,
                 Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) ready = requested }, onError = { if (currentRequest == requested) ready = null })
         }
@@ -1419,7 +1427,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     phoneHeader: (@Composable () -> Unit)? = null, portraitPhone: Boolean = false,
     showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false },
     categoryActions: (@Composable () -> Unit)? = null, trailerMedia: MediaItem? = null,
-    emptyTitle: String = "Discover something to watch") {
+    emptyTitle: String = "Discover something to watch", contentInset: Dp = 0.dp) {
     if (portraitPhone) {
         val context = LocalContext.current
         val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
@@ -1431,7 +1439,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     }
     var drag by remember { mutableFloatStateOf(0f) }
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
-    Column(Modifier.fillMaxWidth().heightIn(min = height).padding(horizontal = if (landscape) 32.dp else 18.dp, vertical = if (compact) 8.dp else 16.dp)
+    Column(Modifier.fillMaxWidth().heightIn(min = height).padding(horizontal = (if (landscape) 32.dp else 18.dp) + contentInset, vertical = if (compact) 8.dp else 16.dp)
         .pointerInput(carousel) { if (carousel) detectHorizontalDragGestures(onDragStart = { drag = 0f }, onDragEnd = { if (drag < -70f) next() else if (drag > 70f) previous() }) { change, amount -> change.consume(); drag += amount } },
         verticalArrangement = Arrangement.Bottom) {
         // Landing heroes keep the same geometry before feeds, artwork and metadata arrive.
@@ -1747,7 +1755,7 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     onFocus: () -> Unit = {}, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val collapsible = LocalCollapsingDiscoveryActions.current && icon != null
-    DiscoveryMobileGlassContainer {
+    DiscoveryMobileGlassContainer(focused = focused) {
     Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 40.dp)
         .widthIn(min = if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 0.dp)
         .then(if (collapsible) Modifier.semantics { contentDescription = label } else Modifier)

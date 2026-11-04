@@ -62,8 +62,8 @@ internal class DiscoveryPhoneBackdropTransformation : Transformation() {
 }
 
 /** Bake static gradients once off-thread instead of shading the entire TV display every frame. */
-internal class DiscoveryBackdropTransformation : Transformation() {
-    override val cacheKey = "niktv-discovery-shaded-backdrop-v3"
+internal class DiscoveryBackdropTransformation(private val verticalShade: Boolean = true) : Transformation() {
+    override val cacheKey = "niktv-discovery-shaded-backdrop-v4-$verticalShade"
     override suspend fun transform(input: android.graphics.Bitmap, size: Size): android.graphics.Bitmap = withContext(Dispatchers.Default) {
         val output = android.graphics.Bitmap.createBitmap(input.width, input.height, android.graphics.Bitmap.Config.ARGB_8888)
         output.setHasAlpha(false)
@@ -74,9 +74,11 @@ internal class DiscoveryBackdropTransformation : Transformation() {
         paint.shader = android.graphics.LinearGradient(0f, 0f, output.width.toFloat(), 0f,
             intArrayOf(0xA6090B10.toInt(), 0x26090B10, 0x00090B10), null, android.graphics.Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, output.width.toFloat(), output.height.toFloat(), paint)
+        if (verticalShade) {
         paint.shader = android.graphics.LinearGradient(0f, 0f, 0f, output.height.toFloat(),
             intArrayOf(0x99090B10.toInt(), 0x00090B10, 0xFF090B10.toInt()), floatArrayOf(0f, .55f, 1f), android.graphics.Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, output.width.toFloat(), output.height.toFloat(), paint)
+        }
         output
     }
 }
@@ -113,7 +115,7 @@ internal suspend fun prepareTrialHeroArtwork(context: Context, url: String?) {
             try {
                 val result = context.imageLoader.execute(ImageRequest.Builder(context)
                     .data(thumbnailArtworkUrl(url, 1280)).size(1280, 720)
-                    .transformations(DiscoveryBackdropTransformation()).build())
+                    .transformations(DiscoveryBackdropTransformation(verticalShade = false)).build())
                 ensureActive()
                 if (result is coil3.request.SuccessResult) {
                     (result.image.asDrawable(context.resources) as? android.graphics.drawable.BitmapDrawable)?.bitmap?.prepareToDraw()

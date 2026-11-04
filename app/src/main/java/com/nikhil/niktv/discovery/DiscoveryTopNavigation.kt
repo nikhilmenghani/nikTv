@@ -111,7 +111,9 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
         DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), backdrop ?: LocalMobileGlassArtwork.current,
-            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds) {
+            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds,
+            fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
+            fillWidth = LocalMobileGlassFillWidth.current) {
             CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
             Row(Modifier.fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -165,7 +167,9 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
         }
     }
     var focused by remember { mutableStateOf(false) }
-    DiscoveryGlassPanel(modifier, backdrop, backdropBounds, focused) {
+    DiscoveryGlassPanel(modifier, backdrop, backdropBounds, focused,
+        fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
+        fillWidth = LocalMobileGlassFillWidth.current) {
     Surface(onClick = open, modifier = Modifier.fillMaxSize().onFocusChanged { focused = it.isFocused }
         .semantics { contentDescription = "Profile: $profile" },
         shape = RoundedCornerShape(10.dp), color = Color.Transparent) {
