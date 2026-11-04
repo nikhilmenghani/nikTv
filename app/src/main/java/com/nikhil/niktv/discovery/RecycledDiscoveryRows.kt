@@ -111,7 +111,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
 
 private fun NativeDiscoveryItem.samePresentation(other: NativeDiscoveryItem) =
     id == other.id && title == other.title && subtitle == other.subtitle &&
-        artwork == other.artwork && progress == other.progress && source == other.source
+        artwork == other.artwork && progress == other.progress && source == other.source && fitArtwork == other.fitArtwork
 private val rowDiff = object : DiffUtil.ItemCallback<NativeDiscoveryRow>() {
     override fun areItemsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) = a.id == b.id
     override fun areContentsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) =
@@ -1067,6 +1067,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             progress.fraction = item.progress
             if (!replacement) return
             image.background = artworkPlaceholder.takeIf { showSkeletons && !item.artwork.isNullOrBlank() }
+            image.scaleType = if (item.fitArtwork) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_CROP
+            val logoPadding = if (item.fitArtwork) dp(12) else 0
+            image.setPadding(logoPadding, logoPadding, logoPadding, if (item.fitArtwork) dp(48) else 0)
             item.artwork?.let { url -> imageJob = work.launch { images.withPermit {
                 try {
                     val w = if (polishedCaptions) px(posterGeometry.width - 8f) else dp(104)

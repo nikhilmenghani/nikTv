@@ -7,6 +7,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
 internal val LocalOpenWatchProviders = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
+internal val WatchProviderSaver = androidx.compose.runtime.saveable.Saver<WatchProvider?, String>(
+    save = { it?.let { p -> Json.encodeToString(WatchProvider.serializer(), p) } ?: "" },
+    restore = { it.takeIf(String::isNotBlank)?.let { value -> Json.decodeFromString(WatchProvider.serializer(), value) } })
 @Serializable internal data class WatchProvider(val id: Int, val name: String, val logo: String? = null)
 @Serializable internal data class WatchRegion(val code: String, val name: String)
 @Serializable internal data class WatchProviderPage(val cards: List<DiscoveryCard>, val page: Int, val totalPages: Int)

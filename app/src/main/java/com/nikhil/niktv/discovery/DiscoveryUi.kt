@@ -85,7 +85,7 @@ internal data class RailEntry(val key: String, val title: String, val artwork: S
 }
 internal data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
     val section: TmdbHomeSection? = null, val providerType: CatalogType? = null, val providerCategory: Category? = null,
-    val recommendation: com.nikhil.niktv.data.HistoryRecommendationRow? = null)
+    val recommendation: com.nikhil.niktv.data.HistoryRecommendationRow? = null, val viewAll: (() -> Unit)? = null)
 
 /** Keep the large screen body out of the many-argument Compose entry method.
  * A combined entry exceeded 255 DEX registers and ART rejected its generated dirty-mask code. */
@@ -439,13 +439,17 @@ private fun DiscoveryPreviewContent(
             resume = currentOpenRecent, open = { currentPlayProvider(CatalogType.SERIES, it, queue) })
     }
     val today = currentDiscoveryDate()
+    val watchProviders = homeWatchProviders(profile, experiment && surface == DashboardSurface.HOME && state.detail == null)
+    val openWatchProviders = LocalOpenWatchProviders.current
+    var chosenWatchProvider by rememberSaveable(profile, stateSaver = WatchProviderSaver) { mutableStateOf<WatchProvider?>(null) }
     val providerRailModels = remember(profile, surface, windowedProviderPreview, progressLookup, scrollVariant.tileLimit) {
         linkedMapOf<String, Pair<List<Any?>, Rail>>()
     }
     val rails = remember(profile, surface, state.detail?.key, state.feeds, state.sections,
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
-        app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection) { buildList {
+        app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection,
+        watchProviders.providers, watchProviders.loading, watchProviders.error) { buildList {
         val detail = state.detail
         if (detail == null) {
             val recents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
@@ -500,6 +504,11 @@ private fun DiscoveryPreviewContent(
                         })
                 }))
             }
+            if (surface == DashboardSurface.HOME && experiment && (watchProviders.loading || watchProviders.providers.isNotEmpty() || watchProviders.error != null))
+                add(Rail("watch-providers", "Providers", watchProviders.providers.map { provider ->
+                    RailEntry("watch-provider:${provider.id}", provider.name, provider.logo,
+                        open = { chosenWatchProvider = provider })
+                }, viewAll = openWatchProviders))
             if (surface == DashboardSurface.HOME) add(Rail("daily-movies", "Trending Movies Today",
                 state.feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty().take(minOf(10, scrollVariant.tileLimit)).map { cardEntry(it, "daily-movies") }, true, TmdbHomeSection.TRENDING_MOVIES))
             if (surface == DashboardSurface.HOME) add(Rail("daily-series", "Trending Series Today",
@@ -641,6 +650,13 @@ private fun DiscoveryPreviewContent(
             }
         } },
         confirmButton = { NikTvSecondaryActionButton(::closeExperimentSettings) { Text("Close") } })
+    chosenWatchProvider?.let { provider ->
+        WatchProvidersScreen(app, back = { chosenWatchProvider = null },
+            select = { chosenWatchProvider = null; actions.selectSurface(it) },
+            navigate = { chosenWatchProvider = null; actions.navigate(it) }, playCard = currentPlayCard,
+            detailVisibilityChanged = actions.detailVisibilityChanged, initialProvider = provider)
+        return
+    }
     if (experiment && scrollVariant.nativeRows && state.detail == null) {
         var nativePopup by remember(profile, surface) { mutableStateOf<RailEntry?>(null) }
         var nativePopupOpen by remember(profile, surface) { mutableStateOf(false) }
@@ -794,22 +810,22 @@ private fun DiscoveryPreviewContent(
                     }
                 }
         }
-        val loadingRows = remember(visibleRails, state.feeds, state.errors, providerState) {
+        val loadingRows = remember(visibleRails, state.feeds, state.errors, providerState, watchProviders.loading) {
             visibleRails.filter { row -> row.entries.isEmpty() && (
-                row.section?.let { discoverySectionSkeleton(it, state) } == true ||
+                (row.key == "watch-providers" && watchProviders.loading) || row.section?.let { discoverySectionSkeleton(it, state) } == true ||
                     row.providerCategory?.let { discoveryProviderSkeleton(profile, it, providerState) } == true)
             }.mapTo(mutableSetOf()) { it.key }
         }
         val nativeRows = remember(visibleRails, scrollVariant, loadingRows) { visibleRails.map { row ->
             val all: () -> Unit = {
                 restoreNativeSelection = true
-                row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
+                row.viewAll?.invoke() ?: row.providerType?.let { type -> providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name }
                     ?: row.section?.let(actions.openSection) ?: run { activityCollection = row.key }
             }
             NativeDiscoveryRow(row.key, row.title, row.entries.map { entry -> NativeDiscoveryItem(
                 entry.key, entry.title, entry.subtitle,
                 entry.artwork, { restoreNativeSelection = true; entry.open() }, entry.popup?.let { { restoreNativeSelection = true; nativePopup = entry; nativePopupOpen = true } }, entry.progress.takeIf { scrollVariant.progressIndicators },
-                source = entry.displaySource.takeIf { scrollVariant.sourceCaptions }) },
+                source = entry.displaySource.takeIf { scrollVariant.sourceCaptions }, fitArtwork = row.key == "watch-providers") },
                 actionLabel = if (recycled && row.key !in setOf("continue", "episodes")) "Remove ${row.title}" else null,
                 action = if (!recycled || row.key in setOf("continue", "episodes")) null else ({
                     if (row.recommendation != null && actions.dismissRecommendation != null) actions.dismissRecommendation(row.recommendation)

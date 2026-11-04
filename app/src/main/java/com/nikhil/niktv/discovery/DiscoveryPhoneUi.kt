@@ -70,7 +70,7 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
         fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
         fillWidth = LocalMobileGlassFillWidth.current) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            DiscoveryPhoneDestination.entries.forEach { destination ->
+            DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS }.forEach { destination ->
                 val active = destination == selected
                 val icon = when (destination) {
                     DiscoveryPhoneDestination.HOME -> Icons.Default.Home

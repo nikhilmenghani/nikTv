@@ -34,7 +34,8 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (DashboardSurface) -> Unit,
-    navigate: (String) -> Unit, playCard: (DiscoveryCard) -> Unit, detailVisibilityChanged: (Boolean) -> Unit) {
+    navigate: (String) -> Unit, playCard: (DiscoveryCard) -> Unit, detailVisibilityChanged: (Boolean) -> Unit,
+    initialProvider: WatchProvider? = null) {
     val context = LocalContext.current
     val profile = app.savedProfile?.cacheKey().orEmpty()
     val preferences = remember(context) { context.getSharedPreferences("watch_providers", 0) }
@@ -48,7 +49,7 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
     val providerSaver = remember { Saver<WatchProvider?, String>(
         save = { it?.let { provider -> kotlinx.serialization.json.Json.encodeToString(WatchProvider.serializer(), provider) } ?: "" },
         restore = { value -> value.takeIf(String::isNotBlank)?.let { kotlinx.serialization.json.Json.decodeFromString(WatchProvider.serializer(), it) } }) }
-    var collection by rememberSaveable(profile, stateSaver = providerSaver) { mutableStateOf<WatchProvider?>(null) }
+    var collection by rememberSaveable(profile, initialProvider?.id, stateSaver = providerSaver) { mutableStateOf(initialProvider) }
     val pages = rememberSaveableStateHolder()
     val allRequesters = remember(profile) { mutableMapOf<Int, FocusRequester>() }
     val gridRequesters = remember(profile) { mutableMapOf<String, FocusRequester>() }
@@ -68,6 +69,7 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
     LaunchedEffect(model) { model.resume() }
     DisposableEffect(model) { onDispose { model.stop() } }
     fun closeCollection() {
+        if (initialProvider != null) { back(); return }
         val providerId = collection?.id
         collection = null
         scopeForFocus.launch { repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { (allRequesters[providerId] ?: collectionOrigin)?.requestFocus() ?: false }.getOrDefault(false)) return@launch } }
@@ -79,6 +81,14 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
             WatchProviderCollection(provider, state.region, state.series, state.rows[provider.id] ?: WatchProviderRow(loading = true),
                 load = { more -> model.load(provider.id, more) }, refresh = { model.refreshProvider(provider.id) },
                 close = ::closeCollection, metadataActive = selected == null,
+                controls = if (initialProvider == null) null else ({
+                    DiscoveryAction(if (state.series) "Show movies" else "Show series",
+                        if (state.series) Icons.Default.Movie else Icons.Default.Tv, iconOnly = true) {
+                        preferences.edit().putBoolean("series", !state.series).apply(); model.select(series = !state.series)
+                    }
+                    DiscoveryAction("Choose region", Icons.Default.Public, iconOnly = true,
+                        modifier = Modifier.focusRequester(regionFocus)) { regions = true }
+                }),
                 open = { card, requester -> originKey = card.key; originFocus = requester; selected = card }, focusRegistry = gridRequesters, cancel = { model.leave(provider.id) })
         } else pages.SaveableStateProvider("provider-rows") { WatchProviderRows(state, model::load, model::leave, query, search, { query = it }, searchFocus,
             regionFocus, { regions = true }, { search = !search; if (!search) query = "" },

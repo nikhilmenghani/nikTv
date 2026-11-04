@@ -557,7 +557,7 @@ internal fun DiscoveryScreenHost(
             state.searchOpen -> null
             state.favoritesOpen || state.offlineDownloadsOpen -> DiscoveryPhoneDestination.LIBRARY
             state.settingsOpen -> null
-            providersVisible -> DiscoveryPhoneDestination.PROVIDERS
+            providersVisible -> DiscoveryPhoneDestination.HOME
             previewVisible || previewProviderCategory -> when (state.discoverySurface) {
                 DashboardSurface.MOVIES -> DiscoveryPhoneDestination.MOVIES
                 DashboardSurface.SERIES -> DiscoveryPhoneDestination.SERIES
