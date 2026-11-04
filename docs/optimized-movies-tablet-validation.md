@@ -35,9 +35,9 @@ The first regression build passed in 54 seconds. Immutable APKs and SHA-256 valu
 
 Physical portrait→landscape→portrait subsequently **passed** using the explicitly authorized scoped display-rotation driver with the later `movies-entry-final-regression-arm64.apk` / matching tests. The host records natural physical size, refuses unknown original rotation modes, verifies the fake regression host owns foreground before each mutation, and restores the original command in a host `finally` block. Actual rotations were 0/1/0; original `free` was restored to `free`, `restoredExactly=true`, `error=null`. No ignore-orientation policy, app preferences, data or caches changed. Evidence: `header-physical-orientation.log` and `header-physical-orientation-restore.json`. The earlier failure remains `header-orientation.log` / `header-orientation-failure.png`.
 
-## Controlled tablet renderer comparison
+## Controlled tablet renderer comparison — no artwork
 
-`CatalogRendererPerformanceTest` passed with `localArtwork=true`, A-B-B-A order, a separate first traversal plus three warm trials per block. It renders the actual old/new row components with identical local 14x30 content and one shared neutral poster image, preserving the tablet's animation and tile-layer policy. It has no provider calls or personal data. No screenshots, UI hierarchy capture, tracing, recording, builds or other-device actions occur during timing.
+`CatalogRendererPerformanceTest` passed with the argument `localArtwork=true`, A-B-B-A order, a separate first traversal plus three warm trials per block. **A later harness audit found that the created PNG was not assigned to either model adapter: both rendered null artwork. These figures are a no-artwork comparison.** The unused PNG/flag do not establish image loading or decoding coverage. The actual old/new row components render identical local 14x30 titles, preserving the tablet's animation and tile-layer policy, with no provider calls or personal data. No screenshots, UI hierarchy capture, tracing, recording, builds or other-device actions occur during timing. Original logs/results remain intact for audit.
 
 | Warm metric | Original | Recycled |
 |---|---:|---:|
@@ -50,11 +50,11 @@ Physical portrait→landscape→portrait subsequently **passed** using the expli
 | Maximum UI-phase sum | 80.55 ms | 6.68 ms |
 | Frames with UI-phase sum >50 ms | 11 | 0 |
 
-The highlight callback measures positive-opacity legacy tile drawing versus focused native-view visibility plus its immediate drawing pass. It is not physical display latency. UI-phase sum covers input/animation/layout/draw, not an independent whole-thread stall trace. Local artwork lacks real provider image diversity, metadata/cache arrivals, full shell navigation and the header. Evidence: `renderer-highlight-abba.log`, `.json`, and `-summary.json`; no Fire TV values are substituted.
+The highlight callback measures positive-opacity legacy tile drawing versus focused native-view visibility plus its immediate drawing pass. It is not physical display latency. UI-phase sum covers input/animation/layout/draw, not an independent whole-thread stall trace. This no-artwork fixture does not measure poster loading/decoding, provider image diversity, metadata/cache arrivals, full shell navigation or the header. Evidence: `renderer-highlight-abba.log`, `.json`, and `-summary.json`; no Fire TV values are substituted. The real-app same-binary ABBA blocks below did render actual posters and are unaffected by this harness correction. A corrected artwork-wiring fixture with a decode assertion is pending after the active Movies observation.
 
 ## Functional fixture findings
 
-`NativeDiscoveryRowsDeviceTest` ran four tests: its two remote-only variants passed; both touch-capable variants failed at line 210, "Remote reentry restores the tile selected by touch." Physical touch had already activated item0 once, but subsequent keyboard-mode entry did not restore that item. Evidence: `native-input.log`. This older native-island component is distinct from the current recycled Movies component, so the failure must be investigated rather than automatically attributed to optimized Movies. Its baseline/preexisting status is unproven. Current recycled results follow; real-app touch checks remain pending.
+`NativeDiscoveryRowsDeviceTest` ran four tests: its two remote-only variants passed; both touch-capable variants failed at line 210, "Remote reentry restores the tile selected by touch." Physical touch had already activated item0 once, but subsequent keyboard-mode entry did not restore that item. Evidence: `native-input.log`. This older native-island component is distinct from the current recycled Movies component, so the failure must be investigated rather than automatically attributed to optimized Movies. Its baseline/preexisting status is unproven. Current recycled results and the subsequent passing real-app checks follow.
 
 `RecycledDiscoveryDeviceTest` passed all 16 tests (`recycled-functional.log`): large-feed recycling; header entry/reversal; held-key release separation; pressure cleanup; rapid reversals; both viewport axes on details return; reduced motion; long titles and local larger-font Configuration contexts; row actions, tail controls and late items.
 
@@ -96,14 +96,9 @@ An initial A1 exposure drifted to Tox. The new expected-title guard rejected the
 
 Optimized warm PSS was approximately 253.5–257.3 MiB and graphics 104.1–104.5 MiB. Both profiles share process/image caches during these switches; no independent cold-memory attribution is implied.
 
-## Pending gates
+## Limits and separately retained failures
 
-- Latest normal-build real touch/D-pad, category boundary, View All/details return, category manager and Home regression checks for both profiles.
-- At least 15 active minutes of navigation/background-return memory observation, excluding shared-lock pauses.
-- Real-app first-usable-tile/artwork readiness and actual provider request counts are not quantified by these gfxinfo/component tests. Fake-source fixtures verify their own request behavior only.
-- Older native-island touch-to-keyboard failures remain separately unproven; current recycled component passes its 16 cases.
-
-This report is in progress and does not yet claim tablet validation passed.
+Real-app first-usable-tile/artwork readiness and actual provider request counts are not quantified by the gfxinfo/component tests. Fake-source fixtures verify their own request behavior. Older native-island touch-to-keyboard failures remain separately unproven; the current recycled component subsequently passes all 19 cases and the final real-app sequences below. Existing lint failures are not a green check.
 
 ## Subsequent real-device findings and scoped corrections
 
@@ -124,4 +119,45 @@ Pre-fix local tests failed both entry and skeleton cases (`mixed-before.log`). A
 
 Final focused **three tests passed** (`mixed-verified.log`): physical touch with feed retained; physical touch/details with actual saved-state remount; and loading→same-cached-card overlay reconciliation. Both touch cases restore item0 on the first hardware arrow, assert full visibility, keep a separate modal's navigation focus, and continue the existing header/hero/details traversal. Immutable before/after APK metadata are in `tablet-mixed-*-build-artifacts.json`.
 
-The **complete recycled device class passed all 19 tests**, zero failures (`recycled-functional-final.log`). Source/tests were frozen and handed back to Root. Root's final normal Dev APK is `movies-final-dev-arm64.apk`, SHA-256 `d8dd4a926ea8adda6f8fb2caaf129558f65bc9937303bb88781b8221db048a18`; final-build installation/retest is underway. Final real mixed-input and seven-category return checks, the remaining normal-app navigation checks, and the **15-active-minute** tablet navigation/background-return memory soak are explicitly **pending** for this Movies checkpoint. The local fixture passes and short warm ABBA results do not substitute for the pending real endurance gate.
+The **complete recycled device class passed all 19 tests**, zero failures (`recycled-functional-final.log`). Source/tests were frozen and handed back to Root. Root's final normal Dev APK is `movies-final-dev-arm64.apk`, SHA-256 `d8dd4a926ea8adda6f8fb2caaf129558f65bc9937303bb88781b8221db048a18`; at the time of the checkpoint the final real-device checks and 15-active-minute endurance were pending. They subsequently completed as recorded below; fixture and short warm ABBA results were not used as substitutes.
+
+## Final normal-build real-device retest
+
+Movies checkpoint: `4a037c5bdb9eae8b147ebc72554e62a0240d142b`. Installed final normal Dev SHA-256 `d8dd4a926ea8adda6f8fb2caaf129558f65bc9937303bb88781b8221db048a18` successfully with data retained. Later Series binaries were not installed for these Movies checks.
+
+- **Both mixed-input sequences passed.** After selecting the neighboring poster with D-pad, touch opened the original movie's correct details. Back retained touch mode; the first hardware Right restored the touched poster at exactly the original bounds. Subsequent Right/Left visited the neighbor and returned correctly. Final Wio content had refreshed to One Piece Heroines / Charlie Harper; Nikhil used Wonder Woman 1984 / Soul. This catalog refresh is separate from the older matched-ABBA data. Evidence: `final-{wio,nikhil}-touch-neighbor.report.json` and associated screenshots.
+- **Both seven-category returns passed.** Returned poster artwork matched and ready cards were visible without the former full-row skeleton. Reversing a long vertical traversal naturally positioned the row higher than its initial viewport; this is distinct from the exact-bounds details-return checks. Evidence: `final-{wio,nikhil}-boundary-*`.
+- **Full selected-category counts were preserved.** Wio manager showed 78 selected / 78 available, Nikhil 172 / 172. Managers were opened and closed with Back; no checkbox, Select all, Clear all or removal action was used. Evidence: `final-{wio,nikhil}-manager-*`.
+- **Fresh View All starts at the first movie.** Wio first focused One Piece Heroines; Nikhil first focused Wonder Woman 1984. Wio normal pagination expanded 14→84 titles with more available; selected You, Me, Us beyond the preview and Info/Back restored its semantic title and exact bounds. Nikhil collection exposed 1,058 titles; navigation reached Eternals beyond the preview, and Info/Back likewise restored its title and exact bounds. Evidence: `final-{wio,nikhil}-viewall-*` and `final-{wio,nikhil}-grid-details-return.report.json`.
+- **Home and original Series smoke checks passed.** Home navigation reached a fully visible portrait media focus. Series retained its original renderer and profile-specific content: Wio Friends S3 E25, Nikhil ICC Cricket World Cup 2023 Highlights, matching the original captures. Evidence: `final-{wio,nikhil}-{home,series}-*`. No real Play, trailer, download or favorite action was invoked.
+
+The observation completed **904.89 active seconds**, 109 navigation cycles and three successful background returns. Shared-lock pauses (32.30 seconds) were excluded; total wall time was 979.0 seconds. Every Home→`am start --activity-single-top` return retained the exact ActivityRecord, task, PID and selected visual poster. No focus-loss or navigation-return-change events occurred. This functional observation has no latency-benchmark claim.
+
+Sixteen memory samples show initial PSS 288,089 KiB (281.3 MiB), warm-up peak 365,887 KiB (357.3 MiB), and final PSS 282,762 KiB (276.1 MiB). Final graphics was 113,860 KiB (111.2 MiB). The last five PSS samples ranged 282,762–302,139 KiB, with garbage-collection variation. This is a retained-cache 15-minute observation, not a cold-memory attribution or a bound beyond this interval. Evidence: `tablet/movies-endurance-nikhil/status.json` and `movies-endurance-nikhil-final.png`.
+
+## Corrected actual-artwork and metadata-arrival fixtures
+
+The earlier no-artwork logs remain preserved and labelled above. A single corrected invocation used regression main SHA-256 `848adbd9a824d9b55d1471ad7386c5dcf68c7094d8f5ccea23eb3fe6b1cd3d68` and test APK `9fc70df9677579f7feb05a437c6b80beb032c839462463122c3267201db01a46`, with both `localArtwork=true` and `arrivalPerformance=true`. Both tests executed and passed (80.177 seconds), with no assumption skips. Each produced 16 records: separate exposure/arrival samples and six warm trials per renderer. Every block asserted actual checkerboard pixels before timing; eight proof PNGs were copied and both legacy/native variants independently inspected.
+
+| Corrected warm component result | Original | Recycled |
+|---|---:|---:|
+| Input→focus p95 | 66.07 ms | 7.27 ms |
+| Input→first highlighted drawing pass p95 | 98.62 ms | 16.20 ms |
+| Maximum first highlighted drawing pass | 110.53 ms | 19.72 ms |
+| Median per-trial frame p95 | 22.92 ms | 20.31 ms |
+| UI samples >50 ms | 5 | 0 |
+
+The arrival fixture separately hydrates synthetic metadata off the main thread, then submits 14 rows × 30 items into a skeleton surface. Warm medians:
+
+| Arrival interval/result | Original | Recycled |
+|---|---:|---:|
+| Synthetic metadata preparation | 15.71 ms | 14.58 ms |
+| Worker-ready→submission | 1.05 ms | 1.02 ms |
+| Submission→focus | 140.01 ms | 123.74 ms |
+| Submission→first focus-ready decor draw | 142.32 ms | 137.73 ms |
+| Submission→first highlighted drawing pass | 156.15 ms | 137.76 ms |
+| Hydration→first highlighted drawing pass | 172.88 ms | 153.39 ms |
+| Median per-trial frame p95 | 39.47 ms | 43.55 ms |
+| Deadline misses / UI samples >50 ms | 10 / 6 | 12 / 6 |
+
+Arrival therefore does **not** establish a frame-p95 or deadline-miss improvement. It distinguishes preparation, submission and drawing; it does not measure real provider/network/disk arrival or physical display latency. The fixtures reuse one decoded local checkerboard across items, and legacy/native layouts have different visible column counts. These are component comparisons, not pixel-matched geometry, diverse-image decoding or production cold-start measurements. Header/provider behavior is covered separately. Evidence: `corrected-artwork-and-arrival.log`, `renderer-artwork-corrected-abba{,-summary}.json`, `arrival-artwork-corrected-abba{,-summary}.json`, and `corrected-artwork-proofs/`.

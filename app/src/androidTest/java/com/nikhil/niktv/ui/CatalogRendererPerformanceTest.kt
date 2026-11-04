@@ -35,6 +35,7 @@ class CatalogRendererPerformanceTest {
     private var draw = 0L
     private var highlight = 0L
     private var nativeMode = false
+    private var phoneLayout = false
     private fun select(id: String) {
         if (id == selected) return
         selected = id
@@ -62,7 +63,7 @@ class CatalogRendererPerformanceTest {
         LazyColumn(Modifier.fillMaxSize().background(Color(0xFF090B10)), state = list) {
             items(14, key = { it }) { row ->
                 val model = remember(row) { Rail("row$row", "Selected category $row", (0 until 30).map { item ->
-                    RailEntry("row$row:item$item", "A longer movie title $row / $item", null, subtitle = "2025 · IPTV", open = {})
+                    RailEntry("row$row:item$item", "A longer movie title $row / $item", poster, subtitle = "2025 · IPTV", open = {})
                 }) }
                 DiscoveryRail(model, width, false, requests, row, phone,
                     popupChanged = {}, prefetch = true, trackPresentation = false, presentationEnabled = false, skeleton = true,
@@ -81,15 +82,11 @@ class CatalogRendererPerformanceTest {
         val host = i.startActivitySync(Intent(i.targetContext, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
         val report = JSONArray()
+        phoneLayout = usesDiscoveryPhoneLayout(host.resources.configuration.smallestScreenWidthDp,
+            host.isTvLikeDevice(host.resources.configuration))
         val compareHeader = InstrumentationRegistry.getArguments().getString("compareHeader") == "true"
         val localArtwork = InstrumentationRegistry.getArguments().getString("localArtwork") == "true"
-        if (localArtwork) {
-            val image = java.io.File(i.targetContext.cacheDir, "catalog-fixture-poster.png")
-            val bitmap = android.graphics.Bitmap.createBitmap(320, 480, android.graphics.Bitmap.Config.ARGB_8888)
-            bitmap.eraseColor(android.graphics.Color.rgb(55, 65, 85))
-            image.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
-            poster = image.toURI().toString()
-        }
+        if (localArtwork) poster = catalogFixturePoster(i.targetContext)
         val thread = HandlerThread("catalog-frames").apply { start() }
         val totals = Collections.synchronizedList(mutableListOf<Long>())
         val ui = Collections.synchronizedList(mutableListOf<Long>())
@@ -132,7 +129,7 @@ class CatalogRendererPerformanceTest {
                 selected = ""; dispatch = 0L
                 i.runOnMainSync { host.setContent { key(block) { MaterialTheme {
                     if (native) RecycledDiscoveryRows((0 until 14).map { row -> NativeDiscoveryRow("row$row", "Selected category $row",
-                        (0 until 30).map { item -> NativeDiscoveryItem("item$item", "A longer movie title $row / $item", "2025 · IPTV", onClick = {}) }) },
+                        (0 until 30).map { item -> NativeDiscoveryItem("item$item", "A longer movie title $row / $item", "2025 · IPTV", artwork = poster, onClick = {}) }) },
                         Modifier.fillMaxSize(), entry, {}, containedCaptions = true, showSkeletons = true,
                         cardShadows = true, homeTileProportions = true,
                         animateFocus = !host.isTvLikeDevice(host.resources.configuration),
@@ -158,6 +155,8 @@ class CatalogRendererPerformanceTest {
                 } } }
                 await("Initial media focus block=$block native=$native") { selected == "row0:item0" }
                 Thread.sleep(1500)
+                // Verification is deliberately outside the timed traversal window.
+                if (localArtwork) verifyCatalogFixtureArtwork(host, "renderer-artwork-block-$block")
                 repeat(4) { trial ->
                     val latency = JSONArray()
                     totals.clear(); ui.clear(); sampleStart = System.nanoTime()
@@ -171,16 +170,17 @@ class CatalogRendererPerformanceTest {
                         }
                         await("Key $key reaches another media") { selected != before }
                         Thread.sleep(260)
-                        assertTrue("Focused media records a positive-opacity drawing pass: $selected", highlight != 0L)
+                        if (native || !phoneLayout) assertTrue("Focused media records a positive-opacity drawing pass: $selected", highlight != 0L)
+                        else assertTrue("Phone legacy card records a decor drawing pass after focus", draw != 0L)
                         i.runOnMainSync { latency.put(JSONObject().put("key", key).put("selected", selected)
                             .put("focusMs", if (focus == 0L) JSONObject.NULL else (focus - dispatch) / 1e6)
-                            .put("firstHighlightDrawMs", (highlight - dispatch) / 1e6)
+                            .put("firstHighlightDrawMs", if (highlight == 0L) JSONObject.NULL else (highlight - dispatch) / 1e6)
                             .put("firstDrawMs", if (draw == 0L) JSONObject.NULL else (draw - dispatch) / 1e6)); dispatch = 0L }
                     }
                     sampleStart = Long.MAX_VALUE
                     assertEquals("Matched traversal returns to first media", "row0:item0", selected)
                     Thread.sleep(200)
-                    report.put(JSONObject().put("block", block).put("trial", trial).put("native", native).put("header", withHeader).put("artwork", localArtwork).put("phase", if (trial == 0) "first-exposure" else "warm")
+                    report.put(JSONObject().put("block", block).put("trial", trial).put("native", native).put("header", withHeader).put("artwork", localArtwork).put("artworkVerifiedBeforeTiming", localArtwork).put("firstHighlightProbeAvailable", native || !phoneLayout).put("phase", if (trial == 0) "first-exposure" else "warm")
                         .put("frames", stats(totals.toList())).put("ui", stats(ui.toList())).put("input", latency))
                 }
             }
@@ -205,4 +205,47 @@ class CatalogRendererPerformanceTest {
 
 private fun PlaybackFixtureHostActivity.lifecycleScopeLaunch(block: suspend () -> Unit) {
     lifecycleScope.launch { block() }
+}
+
+/** Distinctive local bitmap; never a provider URL or personal cache fixture. */
+internal fun catalogFixturePoster(context: android.content.Context): String {
+    val image = java.io.File(context.cacheDir, "catalog-fixture-poster-verified.png")
+    val bitmap = android.graphics.Bitmap.createBitmap(320, 480, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.graphics.Paint()
+    for (y in 0 until 12) for (x in 0 until 8) {
+        paint.color = if ((x + y) % 2 == 0) android.graphics.Color.rgb(55, 65, 85) else android.graphics.Color.rgb(30, 170, 200)
+        canvas.drawRect((x * 40).toFloat(), (y * 40).toFloat(), ((x + 1) * 40).toFloat(), ((y + 1) * 40).toFloat(), paint)
+    }
+    image.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+    bitmap.recycle()
+    return android.net.Uri.fromFile(image).toString()
+}
+
+/** Pixel proof of an actual decoded/drawn image, outside all performance windows. */
+internal fun verifyCatalogFixtureArtwork(host: PlaybackFixtureHostActivity, label: String) {
+    val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+    val end = SystemClock.uptimeMillis() + 6_000
+    var verified = false
+    while (SystemClock.uptimeMillis() < end) {
+        val screenshot = automation.takeScreenshot() ?: continue
+        try {
+            var teal = 0; var slate = 0
+            for (y in 0 until screenshot.height step 2) for (x in 0 until screenshot.width step 2) {
+                val pixel = screenshot.getPixel(x, y)
+                val r = android.graphics.Color.red(pixel); val g = android.graphics.Color.green(pixel); val b = android.graphics.Color.blue(pixel)
+                if (kotlin.math.abs(r - 30) <= 3 && kotlin.math.abs(g - 170) <= 3 && kotlin.math.abs(b - 200) <= 3) teal++
+                if (kotlin.math.abs(r - 55) <= 3 && kotlin.math.abs(g - 65) <= 3 && kotlin.math.abs(b - 85) <= 3) slate++
+            }
+            if (teal >= 500 && slate >= 500) {
+                java.io.File(host.getExternalFilesDir(null), "$label.png").outputStream().use {
+                    screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+                verified = true
+                break
+            }
+        } finally { screenshot.recycle() }
+        Thread.sleep(100)
+    }
+    assertTrue("Local fixture PNG must actually be decoded and drawn before timing: $label", verified)
 }
