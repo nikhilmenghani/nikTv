@@ -7224,6 +7224,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profile = playing.profileKey
         viewModelScope.launch {
             progressSaveMutex.withLock {
+                if (scope != null) userSyncStore.rememberPrivateViewing(scope, RecentItem(
+                    when (playing.catalogType) {
+                        CatalogType.MOVIES -> FavoriteKind.MOVIE
+                        CatalogType.SERIES -> FavoriteKind.EPISODE
+                        else -> FavoriteKind.CHANNEL
+                    }, playing.media, series = playing.series, profileKey = profile))
                 val current = ownedStore.playbackProgress.first()
                 val previous = current.firstOrNull { it.key == key }
                 val sample = playbackSample(previous, key, positionMillis, durationMillis)

@@ -304,3 +304,7 @@ Final normal-app visual checks confirmed authenticated profiles were preserved a
 Manage exposes the red Delete profile action on both devices. Screenshots:
 `D:\workspace\niktv-validation\tablet-profile-manage-delete-final.png` and
 `D:\workspace\niktv-profile-validation\poco-normal-manage-delete-final.png`.
+
+## Three-minute playback sync and parental viewing privacy follow-up
+
+Episode history starts/transitions now publish asynchronously after local persistence; changed playback progress requests IO sync every three minutes, with explicit viewing actions flushed promptly. Pending local viewing conflicts are rebased above downloaded logical revisions; cached acknowledged records and deletion generations keep their existing precedence. Targeted AccountSyncEngine, UserSyncStore and WatchingSession coverage passes 35 tests, including two-device next-episode propagation, unsent-local conflict priority, deletion safety, protected-category history/progress locality, first-progress-before-history registration, backup exclusion, and old remote protected history redaction without import. Debug build and lintDebug passed. No secrets matched the reviewed diff. Earlier Git commits/backups are not rewritten by privacy redaction. Final development deployment uses adb install -r on the existing debug packages, preserving user data and release installations.

@@ -11,6 +11,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import com.nikhil.niktv.model.PortalProfile
+import com.nikhil.niktv.model.RecentItem
+import com.nikhil.niktv.model.FavoriteKind
+import com.nikhil.niktv.model.CatalogType
+import com.nikhil.niktv.model.providerProgressKey
 import java.util.UUID
 
 @Serializable enum class UserProfileType { GENERAL, KIDS }
@@ -215,13 +219,37 @@ class UserSyncStore private constructor(private val context: Context) {
         }
         forgetViewer(UserScope(accountId, profileId))
     }
-    suspend fun snapshot(accountId: String): List<SyncRecord> = dao.records(accountId)
-    suspend fun backupLocalPreferences(accountId: String): List<UserLocalPreference> = dao.allPreferences(accountId).filter { it.name != "offline_media_downloads" }
+    suspend fun snapshot(accountId: String): List<SyncRecord> = withEditLock { db.withTransaction {
+        val maps = dao.mappings(accountId)
+        dao.records(accountId).map { it.profileId }.filter { it.isNotBlank() }.distinct().forEach { id ->
+            val owner = UserScope(accountId, id)
+            redactPrivateViewing(owner, maps, privateViewingKeys(owner, maps))
+        }
+        dao.records(accountId)
+    } }
+    suspend fun backupLocalPreferences(accountId: String): List<UserLocalPreference> = withEditLock { db.withTransaction {
+        dao.allPreferences(accountId).filter { it.name !in setOf("offline_media_downloads", "private_viewing_keys") }.map { row ->
+            val values = portableBackupValuesLocked(UserScope(accountId, row.profileId), mapOf(row.name to row.value))
+            row.copy(value = values.getValue(row.name))
+        }
+    } }
+
+    internal suspend fun portableBackupValues(owner: UserScope?, values: Map<String, String>): Map<String, String> =
+        withEditLock { db.withTransaction { portableBackupValuesLocked(owner, values) } }
+
+    private suspend fun portableBackupValuesLocked(owner: UserScope?, values: Map<String, String>): Map<String, String> {
+        val maps = owner?.let { dao.mappings(it.accountId) }.orEmpty()
+        val keys = owner?.let { privateViewingKeys(it, maps, history = listOfNotNull(values["recently_played"])) }.orEmpty()
+        return values.filterKeys { it != "private_viewing_keys" }.mapValues { (name, raw) ->
+            if (name !in setOf("recently_played", "playback_progress", "recommendation_progress_v1")) raw
+            else runCatching { JsonArray(json.parseToJsonElement(raw).jsonArray.filterNot { privateViewingEntry(name, it, maps, keys) }).toString() }.getOrDefault(raw)
+        }
+    }
     suspend fun backupPortalMappings(accountId: String): List<LocalPortalMapping> = dao.mappings(accountId)
     suspend fun restoreLocalBackup(accountId: String, preferences: List<UserLocalPreference>, mappings: List<LocalPortalMapping>) = withEditLock { db.withTransaction {
         require(preferences.all { it.accountId == accountId } && mappings.all { it.accountId == accountId }) { "This backup belongs to another account." }
         mappings.forEach { UUID.fromString(it.portalId); dao.putMapping(it) }
-        preferences.filter { it.name in SCOPED_KEYS && it.name != "offline_media_downloads" }.forEach { dao.putPreference(it) }
+        preferences.filter { it.name in SCOPED_KEYS && it.name !in setOf("offline_media_downloads", "private_viewing_keys") }.forEach { dao.putPreference(it) }
     } }
     suspend fun restoreBackupRecords(accountId: String, records: List<SyncRecord>) = withEditLock { db.withTransaction {
         require(records.all { it.accountId == accountId }) { "This backup belongs to another account." }
@@ -239,7 +267,19 @@ class UserSyncStore private constructor(private val context: Context) {
         var revision = maxOf(current.values.maxOfOrNull { it.revision } ?: 0L,
             records.maxOfOrNull { it.revision } ?: 0L)
         val affected = mutableSetOf<UserScope>()
-        records.forEach { remote ->
+        val maps = dao.mappings(accountId)
+        val privateKeys = records.map { it.profileId }.distinct().associateWith { profileId ->
+            privateViewingKeys(UserScope(accountId, profileId), maps, records.filter { it.profileId == profileId })
+        }
+        records.forEach { incoming ->
+            val remote = if (!incoming.deleted && privateViewingRecord(incoming, maps, privateKeys[incoming.profileId].orEmpty())) {
+                // Never import another device's private viewing. Publish only an empty
+                // deletion marker to remove an entry uploaded by an older app version.
+                incoming.copy(payload = "{}", deleted = true, generation = incoming.generation + 1,
+                    revision = ++revision, deviceId = deviceId, mutationId = UUID.randomUUID().toString()).also {
+                    dao.enqueue(SyncOutbox(it.mutationId, accountId, json.encodeToString(it)))
+                }
+            } else incoming
             require(remote.revision >= 0 && remote.generation >= 0 && remote.payload.length <= 1_000_000) { "Invalid sync record." }
             val key = Triple(remote.profileId, remote.collection, remote.recordId)
             val old = current[key]
@@ -346,6 +386,8 @@ class UserSyncStore private constructor(private val context: Context) {
         // deletion authoritative and discard those writes instead of resurrecting child rows.
         if (dao.records(owner.accountId).any { it.collection == "profile" && it.recordId == owner.profileId && it.deleted }) return@withTransaction
         val maps = dao.mappings(owner.accountId)
+        val privateKeys = privateViewingKeys(owner, maps, history = listOfNotNull(
+            before[stringPreferencesKey("recently_played")], after[stringPreferencesKey("recently_played")]))
         SCOPED_KEYS.forEach { name ->
             val key = stringPreferencesKey(name)
             if (before[key] == after[key]) return@forEach
@@ -353,8 +395,8 @@ class UserSyncStore private constructor(private val context: Context) {
             if (value == null) dao.deletePreference(owner.accountId, owner.profileId, name)
             else dao.putPreference(UserLocalPreference(owner.accountId, owner.profileId, name, value))
             if (name in LOCAL_ONLY_KEYS) return@forEach
-            val oldEntries = entries(name, before[key], maps)
-            val newEntries = entries(name, value, maps)
+            val oldEntries = entries(name, before[key], maps, privateKeys)
+            val newEntries = entries(name, value, maps, privateKeys)
             val collection = collection(name)
             (oldEntries.keys + newEntries.keys).forEach { id ->
                 if (oldEntries[id] != newEntries[id]) {
@@ -362,6 +404,7 @@ class UserSyncStore private constructor(private val context: Context) {
                 }
             }
         }
+        redactPrivateViewing(owner, maps, privateKeys)
     }
 
     internal suspend fun importPreferences(owner: UserScope, source: Preferences, migrationId: String) = withEditLock { db.withTransaction {
@@ -376,6 +419,7 @@ class UserSyncStore private constructor(private val context: Context) {
 
     private suspend fun rebuildPreferences(owner: UserScope, records: List<SyncRecord>) {
         val maps = dao.mappings(owner.accountId)
+        val privateKeys = privateViewingKeys(owner, maps)
         val localPreferences = dao.preferences(owner.accountId, owner.profileId).associate { it.name to it.value }
         val grouped = records.filter { it.profileId == owner.profileId && !it.deleted && it.collection !in setOf("profile", "portals", "account") }
             .mapNotNull { runCatching { json.parseToJsonElement(it.payload).jsonObject }.getOrNull() }
@@ -385,7 +429,7 @@ class UserSyncStore private constructor(private val context: Context) {
             val value = when {
                 name in LIST_KEYS -> {
                     val previous = runCatching { json.parseToJsonElement(localPreferences[name].orEmpty()).jsonArray }.getOrNull().orEmpty()
-                    fun identity(item: JsonElement): String? = entries(name, JsonArray(listOf(item)).toString(), maps).keys.singleOrNull()
+                    fun identity(item: JsonElement): String? = entries(name, JsonArray(listOf(item)).toString(), maps, privateKeys).keys.singleOrNull()
                     val indexed = previous.mapNotNull { item -> identity(item)?.let { it to item } }.toMap()
                     val restored = values.mapNotNull { value -> restoreLocal(value["entry"] ?: JsonNull, maps)?.let { item -> mergeLocalMediaMetadata(item, indexed[identity(item)]) } }
                     // Legacy v2/title keys and still-unmapped portal records stay on this device.
@@ -402,7 +446,80 @@ class UserSyncStore private constructor(private val context: Context) {
         }
     }
 
-    private fun entries(name: String, raw: String?, maps: List<LocalPortalMapping>): Map<String, String> {
+    /** Register from the captured player before its first progress write. History
+     * persistence can still be in flight when the initial player callback arrives. */
+    internal suspend fun rememberPrivateViewing(owner: UserScope, recent: RecentItem) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val entry = json.encodeToJsonElement(recent)
+            if (!privateHistory(entry, emptyList())) return@withContext
+            withEditLock { db.withTransaction {
+                privateViewingKeys(owner, dao.mappings(owner.accountId), history = listOf("[$entry]"))
+            } }
+            Unit
+        }
+
+    private fun privateHistory(entry: JsonElement, maps: List<LocalPortalMapping>): Boolean {
+        val recent = runCatching { json.decodeFromJsonElement<RecentItem>(restoreLocal(entry, maps) ?: entry) }.getOrNull() ?: return false
+        val type = when (recent.kind) {
+            FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
+            FavoriteKind.MOVIE -> CatalogType.MOVIES
+            else -> CatalogType.SERIES
+        }
+        return adultContentLabel(recent.categoryTitle.orEmpty()) ||
+            listOfNotNull(recent.media, recent.lastPlayed, recent.series).any { item ->
+                item.isAdult || adultContentLabel(item.title) ||
+                    ParentalControls.adultCategory(context, recent.profileKey, type, item.portalCategoryId)
+            }
+    }
+
+    /** Deny-list is device/profile-local and survives history clearing and category refresh. */
+    private suspend fun privateViewingKeys(owner: UserScope, maps: List<LocalPortalMapping>,
+        records: List<SyncRecord> = emptyList(), history: List<String> = emptyList()): Set<String> {
+        val preferences = dao.preferences(owner.accountId, owner.profileId).associate { it.name to it.value }
+        val keys = runCatching { json.decodeFromString<Set<String>>(preferences["private_viewing_keys"].orEmpty()) }.getOrDefault(emptySet()).toMutableSet()
+        val entries = (history + listOfNotNull(preferences["recently_played"]))
+            .flatMap { runCatching { json.parseToJsonElement(it).jsonArray.toList() }.getOrDefault(emptyList()) } +
+            records.filter { it.collection == "history" && !it.deleted }.mapNotNull {
+                runCatching { json.parseToJsonElement(it.payload).jsonObject["entry"] }.getOrNull()
+            }
+        entries.filter { privateHistory(it, maps) }.forEach { entry ->
+            val recent = json.decodeFromJsonElement<RecentItem>(restoreLocal(entry, maps) ?: entry)
+            val type = when (recent.kind) {
+                FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
+                FavoriteKind.MOVIE -> CatalogType.MOVIES
+                else -> CatalogType.SERIES
+            }
+            keys += portableText(providerProgressKey(recent.profileKey, recent.lastPlayed ?: recent.media, type,
+                if (type == CatalogType.SERIES) recent.series ?: recent.media else null), maps)
+        }
+        if (keys.isNotEmpty()) {
+            val encoded = JsonArray(keys.sorted().map { JsonPrimitive(it) }).toString()
+            if (preferences["private_viewing_keys"] != encoded) dao.putPreference(UserLocalPreference(
+                owner.accountId, owner.profileId, "private_viewing_keys", encoded))
+        }
+        return keys
+    }
+
+    private fun privateViewingRecord(record: SyncRecord, maps: List<LocalPortalMapping>, keys: Set<String>): Boolean {
+        val value = runCatching { json.parseToJsonElement(record.payload).jsonObject }.getOrNull() ?: return false
+        val name = value["preference"]?.jsonPrimitive?.content
+        val entry = value["entry"] ?: return false
+        return name == "recently_played" && privateHistory(entry, maps) ||
+            name in setOf("playback_progress", "recommendation_progress_v1") &&
+            (entry as? JsonObject)?.get("key")?.jsonPrimitive?.content?.let { it in keys } == true
+    }
+
+    private suspend fun redactPrivateViewing(owner: UserScope, maps: List<LocalPortalMapping>, keys: Set<String>) {
+        dao.records(owner.accountId).filter { it.profileId == owner.profileId && !it.deleted && privateViewingRecord(it, maps, keys) }
+            .forEach { mutate(owner, it.collection, it.recordId, "{}", deleted = true) }
+    }
+
+    private fun privateViewingEntry(name: String, item: JsonElement, maps: List<LocalPortalMapping>, keys: Set<String>): Boolean =
+        name == "recently_played" && privateHistory(item, maps) ||
+            name in setOf("playback_progress", "recommendation_progress_v1") &&
+            (item as? JsonObject)?.get("key")?.jsonPrimitive?.content?.let { portableText(it, maps) in keys } == true
+
+    private fun entries(name: String, raw: String?, maps: List<LocalPortalMapping>, privateKeys: Set<String> = emptySet()): Map<String, String> {
         if (raw == null) return emptyMap()
         val value = runCatching { json.parseToJsonElement(raw) }.getOrElse { JsonPrimitive(raw) }
         fun wrap(entry: JsonElement, mapKey: String? = null): String = buildJsonObject {
@@ -411,7 +528,7 @@ class UserSyncStore private constructor(private val context: Context) {
             put("entry", portable(entry, maps))
         }.toString()
         return when {
-            name in LIST_KEYS && value is JsonArray -> value.associate { item ->
+            name in LIST_KEYS && value is JsonArray -> value.filterNot { privateViewingEntry(name, it, maps, privateKeys) }.associate { item ->
                 val obj = item as? JsonObject
                 val localKey = when {
                     obj == null -> item.toString()
@@ -494,7 +611,7 @@ class UserSyncStore private constructor(private val context: Context) {
         private fun stableUuid(value: String): String = UUID.nameUUIDFromBytes(value.toByteArray(Charsets.UTF_8)).toString()
         internal val LIST_KEYS = setOf("favorites", "recently_played", "playback_progress", "watched_series", "recent_searches", "requested_recommendations_v1", "recommendation_progress_v1")
         internal val MAP_KEYS = setOf("category_filters", "remembered_series_seasons", "browse_layouts", "tmdb_dashboard_sections", "dismissed_recommendations_v1", "portable_preferences")
-        internal val LOCAL_ONLY_KEYS = setOf("offline_media_downloads", "local_user_preferences")
+        internal val LOCAL_ONLY_KEYS = setOf("offline_media_downloads", "local_user_preferences", "private_viewing_keys")
         internal val SCOPED_KEYS = LIST_KEYS + MAP_KEYS + LOCAL_ONLY_KEYS + "series_start_season"
         internal val ACCOUNT_KEYS = setOf("saved_profiles", "saved_sessions", "active_profile", "active_session", "active_profile_identity", "playback_urls", "tmdb_iptv_mappings", "paged_search_results", "episode_season_caches")
         private val SECRET_FIELDS = setOf("password", "token", "macAddress", "serialNumber", "username", "portalUrl", "sourceUrl", "url", "endpointUrl", "streamRequestHeaders", "streamDrm", "alternateTarget")

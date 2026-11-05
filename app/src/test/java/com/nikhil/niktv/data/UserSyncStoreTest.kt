@@ -24,6 +24,52 @@ class UserSyncStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val users get() = UserSyncStore.get(context)
 
+    @Test fun protectedChannelHistoryAndProgressStayLocalThroughMerge(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val portal = PortalProfile("Privacy fixture", "https://privacy.invalid", "")
+        users.associatePortal(owner, portal)
+        ParentalControls.rememberCategories(context, portal.cacheKey(), CatalogType.LIVE_TV,
+            listOf(Category("protected", "Protected category", CatalogType.LIVE_TV, isAdult = true)))
+        val restricted = MediaItem("restricted", "Channel A", null, null, portalCategoryId = "protected")
+        val regular = MediaItem("regular", "Channel B", null, null)
+        val store = ProfileStore(context, memoryPreferences())
+        val key = providerProgressKey(portal.cacheKey(), restricted, CatalogType.LIVE_TV, null)
+        users.rememberPrivateViewing(owner, RecentItem(FavoriteKind.CHANNEL, restricted, profileKey = portal.cacheKey()))
+        store.savePlaybackProgress(listOf(PlaybackProgress(key, 120_000, 600_000)))
+        assertFalse(users.snapshot("101").any { it.collection == "progress" })
+        store.saveRecentlyPlayed(listOf(RecentItem(FavoriteKind.CHANNEL, restricted, profileKey = portal.cacheKey()),
+            RecentItem(FavoriteKind.CHANNEL, regular, profileKey = portal.cacheKey())))
+        store.savePlaybackProgress(listOf(PlaybackProgress(key, 120_000, 600_000)))
+        val wire = users.snapshot("101")
+        assertFalse(wire.any { it.payload.contains("Channel A") || it.payload.contains("item:restricted") })
+        assertTrue(wire.any { it.payload.contains("Channel B") })
+        assertFalse(users.pending("101").any { it.payload.contains("Channel A") || it.payload.contains("item:restricted") })
+        assertFalse(store.exportBackup().contains("Channel A"))
+        users.merge("101", wire)
+        assertEquals(setOf("restricted", "regular"), store.recentlyPlayed.first().map { it.media.id }.toSet())
+        assertEquals(120_000L, store.playbackProgress.first().single().positionMillis)
+    }
+
+    @Test fun oldRemoteProtectedHistoryIsRedactedInsteadOfImported(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val restricted = RecentItem(FavoriteKind.CHANNEL, MediaItem("old-private", "Old private channel", null, null, isAdult = true), profileKey = "portal:fixture")
+        val payload = "{\"preference\":\"recently_played\",\"entry\":${Json.encodeToString(restricted)}}"
+        val old = SyncRecord("101", owner.profileId, "history", "recently_played:portal:fixture|CHANNEL|old-private",
+            payload, 100, "other", "old-upload")
+        users.merge("101", listOf(old))
+        val redacted = users.snapshot("101").single { it.recordId == old.recordId }
+        assertTrue(redacted.deleted)
+        assertEquals("{}", redacted.payload)
+        assertTrue(redacted.generation > old.generation)
+        assertTrue(ProfileStore(context, memoryPreferences()).recentlyPlayed.first().isEmpty())
+        users.merge("101", listOf(old))
+        assertTrue(users.snapshot("101").single { it.recordId == old.recordId }.deleted)
+    }
+
     @Test fun pendingViewingWinsConcurrentUploadButCachedViewingAndDeletesDoNot(): Unit = runBlocking {
         val owner = UserScope("101", "viewer")
         users.db.withTransaction {

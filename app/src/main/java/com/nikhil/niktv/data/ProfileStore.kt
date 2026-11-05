@@ -509,7 +509,7 @@ class ProfileStore @JvmOverloads constructor(
             if (key.name in BACKUP_INT_KEYS && value is Int) key.name to value else null
         }.toMap().toSortedMap()
         val connection = GitHubBackupManager(context).loadConfig()
-        return NikTvBackup(exportedAtMillis = now, strings = strings, integers = integers,
+        return NikTvBackup(exportedAtMillis = now, strings = users.portableBackupValues(captureScope(), strings), integers = integers,
             devicePreferences = DevicePreferencesBackup.capture(context),
             remoteConfiguration = RemoteCredentials.exportDeviceConfiguration(context)?.let {
                 it.copy(token = "", values = it.values.filterKeys { name -> name != "G_TOKEN" })
