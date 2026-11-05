@@ -11,6 +11,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.nikhil.niktv.data.ProfileStore
+import com.nikhil.niktv.data.UserScope
+import com.nikhil.niktv.data.UserSyncStore
+import com.nikhil.niktv.data.AccountSyncManager
 import com.nikhil.niktv.data.StalkerPortalClient
 import com.nikhil.niktv.data.TmdbClient
 import com.nikhil.niktv.data.TrendingMovie
@@ -203,6 +206,12 @@ data class NikTvState(
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val discoveryMetadataRequests = com.nikhil.niktv.discovery.DiscoveryMetadataRequests()
     private val store = ProfileStore(application)
+    private val userSyncStore = UserSyncStore.get(application)
+    private val accountSync = AccountSyncManager.get(application)
+    private val progressSaveMutex = Mutex()
+    private val lastProgressSync = mutableMapOf<UserScope, Long>()
+    private val flushProgressScopes = mutableSetOf<UserScope>()
+    private val viewerJobs = java.util.concurrent.CopyOnWriteArraySet<Job>()
     private val portal = StalkerPortalClient(application)
     @Volatile private var catalogueTitleIndex: CatalogueTitleIndex? = null
     private val tmdb = TmdbClient()
@@ -228,6 +237,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val channelAvailability = IptvAvailabilityStore(application)
     internal fun observeLivePlayback(playback: PlayingMedia, failed: Boolean) {
         val current = _state.value
+        if (playback.userScope != store.captureScope()) return
         val profile = current.session?.profile?.cacheKey() ?: current.savedProfile?.cacheKey().orEmpty()
         channelAvailability.observe(profile, current.nowPlaying, playback, failed)
     }
@@ -315,34 +325,70 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.collect { com.nikhil.niktv.data.CatalogPlaybackActivity.playing = it.nowPlaying != null }
         }
         prepareProfileChooser()
-        viewModelScope.launch { store.favorites.collect { favorites ->
+        viewModelScope.launch {
+            var previous = userSyncStore.selectedScope.value
+            userSyncStore.selectedScope.collect { selected ->
+                if (selected != previous) {
+                    previous = selected
+                    viewerJobs.toList().forEach { it.cancel() }
+                    viewerJobs.clear()
+                    // A portal can exist in several user profiles. Its cache key alone
+                    // cannot establish ownership after a person/account changes.
+                    openProfileChooser()
+                    profilePreparationJob?.cancel()
+                    categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
+                    categoryMetadataRefreshJobs.clear()
+                    recommendationJob?.cancel()
+                    recommendationFingerprint = null
+                    allFavorites = emptyList()
+                    allRecentlyPlayed = emptyList()
+                    allWatchedSeries = emptyList()
+                    requestedRecommendationSeeds = emptyList()
+                    dismissedRecommendationCategories = emptyMap()
+                    recommendationProgress = emptyList()
+                    recommendationProfile = null
+                    rememberedSeriesSeasons = emptyMap()
+                    browseLayouts = emptyMap()
+                    tmdbDashboardConfigs = emptyMap()
+                    _state.update { it.copy(favorites = emptyList(), recentlyPlayed = emptyList(),
+                        watchedSeries = emptyList(), playbackProgress = emptyList(),
+                        recentSearches = emptyList(), offlineDownloads = emptyList(),
+                        categoryFilters = emptyMap(), browseLayout = BrowseLayout.SECTIONS,
+                        tmdbSectionsBySurface = emptyMap(),
+                        historyRecommendations = emptyList(), items = emptyList(),
+                        categories = emptyList(), rawCategoriesByType = emptyMap(),
+                        browseCache = null, browseCachesByType = emptyMap()) }
+                }
+            }
+        }
+        viewModelScope.launch { collectForViewer({ it.favorites }) { favorites ->
             allFavorites = favorites
             refreshProfileLibrary()
         } }
-        viewModelScope.launch { store.recentlyPlayed.collect { recent ->
+        viewModelScope.launch { collectForViewer({ it.recentlyPlayed }) { recent ->
             allRecentlyPlayed = recent
             refreshProfileLibrary()
         } }
-        viewModelScope.launch { store.playbackProgress.collect { progress ->
+        viewModelScope.launch { collectForViewer({ it.playbackProgress }) { progress ->
             _state.update { it.copy(playbackProgress = progress) }
             scheduleHistoryRecommendations()
         } }
-        viewModelScope.launch { store.requestedRecommendations.collect {
+        viewModelScope.launch { collectForViewer({ it.requestedRecommendations }) {
             requestedRecommendationSeeds = it
             recommendationFingerprint = null
             scheduleHistoryRecommendations()
         } }
-        viewModelScope.launch { store.dismissedRecommendations.collect {
+        viewModelScope.launch { collectForViewer({ it.dismissedRecommendations }) {
             dismissedRecommendationCategories = it
             recommendationFingerprint = null
             scheduleHistoryRecommendations()
         } }
-        viewModelScope.launch { store.recommendationProgress.collect {
+        viewModelScope.launch { collectForViewer({ it.recommendationProgress }) {
             recommendationProgress = it
             scheduleHistoryRecommendations()
         } }
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
-        viewModelScope.launch { store.offlineDownloads.collect { downloads ->
+        viewModelScope.launch { collectForViewer({ it.offlineDownloads }) { downloads ->
             _state.update { it.copy(offlineDownloads = downloads) }
         } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
@@ -359,15 +405,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(automaticReauthentication = enabled) }
         } }
         viewModelScope.launch { store.playbackEngine.collect { engine -> _state.update { it.copy(playbackEngine = engine) } } }
-        viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
-        viewModelScope.launch { store.rememberedSeriesSeasons.collect { rememberedSeriesSeasons = it } }
+        viewModelScope.launch { collectForViewer({ it.seriesStartSeason }) { value -> _state.update { it.copy(seriesStartSeason = value) } } }
+        viewModelScope.launch { collectForViewer({ it.rememberedSeriesSeasons }) { rememberedSeriesSeasons = it } }
         viewModelScope.launch { store.episodeSeasonCaches.collect { episodeSeasonCaches = it } }
-        viewModelScope.launch { store.browseLayouts.collect { layouts ->
+        viewModelScope.launch { collectForViewer({ it.browseLayouts }) { layouts ->
             browseLayouts = layouts
             val key = _state.value.session?.profile?.cacheKey()
             _state.update { it.copy(browseLayout = key?.let(layouts::get) ?: BrowseLayout.SECTIONS) }
         } }
-        viewModelScope.launch { store.tmdbDashboardSections.distinctUntilChanged().collect { stored ->
+        viewModelScope.launch { collectForViewer({ it.tmdbDashboardSections.distinctUntilChanged() }) { stored ->
             tmdbDashboardConfigs = stored
             val profileKey = _state.value.session?.profile?.cacheKey()
             val sections = if (profileKey == null) emptyMap() else DashboardSurface.entries.associateWith { surface ->
@@ -376,11 +422,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(tmdbSectionsBySurface = sections) }
 
         } }
-        viewModelScope.launch { store.watchedSeries.collect { entries ->
+        viewModelScope.launch { collectForViewer({ it.watchedSeries }) { entries ->
             allWatchedSeries = entries
             refreshProfileLibrary()
         } }
-        viewModelScope.launch { store.recentSearches.collect { searches -> _state.update { it.copy(recentSearches = searches) } } }
+        viewModelScope.launch { collectForViewer({ it.recentSearches }) { searches -> _state.update { it.copy(recentSearches = searches) } } }
         viewModelScope.launch { store.profiles.collect { profiles -> _state.update { it.copy(profiles = profiles) } } }
         viewModelScope.launch {
             while (isActive) {
@@ -403,7 +449,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            store.categoryFilters.distinctUntilChanged().collect { filters ->
+            collectForViewer({ it.categoryFilters.distinctUntilChanged() }) { filters ->
                 val snapshot = _state.value
                 val profileKey = snapshot.session?.profile?.cacheKey()
                 val raw = snapshot.rawCategoriesByType[snapshot.selectedType] ?: snapshot.categories
@@ -420,7 +466,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun prepareProfileChooser() = viewModelScope.launch {
+    /** Bind each personal stream to its immutable viewer, including the delivery check.
+     * A buffered emission from the previous person must not refill the new person's UI. */
+    private suspend fun <T> collectForViewer(read: (ProfileStore) -> Flow<T>, publish: (T) -> Unit) {
+        userSyncStore.selectedScope.collectLatest { owner ->
+            val ownedStore = owner?.let(store::scoped) ?: store
+            read(ownedStore).collect { value ->
+                if (owner == userSyncStore.selectedScope.value) publish(value)
+            }
+        }
+    }
+
+    /** Cancel in-flight viewer operations before another account/person can own their results. */
+    private fun launchForViewer(start: kotlinx.coroutines.CoroutineStart = kotlinx.coroutines.CoroutineStart.DEFAULT,
+        block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit): Job {
+        val job = viewModelScope.launch(start = start, block = block)
+        viewerJobs += job
+        job.invokeOnCompletion { viewerJobs -= job }
+        return job
+    }
+
+    private fun prepareProfileChooser() = launchForViewer launch@ {
         // A cold app launch always starts at the profile chooser. Authentication is
         // restored only after the viewer deliberately chooses a profile.
         val profiles = store.profiles.first()
@@ -488,7 +554,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun prepareDashboardInBackground(session: PortalSession) {
         profilePreparationJob?.cancel()
-        profilePreparationJob = viewModelScope.launch {
+        profilePreparationJob = launchForViewer launch@ {
             val profileKey = session.profile.cacheKey()
             suspend fun step(block: suspend () -> Unit) {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -552,6 +618,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun enrichHomeArtwork(profileKey: String) = coroutineScope {
+        val userScope = store.captureScope()
         if (!tmdb.configured || _state.value.session?.profile?.cacheKey() != profileKey) {
             return@coroutineScope
         }
@@ -576,7 +643,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             logo?.let { "${target.kind}:${target.media.id}" to it }
         }.toMap()
 
-        if (enriched.isEmpty() || _state.value.session?.profile?.cacheKey() != profileKey) {
+        if (enriched.isEmpty() || _state.value.session?.profile?.cacheKey() != profileKey || userScope != store.captureScope()) {
             return@coroutineScope
         }
 
@@ -592,8 +659,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + scopedRecent
         allFavorites = allFavorites.filterNot { it.profileKey == profileKey } + scopedFavorites
-        store.saveRecentlyPlayed(allRecentlyPlayed)
-        store.saveFavorites(allFavorites)
+        store.saveRecentlyPlayed(allRecentlyPlayed, userScope)
+        store.saveFavorites(allFavorites, userScope)
         _state.update { current ->
             if (current.session?.profile?.cacheKey() != profileKey) current
             else current.copy(recentlyPlayed = scopedRecent, favorites = scopedFavorites)
@@ -659,6 +726,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private suspend fun enrichFavoriteSeriesPresentation(profileKey: String) {
+        val userScope = store.captureScope()
         if (_state.value.session?.profile?.cacheKey() != profileKey) return
         if (!favoriteSeriesMetadataMutex.tryLock()) return
 
@@ -676,7 +744,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             var changed = false
             for (chunk in targets.chunked(4)) {
-                if (_state.value.session?.profile?.cacheKey() != profileKey) return
+                if (_state.value.session?.profile?.cacheKey() != profileKey || userScope != store.captureScope()) return
 
                 val replacements = coroutineScope {
                     chunk.map { favorite ->
@@ -724,6 +792,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }.awaitAll()
                 }.toMap()
 
+                if (userScope != store.captureScope()) return
+
                 val chunkChanged = replacements.any { (key, replacement) ->
                     _state.value.favorites
                         .firstOrNull { it.key == key }
@@ -746,9 +816,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             if (
                 changed &&
-                _state.value.session?.profile?.cacheKey() == profileKey
+                _state.value.session?.profile?.cacheKey() == profileKey && userScope == store.captureScope()
             ) {
-                store.saveFavorites(allFavorites)
+                store.saveFavorites(allFavorites, userScope)
             }
         } finally {
             favoriteSeriesMetadataMutex.unlock()
@@ -799,6 +869,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun showRecommendationsOnHome(item: MediaItem, requestedType: CatalogType?) {
+        val userScope = store.captureScope()
+        val ownedStore = userScope?.let(store::scoped) ?: store
         val profile = _state.value.session?.profile?.cacheKey() ?: return
         val type = recommendationTypeFor(item, requestedType) ?: return
         if (type == CatalogType.LIVE_TV) {
@@ -806,7 +878,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (type !in setOf(CatalogType.MOVIES, CatalogType.SERIES) || item.isAdult || item.episodeNumber != null) return
-        viewModelScope.launch {
+        launchForViewer launch@ {
             try {
                 val identity = mediaIdentities.resolve(profile, type, item)
                 if (identity?.tmdbId == null) {
@@ -816,7 +888,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val category = "${identity.type}:${identity.tmdbId}"
                 val seed = RecentItem(if (type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
                     item, profileKey = profile)
-                store.requestRecommendations(seed, category)
+                if (userScope != store.captureScope()) return@launch
+                ownedStore.requestRecommendations(seed, category)
                 android.widget.Toast.makeText(getApplication(), "Recommendations added to Home", android.widget.Toast.LENGTH_SHORT).show()
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
               catch (error: Exception) {
@@ -827,12 +900,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun showLiveProgrammeRecommendations(channel: MediaItem, profile: String) {
+        val userScope = store.captureScope()
+        val ownedStore = userScope?.let(store::scoped) ?: store
         val programme = com.nikhil.niktv.data.liveProgrammeRecommendationItem(channel, System.currentTimeMillis())
         if (programme == null) {
             android.widget.Toast.makeText(getApplication(), "No current programme information available.", android.widget.Toast.LENGTH_LONG).show()
             return
         }
-        viewModelScope.launch {
+        launchForViewer launch@ {
             try {
                 val identity = com.nikhil.niktv.data.resolveLiveProgrammeRecommendation(programme) { type, item ->
                     mediaIdentities.resolve(profile, type, item)
@@ -843,7 +918,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val seed = RecentItem(if (identity.type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
                     programme, profileKey = profile)
-                store.requestRecommendations(seed, "${identity.type}:${identity.tmdbId}")
+                if (userScope != store.captureScope()) return@launch
+                ownedStore.requestRecommendations(seed, "${identity.type}:${identity.tmdbId}")
                 android.widget.Toast.makeText(getApplication(), "Recommendations added to Home", android.widget.Toast.LENGTH_SHORT).show()
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
               catch (error: Exception) {
@@ -861,7 +937,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(historyRecommendations = it.historyRecommendations.filterNot { entry ->
             entry.profile == row.profile && entry.key == row.key
         }) }
-        viewModelScope.launch { store.dismissRecommendation(row.profile, row.key) }
+        launchForViewer launch@ { store.dismissRecommendation(row.profile, row.key) }
     }
 
     private fun scheduleHistoryRecommendations() {
@@ -894,7 +970,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (fingerprint == recommendationFingerprint && recommendationJob?.isCancelled != true) return
         recommendationFingerprint = fingerprint
         recommendationJob?.cancel()
-        recommendationJob = viewModelScope.launch {
+        recommendationJob = launchForViewer launch@ {
             if (seeds.isEmpty()) {
                 _state.update { it.copy(historyRecommendations = emptyList(),
                     historyRecommendationsMessage = "Watch 10 minutes of a movie or show, or 20% with a 2-minute minimum. Recommendations use this IPTV profile's history.") }
@@ -925,13 +1001,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun loadProfileLibrary(profileKey: String) {
-        // Claim legacy unscoped rows once for the first profile opened after this upgrade.
-        val storedFavorites = store.favorites.first()
-        val storedRecent = store.recentlyPlayed.first()
+        // Bind legacy portal-key normalization to the person who opened this portal.
+        val owner = userSyncStore.selectedScope.value
+        val ownedStore = owner?.let(store::scoped) ?: store
+        val storedFavorites = ownedStore.favorites.first()
+        val storedRecent = ownedStore.recentlyPlayed.first()
+        if (owner != userSyncStore.selectedScope.value) return
         val migratedFavorites = storedFavorites.map { if (it.profileKey.isBlank()) it.copy(profileKey = profileKey) else it }
         val migratedRecent = storedRecent.map { if (it.profileKey.isBlank()) it.copy(profileKey = profileKey) else it }
-        if (migratedFavorites != storedFavorites) store.saveFavorites(migratedFavorites)
-        if (migratedRecent != storedRecent) store.saveRecentlyPlayed(migratedRecent)
+        if (migratedFavorites != storedFavorites) ownedStore.saveFavorites(migratedFavorites)
+        if (migratedRecent != storedRecent) ownedStore.saveRecentlyPlayed(migratedRecent)
+        if (owner != userSyncStore.selectedScope.value) return
         allFavorites = migratedFavorites
         allRecentlyPlayed = migratedRecent
         refreshProfileLibrary()
@@ -941,7 +1021,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadType(type: CatalogType) {
         if (activateWarmedType(type)) return
-        viewModelScope.launch {
+        launchForViewer launch@ {
             val session = requireNotNull(_state.value.session)
             runCatching {
                 withAutomaticSessionRetry(session) { activeSession ->
@@ -1018,7 +1098,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     selectedSeries = null
                 )
             }
-            viewModelScope.launch {
+            launchForViewer launch@ {
                 runCatching {
                     withAutomaticSessionRetry(session) { activeSession ->
                         loadTypeMetadataInternal(activeSession, type)
@@ -1153,7 +1233,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         if (fetchedCategories && allCategories.isNotEmpty()) {
-            viewModelScope.launch {
+            launchForViewer launch@ {
                 runCatching {
                     store.saveBrowseCatalogMetadata(
                         BrowseCatalogMetadataCache(
@@ -1307,7 +1387,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
-            viewModelScope.launch { enrichCatalogArtwork(session, type) }
+            launchForViewer launch@ { enrichCatalogArtwork(session, type) }
         }
     }
 
@@ -1369,7 +1449,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.filter { it > now })
             .minOrNull() ?: return
-        liveGuideExpiryJob = viewModelScope.launch {
+        liveGuideExpiryJob = launchForViewer launch@ {
             delay((refreshAt - System.currentTimeMillis()).coerceAtLeast(0L) + 1_000L)
             val snapshot = _state.value
             val stillPaused = manualLiveGuideTarget != null || (snapshot.nowPlaying != null && !playerGuideViewportActive) || snapshot.loading ||
@@ -1477,7 +1557,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.withLiveChannelGuide(profileKey, enriched) }
         rescheduleVisibleLiveGuideExpiry()
         liveGuideCacheSaveJob?.cancel()
-        liveGuideCacheSaveJob = viewModelScope.launch {
+        liveGuideCacheSaveJob = launchForViewer launch@ {
             delay(2_500L)
             _state.value.browseCachesByType[CatalogType.LIVE_TV]
                 ?.takeIf { it.profileKey == profileKey }
@@ -1531,7 +1611,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             feedback("Refreshing programme…")
         }
         selectedLiveGuideTarget = target
-        channelScheduleJob = viewModelScope.launch {
+        channelScheduleJob = launchForViewer launch@ {
             val attemptedAt = System.currentTimeMillis()
             liveGuideAttemptedAt[target.key] = attemptedAt
             _state.update { it.copy(liveGuideLoadingIds = it.liveGuideLoadingIds + item.id) }
@@ -1625,19 +1705,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private fun gateAdultAction(item: MediaItem, type: CatalogType, action: () -> Unit): Boolean {
         if (!isAdultMedia(item, type) || !com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) ||
             com.nikhil.niktv.data.ParentalControls.unlocked(getApplication())) return false
-        viewModelScope.launch { if (authorizeParental()) action() }
+        launchForViewer launch@ { if (authorizeParental()) action() }
         return true
     }
-    fun setParentalControlsEnabled(enabled: Boolean) = viewModelScope.launch {
+    fun setParentalControlsEnabled(enabled: Boolean) = launchForViewer launch@ {
         if (!authorizeParental(force = true)) return@launch
         com.nikhil.niktv.data.ParentalControls.setEnabled(getApplication(), enabled)
         lockAdultContent()
         _state.update { it.copy(parentalControlsEnabled = enabled) }
     }
-    fun authorizeParentalSettings(onAuthorized: () -> Unit) = viewModelScope.launch {
+    fun authorizeParentalSettings(onAuthorized: () -> Unit) = launchForViewer launch@ {
         if (authorizeParental(force = true)) onAuthorized()
     }
-    fun setParentalRelockMinutes(minutes: Int) = viewModelScope.launch {
+    fun setParentalRelockMinutes(minutes: Int) = launchForViewer launch@ {
         if (!authorizeParental(force = true)) return@launch
         com.nikhil.niktv.data.ParentalControls.setRelockMinutes(getApplication(), minutes)
         _state.update { it.copy(parentalRelockMinutes = minutes) }
@@ -1729,7 +1809,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             } ?: current.browseCachesByType
         ) }
         if (updated != null) {
-            viewModelScope.launch {
+            launchForViewer launch@ {
                 runCatching { store.saveBrowseCatalog(updated) }
                     .onFailure { Log.w("NikTvCatalogCache", "Could not persist category ${category.id}", it) }
             }
@@ -1749,7 +1829,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (existingRefresh != null) {
             if (userRequested) {
                 _state.update { it.copy(categoryRefreshing = true) }
-                viewModelScope.launch {
+                launchForViewer launch@ {
                     existingRefresh.join()
                     _state.update { it.copy(categoryRefreshing = false) }
                     Toast.makeText(getApplication(), "Category refresh finished", Toast.LENGTH_SHORT).show()
@@ -1757,7 +1837,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        categoryRefreshJobs[key] = viewModelScope.launch {
+        categoryRefreshJobs[key] = launchForViewer launch@ {
             if (userRequested) _state.update { it.copy(categoryRefreshing = true, error = null) }
             try {
                 val page = withAutomaticSessionRetry(session) { activeSession ->
@@ -1952,7 +2032,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.loading || snapshot.catalogLoadingMore || snapshot.categoryFindSearching || !snapshot.catalogHasMore ||
             snapshot.selectedType !in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) return
         _state.update { it.copy(catalogLoadingMore = true) }
-        viewModelScope.launch {
+        launchForViewer launch@ {
             runCatching {
                 withAutomaticSessionRetry(session) { activeSession ->
                     portal.catalogPage(
@@ -2043,7 +2123,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         // Saving a large per-type cache can take noticeable time.
                         // The fetched page is already usable, so persist it without
                         // holding the Load more progress state open.
-                        viewModelScope.launch {
+                        launchForViewer launch@ {
                             runCatching { store.saveBrowseCatalog(updated) }
                                 .onFailure {
                                     Log.w(
@@ -2096,7 +2176,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         categoryFindJob?.cancel()
         liveGuideScheduler.pause()
         val generation = ++categoryFindGeneration
-        categoryFindJob = viewModelScope.launch {
+        categoryFindJob = launchForViewer launch@ {
             var terminalMessage = "Checked every available page."
             var fetchedPages = 0
             var repeatedPages = 0
@@ -2288,7 +2368,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val now = SystemClock.elapsedRealtime()
         if (!userRequested && categoryRefreshAttempts[key]?.let { now - it < 5 * 60_000L } == true) return
         categoryRefreshAttempts[key] = now
-        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+        val job = launchForViewer(start = kotlinx.coroutines.CoroutineStart.LAZY) launch@ {
             _state.update { it.copy(categoryRefreshes = it.categoryRefreshes + key) }
             try {
                 val fresh = categoryRefreshSlots.withPermit {
@@ -2344,7 +2424,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val category = snapshot.selectedCategory ?: return
         // Category refresh updates channel/media listings. Programme refresh remains
         // an explicit per-channel action from the long-press menu.
-        viewModelScope.launch {
+        launchForViewer launch@ {
             withContext(Dispatchers.IO) { portal.invalidateCatalog(session.profile, category) }
             if (_state.value.session?.profile == session.profile &&
                 _state.value.selectedCategory?.id == category.id) {
@@ -2353,11 +2433,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setCacheIntervalMinutes(minutes: Int) = viewModelScope.launch {
+    fun setCacheIntervalMinutes(minutes: Int) = launchForViewer launch@ {
         store.setCacheIntervalMinutes(minutes)
     }
 
-    fun setInitialCatalogItems(items: Int) = viewModelScope.launch {
+    fun setInitialCatalogItems(items: Int) = launchForViewer launch@ {
         val normalized = items.takeIf { it in INITIAL_CATALOG_OPTIONS } ?: 14
         store.setInitialCatalogItems(normalized)
         _state.update { it.copy(initialCatalogItems = normalized) }
@@ -2376,15 +2456,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun setPlayerControlsTimeoutSeconds(seconds: Int) {
         val normalized = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
         _state.update { it.copy(playerControlsTimeoutSeconds = normalized) }
-        viewModelScope.launch {
+        launchForViewer launch@ {
             store.setPlayerControlsTimeoutSeconds(normalized)
         }
     }
 
-    fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = viewModelScope.launch {
+    fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = launchForViewer launch@ {
         store.setKeepAwakeOnlyDuringPlayback(enabled)
     }
-    fun setAutomaticReauthentication(enabled: Boolean) = viewModelScope.launch {
+    fun setAutomaticReauthentication(enabled: Boolean) = launchForViewer launch@ {
         store.setAutomaticReauthentication(enabled)
     }
 
@@ -2436,7 +2516,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        viewModelScope.launch {
+        launchForViewer launch@ {
 
             if (
                 playing.catalogType == CatalogType.SERIES &&
@@ -3068,14 +3148,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // Reflect in-player changes immediately so the label, next cycle step,
         // and Settings selection cannot lag behind the newly created engine.
         _state.update { it.copy(playbackEngine = canonicalEngine) }
-        viewModelScope.launch { store.setPlaybackEngine(canonicalEngine) }
+        launchForViewer launch@ { store.setPlaybackEngine(canonicalEngine) }
     }
 
-    fun setSeriesStartSeason(value: SeriesStartSeason) = viewModelScope.launch {
+    fun setSeriesStartSeason(value: SeriesStartSeason) = launchForViewer launch@ {
         store.setSeriesStartSeason(value)
     }
 
-    fun setBrowseLayout(layout: BrowseLayout) = viewModelScope.launch {
+    fun setBrowseLayout(layout: BrowseLayout) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         _state.update { it.copy(browseLayout = layout) }
         store.setBrowseLayout(profileKey, layout)
@@ -3303,7 +3383,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Optional metadata failure must never cancel a successfully refreshed provider catalogue. */
     internal fun launchEpisodeMetadataEnrichment(series: MediaItem, cache: EpisodeSeasonCache, force: Boolean) =
-        viewModelScope.launch {
+        launchForViewer launch@ {
             val destinationRevision = episodeDestinationRequest
             try {
                 withTimeout(90_000L) { enrichEpisodeCacheFromTmdb(series, cache, force) }
@@ -3433,7 +3513,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         fun result(message: String) {
             if (valid()) _state.update { it.copy(episodeTmdbRefresh = status.copy(running = false, message = message)) }
         }
-        singleEpisodeMetadataJob = viewModelScope.launch {
+        singleEpisodeMetadataJob = launchForViewer launch@ {
             try {
                 withTimeout(45_000L) {
                     val tmdbId = old.tmdbSeriesId ?: store.tmdbMappings.first().firstOrNull {
@@ -3490,7 +3570,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val season = snapshot.selectedSeriesSeason
         val request = ++episodeMetadataRefreshRequest
         episodeMetadataRefreshJob?.cancel()
-        episodeMetadataRefreshJob = viewModelScope.launch {
+        episodeMetadataRefreshJob = launchForViewer launch@ {
             _state.update { it.copy(tmdbEpisodeCacheRefreshing = true) }
             try {
                 withTimeout(90_000L) {
@@ -3614,7 +3694,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val initialEpisodeBatchNeedsFill =
                 cached.hasMore &&
                     cached.rawIptvEpisodes().size < INITIAL_EPISODE_BATCH_LIMIT
-            viewModelScope.launch {
+            launchForViewer launch@ {
                 runCatching {
                     if (
                         cached.iptvEpisodes.isEmpty() ||
@@ -3698,7 +3778,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         fun valid() = _state.value.episodeBrowseKey() == key && episodeDestinationRequest == request
-        episodeDestinationJob = viewModelScope.launch {
+        episodeDestinationJob = launchForViewer launch@ {
             try {
                 episodePageMutex.withLock {
                     if (!valid()) return@withLock
@@ -3763,7 +3843,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val series = snapshot.selectedSeries ?: return
         if (!snapshot.episodeHasMore || snapshot.episodeLoadingMore || snapshot.episodeDestination?.running == true) return
         _state.update { it.copy(episodeLoadingMore = true) }
-        episodePageJob = viewModelScope.launch {
+        episodePageJob = launchForViewer launch@ {
             try {
                 val cache = episodePageMutex.withLock {
                     if (_state.value.episodeBrowseKey() != key || _state.value.episodePage != snapshot.episodePage) return@withLock null
@@ -3824,7 +3904,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         searchSeriesReturn = null
         if (com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) && !com.nikhil.niktv.data.ParentalControls.unlocked(getApplication()) &&
             (category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title))) {
-            viewModelScope.launch { if (authorizeParental()) openModernIptvCategory(category) }
+            launchForViewer launch@ { if (authorizeParental()) openModernIptvCategory(category) }
             return
         }
         tmdbAvailabilityJob?.cancel()
@@ -3915,7 +3995,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (!tmdb.configured || page !in 1..MODERN_TMDB_MAX_PAGES) return
         val profileKey = session.profile.cacheKey()
 
-        viewModelScope.launch {
+        launchForViewer launch@ {
             _state.update { current ->
                 if (current.modernTmdbSection != section) current
                 else current.copy(
@@ -4073,7 +4153,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             else current.discoverySurface == trialSurface
         if (forceId == null) {
             // Browsing only paints saved badges. Provider checks are user initiated.
-            tmdbAvailabilityJob = viewModelScope.launch {
+            tmdbAvailabilityJob = launchForViewer launch@ {
                 val saved = tmdbAvailability.read(profileKey, type).entries.mapValues { it.value.matches }
                 _state.update { current ->
                     if (!accepts(current)) current
@@ -4083,7 +4163,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        tmdbAvailabilityJob = viewModelScope.launch {
+        tmdbAvailabilityJob = launchForViewer launch@ {
             while (isActive) {
                 val snapshot = _state.value
                 if (!accepts(snapshot) || snapshot.nowPlaying != null) return@launch
@@ -4237,7 +4317,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        viewModelScope.launch {
+        launchForViewer launch@ {
             runCatching {
                 store.setTmdbDashboardSections(
                     profileKey,
@@ -4256,7 +4336,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun resetScreenConfiguration(surface: DashboardSurface) = viewModelScope.launch {
+    fun resetScreenConfiguration(surface: DashboardSurface) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         store.setTmdbDashboardSections(profileKey, surface, emptyList())
         val type = when (surface) {
@@ -4703,7 +4783,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         entry: TrendingMovie,
         initial: MovieMatchLookup,
         requestId: Long
-    ) = viewModelScope.launch {
+    ) = launchForViewer launch@ {
         val candidates = initial.rawCandidates.toMutableList()
         val pages = TmdbMovieMatchPaging(initial.pendingRequests)
         val profile = session.profile.cacheKey()
@@ -5021,7 +5101,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(providerMovieDetails = selected) }
         val session = _state.value.session ?: return
         if (session.profile.portalType != PortalType.STALKER || item.id.startsWith("tmdb-")) return
-        movieStructureJob = viewModelScope.launch {
+        movieStructureJob = launchForViewer launch@ {
             try {
                 val episodic = item.vodSeriesContainer || withAutomaticSessionRetry(session) { movieStructureLookup(it, item) }
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -5225,7 +5305,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val searchCacheTtl = snapshot.cacheIntervalMinutes * 60_000L
         if (!forceRefresh && snapshot.fullSearchItems != null &&
             now - (snapshot.fullSearchCachedAtMillis ?: 0L) < searchCacheTtl) return
-        viewModelScope.launch {
+        launchForViewer launch@ {
             _state.update { it.copy(fullSearchLoading = true) }
             if (!forceRefresh) {
                 store.searchCatalog(type, profileKey).first()?.let { cached ->
@@ -5424,7 +5504,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    private fun loadSearchCategories(type: SearchContentType) = viewModelScope.launch {
+    private fun loadSearchCategories(type: SearchContentType) = launchForViewer launch@ {
         if (type == SearchContentType.ALL) return@launch
         val catalogType = catalogTypeForSearch(type)
         val session = _state.value.session ?: return@launch
@@ -5553,7 +5633,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     return
                 }
 
-        searchPreviewJob = viewModelScope.launch {
+        searchPreviewJob = launchForViewer launch@ {
             delay(SEARCH_PREVIEW_DEBOUNCE_MS)
 
             val saved =
@@ -5606,7 +5686,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     current.searchQuery.trim() == normalizedQuery) {
                     // The preview already checked every cache. Do not decode them a second time.
                     searchServerJob?.cancel()
-                    searchServerJob = viewModelScope.launch {
+                    searchServerJob = launchForViewer launch@ {
                         rememberSearch(normalizedQuery, type)
                         if (type == SearchContentType.ALL) fetchGlobalSearch(normalizedQuery, profileKey, local)
                         else fetchSearchPage(normalizedQuery, type, categoryId, 1, local)
@@ -5634,7 +5714,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         searchServerJob?.cancel()
-        searchServerJob = viewModelScope.launch {
+        searchServerJob = launchForViewer launch@ {
             rememberSearch(query, snapshot.searchType)
 
             val saved =
@@ -5692,7 +5772,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         searchServerJob?.cancel()
-        searchServerJob = viewModelScope.launch {
+        searchServerJob = launchForViewer launch@ {
             val current = _state.value
             if (
                 !current.searchHasMore ||
@@ -6177,7 +6257,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun deleteRecentSearch(search: RecentSearch) = viewModelScope.launch {
+    fun deleteRecentSearch(search: RecentSearch) = launchForViewer launch@ {
         store.removeRecentSearch(search)
     }
 
@@ -6289,7 +6369,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(alternateSources = picker.copy(target = target, loading = true, streams = emptyList(), error = null,
             resumePositionMillis = picker.resumePositionMillis.takeIf { alternateProgressKey(picker.profileKey, picker.target) == alternateProgressKey(picker.profileKey, target) },
             selectedId = picker.selectedId.takeIf { picker.target == target })) }
-        alternateLookupJob = viewModelScope.launch {
+        alternateLookupJob = launchForViewer launch@ {
             try {
                 alternateResolver.invalidate(target)
                 val identified = if (target.provider != com.nikhil.niktv.data.AlternateSourceProvider.AUTO && target.tmdbId == null)
@@ -6350,7 +6430,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (source.target.provider !in setOf(com.nikhil.niktv.data.AlternateSourceProvider.CINEJOY, com.nikhil.niktv.data.AlternateSourceProvider.CNO) ||
             !samePlaybackAttempt(_state.value.nowPlaying ?: return, playing)) return
         cinejoyHandoffJob?.cancel()
-        cinejoyHandoffJob = viewModelScope.launch {
+        cinejoyHandoffJob = launchForViewer launch@ {
             try {
                 val streams = cinejoyNativeLookup(candidate)
                 if (kotlinx.coroutines.currentCoroutineContext()[Job]?.isActive != true) return@launch
@@ -6412,7 +6492,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (lease != null && alternatePlaybackLeaseWatcher?.isActive != true) {
             // The ViewModel owns this resource across rotation/PiP/engine changes. It is
             // released for every transition away, including ordinary IPTV/profile paths.
-            alternatePlaybackLeaseWatcher = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            alternatePlaybackLeaseWatcher = launchForViewer(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) launch@ {
                 _state.map { it.nowPlaying?.url }.distinctUntilChanged().collect { url ->
                     val owned = alternatePlaybackLease
                     if (owned == null || url != owned.url) {
@@ -6427,18 +6507,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun commitAlternateStream(picker: AlternateSourcePickerState, stream: com.nikhil.niktv.data.AlternateStream, requestId: Long,
         readLatestPosition: (() -> Long)? = null) {
+        val userScope = store.captureScope()
         if (!latestPlaybackRequest.isCurrent(requestId) || picker.profileKey != alternateProfile()) return
+        if (userScope != null && _state.value.nowPlaying == null) {
+            withTimeoutOrNull(8_000L) { runCatching { accountSync.syncNow() } }
+            if (userScope != store.captureScope() || !latestPlaybackRequest.isCurrent(requestId)) return
+        }
         val target = picker.target
         val beforePreparation = _state.value.nowPlaying
         val lease = try { alternatePlaybackPreparation(stream) }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (_: Exception) { throw com.nikhil.niktv.data.AlternateSourceException("Abibli could not start playback. Retry or choose another source.") }
-        if (!latestPlaybackRequest.isCurrent(requestId) || picker.profileKey != alternateProfile()) { lease?.close(); return }
+        if (!latestPlaybackRequest.isCurrent(requestId) || picker.profileKey != alternateProfile() ||
+            userScope != store.captureScope()) { lease?.close(); return }
         val item = alternateEpisodeMedia(picker.request, target)
         val key = alternateProgressKey(picker.profileKey, target)
         val active = _state.value.nowPlaying?.takeIf { it.playbackAttemptId == beforePreparation?.playbackAttemptId && it.progressKey == key }
+        val refreshedProgress = userScope?.let { store.scoped(it).playbackProgress.first() } ?: _state.value.playbackProgress
+        if (userScope != store.captureScope() || !latestPlaybackRequest.isCurrent(requestId)) { lease?.close(); return }
         val position = active?.let { runCatching { readLatestPosition?.invoke() }.getOrNull() }?.coerceAtLeast(0L)
-            ?: picker.resumePositionMillis ?: _state.value.playbackProgress.firstOrNull { it.key == key }?.positionMillis ?: 0L
+            ?: picker.resumePositionMillis ?: refreshedProgress.firstOrNull { it.key == key }
+                ?.takeUnless { it.action in setOf(ViewingAction.COMPLETED, ViewingAction.MARK_UNWATCHED) }?.positionMillis ?: 0L
         val source = AlternatePlaybackSource(target, picker.streams, stream.id, picker.profileKey)
         liveGuideScheduler.pause()
         channelScheduleJob?.cancel(); playbackQueuePrefetches.cancelUnfinished()
@@ -6449,7 +6538,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             nextEpisode = target.episode?.takeIf { target.series }?.let { number -> alternateEpisodeMedia(picker.request, target.copy(episode = number + 1)) },
             resumePositionMillis = position, progressKey = key, directFullscreen = true,
             streamRequestHeaders = if (lease == null) stream.headers else emptyMap(), playbackFormat = stream.format,
-            playWhenReady = active?.playWhenReady ?: picker.playWhenReady, alternateSource = source, profileKey = picker.profileKey),
+            playWhenReady = active?.playWhenReady ?: picker.playWhenReady, alternateSource = source, profileKey = picker.profileKey,
+            userScope = userScope, logicalPortalId = "alternate:${target.provider.name}"),
             error = null, playbackReturnFocusId = if (it.nowPlaying != null)
                 it.playbackReturnFocusId ?: picker.request.item.id else picker.request.item.id,
             playbackQueueScope = null, playbackQueueHasMore = false, playbackQueueLoadingMore = false) }
@@ -6462,7 +6552,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(recentlyPlayed = updated) }
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == picker.profileKey } + updated
         val persisted = allRecentlyPlayed
-        viewModelScope.launch { store.saveRecentlyPlayed(persisted) }
+        launchForViewer launch@ {
+            store.saveRecentlyPlayed(persisted, userScope)
+            accountSync.requestSync("playback-start")
+        }
 
     }
 
@@ -6500,7 +6593,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(error = "Live channels require a timed recording and cannot be saved as an offline download.") }
             return
         }
-        viewModelScope.launch {
+        launchForViewer launch@ {
             runCatching {
                 val session = requireNotNull(_state.value.session)
                 val key = "${session.profile.cacheKey()}:${type.name}:${item.id}"
@@ -6530,7 +6623,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profileKey = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey() ?: return
         val existingKey = "$profileKey:${playing.catalogType.name}:${playing.media.id}"
-        viewModelScope.launch {
+        launchForViewer launch@ {
             _state.value.offlineDownloads.firstOrNull { it.key == existingKey }?.let { existing ->
                 if (withContext(Dispatchers.IO) { OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) } !in
                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)
@@ -6566,7 +6659,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val removingActiveOfflinePlayback =
             playing?.offlinePlayback == true && playing.catalogType == type && playing.media.id == item.id
 
-        viewModelScope.launch {
+        launchForViewer launch@ {
             var onlineUrl: String? = null
             if (removingActiveOfflinePlayback) {
                 val session = _state.value.session
@@ -6618,7 +6711,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 it.catalogType == active.catalogType && it.media.id == active.media.id
             }
         }
-        viewModelScope.launch {
+        launchForViewer launch@ {
             var onlineUrl: String? = null
             if (activeDownload != null) {
                 val session = _state.value.session
@@ -6683,6 +6776,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         reauthenticate: Boolean = false,
         queueFilter: PlaybackQueueFilter? = null
     ) = latestPlaybackRequest.run(requestId) {
+        val userScope = store.captureScope()
+        // Resume is refreshed before a new session starts; an unreachable server
+        // leaves the durable local resume position available.
+        if (userScope != null && !forceFreshUrl) {
+            withTimeoutOrNull(8_000L) { runCatching { accountSync.syncNow() } }
+            if (userScope != store.captureScope() || !latestPlaybackRequest.isCurrent(requestId)) return@run
+        }
         if (navigationCursor.pendingRequest != requestId) navigationCursor.select(requestId,
             _state.value.nowPlaying?.let(::playbackNavigationQueue).orEmpty().map { it.id }, item.id,
             playbackNavigationIndex)
@@ -6708,11 +6808,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     if (latestPlaybackRequest.isCurrent(requestId)) _state.update { it.copy(reauthenticating = false) }
                 }
                 resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, requestId, queueFilter)
+                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, requestId, queueFilter, userScope)
             } else {
                 withAutomaticSessionRetry(session, playbackRequestId = requestId) { activeSession ->
                     resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter)
+                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter, userScope)
                 }
             }
         } catch (container: com.nikhil.niktv.data.PortalVodSeriesContainerException) {
@@ -6743,9 +6843,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         directFullscreen: Boolean = false,
         session: PortalSession,
         requestId: Long,
-        queueFilter: PlaybackQueueFilter?
+        queueFilter: PlaybackQueueFilter?,
+        userScope: UserScope?
     ) {
         val playbackStartedAt = SystemClock.elapsedRealtime()
+        val logicalPortalId = userScope?.let { userSyncStore.registerPortal(it.accountId, session.profile) }.orEmpty()
         val offlineEntry = _state.value.offlineDownloads
             .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${requestedItem.id}" }
         val offlineUrl = withContext(Dispatchers.IO) { offlineEntry
@@ -6807,14 +6909,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // Use a profile-scoped, content-based key so resume survives session/token refreshes.
         val progressKey = progressKeyFor(session.profile, item, type, series)
         val legacyProgressKey = legacyProgressKeyFor(item, type)
+        val previousProgressKey = legacyPortalProgressKeyFor(session.profile, item, type, series)
         // Keep backward compatibility with already-saved progress entries.
-        val saved = _state.value.playbackProgress.firstOrNull { it.key == progressKey }
-            ?: _state.value.playbackProgress
+        val refreshedProgress = userScope?.let { store.scoped(it).playbackProgress.first() } ?: _state.value.playbackProgress
+        val saved = refreshedProgress.firstOrNull { it.key == progressKey }
+            ?: refreshedProgress
                 .asSequence()
-                .filter { it.key == legacyProgressKey }
+                .filter { it.key == legacyProgressKey || it.key == previousProgressKey }
                 .maxByOrNull { it.updatedAtMillis }
         val resumePosition = resumePositionOverride
-            ?: saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L }
+            ?: saved?.positionMillis?.takeIf { saved.action != ViewingAction.COMPLETED && saved.action != ViewingAction.MARK_UNWATCHED &&
+                (saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L) }
             ?: 0L
 
         /*
@@ -6930,6 +7035,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         if (!latestPlaybackRequest.isCurrent(requestId) ||
+            userScope != store.captureScope() ||
             _state.value.session?.profile?.cacheKey() != session.profile.cacheKey() ||
             _state.value.session != session) return
         channelScheduleJob?.cancel()
@@ -6949,6 +7055,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     resumePositionMillis = resumePosition,
                     progressKey = progressKey,
                     profileKey = session.profile.cacheKey(),
+                    userScope = userScope,
+                    logicalPortalId = logicalPortalId,
                     authorizationRetryCount = authorizationRetryCount,
                     playWhenReady = if (forceFreshUrl) paginationSnapshot.nowPlaying?.playWhenReady ?: true else true,
                     decoderSessionId = paginationSnapshot.nowPlaying?.takeIf {
@@ -7005,7 +7113,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        recordRecent(item, type, series)
+        recordRecent(item, type, series, session.profile.cacheKey(), userScope)
     }
 
     private suspend fun playbackCatalogQueue(
@@ -7105,41 +7213,81 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Legacy/test entry point. UI callbacks must pass their captured playback session. */
     fun savePlaybackProgress(key: String, positionMillis: Long, durationMillis: Long) {
-        if (key.isBlank()) return
-        val snapshot = _state.value
-        val playing = snapshot.nowPlaying?.takeIf { it.progressKey == key }
-        val profile = snapshot.session?.profile?.cacheKey()
+        val playing = _state.value.nowPlaying?.takeIf { it.progressKey == key } ?: return
+        savePlaybackProgress(playing, key, positionMillis, durationMillis)
+    }
+
+    fun savePlaybackProgress(playing: PlayingMedia, key: String, positionMillis: Long, durationMillis: Long) {
+        if (key.isBlank() || key != playing.progressKey || playing.externalPlayback) return
+        val replacement = _state.value.nowPlaying
+        if (replacement != null && replacement.userScope == playing.userScope && replacement.progressKey == key &&
+            replacement.playbackAttemptId != playing.playbackAttemptId) return
+        val scope = playing.userScope
+        // An older, unowned player must never adopt the currently selected person.
+        if (scope == null && store.captureScope() != null) return
+        val ownedStore = scope?.let(store::scoped) ?: store
+        val profile = playing.profileKey
         viewModelScope.launch {
-            val current = _state.value.playbackProgress
-            val updated = if (durationMillis > 0L && positionMillis >= durationMillis - 5_000L) {
-                current.filterNot { it.key == key }
-            } else {
-                (listOf(PlaybackProgress(key, positionMillis.coerceAtLeast(0L), durationMillis)) + current.filterNot { it.key == key })
-                    .take(MAX_PROGRESS_ITEMS)
-            }
-            _state.update { it.copy(playbackProgress = updated) }
-            store.savePlaybackProgress(updated)
-            if (com.nikhil.niktv.data.meaningfulViewing(positionMillis, durationMillis)) {
-                val previous = recommendationProgress.firstOrNull { it.key == key }
-                if (previous == null || positionMillis / 60_000 != previous.positionMillis / 60_000 ||
-                    (durationMillis > 0 && positionMillis >= durationMillis - 5_000)) {
-                    store.saveRecommendationProgress(PlaybackProgress(key, positionMillis, durationMillis))
-                }
-                if (playing != null && playing.alternateSource == null && profile != null && dismissedRecommendationCategories[profile].orEmpty().isNotEmpty()) {
-                    try {
-                        val identity = when (playing.catalogType) {
-                            CatalogType.MOVIES -> mediaIdentities.resolve(profile, CatalogType.MOVIES, playing.media)
-                            CatalogType.SERIES -> playing.series?.let { mediaIdentities.resolve(profile, CatalogType.SERIES, it) }
-                            CatalogType.LIVE_TV -> com.nikhil.niktv.data.liveProgrammeRecommendationItem(playing.media, System.currentTimeMillis())?.let { programme ->
-                                com.nikhil.niktv.data.resolveLiveProgrammeRecommendation(programme) { type, item -> mediaIdentities.resolve(profile, type, item) }
+            progressSaveMutex.withLock {
+                val current = ownedStore.playbackProgress.first()
+                val previous = current.firstOrNull { it.key == key }
+                val sample = playbackSample(previous, key, positionMillis, durationMillis)
+                if (previous?.positionMillis == sample.positionMillis && previous.durationMillis == sample.durationMillis &&
+                    previous.action == sample.action) return@withLock
+                val updated = (listOf(sample) + current.filterNot { it.key == key }).take(MAX_PROGRESS_ITEMS)
+                // Persist the mutation/outbox first. Work scheduling cannot be the durability boundary.
+                ownedStore.savePlaybackProgress(updated, scope)
+                if (scope == store.captureScope()) _state.update { it.copy(playbackProgress = updated) }
+                if (com.nikhil.niktv.data.meaningfulViewing(positionMillis, durationMillis)) {
+                    ownedStore.saveRecommendationProgress(sample, scope)
+                    if (scope == store.captureScope() && playing.alternateSource == null && profile.isNotBlank() &&
+                        dismissedRecommendationCategories[profile].orEmpty().isNotEmpty()) {
+                        try {
+                            val identity = when (playing.catalogType) {
+                                CatalogType.MOVIES -> mediaIdentities.resolve(profile, CatalogType.MOVIES, playing.media)
+                                CatalogType.SERIES -> playing.series?.let { mediaIdentities.resolve(profile, CatalogType.SERIES, it) }
+                                CatalogType.LIVE_TV -> com.nikhil.niktv.data.liveProgrammeRecommendationItem(playing.media, System.currentTimeMillis())?.let { programme ->
+                                    com.nikhil.niktv.data.resolveLiveProgrammeRecommendation(programme) { type, item -> mediaIdentities.resolve(profile, type, item) }
+                                }
+                                else -> null
                             }
-                            else -> null
-                        }
-                        identity?.tmdbId?.let { store.restoreRecommendation(profile, "${identity.type}:$it") }
-                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                      catch (error: Exception) { Log.w("NikTvRecommendations", "Could not restore watched recommendation source", error) }
+                            if (scope == store.captureScope()) identity?.tmdbId?.let {
+                                ownedStore.restoreRecommendation(profile, "${identity.type}:$it")
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                          catch (_: Exception) { /* A later metadata request can retry. */ }
+                    }
                 }
+                if (scope != null) {
+                    val now = SystemClock.elapsedRealtime()
+                    val explicit = flushProgressScopes.remove(scope) ||
+                        sample.action in setOf(ViewingAction.COMPLETED, ViewingAction.REWIND, ViewingAction.RESTART)
+                    if (explicit || now - (lastProgressSync[scope] ?: 0L) >= 60_000L) {
+                        lastProgressSync[scope] = now
+                        accountSync.requestSync("playback", immediate = explicit)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Explicit viewing action; retained for deterministic synchronization across devices. */
+    fun markUnwatched(item: MediaItem, type: CatalogType, series: MediaItem? = null) {
+        val snapshot = _state.value
+        val portalProfile = snapshot.session?.profile ?: snapshot.savedProfile ?: return
+        val scope = store.captureScope() ?: return
+        val key = progressKeyFor(portalProfile, item, type, series)
+        val ownedStore = store.scoped(scope)
+        viewModelScope.launch {
+            progressSaveMutex.withLock {
+                val current = ownedStore.playbackProgress.first()
+                val updated = listOf(PlaybackProgress(key, 0L, 0L, action = ViewingAction.MARK_UNWATCHED)) +
+                    current.filterNot { it.key == key }
+                ownedStore.savePlaybackProgress(updated, scope)
+                if (scope == store.captureScope()) _state.update { it.copy(playbackProgress = updated) }
+                accountSync.requestSync("mark-unwatched", immediate = true)
             }
         }
     }
@@ -7288,7 +7436,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         navigationCursor.select(requestId, queue.map { it.id }, boundary.id,
             queueOccurrences(queue.map { it.id }).indexOf(boundary))
         val started = _state.value.playbackQueueLoadingMore || loadMorePlaybackQueue()
-        autoAdvanceAfterQueueLoadJob = viewModelScope.launch {
+        autoAdvanceAfterQueueLoadJob = launchForViewer launch@ {
             try {
                 if (!started) return@launch
                 _state.first { !it.playbackQueueLoadingMore }
@@ -7316,8 +7464,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun recordRecent(item: MediaItem, type: CatalogType, series: MediaItem?) {
-        val profileKey = requireNotNull(_state.value.session).profile.cacheKey()
+    private suspend fun recordRecent(item: MediaItem, type: CatalogType, series: MediaItem?, profileKey: String, userScope: UserScope?) {
+        if (userScope != store.captureScope()) return
         val additions = buildList {
             if (type == CatalogType.SERIES && series != null) {
                 add(RecentItem(FavoriteKind.SERIES, series, lastPlayed = item, profileKey = profileKey))
@@ -7334,8 +7482,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             .distinctBy { it.key }.take(MAX_RECENT_ITEMS)
         _state.update { it.copy(recentlyPlayed = updated) }
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
-        store.saveRecentlyPlayed(allRecentlyPlayed)
-        if (type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) viewModelScope.launch {
+        store.saveRecentlyPlayed(allRecentlyPlayed, userScope)
+        accountSync.requestSync("playback-start")
+        if (type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) launchForViewer launch@ {
             try {
                 mediaIdentities.resolve(profileKey, type, if (type == CatalogType.SERIES) series ?: item else item)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -7401,6 +7550,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlayer() {
+        _state.value.nowPlaying?.userScope?.let { flushProgressScopes += it }
+        accountSync.requestSync("playback-stop", immediate = true)
         releaseAlternatePlaybackLease()
         cinejoyHandoffJob?.cancel(); cinejoyHandoffJob = null
         // A guide can finish into the browse cache after Back; it never starts playback.
@@ -7421,6 +7572,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     }
     fun setPlaybackIntent(attemptId: String, requested: Boolean) {
+        if (!requested) _state.value.nowPlaying?.takeIf { it.playbackAttemptId == attemptId }?.userScope?.let {
+            flushProgressScopes += it
+            accountSync.requestSync("playback-pause", immediate = true)
+        }
         _state.update { state ->
             val playing = state.nowPlaying
             if (playing?.playbackAttemptId != attemptId || playing.playWhenReady == requested) state
@@ -7438,7 +7593,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(nowPlaying = playing.copy(playWhenReady = true)) }
         if (playing.alternateSource != null) { retryAlternatePlayback(positionMillis.coerceAtLeast(0), playing); return }
         val requestId = beginPlaybackRequest()
-        viewModelScope.launch {
+        launchForViewer launch@ {
             if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
             _state.update { it.copy(error = null) }
             runCatching {
@@ -7473,7 +7628,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         if (!allowDecoderRecovery(playing.decoderRecoveryCount)) return
         val requestId = beginPlaybackRequest()
-        viewModelScope.launch {
+        launchForViewer launch@ {
             latestPlaybackRequest.run(requestId) {
                 /*
                  * MTK_DECODER_RELEASE_GRACE_V14
@@ -7522,7 +7677,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val requestId = beginPlaybackRequest()
-        viewModelScope.launch {
+        launchForViewer launch@ {
             if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
             /*
              * Keep PlayerScreen mounted while a rejected provider link is
@@ -7568,7 +7723,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setPreconfiguredProfileEnabled(profile: PortalProfile, enabled: Boolean) = viewModelScope.launch {
+    fun setPreconfiguredProfileEnabled(profile: PortalProfile, enabled: Boolean) = launchForViewer launch@ {
         if (enabled) store.addProfile(profile) else store.removeProfile(profile)
         val profiles = store.profiles.first()
         _state.update { current ->
@@ -7588,7 +7743,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun reauthenticate() {
         val profile = _state.value.savedProfile ?: return
         if (_state.value.reauthenticating) return
-        viewModelScope.launch {
+        launchForViewer launch@ {
             _state.update { it.copy(reauthenticating = true) }
             runCatching { refreshSession(profile) }
                 .onSuccess {
@@ -7628,7 +7783,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             selectedSeries = null, providerMovieDetails = null, nowPlaying = null, loading = false,
             restoring = false, error = null, profileLoadProgress = null, episodeTmdbRefresh = null) }
     }
-    fun exportBackup(uri: Uri) = viewModelScope.launch {
+    fun exportBackup(uri: Uri) = launchForViewer launch@ {
         runCatching {
             com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile export · Device") {
 
@@ -7643,7 +7798,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(backupMessage = "Could not export backup: ${error.message}") }
         }
     }
-    fun importBackup(uri: Uri) = viewModelScope.launch {
+    fun importBackup(uri: Uri) = launchForViewer launch@ {
         runCatching {
             com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile restore · Device") {
 
@@ -7656,7 +7811,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(backupMessage = "Could not import backup: ${error.message}") }
         }
     }
-    fun importBackupContent(content: String) = viewModelScope.launch {
+    fun importBackupContent(content: String) = launchForViewer launch@ {
         runCatching {
             com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile restore · GitHub") {
 
@@ -7713,7 +7868,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val session = snapshot.session ?: return
-        viewModelScope.launch {
+        launchForViewer launch@ {
             val cached = store.browseCatalog(type, session.profile.cacheKey()).first()?.categories.orEmpty()
             val categories = if (cached.isNotEmpty()) cached else runCatching {
                 withAutomaticSessionRetry(session) { activeSession ->
@@ -7728,12 +7883,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun setCategoryFilter(type: CatalogType, enabledCategoryIds: List<String>) = viewModelScope.launch {
+    fun setCategoryFilter(type: CatalogType, enabledCategoryIds: List<String>) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         store.saveCategoryFilter(profileKey, type, enabledCategoryIds.distinct())
     }
 
-    fun applyCategoryFilters(selections: Map<CatalogType, List<String>>) = viewModelScope.launch {
+    fun applyCategoryFilters(selections: Map<CatalogType, List<String>>) = launchForViewer launch@ {
         val snapshot = _state.value
         val session = snapshot.session ?: return@launch
         val profileKey = session.profile.cacheKey()
@@ -7789,7 +7944,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(feedRefreshing = false) }
         }
     }
-    fun toggleCategoryFilter(type: CatalogType, categoryId: String) = viewModelScope.launch {
+    fun toggleCategoryFilter(type: CatalogType, categoryId: String) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val raw = _state.value.rawCategoriesByType[type].orEmpty()
         val filterKey = filterKey(profileKey, type)
@@ -7801,7 +7956,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         setCategoryFilter(type, updated)
     }
-    fun removeCategoryFilter(type: CatalogType, categoryId: String) = viewModelScope.launch {
+    fun removeCategoryFilter(type: CatalogType, categoryId: String) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val raw = _state.value.rawCategoriesByType[type].orEmpty()
         val key = filterKey(profileKey, type)
@@ -7811,12 +7966,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(categoryFilters = it.categoryFilters + (key to updated)) }
         store.saveCategoryFilter(profileKey, type, updated)
     }
-    fun selectAllCategories(type: CatalogType) = viewModelScope.launch {
+    fun selectAllCategories(type: CatalogType) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val allCategories = _state.value.rawCategoriesByType[type].orEmpty().map { it.id }
         store.saveCategoryFilter(profileKey, type, allCategories)
     }
-    fun deselectAllCategories(type: CatalogType) = viewModelScope.launch {
+    fun deselectAllCategories(type: CatalogType) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         store.saveCategoryFilter(profileKey, type, emptyList())
     }
@@ -7835,7 +7990,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun localFirstSession(profile: PortalProfile): PortalSession {
         val cached = if (com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) store.sessionFor(profile) else null
         if (cached != null) {
-            viewModelScope.launch {
+            launchForViewer launch@ {
                 try {
                     val fresh = portal.authenticate(profile)
                     if (_state.value.savedProfile?.cacheKey() == profile.cacheKey()) {
@@ -7884,7 +8039,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         prepareDashboardInBackground(session)
         SearchMetadataSyncScheduler.configureProfile(getApplication(), session.profile)
     }
-    fun removeProfile(profile: PortalProfile) = viewModelScope.launch {
+    fun removeProfile(profile: PortalProfile) = launchForViewer launch@ {
         store.removeProfile(profile)
         if (_state.value.savedProfile?.cacheKey() == profile.cacheKey()) {
             _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false) }
@@ -7903,10 +8058,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return
-        viewModelScope.launch {
+        launchForViewer launch@ {
             enrichFavoriteSeriesPresentation(profileKey)
         }
-        viewModelScope.launch {
+        launchForViewer launch@ {
             refreshFavoriteEpisodeCachesIfDue(profileKey)
         }
     }
@@ -7929,6 +8084,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun playOfflineDownload(entry: OfflineMediaDownload) {
+        val userScope = store.captureScope()
+        val logicalPortalId = userScope?.let { owner -> kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            userSyncStore.dao.mappings(owner.accountId).firstOrNull { it.localKey == entry.profileKey }?.portalId
+        } }.orEmpty()
+        // The download file stays local; visibility and progress belong to its viewer.
+        if (_state.value.offlineDownloads.none { it.key == entry.key && it.requestId == entry.requestId }) return
         val protectedMedia = entry.media.copy(isAdult = entry.media.isAdult || entry.series?.isAdult == true ||
             com.nikhil.niktv.data.ParentalControls.adultCategory(getApplication(), entry.profileKey, entry.catalogType,
                 entry.series?.portalCategoryId ?: entry.media.portalCategoryId))
@@ -7939,8 +8100,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(error = "This download is not complete yet.") }
             return
         }
-        val progressKey = "${entry.catalogType.name}:${entry.media.id}"
+        val progressKey = providerProgressKey(entry.profileKey, entry.media, entry.catalogType, entry.series)
         val savedProgress = _state.value.playbackProgress.firstOrNull { it.key == progressKey }
+            ?: _state.value.playbackProgress.firstOrNull { it.key == "${entry.catalogType.name}:${entry.media.id}" }
         _state.update {
             it.copy(
                 nowPlaying = PlayingMedia(
@@ -7948,11 +8110,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     url = uri,
                     catalogType = entry.catalogType,
                     series = entry.series,
-                    resumePositionMillis = savedProgress?.positionMillis ?: 0L,
+                    resumePositionMillis = savedProgress?.takeUnless { it.action in setOf(ViewingAction.COMPLETED, ViewingAction.MARK_UNWATCHED) }?.positionMillis ?: 0L,
                     progressKey = progressKey,
                     directFullscreen = true,
                     offlinePlayback = true,
                     profileKey = entry.profileKey
+                    ,userScope = userScope
+                    ,logicalPortalId = logicalPortalId
                     ,playbackFormat = entry.fileType.ifBlank { mediaFormatLabel(entry.sourceUrl) }
                 )
             )
@@ -8063,7 +8227,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             profileKey = profileKey, categoryTitle = snapshot.selectedCategory?.title))
     }
 
-    fun toggleFavorite(favorite: FavoriteItem) = viewModelScope.launch {
+    fun toggleFavorite(favorite: FavoriteItem) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val scopedFavorite = if (favorite.profileKey == profileKey) favorite else favorite.copy(profileKey = profileKey)
         val updated = _state.value.favorites.toMutableList().apply {
@@ -8267,7 +8431,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun removeRecent(recent: RecentItem) = viewModelScope.launch {
+    fun removeRecent(recent: RecentItem) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         if (recent.profileKey != profileKey) return@launch
         val updated = _state.value.recentlyPlayed.filterNot { it.contentIdentity() == recent.contentIdentity() }
@@ -8275,7 +8439,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
         store.saveRecentlyPlayed(allRecentlyPlayed)
     }
-    fun clearRecent(kind: FavoriteKind) = viewModelScope.launch {
+    fun clearRecent(kind: FavoriteKind) = launchForViewer launch@ {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val updated = _state.value.recentlyPlayed.filterNot { it.kind == kind }
         _state.update { it.copy(recentlyPlayed = updated) }
@@ -8283,7 +8447,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.saveRecentlyPlayed(allRecentlyPlayed)
     }
 
-    fun toggleSeriesWatch() = viewModelScope.launch {
+    fun toggleSeriesWatch() = launchForViewer launch@ {
+        val userScope = store.captureScope()
         val snapshot = _state.value
         val series = snapshot.selectedSeries ?: return@launch
         val session = snapshot.session ?: return@launch
@@ -8294,7 +8459,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val updated = snapshot.watchedSeries.filterNot { it.key == existing.key }
             _state.update { it.copy(watchedSeries = updated) }
             allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
-            store.saveWatchedSeries(allWatchedSeries)
+            store.saveWatchedSeries(allWatchedSeries, userScope)
             return@launch
         }
 
@@ -8312,7 +8477,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val updated = snapshot.watchedSeries + optimistic
         _state.update { it.copy(watchedSeries = updated) }
         allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
-        store.saveWatchedSeries(allWatchedSeries)
+        store.saveWatchedSeries(allWatchedSeries, userScope)
 
         val latest = runCatching {
             portal.episodeSeason(session, series, SeriesStartSeason.LAST)
@@ -8320,7 +8485,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         // Do not revive the watch entry if the user toggled it off or changed
         // profiles while the provider request was in flight.
-        if (_state.value.session?.profile?.cacheKey() != profileKey) return@launch
+        if (_state.value.session?.profile?.cacheKey() != profileKey || userScope != store.captureScope()) return@launch
         val current = _state.value.watchedSeries.firstOrNull { it.key == optimistic.key }
             ?: return@launch
         val refreshed = current.copy(
@@ -8332,10 +8497,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         _state.update { it.copy(watchedSeries = refreshedList) }
         allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + refreshedList
-        store.saveWatchedSeries(allWatchedSeries)
+        store.saveWatchedSeries(allWatchedSeries, userScope)
     }
 
     private suspend fun refreshWatchedSeriesIfDue(force: Boolean = false) {
+        val userScope = store.captureScope()
+        val ownedStore = userScope?.let(store::scoped) ?: store
         if (!watchRefreshMutex.tryLock()) return
         try {
         val session = _state.value.session ?: return
@@ -8364,7 +8531,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }.getOrNull()
                 ?: return@forEachIndexed
-            val discovery = store.recordEpisodeDiscovery(watched.key, latest.episodes, now)
+            if (userScope != store.captureScope()) return
+            val discovery = ownedStore.recordEpisodeDiscovery(watched.key, latest.episodes, now)
                 ?: return@forEachIndexed
             val discovered = discovery.added
             Log.i(
@@ -8396,9 +8564,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun markEpisodeWatched(watched: WatchedSeries, episode: MediaItem) = viewModelScope.launch {
+    fun markEpisodeWatched(watched: WatchedSeries, episode: MediaItem) = launchForViewer launch@ {
+        val userScope = store.captureScope()
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         if (watched.profileKey != profileKey) return@launch
+        val ownedStore = userScope?.let(store::scoped) ?: store
+        progressSaveMutex.withLock {
+            val key = providerProgressKey(profileKey, episode, CatalogType.SERIES, watched.series)
+            val current = ownedStore.playbackProgress.first()
+            val previous = current.firstOrNull { it.key == key }
+            val duration = previous?.durationMillis ?: 0L
+            val completed = PlaybackProgress(key, duration.coerceAtLeast(0L), duration,
+                action = ViewingAction.COMPLETED)
+            val progress = listOf(completed) + current.filterNot { it.key == key }
+            ownedStore.savePlaybackProgress(progress, userScope)
+            if (userScope == store.captureScope()) _state.update { it.copy(playbackProgress = progress) }
+        }
         val updated = _state.value.watchedSeries.map {
             if (it.key == watched.key) it.copy(
                 knownEpisodeIds = it.knownEpisodeIds + episode.id,
@@ -8407,11 +8588,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
         _state.update { it.copy(watchedSeries = updated) }
-        store.saveWatchedSeries(allWatchedSeries)
+        store.saveWatchedSeries(allWatchedSeries, userScope)
+        accountSync.requestSync("mark-watched", immediate = true)
     }
 
     fun dismissWatchedEpisode(watched: WatchedSeries, episode: MediaItem) =
-        viewModelScope.launch {
+        launchForViewer launch@ {
             val profileKey = _state.value.session?.profile?.cacheKey()
                 ?: return@launch
             val updated = _state.value.watchedSeries.map {
@@ -8438,7 +8620,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return thisEpisode > otherEpisode
     }
     fun dismissError() = _state.update { it.copy(error = null) }
-    fun logout() = viewModelScope.launch {
+    fun logout() = launchForViewer launch@ {
         searchSeriesReturn = null
         recommendationJob?.cancel()
         recommendationFingerprint = null
@@ -8449,7 +8631,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun playbackTask(requestId: Long, block: suspend () -> Unit) {
-        viewModelScope.launch {
+        launchForViewer launch@ {
             if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
             _state.update { it.copy(loading = true, error = null, tmdbIptvLookupMiss = null) }
             try {
@@ -8468,7 +8650,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun task(block: suspend () -> Unit) {
-        viewModelScope.launch {
+        launchForViewer launch@ {
             _state.update { it.copy(loading = true, error = null, tmdbIptvLookupMiss = null) }
             try {
                 withTimeout(90_000L) {
@@ -8518,7 +8700,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val enabledSet = enabledIds.toSet()
         return raw.filter { it.id in enabledSet }
     }
-    private fun progressKeyFor(profile: PortalProfile, item: MediaItem, type: CatalogType, series: MediaItem?): String {
+    private fun progressKeyFor(profile: PortalProfile, item: MediaItem, type: CatalogType, series: MediaItem?): String =
+        providerProgressKey(profile.cacheKey(), item, type, series)
+
+    /** Read-only migration lookup for existing device data. Never emitted as a new shared identity. */
+    private fun legacyPortalProgressKeyFor(profile: PortalProfile, item: MediaItem, type: CatalogType, series: MediaItem?): String {
         // Keep keys bounded for storage while still differentiating profile/type/media.
         val base = buildString {
             append("progress-v2|")

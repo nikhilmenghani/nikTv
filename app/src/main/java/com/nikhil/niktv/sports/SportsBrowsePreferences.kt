@@ -7,7 +7,7 @@ internal data class SportsBrowseDefaults(val sport: String = "All sports", val s
 
 /** Device-local browsing defaults, independent of IPTV profiles and playback preferences. */
 internal class SportsBrowsePreferences(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("sports_browse", Context.MODE_PRIVATE)
+    private val prefs = com.nikhil.niktv.data.UserProfilePreferences.get(context, "sports_browse")
     fun read() = SportsBrowseDefaults(
         prefs.getString("sport", null)?.trim()?.takeIf { it.length in 1..100 } ?: "All sports",
         prefs.getString("status", null)?.let { if (it == "Finished") "Recent" else it }?.takeIf { it in SPORTS_STATUS_FILTERS } ?: "Now & next")

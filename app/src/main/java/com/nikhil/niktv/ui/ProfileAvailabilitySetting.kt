@@ -21,7 +21,7 @@ internal fun ProfileAvailabilitySetting(name: String, stalker: Boolean, checked:
         icon = if (stalker) Icons.Default.Tv else Icons.Default.Key,
         title = name,
         subtitle = if (!available) "Sync private configuration to enable"
-            else if (checked) "Available on the profile screen" else "Hidden from the profile screen",
+            else if (checked) "Available on the portal screen" else "Hidden from the portal screen",
         modifier = modifier
             .then(if (available) Modifier.toggleable(checked, role = Role.Switch, onValueChange = onCheckedChange)
                 else Modifier.clickable(role = Role.Button, onClick = onSetupNeeded))

@@ -24,16 +24,20 @@ internal fun formatEpisodeAddedTime(millis: Long): String =
     java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
         .format(java.util.Date(millis))
 
-/** Playback's v2 identity contains season/episode and title, not the provider episode ID. */
+/** Provider identity is preferred; legacy title keys remain readable on this device. */
 internal fun seriesEpisodeProgress(records: List<PlaybackProgress>, profile: String,
     series: MediaItem, episode: MediaItem): PlaybackProgress? {
     val title = episode.title.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "-").trim('-')
     val prefix = "progress-v2|$profile|SERIES|series:${series.id}|s:${episode.seasonNumber ?: -1}|e:${episode.episodeNumber ?: -1}|$title|"
-    return records.filter { it.key.startsWith(prefix.take(240)) }.maxByOrNull { it.updatedAtMillis }
+    val currentKey = com.nikhil.niktv.model.providerProgressKey(profile, episode, com.nikhil.niktv.model.CatalogType.SERIES, series)
+    return records.firstOrNull { it.key == currentKey }
+        ?: records.filter { it.key.startsWith(prefix.take(240)) }.maxByOrNull { it.updatedAtMillis }
         ?: records.firstOrNull { it.key == "SERIES:${episode.id}" }
 }
 
 internal fun episodeRemainingLabel(progress: PlaybackProgress?): String? {
+    if (progress?.action == com.nikhil.niktv.model.ViewingAction.COMPLETED) return "Watched"
+    if (progress?.action == com.nikhil.niktv.model.ViewingAction.MARK_UNWATCHED) return null
     if (progress == null || progress.durationMillis <= 0 || progress.positionMillis <= 0) return null
     if (progress.positionMillis >= progress.durationMillis * .9) return "Watched"
     val minutes = ((progress.durationMillis - progress.positionMillis + 59_999) / 60_000).coerceAtLeast(1)

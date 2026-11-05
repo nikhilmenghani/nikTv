@@ -360,6 +360,14 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
+    AccountProfileGate(vm) { NikTvAuthenticatedApp(vm) }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
+    val openAccount = LocalOpenAccountScreen.current
+    val openUserProfiles = LocalOpenUserProfiles.current
     androidx.compose.runtime.CompositionLocalProvider(
         LocalPlayAlternateSource provides vm::openAlternateSources,
         LocalRefreshProviderCategories provides { type -> vm.refreshProviderCategories(type) },
@@ -384,21 +392,27 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             navigate = { label -> when (label) {
                 "Home" -> vm.openHome(); "Home 2" -> vm.openHomeExperiment(); "Previous Home" -> vm.openPreviousHome(); "Live TV" -> vm.openCatalogType(CatalogType.LIVE_TV)
                 "Previous Movies" -> vm.openPreviousDiscovery(DashboardSurface.MOVIES)
+                "Previous Series" -> vm.openPreviousDiscovery(DashboardSurface.SERIES)
                 "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
-                "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileSwitcher()
+                "Settings" -> openAccount(); "Profile" -> openUserProfiles()
             } }, favorite = { vm.toggleFavorite(it) }, playEpisode = vm::openDiscoveryEpisode,
             recent = vm::openRecent, watched = vm::openWatchedEpisode, category = vm::openModernIptvCategory,
             section = vm::openModernTmdbSection, removeRecent = vm::removeRecent,
             markWatched = vm::markEpisodeWatched, dismissEpisode = vm::dismissWatchedEpisode, playProvider = vm::openMediaInContext),
+        LocalMarkUnwatched provides vm::markUnwatched,
         LocalShowRecommendations provides vm::showRecommendationsOnHome,
         LocalRecommendationTypeFor provides vm::recommendationTypeFor) {
         NikTvAppContent(vm)
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun NikTvAppContent(vm: NikTvViewModel) {
+    val openAccount = LocalOpenAccountScreen.current
+    val openUserProfiles = LocalOpenUserProfiles.current
+    val closeAccountSettings = LocalCloseAccountSettings.current
     val pairingInvite = com.nikhil.niktv.data.PairingInvites.pending
     LaunchedEffect(pairingInvite) {
         if (pairingInvite != null) vm.openSettings()
@@ -481,7 +495,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
             close = vm::closeProfileSwitcher, select = vm::switchProfile, openChooser = vm::openProfileChooser)
         ParentalPinPrompt(vm)
         Surface(Modifier.fillMaxSize()) {
-          if (updateEnforcementEnabled && (checkingForRequiredUpdate || requiredUpdate != null)) {
+          if (updateEnforcementEnabled && !(state.session == null && state.settingsOpen) && (checkingForRequiredUpdate || requiredUpdate != null)) {
             MandatoryNikTvUpdateScreen(
                 checking = checkingForRequiredUpdate,
                 update = requiredUpdate,
@@ -526,7 +540,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     onPlaybackAuthorizationFailure = { position -> vm.retryPlaybackAfterAuthorizationFailure(position, playback) },
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
-                    onProgress = vm::savePlaybackProgress,
+                    onProgress = { key, position, duration -> vm.savePlaybackProgress(playback, key, position, duration) },
                     onChooseAlternateSource = playback.alternateSource?.let { { position, positionReader -> vm.openPlayingAlternateSources(position, playback, positionReader) } },
                     alternateSourceChooserOpen = state.alternateSources != null,
                     onPlaybackIntentChanged = { vm.setPlaybackIntent(playback.playbackAttemptId, it) },
@@ -612,7 +626,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                 )
                 state.session == null && state.settingsOpen -> ModernSettingsScreen(
                     state = state,
-                    closeSettings = vm::closeSettings,
+                    closeSettings = { vm.closeSettings(); closeAccountSettings() },
                     reauthenticate = vm::reauthenticate,
                     editProfile = vm::editProfile,
                     addProfile = vm::addProfile,
@@ -633,7 +647,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     setBrowseLayout = vm::setBrowseLayout,
                     openCategoryManager = vm::openCategoryManager
                 )
-                state.session == null && !state.offlineDownloadsOpen -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::openSettingsFromProfileChooser, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup, vm::openOfflineDownloads)
+                state.session == null && !state.offlineDownloadsOpen -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, { openAccount() }, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup, vm::openOfflineDownloads, openUserProfiles = openUserProfiles)
                 else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { DiscoveryScreenHost(
                     state = state,
                     selectType = vm::openCatalogType,
@@ -662,8 +676,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     openFavorite = { favorite -> if (favorite.kind == FavoriteKind.MOVIE && favorite.source != FavoriteSource.TMDB) vm.openProviderMovieDetails(favorite.media) else vm.openFavorite(favorite) },
                     toggleFavorite = vm::toggleFavorite,
                     toggleFavoriteEntry = { vm.toggleFavorite(it) },
-                    openSettings = vm::openSettings,
-                    closeSettings = vm::closeSettings,
+                    openSettings = openAccount,
+                    closeSettings = { vm.closeSettings(); closeAccountSettings() },
                     reauthenticate = vm::reauthenticate,
                     editProfile = vm::editProfile,
                     logout = vm::logout,
@@ -703,7 +717,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,exportBackup = vm::exportBackup
                     ,importBackup = vm::importBackup
                     ,importBackupContent = vm::importBackupContent
-                    ,openProfileSwitcher = vm::openProfileSwitcher
+                    ,openProfileSwitcher = openUserProfiles
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
                     ,setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled

@@ -46,7 +46,8 @@ internal fun PlayerLiveScheduleSummary(
     }
     val current = item.currentLiveProgramme(now)
     val next = item.liveSchedule.filter { (it.startTimeMillis ?: Long.MIN_VALUE) > now }.take(2)
-    val time = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+    val locale = rememberPlayerLocale()
+    val time = remember(locale, java.util.TimeZone.getDefault().id) { SimpleDateFormat("h:mm a", locale) }
     val entries = listOfNotNull(current?.let { "NOW" to it }) + next.map { "NEXT" to it }
     val expandRequester = remember { FocusRequester() }
     val closeRequester = remember { FocusRequester() }
@@ -128,8 +129,9 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
     }
     val current = item.currentLiveProgramme(now)
     val programmes = item.liveSchedule.filter { (it.endTimeMillis ?: Long.MAX_VALUE) > now }
-    val dateTimeFormatter = SimpleDateFormat("EEE, MMM d · h:mm a", Locale.getDefault())
-    val timeFormatter = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val locale = rememberPlayerLocale()
+    val dateTimeFormatter = SimpleDateFormat("EEE, MMM d · h:mm a", locale)
+    val timeFormatter = SimpleDateFormat("h:mm a", locale)
     val dayKeyFormatter = SimpleDateFormat("yyyyMMdd", Locale.US)
     val requesters = remember(programmes) { programmes.map { FocusRequester() } }
     val closeRequester = remember { FocusRequester() }

@@ -18,7 +18,7 @@ internal enum class SettingsDestination(
         "Brightness, orientation and screen awake"
     ),
     PROFILES(
-        "Profiles & access",
+        "Portals & access",
         "Accounts, portals and session access"
     ),
     CATALOG(
@@ -44,7 +44,7 @@ internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
         "Device & display" -> SettingsDestination.GENERAL
         "Playback", "Compatibility" -> SettingsDestination.PLAYBACK
 
-        "Profiles",
+        "Profiles", "Portals",
         "Connection",
         "Parental controls",
         "Private configuration",
@@ -69,12 +69,12 @@ internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
 internal enum class SettingsPage(val destination: SettingsDestination, val title: String, val parent: SettingsPage? = null) {
     PLAYBACK(SettingsDestination.PLAYBACK, "Playback"),
     DISPLAY(SettingsDestination.GENERAL, "Display & controls"),
-    PROFILES(SettingsDestination.PROFILES, "Profiles & access"),
+    PROFILES(SettingsDestination.PROFILES, "Portals & access"),
     LIBRARY(SettingsDestination.CATALOG, "Library & backup"),
     APP(SettingsDestination.SYSTEM, "App & updates"),
     COMPATIBILITY(SettingsDestination.PLAYBACK, "Compatibility", PLAYBACK),
-    MANAGE_PROFILES(SettingsDestination.PROFILES, "Manage profiles", PROFILES),
-    PROFILE_DETAILS(SettingsDestination.PROFILES, "Profile details", MANAGE_PROFILES),
+    MANAGE_PROFILES(SettingsDestination.PROFILES, "Manage portals", PROFILES),
+    PROFILE_DETAILS(SettingsDestination.PROFILES, "Portal details", MANAGE_PROFILES),
     CONNECTION(SettingsDestination.PROFILES, "Connection", PROFILES),
     PARENTAL(SettingsDestination.PROFILES, "Parental controls", PROFILES),
     PRIVATE_CONFIGURATION(SettingsDestination.PROFILES, "Private configuration", PROFILES),
@@ -89,7 +89,7 @@ internal enum class SettingsPage(val destination: SettingsDestination, val title
     DEVICE_BACKUP(SettingsDestination.CATALOG, "Device backup", BACKUPS),
     BACKUP_DESTINATION(SettingsDestination.CATALOG, "Backup destination", BACKUPS),
     UPDATE_PREFERENCES(SettingsDestination.SYSTEM, "Update preferences", APP),
-    RESET(SettingsDestination.SYSTEM, "Reset app", APP)
+    RESET(SettingsDestination.SYSTEM, "Account & profile data", APP)
 }
 
 internal fun SettingsDestination.rootPage(): SettingsPage = when (this) {
@@ -105,7 +105,7 @@ internal fun compactSettingsPageFor(title: String): SettingsPage = when (title) 
     "Playback" -> SettingsPage.PLAYBACK
     "Compatibility" -> SettingsPage.COMPATIBILITY
     "Storage & refresh" -> SettingsPage.BROWSE_REFRESH
-    "Profiles" -> SettingsPage.MANAGE_PROFILES
+    "Profiles", "Portals" -> SettingsPage.MANAGE_PROFILES
     "Connection" -> SettingsPage.CONNECTION
     "Parental controls" -> SettingsPage.PARENTAL
     "Private configuration" -> SettingsPage.PRIVATE_CONFIGURATION

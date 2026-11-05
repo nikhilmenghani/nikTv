@@ -27,7 +27,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 internal fun WatchProviderCollection(provider: WatchProvider, region: String, series: Boolean,
     row: WatchProviderRow, load: (Boolean) -> Unit, refresh: () -> Unit, close: () -> Unit,
     metadataActive: Boolean, open: (DiscoveryCard, FocusRequester) -> Unit,
-    focusRegistry: MutableMap<String, FocusRequester>? = null, cancel: () -> Unit = {}) {
+    focusRegistry: MutableMap<String, FocusRequester>? = null, cancel: () -> Unit = {}, controls: (@Composable () -> Unit)? = null) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
@@ -92,6 +92,7 @@ internal fun WatchProviderCollection(provider: WatchProvider, region: String, se
                         fontWeight = FontWeight.SemiBold, maxLines = 2)
                     Text("${if (series) "Series" else "Movies"} · $region", color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
                 }
+                controls?.invoke()
                 DiscoveryCollectionSearch(query, { query = it }, compact = phone, onActivate = { entered = true })
                 DiscoveryAction("Refresh provider titles", Icons.Default.Refresh, iconOnly = true) {
                     coordinator.cancel(); entered = false; selected = null; autoCount = -1; refresh()

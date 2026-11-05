@@ -148,7 +148,7 @@ internal fun ProfileLoadingScreen(profileName: String?, message: String, progres
                 }
             }
             Text(
-                text = profileName?.let { "Loading $it" } ?: "Loading profile",
+                text = profileName?.let { "Loading $it" } ?: "Loading portal",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )

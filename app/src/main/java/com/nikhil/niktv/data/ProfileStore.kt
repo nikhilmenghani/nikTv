@@ -34,6 +34,10 @@ import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
@@ -42,20 +46,32 @@ private val Context.dataStore by preferencesDataStore("nik_tv_profiles")
 
 @Serializable
 private data class NikTvBackup(
-    val formatVersion: Int = 2,
+    val formatVersion: Int = 3,
     val exportedAtMillis: Long = System.currentTimeMillis(),
     val strings: Map<String, String>,
     val integers: Map<String, Int>,
     val devicePreferences: Map<String, Map<String, DevicePreferenceValue>> = emptyMap(),
     val remoteConfiguration: RemoteConfigurationBackup? = null,
     val backupConnection: BackupConnectionConfiguration? = null,
-    val backupMetadata: DeviceBackupMetadata? = null
+    val backupMetadata: DeviceBackupMetadata? = null,
+    val userRecords: List<SyncRecord> = emptyList(),
+    val userLocalPreferences: List<UserLocalPreference> = emptyList(),
+    val portalMappings: List<LocalPortalMapping> = emptyList(),
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ProfileStore @JvmOverloads constructor(
     private val context: Context,
-    private val preferences: DataStore<Preferences> = context.dataStore,
+    preferences: DataStore<Preferences> = context.dataStore,
+    private val fixedUserScope: UserScope? = null,
 ) {
+    private val basePreferences = preferences
+    private val users = UserSyncStore.get(context)
+    private val preferences: DataStore<Preferences> = UserScopedPreferences(basePreferences, users, fixedUserScope)
+    fun captureScope(): UserScope? = fixedUserScope ?: users.selectedScope.value
+    fun scoped(scope: UserScope): ProfileStore = ProfileStore(context, basePreferences, scope)
+    private fun scopedPreferences(scope: UserScope?): DataStore<Preferences> =
+        if (scope == null) preferences else UserScopedPreferences(basePreferences, users, scope)
     private val key = stringPreferencesKey("active_profile")
     private val sessionKey = stringPreferencesKey("active_session")
     private val profilesKey = stringPreferencesKey("saved_profiles")
@@ -82,27 +98,33 @@ class ProfileStore @JvmOverloads constructor(
     private val tmdbDashboardSectionsKey = stringPreferencesKey("tmdb_dashboard_sections")
     private val tmdbMappingsKey = stringPreferencesKey("tmdb_iptv_mappings")
     private val offlineDownloadsKey = stringPreferencesKey("offline_media_downloads")
-    val activeProfile: Flow<PortalProfile?> = preferences.data.decodedProfilePreference(
+    val activeProfile: Flow<PortalProfile?> = this@ProfileStore.preferences.data.decodedProfilePreference(
         select = { Triple(it[profilesKey], it[key], it[activeProfileKey]) },
         decode = { (raw, legacy, identity) ->
             val profiles = decodeProfiles(raw, legacy)
             profiles.firstOrNull { it.identity() == identity } ?: profiles.firstOrNull()
         },
     )
-    val activeSession: Flow<PortalSession?> = preferences.data.decodedProfilePreference(
+    val activeSession: Flow<PortalSession?> = this@ProfileStore.preferences.data.decodedProfilePreference(
         select = { Triple(it[sessionsKey], it[sessionKey], it[activeProfileKey]) },
         decode = { (raw, legacy, active) ->
             decodeSessions(raw, legacy).firstOrNull { it.profile.identity() == active }
                 ?: legacy?.let { runCatching { Json.decodeFromString<PortalSession>(it) }.getOrNull() }
         },
     )
-    val profiles: Flow<List<PortalProfile>> = preferences.data.decodedProfilePreference(
+    private val portalRecordChanges = users.selectedAccount.flatMapLatest { accountId ->
+        if (accountId == null) flowOf(emptyList()) else users.dao.observeRecords(accountId)
+    }.map { records -> records.filter { it.collection == "portals" } }
+    val profiles: Flow<List<PortalProfile>> = this@ProfileStore.preferences.data.decodedProfilePreference(
         select = { it[profilesKey] to it[key] }, decode = { (raw, legacy) -> decodeProfiles(raw, legacy) },
-    )
-    val favorites: Flow<List<FavoriteItem>> = preferences.data.decodedProfilePreference(select = { it[favoritesKey] }, decode = { raw ->
+    ).combine(users.selectedScope) { portals, selected -> portals to (fixedUserScope ?: selected) }
+    .combine(portalRecordChanges) { (portals, owner), _ ->
+        if (owner == null) portals else portals.filter { users.hasPortalAssociation(owner, it) }
+    }
+    val favorites: Flow<List<FavoriteItem>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[favoritesKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<List<FavoriteItem>>(it) }.getOrNull() }.orEmpty()
     })
-    val recentlyPlayed: Flow<List<RecentItem>> = preferences.data.decodedProfilePreference(select = { it[recentKey] }, decode = { raw ->
+    val recentlyPlayed: Flow<List<RecentItem>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[recentKey] }, decode = { raw ->
         val stored = raw?.let { runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull() }.orEmpty()
         stored.filterNot { it.kind == com.nikhil.niktv.model.FavoriteKind.EPISODE }.map { recent ->
             if (recent.kind != com.nikhil.niktv.model.FavoriteKind.SERIES || recent.lastPlayed != null) recent
@@ -112,7 +134,7 @@ class ProfileStore @JvmOverloads constructor(
         }
     })
     private val requestedRecommendationsKey = stringPreferencesKey("requested_recommendations_v1")
-    val requestedRecommendations: Flow<List<RecentItem>> = preferences.data.decodedProfilePreference(select = { it[requestedRecommendationsKey] }, decode = { raw ->
+    val requestedRecommendations: Flow<List<RecentItem>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[requestedRecommendationsKey] }, decode = { raw ->
         raw?.let {
             runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull()
         }.orEmpty()
@@ -132,7 +154,7 @@ class ProfileStore @JvmOverloads constructor(
     }
 
     private val dismissedRecommendationsKey = stringPreferencesKey("dismissed_recommendations_v1")
-    val dismissedRecommendations: Flow<Map<String, Set<String>>> = preferences.data.decodedProfilePreference(select = { it[dismissedRecommendationsKey] }, decode = { raw ->
+    val dismissedRecommendations: Flow<Map<String, Set<String>>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[dismissedRecommendationsKey] }, decode = { raw ->
         raw?.let {
             runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
         }.orEmpty()
@@ -156,12 +178,12 @@ class ProfileStore @JvmOverloads constructor(
     }
 
     private val recommendationProgressKey = stringPreferencesKey("recommendation_progress_v1")
-    val recommendationProgress: Flow<List<PlaybackProgress>> = preferences.data.decodedProfilePreference(select = { it[recommendationProgressKey] }, decode = { raw ->
+    val recommendationProgress: Flow<List<PlaybackProgress>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[recommendationProgressKey] }, decode = { raw ->
         raw?.let {
             runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull()
         }.orEmpty()
     })
-    suspend fun saveRecommendationProgress(progress: PlaybackProgress) = preferences.editProfileMetadata { prefs ->
+    suspend fun saveRecommendationProgress(progress: PlaybackProgress, scope: UserScope? = captureScope()) = scopedPreferences(scope).editProfileMetadata { prefs ->
         val current = prefs[recommendationProgressKey]?.let {
             runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull()
         }.orEmpty()
@@ -169,67 +191,69 @@ class ProfileStore @JvmOverloads constructor(
             (listOf(progress) + current.filterNot { it.key == progress.key }).take(500))
     }
 
-    val playbackProgress: Flow<List<PlaybackProgress>> = preferences.data.decodedProfilePreference(select = { it[progressKey] }, decode = { raw ->
+    val playbackProgress: Flow<List<PlaybackProgress>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[progressKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
     })
-    val playbackUrls: Flow<List<PlaybackUrl>> = preferences.data.decodedProfilePreference(select = { it[playbackUrlsKey] }, decode = { raw ->
+    val playbackUrls: Flow<List<PlaybackUrl>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[playbackUrlsKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
     })
-    val cacheIntervalMinutes: Flow<Int> = preferences.data.map { it[cacheIntervalKey] ?: 60 }
-    val initialCatalogItems: Flow<Int> = preferences.data.map { prefs ->
+    val cacheIntervalMinutes: Flow<Int> = this@ProfileStore.preferences.data.map { it[cacheIntervalKey] ?: 60 }
+    val initialCatalogItems: Flow<Int> = this@ProfileStore.preferences.data.map { prefs ->
         prefs[initialCatalogItemsKey]?.takeIf { it in INITIAL_CATALOG_OPTIONS } ?: 14
     }
-    val playerControlsTimeoutSeconds: Flow<Int> = preferences.data.map { it[playerControlsTimeoutKey] ?: 3 }
-    val keepAwakeOnlyDuringPlayback: Flow<Boolean> = preferences.data.map {
+    val playerControlsTimeoutSeconds: Flow<Int> = this@ProfileStore.preferences.data.map { it[playerControlsTimeoutKey] ?: 3 }
+    val keepAwakeOnlyDuringPlayback: Flow<Boolean> = this@ProfileStore.preferences.data.map {
         (it[keepAwakeOnlyDuringPlaybackKey] ?: 0) == 1
     }
-    val automaticReauthentication: Flow<Boolean> = preferences.data.map {
+    val automaticReauthentication: Flow<Boolean> = this@ProfileStore.preferences.data.map {
         (it[automaticReauthenticationKey] ?: 1) == 1
     }
 
-    val playbackEngine: Flow<PlaybackEngine> = preferences.data.map { prefs ->
+    val playbackEngine: Flow<PlaybackEngine> = this@ProfileStore.preferences.data.map { prefs ->
         prefs[playbackEngineKey]?.let { runCatching { PlaybackEngine.valueOf(it) }.getOrNull() }
             ?.let { if (it == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else it }
             ?: PlaybackEngine.AUTO
     }
-    val recentSearches: Flow<List<RecentSearch>> = preferences.data.decodedProfilePreference(select = { it[recentSearchesKey] }, decode = { raw ->
+    val recentSearches: Flow<List<RecentSearch>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[recentSearchesKey] }, decode = { raw ->
         decodeRecentSearches(raw).deduplicatedRecentSearches()
     })
-    val pagedSearches: Flow<List<SearchResultCache>> = preferences.data.decodedProfilePreference(select = { it[pagedSearchesKey] }, decode = { raw ->
+    val pagedSearches: Flow<List<SearchResultCache>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[pagedSearchesKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
     })
-    val categoryFilters: Flow<Map<String, List<String>>> = preferences.data.decodedProfilePreference(select = { it[categoryFiltersKey] }, decode = { raw ->
+    val categoryFilters: Flow<Map<String, List<String>>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[categoryFiltersKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
     })
-    val seriesStartSeason: Flow<SeriesStartSeason> = preferences.data.map { prefs ->
+    val seriesStartSeason: Flow<SeriesStartSeason> = this@ProfileStore.preferences.data.map { prefs ->
         prefs[seriesStartSeasonKey]?.let { runCatching { SeriesStartSeason.valueOf(it) }.getOrNull() }
             ?: SeriesStartSeason.LAST
     }
-    val watchedSeries: Flow<List<WatchedSeries>> = preferences.data.decodedProfilePreference(select = { it[watchedSeriesKey] }, decode = { raw ->
+    val watchedSeries: Flow<List<WatchedSeries>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[watchedSeriesKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<List<WatchedSeries>>(it) }.getOrNull() }.orEmpty()
     })
-    val rememberedSeriesSeasons: Flow<Map<String, Int>> = preferences.data.decodedProfilePreference(select = { it[rememberedSeriesSeasonsKey] }, decode = { raw ->
+    val rememberedSeriesSeasons: Flow<Map<String, Int>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[rememberedSeriesSeasonsKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
     })
-    val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = preferences.data.decodedProfilePreference(select = { it[episodeSeasonCachesKey] }, decode = { raw ->
+    val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[episodeSeasonCachesKey] }, decode = { raw ->
         raw
             ?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }
             .orEmpty()
     })
-    val browseLayouts: Flow<Map<String, BrowseLayout>> = preferences.data.decodedProfilePreference(select = { it[browseLayoutsKey] }, decode = { raw ->
+    val browseLayouts: Flow<Map<String, BrowseLayout>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[browseLayoutsKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
     })
-    val tmdbDashboardSections: Flow<Map<String, List<TmdbHomeSection>>> = preferences.data.decodedProfilePreference(select = { it[tmdbDashboardSectionsKey] }, decode = { raw ->
+    val tmdbDashboardSections: Flow<Map<String, List<TmdbHomeSection>>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[tmdbDashboardSectionsKey] }, decode = { raw ->
         raw
             ?.let { runCatching { Json.decodeFromString<Map<String, List<TmdbHomeSection>>>(it) }.getOrNull() }
             .orEmpty()
     })
-    val tmdbMappings: Flow<List<TmdbIptvMapping>> = preferences.data.decodedProfilePreference(select = { it[tmdbMappingsKey] }, decode = { raw ->
+    val tmdbMappings: Flow<List<TmdbIptvMapping>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[tmdbMappingsKey] }, decode = { raw ->
         raw
             ?.let { runCatching { Json.decodeFromString<List<TmdbIptvMapping>>(it) }.getOrNull() }
             .orEmpty()
     })
-    suspend fun save(session: PortalSession) = preferences.editProfileMetadata {
+    suspend fun save(session: PortalSession): Preferences {
+        captureScope()?.let { users.associatePortal(it, session.profile) }
+        return preferences.editProfileMetadata {
         val profiles = decodeProfiles(it[profilesKey], it[key])
         val sessions = decodeSessions(it[sessionsKey], it[sessionKey])
         it[profilesKey] = Json.encodeToString((profiles.filterNot { saved -> saved.identity() == session.profile.identity() } + session.profile))
@@ -237,11 +261,15 @@ class ProfileStore @JvmOverloads constructor(
         it[activeProfileKey] = session.profile.identity()
         it[key] = Json.encodeToString(session.profile)
         it[sessionKey] = Json.encodeToString(session)
+        }
     }
-    suspend fun addProfile(profile: PortalProfile) = preferences.editProfileMetadata { prefs ->
+    suspend fun addProfile(profile: PortalProfile): Preferences {
+        captureScope()?.let { users.associatePortal(it, profile) }
+        return preferences.editProfileMetadata { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         if (profiles.none { it.identity() == profile.identity() }) {
             prefs[profilesKey] = Json.encodeToString(profiles + profile)
+        }
         }
     }
     suspend fun activate(profile: PortalProfile) = preferences.editProfileMetadata { prefs ->
@@ -251,17 +279,27 @@ class ProfileStore @JvmOverloads constructor(
         if (session != null) prefs[sessionKey] = Json.encodeToString(session) else prefs.remove(sessionKey)
     }
     suspend fun sessionFor(profile: PortalProfile): PortalSession? = withContext(profileMetadataDispatcher) {
-        preferences.data.first().let { prefs ->
+        this@ProfileStore.preferences.data.first().let { prefs ->
             decodeSessions(prefs[sessionsKey], prefs[sessionKey]).firstOrNull { it.profile.identity() == profile.identity() }
         }
     }
-    suspend fun removeProfile(profile: PortalProfile) = preferences.editProfileMetadata { prefs ->
+    suspend fun removeProfile(profile: PortalProfile): Preferences {
+        captureScope()?.let { owner ->
+            val portalId = users.registerPortal(owner.accountId, profile)
+            users.removePortal(owner, profile)
+            val usedElsewhere = users.snapshot(owner.accountId).any {
+                it.collection == "portals" && it.recordId == portalId && it.profileId != owner.profileId && !it.deleted
+            }
+            if (usedElsewhere) return this@ProfileStore.preferences.data.first()
+        }
+        return preferences.editProfileMetadata { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key]).filterNot { it.identity() == profile.identity() }
         val sessions = decodeSessions(prefs[sessionsKey], prefs[sessionKey]).filterNot { it.profile.identity() == profile.identity() }
         prefs[profilesKey] = Json.encodeToString(profiles)
         prefs[sessionsKey] = Json.encodeToString(sessions)
         if (prefs[activeProfileKey] == profile.identity()) {
             prefs.remove(activeProfileKey); prefs.remove(key); prefs.remove(sessionKey)
+        }
         }
     }
     suspend fun clearSession() = preferences.edit { it.remove(sessionKey) }
@@ -273,13 +311,13 @@ class ProfileStore @JvmOverloads constructor(
         CatalogDiskCache.write(context, "search:${cache.profileKey}:${cache.type.name}", cache)
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
-    suspend fun saveFavorites(items: List<FavoriteItem>) = preferences.editProfileMetadata {
+    suspend fun saveFavorites(items: List<FavoriteItem>, scope: UserScope? = captureScope()) = scopedPreferences(scope).editProfileMetadata {
         it[favoritesKey] = Json.encodeToString(items)
     }
-    suspend fun saveRecentlyPlayed(items: List<RecentItem>) = preferences.editProfileMetadata {
+    suspend fun saveRecentlyPlayed(items: List<RecentItem>, scope: UserScope? = captureScope()) = scopedPreferences(scope).editProfileMetadata {
         it[recentKey] = Json.encodeToString(items)
     }
-    suspend fun savePlaybackProgress(items: List<PlaybackProgress>) = preferences.editProfileMetadata {
+    suspend fun savePlaybackProgress(items: List<PlaybackProgress>, scope: UserScope? = captureScope()) = scopedPreferences(scope).editProfileMetadata {
         it[progressKey] = Json.encodeToString(items)
     }
     suspend fun savePlaybackUrls(items: List<PlaybackUrl>) = preferences.editProfileMetadata {
@@ -357,7 +395,7 @@ class ProfileStore @JvmOverloads constructor(
     suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = preferences.edit {
         it[keepAwakeOnlyDuringPlaybackKey] = if (enabled) 1 else 0
     }
-    val offlineDownloads: Flow<List<OfflineMediaDownload>> = preferences.data.decodedProfilePreference(select = { it[offlineDownloadsKey] }, decode = { raw ->
+    val offlineDownloads: Flow<List<OfflineMediaDownload>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[offlineDownloadsKey] }, decode = { raw ->
         raw
             ?.let { runCatching { Json.decodeFromString<List<OfflineMediaDownload>>(it) }.getOrNull() }
             .orEmpty()
@@ -370,7 +408,7 @@ class ProfileStore @JvmOverloads constructor(
         it[playbackEngineKey] = if (engine == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3.name else engine.name
     }
     suspend fun setSeriesStartSeason(value: SeriesStartSeason) = preferences.edit { it[seriesStartSeasonKey] = value.name }
-    suspend fun saveWatchedSeries(items: List<WatchedSeries>) = preferences.editProfileMetadata {
+    suspend fun saveWatchedSeries(items: List<WatchedSeries>, scope: UserScope? = captureScope()) = scopedPreferences(scope).editProfileMetadata {
         it[watchedSeriesKey] = Json.encodeToString(items)
     }
     // Merge into the latest persisted subscription, preserving concurrent watched/
@@ -440,7 +478,7 @@ class ProfileStore @JvmOverloads constructor(
     }
 
     private suspend fun backupSnapshot(now: Long, metadata: DeviceBackupMetadata? = null): NikTvBackup {
-        val values = preferences.data.first().asMap()
+        val values = this@ProfileStore.preferences.data.first().asMap()
         val strings = values.mapNotNull { (key, value) ->
             if (key.name in BACKUP_STRING_KEYS && value is String) key.name to value else null
         }.toMap().toSortedMap()
@@ -450,10 +488,15 @@ class ProfileStore @JvmOverloads constructor(
         val connection = GitHubBackupManager(context).loadConfig()
         return NikTvBackup(exportedAtMillis = now, strings = strings, integers = integers,
             devicePreferences = DevicePreferencesBackup.capture(context),
-            remoteConfiguration = RemoteCredentials.exportDeviceConfiguration(context),
-            backupConnection = BackupConnectionConfiguration(connection.username, connection.repository, connection.token,
-                connection.passphrase, connection.backupMode.name, connection.autoBackupIntervalHours),
-            backupMetadata = metadata)
+            remoteConfiguration = RemoteCredentials.exportDeviceConfiguration(context)?.let {
+                it.copy(token = "", values = it.values.filterKeys { name -> name != "G_TOKEN" })
+            },
+            backupConnection = BackupConnectionConfiguration(connection.username, connection.repository, "",
+                "", connection.backupMode.name, connection.autoBackupIntervalHours),
+            backupMetadata = metadata,
+            userRecords = users.selectedAccount.value?.let { users.snapshot(it) }.orEmpty(),
+            userLocalPreferences = users.selectedAccount.value?.let { users.backupLocalPreferences(it) }.orEmpty(),
+            portalMappings = users.selectedAccount.value?.let { users.backupPortalMappings(it) }.orEmpty())
     }
 
     suspend fun backupFingerprint(): String = withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -467,9 +510,15 @@ class ProfileStore @JvmOverloads constructor(
         backupExportJson.encodeToString(backupSnapshot(now, DeviceBackupIdentity.create(context, now)))
     }
 
-    suspend fun importBackup(content: String) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun importBackup(content: String, scope: UserScope? = captureScope()) = withContext(kotlinx.coroutines.Dispatchers.IO) {
         val backup = backupImportJson.decodeFromString<NikTvBackup>(content)
-        require(backup.formatVersion in 1..2) { "Unsupported NikTV backup version ${backup.formatVersion}" }
+        val importAccount = scope?.accountId ?: users.selectedAccount.value
+        require(backup.formatVersion in 1..3) { "Unsupported NikTV backup version ${backup.formatVersion}" }
+        if (backup.userRecords.isNotEmpty() || backup.userLocalPreferences.isNotEmpty() || backup.portalMappings.isNotEmpty()) {
+            val accountId = requireNotNull(importAccount) { "Connect the backup's GitHub account before importing user data." }
+            require(backup.userRecords.all { it.accountId == accountId }) { "This backup belongs to a different GitHub account." }
+            require(backup.userLocalPreferences.all { it.accountId == accountId } && backup.portalMappings.all { it.accountId == accountId }) { "This backup belongs to a different GitHub account." }
+        }
         backup.strings[profilesKey.name]?.let {
             require(runCatching { Json.decodeFromString<List<PortalProfile>>(it) }.getOrNull() != null) {
                 "The backup contains invalid profile data"
@@ -483,10 +532,21 @@ class ProfileStore @JvmOverloads constructor(
                 BackupMode.valueOf(it.mode)
             }
         }
-        preferences.edit { prefs ->
-            BACKUP_STRING_KEYS.forEach { prefs.remove(stringPreferencesKey(it)) }
+        if (scope != null) require(users.snapshot(scope.accountId).any { it.collection == "profile" && it.recordId == scope.profileId && !it.deleted }) { "Select a user profile before assigning this backup." }
+        val legacyBackup = backup.formatVersion < 3 || backup.userRecords.isEmpty()
+        val restoredPortals = decodeProfiles(backup.strings[profilesKey.name], backup.strings[key.name])
+        if (scope != null && legacyBackup) restoredPortals.forEach { users.associatePortal(scope, it) }
+        // With no chosen person, old snapshot fields remain unassigned on-device until the
+        // user explicitly imports them from the chooser. Never pick an arbitrary remote UUID.
+        val targetPreferences = when {
+            scope != null -> scopedPreferences(scope)
+            legacyBackup -> basePreferences
+            else -> preferences
+        }
+        targetPreferences.edit { prefs ->
+            BACKUP_STRING_KEYS.filter { legacyBackup || it !in UserSyncStore.SCOPED_KEYS }.forEach { prefs.remove(stringPreferencesKey(it)) }
             BACKUP_INT_KEYS.forEach { prefs.remove(intPreferencesKey(it)) }
-            backup.strings.filterKeys { it in BACKUP_STRING_KEYS }.forEach { (name, value) ->
+            backup.strings.filterKeys { it in BACKUP_STRING_KEYS && (legacyBackup || it !in UserSyncStore.SCOPED_KEYS) }.forEach { (name, value) ->
                 prefs[stringPreferencesKey(name)] = value
             }
             backup.integers.filterKeys { it in BACKUP_INT_KEYS }.forEach { (name, value) ->
@@ -506,6 +566,64 @@ class ProfileStore @JvmOverloads constructor(
                     autoBackupIntervalHours = it.intervalHours), reschedule = false)
             }
         }
+        if (backup.formatVersion >= 3 && backup.userRecords.isNotEmpty()) {
+            val accountId = requireNotNull(importAccount) { "Connect the backup's GitHub account before importing user data." }
+            require(backup.userRecords.all { it.accountId == accountId }) { "This backup belongs to a different GitHub account." }
+            users.restoreBackupRecords(accountId, backup.userRecords)
+            users.restoreLocalBackup(accountId, backup.userLocalPreferences, backup.portalMappings)
+        }
+        val restoreId = "backup-import:${java.util.UUID.randomUUID()}"
+        if (scope != null && legacyBackup) UserProfilePreferences.importLegacy(context, scope, migrationId = restoreId, overrideExisting = true)
+        if (scope == null && legacyBackup) context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE)
+            .edit().remove("assigned").putString("pending_import_id", restoreId).commit()
+    }
+
+    suspend fun hasLegacyViewingData(): Boolean {
+        if (context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE).getBoolean("assigned", false)) return false
+        val source = basePreferences.data.first()
+        return UserSyncStore.SCOPED_KEYS.filterNot { it in UserSyncStore.LOCAL_ONLY_KEYS }.any {
+            source[stringPreferencesKey(it)]?.let { raw -> raw != "[]" && raw != "{}" && raw.isNotBlank() } == true
+        } || UserProfilePreferences.hasLegacy(context)
+    }
+
+    suspend fun migrateLegacy(accountId: String, assignToFamily: Boolean): Boolean {
+        val legacyAssignment = context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE)
+        val originalAccount = legacyAssignment.getString("portal_account", null)
+        if (originalAccount == null || originalAccount == accountId) {
+            basePreferences.edit { prefs ->
+                UserSyncStore.ACCOUNT_KEYS.forEach { name ->
+                    val destination = stringPreferencesKey("account_${accountId}_$name")
+                    if (prefs[destination] == null) prefs[stringPreferencesKey(name)]?.let { prefs[destination] = it }
+                }
+            }
+            legacyAssignment.edit().putString("portal_account", accountId).commit()
+            val raw = basePreferences.data.first()
+            decodeProfiles(raw[profilesKey], raw[key]).forEach { portal ->
+                users.registerPortal(accountId, portal)
+                if (assignToFamily) listOf(UserProfileType.GENERAL, UserProfileType.KIDS).forEach { type ->
+                    users.associatePortal(UserScope(accountId, UserSyncStore.defaultProfileId(accountId, type)), portal)
+                }
+            }
+        }
+        if (!assignToFamily || !hasLegacyViewingData()) return false
+        val family = UserSyncStore.defaultProfileId(accountId, UserProfileType.GENERAL)
+        if (users.snapshot(accountId).none { it.collection == "profile" && it.recordId == family && !it.deleted }) return false
+        importLegacyToProfile(UserScope(accountId, family))
+        return true
+    }
+
+    suspend fun importLegacyToProfile(scope: UserScope) {
+        require(users.snapshot(scope.accountId).any { it.collection == "profile" && it.recordId == scope.profileId && !it.deleted }) { "Select a user profile for the import." }
+        val source = basePreferences.data.first()
+        decodeProfiles(source[profilesKey], source[key]).forEach { users.associatePortal(scope, it) }
+        basePreferences.edit { prefs -> UserSyncStore.ACCOUNT_KEYS.forEach { name ->
+            source[stringPreferencesKey(name)]?.let { prefs[stringPreferencesKey("account_${scope.accountId}_$name")] = it }
+        } }
+        val assignment = context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE)
+        val pendingImport = assignment.getString("pending_import_id", null)
+        users.importPreferences(scope, source, pendingImport ?: "legacy-import")
+        UserProfilePreferences.importLegacy(context, scope, migrationId = pendingImport?.let { "$it:browsing" } ?: "legacy-browsing-import", overrideExisting = pendingImport != null)
+        assignment.edit().putBoolean("assigned", true).remove("pending_import_id").commit()
     }
     suspend fun clear() = preferences.edit {
         CatalogDiskCache.clear(context)

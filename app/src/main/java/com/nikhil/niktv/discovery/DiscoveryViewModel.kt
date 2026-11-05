@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.*
 
 internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val repository: DiscoveryDataSource = DiscoveryRepository(app)) : AndroidViewModel(app) {
-    private val preferences = app.getSharedPreferences("discovery_trial_v1", 0)
+    private val preferences = com.nikhil.niktv.data.UserProfilePreferences.get(app, "discovery_trial_v1")
     private val _state = MutableStateFlow(DiscoveryState())
     val state = _state.asStateFlow()
     /** Initial value for the trial's filtered Flow; subsequent values are collected reactively. */

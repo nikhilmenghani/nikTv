@@ -26,6 +26,15 @@ class ProviderMetadataTest {
         assertNull(readProviderHeroMetadata(cache, movie(id = 99), CatalogType.MOVIES))
         assertFalse(directory.listFiles().orEmpty().joinToString { it.readText() }.contains("private-provider"))
     }
+    @Test fun seriesHeroReadsOnlySeriesPresentationWithoutMutatingProviderMedia() = runBlocking {
+        val cache = DiscoveryCache(temporary.newFolder())
+        val provider = movie("Provider Series").copy(id = "series-provider", command = "original-series")
+        val series = DiscoveryCard(31, true, "Cached series", backdrop = "https://example.invalid/series.jpg")
+        cachedProviderMetadata(cache, provider, CatalogType.SERIES) { series }
+        assertEquals(series, readProviderHeroMetadata(cache, provider, CatalogType.SERIES))
+        assertNull(readProviderHeroMetadata(cache, provider, CatalogType.MOVIES))
+        assertEquals("series-provider", provider.id); assertEquals("original-series", provider.command)
+    }
     @Test fun broadcasterMissDoesNotBlockCleanSeriesLookup() = runBlocking {
         val cache = DiscoveryCache(temporary.newFolder())
         val decorated = movie("Star Plus Hindi : Anupama")

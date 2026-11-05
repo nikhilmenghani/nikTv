@@ -39,13 +39,66 @@ object RemoteCredentials {
     private val mutex = Mutex()
     private val http = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
 
+    private fun activeAccount(context: Context): String? = context.applicationContext
+        .getSharedPreferences("github_configuration_accounts", Context.MODE_PRIVATE).getString("active", null)
+    private fun preferences(context: Context, accountId: String? = activeAccount(context)): android.content.SharedPreferences =
+        context.applicationContext.getSharedPreferences(if (accountId == null) PREFS else "${PREFS}_account_$accountId", Context.MODE_PRIVATE)
+
+    /** Private configuration is device-owned, but its cached secrets and connection belong to
+     * one GitHub account. A second account never sees the first account's portal credentials. */
+    @Synchronized fun activateAccount(context: Context, accountId: String, login: String = "") {
+        require(accountId.toLongOrNull() != null) { "A numeric GitHub account ID is required." }
+        val selector = context.applicationContext.getSharedPreferences("github_configuration_accounts", Context.MODE_PRIVATE)
+        if (selector.getString("legacy_adopted", null) == null) {
+            val source = preferences(context, null)
+            val destination = preferences(context, accountId)
+            val legacyOwner = source.getString("owner", "nikhilmenghani").orEmpty()
+            if (destination.all.isEmpty() && login.isNotBlank() && legacyOwner.equals(login, ignoreCase = true)) {
+                val editor = destination.edit()
+                source.all.forEach { (name, value) -> when (value) {
+                    is String -> editor.putString(name, value)
+                    is Long -> editor.putLong(name, value)
+                    is Int -> editor.putInt(name, value)
+                    is Boolean -> editor.putBoolean(name, value)
+                } }
+                editor.commit()
+            }
+            // A different account may be connected first. Keep the unassigned legacy namespace
+            // available for its matching owner instead of making that owner's later return lose it.
+            if (login.isNotBlank() && legacyOwner.equals(login, ignoreCase = true))
+                selector.edit().putString("legacy_adopted", accountId).commit()
+        }
+        selector.edit().putString("active", accountId).commit()
+        val selected = preferences(context, accountId)
+        values = effectiveValues(context, parseKnownValues(decrypt(selected.getString("cached_values", null))))
+        lastUpdatedAt = selected.getLong("updated_at", 0L)
+    }
+
+    @Synchronized fun disconnect(context: Context) {
+        preferences(context).edit().remove("token").putBoolean("manually_configured", false).commit()
+        context.applicationContext.getSharedPreferences("github_configuration_accounts", Context.MODE_PRIVATE)
+            .edit().putString("active", "disconnected").commit()
+        values = emptyMap()
+        lastUpdatedAt = 0L
+    }
+
+    /** Rotate only an account token copy; an independently supplied configuration token stays
+     * independent. Secrets are compared in memory and never leave Keystore-protected storage. */
+    @Synchronized fun replaceAccountToken(context: Context, previousToken: String, replacementToken: String): Boolean {
+        if (previousToken.isBlank() || replacementToken.isBlank()) return false
+        val selected = preferences(context)
+        if (decrypt(selected.getString("token", null)) != previousToken) return false
+        selected.edit().putString("token", encrypt(replacementToken.trim())).putLong("attempted_at", 0L).commit()
+        return true
+    }
+
     var values by mutableStateOf<Map<String, String>>(emptyMap())
         private set
     var lastUpdatedAt by mutableStateOf(0L)
         private set
 
     fun initialize(context: Context) {
-        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = preferences(context)
         if (!prefs.contains("manually_configured") && !prefs.getString("token", null).isNullOrBlank()) {
             prefs.edit().putBoolean("manually_configured", true).apply()
         }
@@ -74,7 +127,7 @@ object RemoteCredentials {
         if (!file.isFile) return
         try {
             val token = file.readText(Charsets.UTF_8).trim()
-            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val prefs = preferences(context)
             if (token.isNotBlank() && !prefs.getBoolean("manually_configured", false)) {
                 saveConnection(context, token, owner(context), repository(context), filePath(context),
                     manuallyEntered = false)
@@ -93,7 +146,7 @@ object RemoteCredentials {
         require(raw.toByteArray().size <= 65_536) { "The Cricbuzz configuration file is too large." }
         val local = parseKnownValues(raw).filterKeys { it in CRICKET_KEYS }
         require(local["NIKTV_CRICBUZZ_AUTH_KEY"].orEmpty().isNotBlank()) { "The file does not contain a Cricbuzz API configuration." }
-        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = preferences(context)
         prefs.edit().putString("local_cricket_values", encrypt(JSONObject(local).toString())).commit()
         values = effectiveValues(context, parseKnownValues(decrypt(prefs.getString("cached_values", null))))
     }
@@ -114,7 +167,7 @@ object RemoteCredentials {
             remote.filterValues { it.isNotBlank() }
 
     private fun localCricketValues(context: Context): Map<String, String> = parseKnownValues(decrypt(
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("local_cricket_values", null)
+        preferences(context).getString("local_cricket_values", null)
     )).filterKeys { it in CRICKET_KEYS }
 
     private fun importLocalDebugCricketConfiguration(context: Context) {
@@ -134,7 +187,7 @@ object RemoteCredentials {
             repository(context).isNotBlank() && filePath(context).isNotBlank()
 
     fun canPairDevices(context: Context): Boolean =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        preferences(context)
             .getBoolean("manually_configured", false) && configured(context)
 
     fun pairingConfiguration(context: Context): String {
@@ -150,7 +203,7 @@ object RemoteCredentials {
     }
 
     fun owner(context: Context): String =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        preferences(context)
             .getString("owner", "nikhilmenghani").orEmpty()
 
     internal fun exportDeviceConfiguration(context: Context): RemoteConfigurationBackup? {
@@ -171,7 +224,7 @@ object RemoteCredentials {
 
     internal fun restoreDeviceConfiguration(context: Context, backup: RemoteConfigurationBackup?) {
         validateDeviceConfiguration(backup)
-        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = preferences(context)
         prefs.edit().clear().commit()
         if (backup != null) {
             if (backup.token.isNotBlank()) saveConnection(context, backup.token, backup.owner, backup.repository,
@@ -184,11 +237,11 @@ object RemoteCredentials {
     }
 
     fun repository(context: Context): String =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        preferences(context)
             .getString("repository", "myenv").orEmpty().substringAfterLast('/')
 
     fun filePath(context: Context): String =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        preferences(context)
             .getString("file_path", ".env").orEmpty()
 
     fun saveConnection(context: Context, token: String, owner: String, repository: String, path: String) {
@@ -201,7 +254,7 @@ object RemoteCredentials {
         require(REPOSITORY_PATTERN.matches(repository.trim())) { "Enter the repository name only." }
         require(path.isNotBlank()) { "Enter the configuration file path." }
         require(path.split('/').none { it.isBlank() || it == "." || it == ".." }) { "Enter a valid file path." }
-        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = preferences(context)
         val effectiveToken = token.trim().ifBlank { token(context) }
         require(effectiveToken.isNotBlank()) { "Enter a GitHub token or configure one in GitHub backup settings." }
         prefs.edit()
@@ -219,17 +272,20 @@ object RemoteCredentials {
 
     suspend fun refresh(context: Context, force: Boolean = false): Boolean = mutex.withLock {
         val app = context.applicationContext
+        val capturedAccount = activeAccount(app)
         if (!configured(app)) return@withLock false
-        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = preferences(app, capturedAccount)
         if (!force && prefs.getInt("credential_schema", 0) == CREDENTIAL_SCHEMA && System.currentTimeMillis() - prefs.getLong("attempted_at", 0L) < REFRESH_MILLIS) {
             return@withLock false
         }
         prefs.edit().putLong("attempted_at", System.currentTimeMillis()).putInt("credential_schema", CREDENTIAL_SCHEMA).apply()
-        val token = token(app)
-        val owner = owner(app)
-        val repo = repository(app)
+        val token = decrypt(prefs.getString("token", null)).ifBlank {
+            if (capturedAccount == null) GitHubBackupManager(app).deviceToken() else ""
+        }
+        val owner = prefs.getString("owner", "nikhilmenghani").orEmpty()
+        val repo = prefs.getString("repository", "myenv").orEmpty().substringAfterLast('/')
         require(REPOSITORY_PATTERN.matches(owner) && REPOSITORY_PATTERN.matches(repo)) { "Invalid GitHub repository." }
-        val encodedPath = filePath(app).split('/').joinToString("/") { encode(it) }
+        val encodedPath = prefs.getString("file_path", ".env").orEmpty().split('/').joinToString("/") { encode(it) }
         val url = "https://api.github.com/repos/$owner/$repo/contents/$encodedPath"
         val request = Request.Builder().url(url)
             .header("Authorization", "Bearer $token")
@@ -249,8 +305,12 @@ object RemoteCredentials {
             .putString("cached_values", encrypt(JSONObject(parsed).toString()))
             .putLong("updated_at", now)
             .apply()
-        values = effectiveValues(app, parsed)
-        lastUpdatedAt = now
+        // An account switch during the request can cache its own response, but must never
+        // replace the newly selected account's in-memory portal configuration.
+        if (activeAccount(app) == capturedAccount) {
+            values = effectiveValues(app, parsed)
+            lastUpdatedAt = now
+        }
         true
     }
 
@@ -263,8 +323,8 @@ object RemoteCredentials {
     }
 
     private fun token(context: Context): String = decrypt(
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("token", null)
-    ).ifBlank { GitHubBackupManager(context).deviceToken() }
+        preferences(context).getString("token", null)
+    ).ifBlank { if (activeAccount(context) == null) GitHubBackupManager(context).deviceToken() else "" }
 
     internal fun parseKnownValues(raw: String): Map<String, String> =
         decodeValues(raw).filterKeys { it in KNOWN_KEYS }

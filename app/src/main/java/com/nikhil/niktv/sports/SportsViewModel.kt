@@ -49,6 +49,8 @@ internal data class SportsState(
 }
 
 internal class SportsViewModel(application: Application) : AndroidViewModel(application) {
+    private val users = com.nikhil.niktv.data.UserSyncStore.get(application)
+    private val owner = users.selectedScope.value
     private val repository = SportsRepository(country = { sportsDeviceCountry(application) })
     private val resolver = SportsStreamResolver(repository.transport, SportsWebResolver(application)::resolve)
     private val library = SportsLibraryStore(application)
@@ -67,6 +69,12 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
     private val checked = mutableMapOf<String, Long>()
 
     init {
+        owner?.let { viewer -> viewModelScope.launch {
+            users.dao.observePreferences(viewer.accountId, viewer.profileId).collect {
+                mutable.update { it.copy(favourites = library.favourites(), customPlaylists = library.playlists(),
+                    channelFlags = availability.flags(), availabilityFilter = availability.filter()) }
+            }
+        } }
         viewModelScope.launch {
             playback.state.collect(::applyPlayback)
         }

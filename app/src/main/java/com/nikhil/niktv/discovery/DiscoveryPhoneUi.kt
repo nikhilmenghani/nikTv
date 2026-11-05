@@ -25,7 +25,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -70,7 +70,7 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
         fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
         fillWidth = LocalMobileGlassFillWidth.current) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            DiscoveryPhoneDestination.entries.forEach { destination ->
+            DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS }.forEach { destination ->
                 val active = destination == selected
                 val icon = when (destination) {
                     DiscoveryPhoneDestination.HOME -> Icons.Default.Home
@@ -107,6 +107,10 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
     navigate: (String) -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit,
     customize: (() -> Unit)?, profile: String = "", categoryManagerOpen: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {}, searchActive: Boolean = false) {
+    val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
+    val viewerName = viewer?.name ?: profile
+    val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
+        ?: profile.trim().firstOrNull()?.uppercase() ?: "N"
     CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -128,8 +132,9 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             if (!detail) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
                     modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
-                DiscoveryAction("Profile: $profile", visualLabel = profile.trim().firstOrNull()?.uppercase() ?: "N",
-                    horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $profile" }
+                DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
+                    containerColor = viewer?.let { Color(it.color) },
+                    horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $viewerName" }
                         .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play }) { navigate("Profile") }
                 DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
             }
@@ -138,6 +143,12 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
     }
     }
 }
+
+// Previous Home's mobile gradient: preserve the middle of the backdrop and
+// blend progressively behind the lower controls, without a side vignette.
+private val phoneHeroShade = Brush.verticalGradient(
+    0f to Color(0xFF090B10), .25f to Color.Transparent,
+    .55f to Color.Transparent, .82f to Color(0x99090B10), 1f to Color(0xFF090B10))
 
 /** A portrait crop and a baked vertical gradient, never a stretched TV backdrop or live blur. */
 @Composable
@@ -167,7 +178,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
         LocalMobileGlassBounds provides heroBounds, LocalMobileGlassFit provides glassSource.fit,
         LocalMobileGlassTopAligned provides glassSource.topAligned, LocalMobileGlassFillWidth provides glassSource.fillWidth) {
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds = Rect(it.positionInRoot(), it.size.toSize()) }) {
+        Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds = Rect(it.positionInWindow(), it.size.toSize()) }) {
             Crossfade(picture, modifier = Modifier.matchParentSize(), animationSpec = tween(if (reduceMotion) 0 else 250), label = "phoneHeroArtwork") { url ->
                 AsyncImage(ImageRequest.Builder(context).data(url).size(if (portraitPoster) 780 else 1280, if (portraitPoster) 1170 else 720)
                     .apply { if (detail) transformations(DiscoveryPhoneBackdropTransformation()) }.crossfade(false).build(), null,
@@ -176,7 +187,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                     alignment = if (compactDetail && !portraitPoster) Alignment.TopCenter else artworkAlignment)
             }
             // Shade the viewport, not the source bitmap: a portrait crop must not cut away its fades.
-            if (!detail) DiscoveryHeroShade(Modifier.matchParentSize())
+            if (!detail) Box(Modifier.matchParentSize().background(phoneHeroShade))
             if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                 0f to Color(0xD9090B10), .3f to Color.Transparent, .6f to Color(0x66090B10), 1f to Color(0xFF090B10))))
             if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
@@ -193,10 +204,13 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 header?.invoke()
                 Spacer(Modifier.height(navigationInset))
                 Spacer(Modifier.height(if (compactDetail) 52.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .10f).coerceIn(20.dp, 30.dp)))
+                // Move the content into the space previously occupied by the
+                // carousel row, keeping the hero and first rail at the same height.
+                if (!detail) Spacer(Modifier.height(56.dp))
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compactDetail) 10.dp else if (!detail) 12.dp else 20.dp),
                     horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compactDetail || !detail) 8.dp else 12.dp)) {
                     // Keep rank/loading in one fixed slot: content arrival must not move actions.
-                    if ((!detail && (rank != null || loading)) || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
+                    if (!detail || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
                         contentAlignment = Alignment.Center) {
                         if (loading) LinearProgressIndicator(Modifier.width(110.dp).semantics { contentDescription = "Loading featured title" })
                         else rank?.let { Text("#$it · TRENDING TODAY", color = Color(0xFFE5E5EA), fontSize = 11.sp, lineHeight = 24.sp,
@@ -274,7 +288,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                             }) { actions() }
                     }
-                    if (carousel || !detail) Row(Modifier.heightIn(min = 48.dp).onPreviewKeyEvent {
+                    if (carousel && detail) Row(Modifier.heightIn(min = 48.dp).onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                     }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         PhoneHeroIcon("Previous featured title", Icons.Default.ChevronLeft, carousel, previous,
@@ -286,10 +300,36 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                     }
                 }
             }
+            if (!detail && carousel) {
+                PhoneHeroCarouselArrow("Previous featured title", Icons.Default.ChevronLeft, previous,
+                    Modifier.align(Alignment.CenterStart).padding(start = 4.dp), onFocus)
+                PhoneHeroCarouselArrow("Next featured title", Icons.Default.ChevronRight, next,
+                    Modifier.align(Alignment.CenterEnd).padding(end = 4.dp), onFocus)
+                Text("${index + 1} / $count", Modifier.align(Alignment.TopCenter)
+                    .padding(top = (if (header != null) 64.dp else navigationInset) + 12.dp).background(Color.Black.copy(alpha = .35f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp), color = Color.LightGray, fontSize = 11.sp)
+            }
         }
         if (detail && showSynopsis && !card?.overview.isNullOrBlank()) Text(card?.overview.orEmpty(),
             Modifier.padding(horizontal = 20.dp, vertical = 12.dp), color = Color(0xFFD6D6DC), fontSize = 15.sp, lineHeight = 23.sp)
     }
+    }
+}
+
+@Composable
+private fun PhoneHeroCarouselArrow(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector,
+    click: () -> Unit, modifier: Modifier, onFocus: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(onClick = click, modifier = modifier.size(48.dp).onFocusChanged {
+        focused = it.isFocused
+        if (it.isFocused) onFocus()
+    }.semantics { contentDescription = label }, color = Color.Transparent, shape = RoundedCornerShape(10.dp)) {
+        Box(contentAlignment = Alignment.Center) {
+            DiscoveryMobileGlassContainer(Modifier.size(32.dp), focused = focused,
+                artworkOpacity = .85f, tint = Color(0x33101520)) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(20.dp)) }
+            }
+        }
     }
 }
 

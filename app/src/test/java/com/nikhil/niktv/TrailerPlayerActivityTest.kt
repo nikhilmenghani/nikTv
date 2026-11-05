@@ -73,6 +73,38 @@ class TrailerPlayerActivityTest {
         assertEquals("CC Off", button.text.toString())
     }
 
+    @Test fun mediaKeysStillControlPlaybackWithAChildFocused() {
+        bridge("ready"); bridge("state", 1)
+        (field("play") as Button).requestFocus()
+        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE))
+        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE))
+        assertEquals(false, field("playbackRequested"))
+        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY))
+        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY))
+        assertEquals(true, field("playbackRequested"))
+    }
+
+    @Test fun unhandledKeysReachTheFocusedChild() {
+        var received = 0
+        val child = View(activity).apply {
+            isFocusableInTouchMode = true
+            setOnKeyListener { _, code, event ->
+                if (code == KeyEvent.KEYCODE_A && event.action == KeyEvent.ACTION_DOWN) {
+                    received++; true
+                } else false
+            }
+        }
+        val root = field("root") as android.widget.FrameLayout
+        root.addView(child, android.widget.FrameLayout.LayoutParams(48, 48))
+        shadowOf(Looper.getMainLooper()).idle()
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1920, View.MeasureSpec.EXACTLY))
+        root.layout(0, 0, 1080, 1920)
+        assertTrue(child.requestFocus())
+        assertTrue(root.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A)))
+        assertEquals(1, received)
+    }
+
     private fun externalTarget(): Intent {
         (field("external") as Button).performClick()
         val chooser = shadowOf(activity).nextStartedActivity

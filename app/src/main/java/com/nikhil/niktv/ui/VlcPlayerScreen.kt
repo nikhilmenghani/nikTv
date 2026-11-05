@@ -667,6 +667,9 @@ internal fun VlcPlayerScreen(
         onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
     PauseTvPlaybackInBackground {
+        if (media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
+            onProgress(media.progressKey, position, duration)
+        }
         requestPlayback(false)
         controlsVisible = true
     }

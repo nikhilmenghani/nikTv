@@ -18,10 +18,6 @@ fun String.asBuildConfigString(): String {
 
 val fireTvApk = providers.gradleProperty("fireTvApk")
     .map(String::toBoolean).orElse(false)
-val embedLocalGithubToken = !providers.environmentVariable("GITHUB_ACTIONS")
-    .orNull.equals("true", ignoreCase = true) &&
-    !providers.gradleProperty("skipLocalGithubToken").orNull.equals("true", ignoreCase = true)
-
 plugins {
     id("com.google.devtools.ksp")
     id("com.android.application")
@@ -160,12 +156,7 @@ android {
             // Opt in explicitly; ordinary development builds stay debuggable.
             isDebuggable = !providers.gradleProperty("performanceBuild")
                 .orNull.equals("true", ignoreCase = true)
-            val localToken = if (embedLocalGithubToken) {
-                providers.gradleProperty("G_TOKEN").orNull
-                    ?: providers.gradleProperty("G_Token").orNull
-                    ?: ""
-            } else ""
-            buildConfigField("String", "LOCAL_GITHUB_TOKEN", localToken.asBuildConfigString())
+            // Development provisioning stays outside APKs and user sync identity.
             // Local debug builds use Gradle values as a fallback; CI APKs fetch them from GitHub.
             listOf("NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION").forEach { name ->
                 val value = if (!providers.environmentVariable("GITHUB_ACTIONS").orNull.equals("true", ignoreCase = true) &&

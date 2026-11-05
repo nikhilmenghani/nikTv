@@ -395,7 +395,11 @@ data class PlayingMedia(
     /** Opt-in provider DVR controls; no local proxy, recording or extra stream. */
     val allowLiveWindowSeeking: Boolean = false,
     /** A user-opened file/URL, independent of IPTV profiles and history. */
-    val externalPlayback: Boolean = false
+    val externalPlayback: Boolean = false,
+    /** Immutable owner captured when playback starts; late callbacks retain it. */
+    val userScope: com.nikhil.niktv.data.UserScope? = null,
+    /** Stable logical portal association, independent of its local credentials. */
+    val logicalPortalId: String = ""
 )
 
 class PlaybackStreamDrm(
@@ -417,11 +421,15 @@ data class AlternatePlaybackSource(
 enum class PlaybackEngine { AUTO, MEDIA3, VLC, EXOPLAYER, MPV, FLOW }
 
 @Serializable
+enum class ViewingAction { PROGRESS, REWIND, RESTART, COMPLETED, MARK_UNWATCHED }
+
+@Serializable
 data class PlaybackProgress(
     val key: String,
     val positionMillis: Long,
     val durationMillis: Long,
-    @EncodeDefault val updatedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val updatedAtMillis: Long = System.currentTimeMillis(),
+    val action: ViewingAction = ViewingAction.PROGRESS
 )
 
 @Serializable

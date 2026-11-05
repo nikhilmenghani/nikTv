@@ -25,7 +25,8 @@ internal fun meaningfulViewing(positionMs: Long, durationMs: Long): Boolean =
 internal fun seriesRecommendationProgress(profile: String, seriesId: String,
     progress: Collection<PlaybackProgress>): PlaybackProgress? {
     val prefix = "progress-v2|$profile|SERIES|series:$seriesId|"
-    return progress.filter { it.key.startsWith(prefix) && meaningfulViewing(it.positionMillis, it.durationMillis) }
+    val currentPrefix = "progress-v3|$profile|SERIES|series:$seriesId|"
+    return progress.filter { (it.key.startsWith(prefix) || it.key.startsWith(currentPrefix)) && meaningfulViewing(it.positionMillis, it.durationMillis) }
         .maxByOrNull { it.updatedAtMillis }
 }
 

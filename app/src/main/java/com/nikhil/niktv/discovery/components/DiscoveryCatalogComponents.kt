@@ -430,7 +430,7 @@ private fun ModernDestinationHub(
     if (confirmClearChannels) {
         ProjectCardConfirmationDialog(
             title = "Clear recently played channels?",
-            message = "This removes the channel history for this profile. Your channels and My List are kept.",
+            message = "Clear channel history for this user profile in this GitHub account across devices after sync. Other user profiles, channels and My List are kept.",
             confirmLabel = "Clear history",
             close = { confirmClearChannels = false },
             confirm = { clearRecentChannels(); confirmClearChannels = false }
@@ -1099,7 +1099,7 @@ internal fun ModernRecentChannelsCollection(
     categoryToClear?.let { category ->
         ProjectCardConfirmationDialog(
             title = "Clear ${category.second} history?",
-            message = "Remove recently played channels in this category. Other categories and My List are kept.",
+            message = "Remove this category's channel history for this user profile in this GitHub account across devices after sync. Other user profiles, categories and My List are kept.",
             confirmLabel = "Clear category",
             close = { categoryToClear = null },
             confirm = {
@@ -2037,7 +2037,7 @@ private fun ModernContinueRow(
                 },
                 homeCardScale = 0.82f,
                 modifier = Modifier.focusRequester(
-                    requesters.getOrPut(focusId) { FocusRequester() }
+                    remember(requesters, focusId) { requesters.getOrPut(focusId) { FocusRequester() } }
                 )
             )
         }
@@ -2432,6 +2432,10 @@ internal fun ModernTileActionsMenu(
                 onClick = { dismiss(); action() })
         }
         val alternateItem = alternateSource?.item ?: recommendationItem ?: trailerItem
+        alternateItem?.let { item ->
+            MarkUnwatchedMenuItem(item, alternateSource?.type ?: recommendationType ?: if (trailerSeries) CatalogType.SERIES else null,
+                alternateSource?.series, dismiss)
+        }
         alternateItem?.let { item ->
             AlternateSourceMenuItem(item,
                 alternateSource?.type ?: recommendationType ?: if (trailerSeries) CatalogType.SERIES else null,
@@ -2846,8 +2850,8 @@ private fun ModernTmdbCollection(
                             if (it.hasFocus) focusedPosterIndex = index
                         }
                         .focusRequester(
-                            itemFocusRequesters.getOrPut(media.id) {
-                                FocusRequester()
+                            remember(itemFocusRequesters, media.id) {
+                                itemFocusRequesters.getOrPut(media.id) { FocusRequester() }
                             }
                         ),
                     subtitle = buildList {
@@ -2917,8 +2921,8 @@ private fun ModernTmdbCollection(
                             if (it.hasFocus) focusedPosterIndex = index
                         }
                         .focusRequester(
-                            itemFocusRequesters.getOrPut(media.id) {
-                                FocusRequester()
+                            remember(itemFocusRequesters, media.id) {
+                                itemFocusRequesters.getOrPut(media.id) { FocusRequester() }
                             }
                         ),
                     subtitle = buildList {
@@ -3642,8 +3646,8 @@ internal fun ModernIptvCollection(
                     }
                 }
                 .focusRequester(
-                    itemFocusRequesters.getOrPut(focusIds[index]) {
-                        FocusRequester()
+                    remember(itemFocusRequesters, focusIds[index]) {
+                        itemFocusRequesters.getOrPut(focusIds[index]) { FocusRequester() }
                     }
                 )
 

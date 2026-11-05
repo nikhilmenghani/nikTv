@@ -79,7 +79,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     containedCaptions: Boolean = false, cardShadows: Boolean = false, homeTileProportions: Boolean = false,
     hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false, focusRestorer: NativeDiscoveryFocusRestorer? = null,
     popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false,
-    navigationTrace: ((String) -> Unit)? = null, restoreTouchSelection: Boolean = false, reconcileSkeletons: Boolean = false) {
+    navigationTrace: ((String) -> Unit)? = null, restoreTouchSelection: Boolean = false, reconcileSkeletons: Boolean = false,
+    transparentBackground: Boolean = false) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -95,6 +96,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
         onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
             focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
             view.navigationInsetPx = navigationInsetPx
+            view.setBackgroundColor(if (transparentBackground) Color.TRANSPARENT else Color.rgb(9, 11, 16))
             view.animateFocus = animateFocus
             view.restoreSelection = restoreSelection
             view.heroContent = hero; view.heroFocusEntry = heroFocusEntry
@@ -109,7 +111,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
 
 private fun NativeDiscoveryItem.samePresentation(other: NativeDiscoveryItem) =
     id == other.id && title == other.title && subtitle == other.subtitle &&
-        artwork == other.artwork && progress == other.progress && source == other.source
+        artwork == other.artwork && progress == other.progress && source == other.source && fitArtwork == other.fitArtwork
 private val rowDiff = object : DiffUtil.ItemCallback<NativeDiscoveryRow>() {
     override fun areItemsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) = a.id == b.id
     override fun areContentsTheSame(a: NativeDiscoveryRow, b: NativeDiscoveryRow) =
@@ -383,6 +385,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         // Retain a small neighborhood of prepared rows; avoid rebinding the same
         // posters during short direction reversals without materializing the feed.
         setItemViewCacheSize(4); clipToPadding = false
+        // The hero extends across the row gutters; the recycler's outline still
+        // contains drawing at the screen edge.
+        clipChildren = false
         setPadding(dp(18), dp(10), dp(18), dp(24))
         setBackgroundColor(Color.rgb(9, 11, 16)); outlineProvider = ViewOutlineProvider.BOUNDS; clipToOutline = true
         isFocusable = true; isFocusableInTouchMode = true
@@ -625,6 +630,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     private inner class RowHolder(private val hero: Boolean = false) : ViewHolder(LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL; layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        if (hero) { clipChildren = false; clipToPadding = false }
     }) {
         var rowId = ""
         private var restoreHorizontal = false
@@ -692,7 +698,11 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
                     setContent { heroContent?.invoke({ item ->
                         if (pending == null || pending == (HERO_ROW to item)) selected(HERO_ROW, item)
                     }, { adjacent(HERO_ROW, 1) }, { onUp() }) }
-                }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2))
+                }, LinearLayout.LayoutParams(-1, heroHeightPx ?: -2).apply {
+                    // The hero paints across the rail gutters; controls retain their inset.
+                    leftMargin = -this@RailRecycler.paddingLeft
+                    rightMargin = -this@RailRecycler.paddingRight
+                })
             } else {
             (itemView as LinearLayout).addView(title, LinearLayout.LayoutParams(-1, -2))
             val rail: View = if (skeleton == null) horizontal else FrameLayout(context).apply {
@@ -1057,6 +1067,9 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             progress.fraction = item.progress
             if (!replacement) return
             image.background = artworkPlaceholder.takeIf { showSkeletons && !item.artwork.isNullOrBlank() }
+            image.scaleType = if (item.fitArtwork) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_CROP
+            val logoPadding = if (item.fitArtwork) dp(12) else 0
+            image.setPadding(logoPadding, logoPadding, logoPadding, if (item.fitArtwork) dp(48) else 0)
             item.artwork?.let { url -> imageJob = work.launch { images.withPermit {
                 try {
                     val w = if (polishedCaptions) px(posterGeometry.width - 8f) else dp(104)

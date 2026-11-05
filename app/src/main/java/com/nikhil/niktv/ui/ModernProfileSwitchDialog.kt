@@ -23,7 +23,7 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
     val selected = profiles.indexOfFirst { it.cacheKey() == current?.cacheKey() }.coerceAtLeast(0)
     val closeFocus = remember { FocusRequester() }
     AlertDialog(modifier = Modifier.initialFocusEntry(if (profiles.isEmpty()) closeFocus else entry), onDismissRequest = close, containerColor = Color(0xFF181B22),
-        title = { Text("Switch profile") }, text = {
+        title = { Text("Switch portal") }, text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 profiles.forEachIndexed { index, profile ->

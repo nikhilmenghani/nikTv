@@ -90,8 +90,24 @@ data class GitHubBackupDecoded(
 
 class GitHubBackupManager(context: Context) {
     private val appContext = context.applicationContext
-    private val prefs =
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs get() = appContext.getSharedPreferences(
+        UserSyncStore.get(appContext).selectedAccount.value?.let { "${PREFS_NAME}_account_$it" } ?: PREFS_NAME,
+        Context.MODE_PRIVATE)
+
+    /** Preserve legacy full-backup settings only for their explicitly configured owner. */
+    internal fun adoptLegacyAccountSettings(login: String) {
+        val source = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (source.getString(KEY_USERNAME, DEFAULT_USERNAME).equals(login, ignoreCase = true) && prefs.all.isEmpty()) {
+            val editor = prefs.edit()
+            source.all.forEach { (name, value) -> when (value) {
+                is String -> editor.putString(name, value)
+                is Int -> editor.putInt(name, value)
+                is Long -> editor.putLong(name, value)
+                is Boolean -> editor.putBoolean(name, value)
+            } }
+            editor.commit()
+        }
+    }
     private val random = SecureRandom()
 
     private val http = OkHttpClient.Builder()
@@ -208,6 +224,9 @@ class GitHubBackupManager(context: Context) {
 
     private suspend fun uploadBackupInternal(rawBackup: String, config: GitHubBackupConfig): GitHubBackupUpload = withContext(Dispatchers.IO) {
         val cfg = validated(config)
+        // Full backups include portable and device-private configuration. Ordinary account sync
+        // excludes secrets; a full remote backup must instead be explicitly password encrypted.
+        requireStrongPassphrase(cfg.passphrase)
         val branch = defaultBranch(cfg)
         val root =
             runCatching { JSONObject(rawBackup) }

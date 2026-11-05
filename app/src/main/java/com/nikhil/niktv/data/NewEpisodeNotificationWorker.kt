@@ -30,12 +30,18 @@ internal object NewEpisodeNotificationScheduler {
 class NewEpisodeNotificationWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         if (!NewEpisodeNotifications.supported(applicationContext) || CatalogPlaybackActivity.playing) return Result.success()
-        val store = ProfileStore(applicationContext)
+        val users = UserSyncStore.get(applicationContext)
+        val accountId = users.selectedAccount.value ?: return Result.success()
+        val userProfiles = users.profiles.first()
         val portal = StalkerPortalClient(applicationContext)
         var failed = false
         NewEpisodeNotifications.refreshMutex.withLock {
+            for (userProfile in userProfiles) {
+            val owner = UserScope(accountId, userProfile.id)
+            val store = ProfileStore(applicationContext).scoped(owner)
             val profiles = store.profiles.first()
             for (profile in profiles) {
+                if (users.selectedAccount.value != accountId) return Result.success()
                 val due = store.watchedSeries.first().filter {
                     it.profileKey == profile.cacheKey() &&
                         System.currentTimeMillis() - it.checkedAtMillis >= NewEpisodeNotifications.INTERVAL_MILLIS
@@ -48,6 +54,7 @@ class NewEpisodeNotificationWorker(context: Context, params: WorkerParameters) :
                         try {
                             val latest = withTimeoutOrNull(30_000L) { portal.episodeSeason(session, watched.series, SeriesStartSeason.LAST) }
                                 ?: error("Episode check timed out")
+                            if (users.selectedAccount.value != accountId) return Result.success()
                             store.recordEpisodeDiscovery(watched.key, latest.episodes, System.currentTimeMillis())?.let {
                                 NewEpisodeNotifications.post(applicationContext, profile.name, it)
                             }
@@ -63,6 +70,7 @@ class NewEpisodeNotificationWorker(context: Context, params: WorkerParameters) :
                     failed = true
                     Log.w("NikTvNewEpisodes", "Profile check failed; subscriptions remain due for retry")
                 }
+            }
             }
         }
         return if (failed) Result.retry() else Result.success()

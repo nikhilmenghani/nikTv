@@ -26,6 +26,32 @@ class ProviderDiscoveryTest {
             preview = true, initialPreviewWindow = mapOf(CatalogType.MOVIES to window))
         waitFor { vm.state.value.ready }
     }
+    @Test fun seriesWindowRetainsHydratedRowsAndUsesOnlySeriesProviderRequests() {
+        val type = CatalogType.SERIES
+        val source = object : Source() {
+            override suspend fun cached(profile: String, requested: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                assertEquals(type, requested)
+                return categories.filter { it.id == "a" }.associate { it.id to ProviderDiscoveryPage(listOf(item("cached-series")), 1, false, System.currentTimeMillis()) }
+            }
+            override suspend fun page(session: PortalSession, category: Category, page: Int): PortalCatalogPage {
+                assertEquals(type, category.type)
+                return super.page(session, category, page)
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source)
+        vm.bind(session("series"), mapOf(type to listOf("a", "b").map { category(it).copy(type = type) }), 60_000,
+            preview = true, initialPreviewWindow = mapOf(type to setOf("a")))
+        waitFor { vm.state.value.ready }
+        val identity = vm.state.value.identity
+        vm.updatePreviewWindow(mapOf(type to setOf("b")))
+        waitFor { hydration(vm).isCompleted }
+        vm.load(type, categoryIds = setOf("b")); waitFor { source.saved.isNotEmpty() }
+        assertEquals(identity, vm.state.value.identity)
+        assertEquals(listOf("b" to 1), source.calls)
+        assertEquals("cached-series", vm.state.value.pages.getValue(type).getValue("a").items.single().id)
+        assertFalse(vm.state.value.pages.containsKey(CatalogType.MOVIES))
+        vm.pause(release = true)
+    }
     @Test fun previewWindowRetainsRowsAndSelectionWithoutRebindingFreshCategories() {
         val reads = mutableListOf<List<String>>()
         val source = object : Source() {

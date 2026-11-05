@@ -10,6 +10,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import java.util.concurrent.TimeUnit
 
 object GitHubBackupScheduler {
@@ -35,7 +36,6 @@ object GitHubBackupScheduler {
             config.backupMode != BackupMode.GITHUB ||
             hours <= 0 ||
             (
-                config.passphrase.isNotBlank() &&
                 config.passphrase.length < 12
             )
         ) {
@@ -53,6 +53,7 @@ object GitHubBackupScheduler {
                 hours.toLong(),
                 TimeUnit.HOURS
             )
+                .setInputData(workDataOf("accountId" to UserSyncStore.get(context).selectedAccount.value))
                 .setConstraints(constraints)
                 .build()
 
@@ -69,6 +70,9 @@ class GitHubBackupWorker(
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
+        val accountId = inputData.getString("accountId")
+        val users = UserSyncStore.get(applicationContext)
+        if (users.selectedAccount.value != accountId) return Result.success()
         val manager = GitHubBackupManager(applicationContext)
         val config = manager.loadConfig()
 
@@ -96,7 +100,9 @@ class GitHubBackupWorker(
             }
 
             val content = store.exportBackup()
+            if (users.selectedAccount.value != accountId) return Result.success()
             manager.uploadBackup(content, config)
+            if (users.selectedAccount.value != accountId) return Result.success()
             manager.recordSuccessfulBackupFingerprint(
                 fingerprint,
                 config

@@ -1372,6 +1372,9 @@ fun PlayerScreen(
         }
     }
     PauseTvPlaybackInBackground {
+        if (media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
+            onProgress(media.progressKey, player.currentPosition, player.duration)
+        }
         playbackRequested = false
         player.pause()
         controlsVisible = true

@@ -57,28 +57,29 @@ class EmptyProfileDashboardDeviceTest {
                     {}, { fail("Must not authenticate") }, { fail("No profiles") },
                     { editor.value = true }, { editor.value = false }, {}, {})
             } } }
-            await("Fresh devices show the dashboard") { find("Who's watching?") != null }
+            await("Fresh devices show the dashboard") { find("Portals") != null }
             block(host, editor)
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }
 
     @Test fun tokenFreeDashboardShowsAvailableActionsWithoutTheRemovedYouTubeTile() = withDashboard { _, _ ->
-        for (label in listOf("Offline", "Settings", "Add profile", "Import backup"))
+        for (label in listOf("Stalker", "Xtream", "Sports", "Offline", "GitHub account", "Configure portal", "User profiles", "Import backup"))
             assertNotNull("Dashboard exposes $label without a profile", find(label))
-        assertNull("Sports stays hidden without configuration", find("Sports"))
+        assertNotNull("Sports is a destination even before private configuration", find("Sports"))
         assertNull("Must not force the profile form", find("Portal URL"))
         assertNull(find("NikTube"))
+        assertNull("Portal actions must not be mislabeled as user profile creation", find("Add profile"))
     }
 
     @Test fun firstProfileCanBeCanceledWithButtonAndSystemBack() = withDashboard { _, _ ->
-        click("Add profile")
+        click("Configure portal")
         await("Add is explicit") { find("Portal URL") != null }
         click("Cancel")
-        await("Cancel returns to the dashboard") { find("Who's watching?") != null }
-        click("Add profile")
+        await("Cancel returns to the dashboard") { find("Portals") != null }
+        click("Configure portal")
         await("Editor can reopen") { find("Portal URL") != null }
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-        await("System Back returns to the dashboard") { find("Who's watching?") != null }
+        await("System Back returns to the dashboard") { find("Portals") != null }
     }
 
     @Test fun configuredDashboardIncludesSportsAndUnconfiguredDashboardRemovesIt() = withDashboard { host, _ ->
@@ -108,10 +109,10 @@ class EmptyProfileDashboardDeviceTest {
             repeat(6) { if (node?.isFocused == true) return true; node = node?.parent }
             return false
         }
-        await("First TV focus reaches Offline without a saved profile") { focused("Offline") }
+        await("First TV focus reaches Stalker without a saved profile") { focused("Stalker") }
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
-        await("Right reaches the next available tile") { focused("Settings") }
+        await("Right reaches the next available tile") { focused("Xtream") }
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
-        await("Left returns to Offline") { focused("Offline") }
+        await("Left returns to Stalker") { focused("Stalker") }
     }
 }

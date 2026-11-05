@@ -5,9 +5,17 @@ import android.content.SharedPreferences
 /** Small local preferences, read/written on IO. No Room, network or playback-side polling. */
 internal class IntroTimingStore(private val openPreferences: () -> SharedPreferences) {
     private val preferences get() = openPreferences()
-    fun read(target: IntroTarget): IntroTimings = IntroTimings(readRange(target.episodeKey), target.seasonKey?.let(::readRange))
+    fun read(target: IntroTarget): IntroTimings = IntroTimings(readRange(target.episodeKey, target.legacyEpisodeKey),
+        target.seasonKey?.let { readRange(it, target.legacySeasonKey) })
 
-    private fun readRange(key: String): IntroRange? = decode(preferences.getString(key, null))
+    private fun readRange(key: String, legacy: String? = null): IntroRange? {
+        val current = preferences.getString(key, null)
+        if (current != null) return decode(current)
+        val old = legacy?.let { preferences.getString(it, null) } ?: return null
+        // Upgrade only after an exact local provider identity is available.
+        preferences.edit().putString(key, old).remove(legacy).commit()
+        return decode(old)
+    }
 
     fun save(target: IntroTarget, scope: IntroScope, range: IntroRange?) {
         val key = when (scope) {

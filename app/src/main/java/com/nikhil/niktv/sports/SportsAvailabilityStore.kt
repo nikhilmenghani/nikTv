@@ -25,7 +25,7 @@ internal enum class SportsAvailabilityFilter(val title: String) {
 
 /** Local observations, not a provider guarantee. No stream addresses or IPTV profile data are saved. */
 internal class SportsAvailabilityStore(context: Context, private val now: () -> Long = System::currentTimeMillis) {
-    private val prefs = context.applicationContext.getSharedPreferences("sports_availability_v1", Context.MODE_PRIVATE)
+    private val prefs = com.nikhil.niktv.data.UserProfilePreferences.get(context, "sports_availability_v1")
     private val json = Json { ignoreUnknownKeys = true }
     fun flags(): Map<String, SportsChannelFlag> = runCatching {
         json.decodeFromString<Map<String, SportsChannelFlag>>(prefs.getString("flags", "{}")!!)

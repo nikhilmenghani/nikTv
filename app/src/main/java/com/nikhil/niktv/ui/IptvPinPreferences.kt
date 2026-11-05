@@ -9,7 +9,7 @@ internal object IptvPinPreferences {
     private const val FILE = "iptv_pin_preferences"
 
     private fun preferences(context: Context) =
-        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+        com.nikhil.niktv.data.UserProfilePreferences.get(context, FILE)
 
     private fun categoryKey(profileKey: String, type: CatalogType) =
         "$profileKey|category|${type.name}"

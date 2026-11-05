@@ -50,7 +50,7 @@ import java.util.concurrent.atomic.AtomicReference
 class MobileSettingsDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val paneBounds = AtomicReference<RectF>()
-    private val categories = listOf("Playback", "Display & controls", "Profiles & access", "Library & backup", "App & updates")
+    private val categories = listOf("Playback", "Display & controls", "Portals & access", "Library & backup", "App & updates")
 
     private fun await(message: String, condition: () -> Boolean) {
         val end = SystemClock.uptimeMillis() + 8_000

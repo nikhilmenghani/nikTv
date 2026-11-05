@@ -79,7 +79,7 @@ object PlaybackUiPreferences {
     private const val PREFS_NAME = "niktv_playback_ui"
 
     private fun prefs(context: Context): SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        com.nikhil.niktv.data.UserProfilePreferences.get(context, PREFS_NAME)
 
     private fun profilePart(profileKey: String) = profileKey.ifBlank { "default" }
 
@@ -1036,6 +1036,7 @@ private fun ShowcaseDetailsPanel(
         it.isNotBlank() && !it.equals(item.title.trim(), ignoreCase = true)
     }
     val detailsContext = LocalContext.current
+    val liveTimeLocale = rememberPlayerLocale()
     val detailsConfiguration = LocalConfiguration.current
     val isTv =
         detailsContext.isShowcaseTvLikeDevice(
@@ -1120,7 +1121,7 @@ private fun ShowcaseDetailsPanel(
                     )
                     upcoming.forEach { programme ->
                         val start = programme.startTimeMillis?.let {
-                            java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                            java.text.SimpleDateFormat("h:mm a", liveTimeLocale)
                                 .format(java.util.Date(it))
                         }
                         Text(
@@ -1332,7 +1333,7 @@ private fun BoxScope.ShowcaseRail(
                 items = items,
                 key = { _, item -> "showcase-${type.name}-${item.id}" }
             ) { _, item ->
-                val requester = posterFocusRequesters.getOrPut(item.id) { FocusRequester() }
+                val requester = remember(posterFocusRequesters, item.id) { posterFocusRequesters.getOrPut(item.id) { FocusRequester() } }
                 ShowcasePosterCard(
                     item = item,
                     width = posterWidth,

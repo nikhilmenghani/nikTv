@@ -11,6 +11,12 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import com.nikhil.niktv.data.AccountSyncManager
+import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.data.GitHubBackupScheduler
 import com.nikhil.niktv.data.PairingInvites
@@ -20,6 +26,7 @@ import com.nikhil.niktv.ui.NikTvApp
 class MainActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPictureHost {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private var playerActive = false
+    private var startedOnce = false
     override var pipModeListener: ((Boolean) -> Unit)? = null
     var playerTransportKeyHandler: ((KeyEvent) -> Boolean)? = null
 
@@ -60,16 +67,37 @@ class MainActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPic
         GitHubBackupScheduler.initialize(applicationContext)
         SearchMetadataSyncScheduler.initialize(applicationContext)
         com.nikhil.niktv.data.NewEpisodeNotificationScheduler.initialize(applicationContext)
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         setContent { NikTvApp() }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            lifecycleScope.launch {
+                val sync = AccountSyncManager.get(applicationContext)
+                combine(sync.state, UserSyncStore.get(applicationContext).selectedScope) { account, viewer ->
+                    account.initialized && viewer != null && viewer.accountId == account.accountId
+                }.first { it }
+                // Token validation and first profile selection precede optional notifications.
+                notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         PairingInvites.accept(intent.data)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The account gate performs initial setup/launch sync. This handles
+        // returning from the background without duplicating the first request.
+        if (startedOnce) lifecycleScope.launch { AccountSyncManager.get(applicationContext).launchSync() }
+        startedOnce = true
+    }
+
+    override fun onStop() {
+        AccountSyncManager.get(applicationContext).requestSync("background", immediate = true)
+        super.onStop()
     }
 
     override fun onUserLeaveHint() {

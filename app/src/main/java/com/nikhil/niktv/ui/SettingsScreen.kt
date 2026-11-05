@@ -171,6 +171,9 @@ internal fun ModernSettingsScreen(
     setBrowseLayout: (BrowseLayout) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
 ) {
+    val openUserProfiles = LocalOpenUserProfiles.current
+    val openAccount = LocalOpenAccountScreen.current
+    val selectedUserProfile = LocalSelectedUserProfile.current
     MaterialTheme(shapes = MaterialTheme.shapes.copy(
         small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(10.dp),
         large = RoundedCornerShape(10.dp), extraLarge = RoundedCornerShape(10.dp)
@@ -188,14 +191,14 @@ internal fun ModernSettingsScreen(
     val preconfiguredProfiles = remember(generatedIdentity, remoteValues) {
         listOf(
             PortalProfile(
-                RemoteCredentials.get("NIKTV_DEFAULT_PROFILE_NAME").ifBlank { "WIO" },
+                "Stalker",
                 RemoteCredentials.get("NIKTV_DEFAULT_PORTAL_URL"),
                 RemoteCredentials.get("NIKTV_DEFAULT_MAC_ADDRESS").ifBlank { generatedIdentity.macAddress },
                 RemoteCredentials.get("NIKTV_DEFAULT_SERIAL_NUMBER").ifBlank { generatedIdentity.serialNumber },
                 PortalType.STALKER
             ),
             PortalProfile(
-                RemoteCredentials.get("NIKTV_XTREAM_PROFILE_NAME").ifBlank { "Xtream" },
+                "Xtream",
                 RemoteCredentials.get("NIKTV_XTREAM_PORTAL_URL"),
                 macAddress = "",
                 portalType = PortalType.XTREAM,
@@ -334,7 +337,7 @@ internal fun ModernSettingsScreen(
     val settingsContentEntryRequester = remember { FocusRequester() }
     var profileSetupExplanation by remember { mutableStateOf<String?>(null) }
     profileSetupExplanation?.let { explanation ->
-        FullDescriptionDialog("Profile setup", explanation, dismiss = { profileSetupExplanation = null })
+        FullDescriptionDialog("Portal setup", explanation, dismiss = { profileSetupExplanation = null })
     }
     var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
     var restoreVersionFocus by remember { mutableStateOf(false) }
@@ -492,7 +495,6 @@ internal fun ModernSettingsScreen(
     var mobileCategoriesOpen by rememberSaveable { mutableStateOf(PairingInvites.pending == null) }
     var returnToMobileCategory by remember { mutableStateOf(false) }
     val mobileCategoryScrollState = rememberScrollState()
-    var confirmReset by remember { mutableStateOf(false) }
     var managedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var returnToSettingsPage by remember { mutableStateOf<SettingsPage?>(null) }
     var enterSettingsPage by remember { mutableStateOf(false) }
@@ -522,12 +524,6 @@ internal fun ModernSettingsScreen(
         } else closeSettings()
     }
     BackHandler(onBack = settingsBack)
-    if (confirmReset) ProjectCardConfirmationDialog(
-        title = "Clear all app data?",
-        message = "Remove every saved profile, credential, session, cache, favorite and recent item from this device. This cannot be undone. Back up your data first if you want to restore it later.",
-        confirmLabel = "Clear all app data", close = { confirmReset = false },
-        confirm = { confirmReset = false; logout() }
-    )
     val settingsRailRequesters = remember {
         SettingsDestination.entries.associateWith { FocusRequester() }
     }
@@ -636,7 +632,7 @@ internal fun ModernSettingsScreen(
         Text(activePage.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
 
         if (activePage == SettingsPage.PROFILES) {
-            SettingsSection("Profiles & access", page = SettingsPage.PROFILES) {
+            SettingsSection("Portals & access", page = SettingsPage.PROFILES) {
                 SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "${state.profiles.size} saved")
                 if (profile != null) SettingsLinkRow(SettingsPage.CONNECTION, profile.name)
                 SettingsLinkRow(SettingsPage.PARENTAL, if (state.parentalControlsEnabled) "On" else "Off")
@@ -646,7 +642,7 @@ internal fun ModernSettingsScreen(
         }
         if (activePage == SettingsPage.LIBRARY) {
             SettingsSection("Library & backup", page = SettingsPage.LIBRARY) {
-                SettingsLinkRow(SettingsPage.CATALOG_UPDATES, catalogProfile?.name ?: "Choose profile")
+                SettingsLinkRow(SettingsPage.CATALOG_UPDATES, catalogProfile?.name ?: "Choose portal")
                 SettingsControlRow("Use local catalog first", checked = preferLocalCatalog, onToggle = {
                     preferLocalCatalog = it
                     com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(context, it)
@@ -718,7 +714,7 @@ internal fun ModernSettingsScreen(
                 state.initialCatalogItems, setInitialCatalogItems, "How many IPTV items load when a category opens.")
         }
         val knownProfiles = (state.profiles + preconfiguredProfiles).distinctBy { it.cacheKey() }
-        SettingsSection("Profiles") {
+        SettingsSection("Portals") {
             knownProfiles.forEach { entry ->
                 val saved = state.profiles.any { it.cacheKey() == entry.cacheKey() }
                 SettingsControlRow(entry.name,
@@ -726,9 +722,9 @@ internal fun ModernSettingsScreen(
                     modifier = if (entry.cacheKey() == managedProfileId) Modifier.focusRequester(settingsPageRequesters.getValue(SettingsPage.PROFILE_DETAILS)) else Modifier,
                     onClick = { managedProfileId = entry.cacheKey(); openSettingsPage(SettingsPage.PROFILE_DETAILS) })
             }
-            SettingsControlRow("Add profile", description = "Stalker / MAG or Xtream Codes", onClick = addProfile)
+            SettingsControlRow("Configure portal", description = "Stalker / MAG or Xtream Codes", onClick = addProfile)
         }
-        SettingsSection("Profile details", page = SettingsPage.PROFILE_DETAILS) {
+        SettingsSection("Portal details", page = SettingsPage.PROFILE_DETAILS) {
             val managed = knownProfiles.firstOrNull { it.cacheKey() == managedProfileId }
             if (managed != null) {
                 val saved = state.profiles.firstOrNull { it.cacheKey() == managed.cacheKey() }
@@ -737,20 +733,20 @@ internal fun ModernSettingsScreen(
                 if (builtIn != null) {
                     val available = builtIn.portalUrl.isNotBlank() && (builtIn.portalType == PortalType.STALKER ||
                         (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
-                    SettingsControlRow("Enable profile", checked = saved != null, onToggle = { enabled ->
+                    SettingsControlRow("Enable portal", checked = saved != null, onToggle = { enabled ->
                         if (available || !enabled) setPreconfiguredProfileEnabled(builtIn, enabled)
                         else profileSetupExplanation = "Sync private configuration before enabling ${builtIn.name}."
                     })
                 }
-                if (saved != null && saved.cacheKey() != profile?.cacheKey()) SettingsControlRow("Open profile", onClick = { switchProfile(saved) })
-                if (saved != null && saved.cacheKey() == profile?.cacheKey()) SettingsLinkRow(SettingsPage.CONNECTION, "Active profile")
-                if (saved != null) SettingsControlRow("Remove profile", danger = true, onClick = { pendingRemoval = saved })
+                if (saved != null && saved.cacheKey() != profile?.cacheKey()) SettingsControlRow("Open portal", onClick = { switchProfile(saved) })
+                if (saved != null && saved.cacheKey() == profile?.cacheKey()) SettingsLinkRow(SettingsPage.CONNECTION, "Active portal")
+                if (saved != null) SettingsControlRow("Remove portal", danger = true, onClick = { pendingRemoval = saved })
             }
         }
         if (profile != null) SettingsSection("Connection") {
             SettingsValueRow(
                 Icons.Default.AccountCircle,
-                "Profile",
+                "Portal",
                 profile.name
             )
             SettingsDivider()
@@ -784,7 +780,7 @@ internal fun ModernSettingsScreen(
                 icon = Icons.Default.Refresh,
                 title = "Re-authenticate",
                 subtitle =
-                    "Request a fresh session token using the saved profile",
+                    "Request a fresh session token using the saved portal",
                 modifier = Modifier
                     .remoteFocusFrame(RoundedCornerShape(14.dp))
                     .clickable(onClick = reauthenticate),
@@ -809,12 +805,13 @@ internal fun ModernSettingsScreen(
         SettingsSection("Parental controls") {
             ParentalControlsSettings()
         }
-        if (activePage in setOf(SettingsPage.CATALOG_UPDATES, SettingsPage.CATALOG_MEDIA_TYPES, SettingsPage.CATALOG_TOOLS))
-        SettingsSection("Data and sync", page = activePage) {
-            SettingsGroupHeading("Local catalog", "Choose a profile, build its catalog and review scan progress.")
-            if (catalogProfile == null) SettingsControlRow("Add a profile", description = "A connection is needed before building a catalog.", onClick = addProfile)
-            else CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
-                catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
+        if (activePage in setOf(SettingsPage.CATALOG_UPDATES, SettingsPage.CATALOG_MEDIA_TYPES, SettingsPage.CATALOG_TOOLS)) {
+            SettingsSection("Data and sync", page = activePage) {
+                SettingsGroupHeading("Local catalog", "Choose a portal, build its catalog and review scan progress.")
+                if (catalogProfile == null) SettingsControlRow("Configure a portal", description = "A connection is needed before building a catalog.", onClick = addProfile)
+                else CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
+                    catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
+                }
             }
         }
         SettingsSection("Backup destination") {
@@ -913,9 +910,8 @@ internal fun ModernSettingsScreen(
                         icon = Icons.Default.Lock,
                         title = "Backup password",
                         subtitle =
-                            "Optional · Leave blank for readable JSON. " +
-                                "Use 12+ characters to encrypt device backups.",
-                        placeholder = "Optional backup password",
+                            "Required for GitHub full backups. Use 12+ characters; enter the same password on another device to restore.",
+                        placeholder = "Backup password (12+ characters)",
                         password = true,
                         requester = githubPasswordRequester,
                         upRequester = githubTokenRequester
@@ -923,15 +919,13 @@ internal fun ModernSettingsScreen(
 
                     if (githubBackupConfig.passphrase.isBlank()) {
                         Text(
-                            "No password: the backup is uploaded as readable JSON. " +
-                                "Anyone who can read the repository can read the backed-up credentials.",
+                            "GitHub full backups contain portal credentials and require encryption. Set a password of at least 12 characters before uploading. Existing readable backups can still be imported.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
                     } else if (githubBackupConfig.passphrase.length < 12) {
                         Text(
-                            "Finish the password to at least 12 characters, or clear it " +
-                                "to use plain JSON. Automatic backup is paused while it is incomplete.",
+                            "Finish the password to at least 12 characters. Automatic GitHub backup is paused until encryption is configured.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -1173,7 +1167,7 @@ internal fun ModernSettingsScreen(
                                 Text("Backup date: ${preview.exportedAt}")
                                 Text("NikTV version: ${preview.appVersion}")
                                 Text("Settings version: ${preview.settingsVersion}")
-                                Text("Profiles: ${preview.profileCount}")
+                                Text("Portals: ${preview.profileCount}")
                                 githubSelectedBackupName?.let {
                                     Text(
                                         it,
@@ -1653,37 +1647,18 @@ internal fun ModernSettingsScreen(
         }
         if (activePage == SettingsPage.APP) {
             SettingsLinkRow(SettingsPage.UPDATE_PREFERENCES, "Package & enforcement")
-            SettingsLinkRow(SettingsPage.RESET, "Review before clearing")
+            SettingsLinkRow(SettingsPage.RESET, "Disconnect or delete a user profile explicitly")
         }
         TmdbCredentialSettingsSection()
         SettingsSection("Data & reset") {
-            ResponsiveSettingsOptionRow(
-                icon = Icons.AutoMirrored.Filled.Logout,
-                title = "Clear all app data",
-                subtitle =
-                    "Remove every profile, cache, favorite, recent item, and session",
-                iconTint = MaterialTheme.colorScheme.error,
-                titleColor = MaterialTheme.colorScheme.error,
-                subtitleColor =
-                    MaterialTheme.colorScheme.error.copy(alpha = .78f),
-                modifier = Modifier
-                    .remoteFocusFrame(RoundedCornerShape(14.dp))
-                    .clickable { confirmReset = true },
-                trailingContent = {
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        "Clear all app data",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            )
-
+            SettingsControlRow("User profiles", description = "Manage people or explicitly delete a user profile across devices.", onClick = openUserProfiles)
+            SettingsControlRow("GitHub account", description = "Disconnect local authentication while keeping local and remote viewing data.", onClick = openAccount)
         }
         if (
             activePage == SettingsPage.RESET
         ) {
             Text(
-                "NikTV keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
+                "Disconnecting removes this device's account authentication and keeps viewing data. Deleting a user profile is a separate action on User profiles and syncs that deletion across devices.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1763,7 +1738,9 @@ internal fun ModernSettingsScreen(
     pendingRemoval?.let { target ->
         ProjectCardConfirmationDialog(
             title = "Remove ${target.name}?",
-            message = "This removes its saved credentials and session. Other profiles remain available.",
+            message = selectedUserProfile?.let {
+                "Remove ${it.name}'s portal association in this GitHub account across devices after sync. Device credentials and session are removed only when no other user profile uses this portal. Viewing records are kept."
+            } ?: "Remove this device's saved portal credentials and session. User profile associations and viewing records are kept.",
             confirmLabel = "Remove", close = { pendingRemoval = null },
             confirm = { removeProfile(target); pendingRemoval = null; selectedSettingsPage = SettingsPage.MANAGE_PROFILES }
         )
@@ -2405,10 +2382,8 @@ internal fun LiveTvPlaybackScreen(
                                     playing.media.id
 
                         val itemFocusRequester =
-                            channelFocusRequesters.getOrPut(
-                                item.id
-                            ) {
-                                FocusRequester()
+                            remember(channelFocusRequesters, item.id) {
+                                channelFocusRequesters.getOrPut(item.id) { FocusRequester() }
                             }
 
                         ModernMediaListCard(
@@ -2915,12 +2890,12 @@ internal fun ScheduleProfileControl(
         IconButton(
             onClick = { onChange(profiles[(profileIndex - 1 + profiles.size) % profiles.size].id) },
             modifier = Modifier.remoteFocusFrame(CircleShape)
-        ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous profile") }
+        ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous schedule") }
         Text(profile.name, Modifier.widthIn(min = 112.dp), fontWeight = FontWeight.SemiBold)
         IconButton(
             onClick = { onChange(profiles[(profileIndex + 1) % profiles.size].id) },
             modifier = Modifier.remoteFocusFrame(CircleShape)
-        ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next profile") }
+        ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next schedule") }
     }
 }
 
@@ -3388,7 +3363,7 @@ internal fun TmdbCredentialSettingsSection() {
                                 paired = true
                                 tokenInput = ""
                                 RemoteCredentials.refresh(context, force = true)
-                                message = "Configuration synced. Open Profiles in Settings to enable the preconfigured profiles."
+                                message = "Configuration synced. Open Portals in Settings to enable the preconfigured portals."
                             } catch (failure: Exception) {
                                 message = failure.message ?: "Could not sync configuration"
                             } finally {
@@ -3406,7 +3381,7 @@ internal fun TmdbCredentialSettingsSection() {
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                "After syncing, open Profiles in Settings and turn on the preconfigured profiles you want to use.",
+                "After syncing, open Portals in Settings and turn on the preconfigured portals you want to use.",
                 style = MaterialTheme.typography.bodySmall
             )
             SettingsValueRow(Icons.Default.Key, "TMDB", if (values["NIKTV_TMDB_API_KEY"].isNullOrBlank() && values["NIKTV_TMDB_READ_ACCESS_TOKEN"].isNullOrBlank()) "Not configured" else "Available")

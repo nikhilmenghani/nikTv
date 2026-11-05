@@ -20,7 +20,7 @@ internal data class IntroRange(val startMillis: Long, val endMillis: Long, val a
 internal enum class IntroScope { EPISODE, SEASON }
 
 internal data class IntroTarget(val episodeKey: String, val seasonKey: String?, val episodeLabel: String,
-    val seasonLabel: String?)
+    val seasonLabel: String?, val legacyEpisodeKey: String? = null, val legacySeasonKey: String? = null)
 
 /** No URLs/credentials/titles in preference keys; length framing prevents delimiter collisions. */
 private fun introKey(vararg parts: String): String {
@@ -40,6 +40,11 @@ private fun introKey(vararg parts: String): String {
 
 internal fun introTarget(media: PlayingMedia): IntroTarget? {
     if (media.profileKey.isBlank() || media.catalogType == CatalogType.LIVE_TV) return null
+    if (media.logicalPortalId.isNotBlank()) {
+        val stable = introTarget(media.copy(profileKey = "portal:${media.logicalPortalId}", logicalPortalId = "")) ?: return null
+        val legacy = introTarget(media.copy(logicalPortalId = ""))
+        return stable.copy(legacyEpisodeKey = legacy?.episodeKey, legacySeasonKey = legacy?.seasonKey)
+    }
     val series = media.series
     if (series == null) {
         if (media.catalogType != CatalogType.MOVIES || media.media.id.isBlank()) return null

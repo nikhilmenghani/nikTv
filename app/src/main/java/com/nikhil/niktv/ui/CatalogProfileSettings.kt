@@ -70,10 +70,10 @@ internal fun CatalogProfileSettings(
     var message by remember(id) { mutableStateOf<String?>(null) }
     var selectedCheckpoint by remember(id) { mutableStateOf<CatalogCheckpointFile?>(null) }
     var confirmRefreshAll by remember(id) { mutableStateOf(false) }
-    BackupSettingsActionRow(Icons.Default.AccountCircle, "Profile · ${profile.name}",
-        "All catalog actions below apply to this profile until you change it.", onClick = { chooseProfile = true })
+    BackupSettingsActionRow(Icons.Default.AccountCircle, "Portal · ${profile.name}",
+        "All catalog actions below apply to this portal until you change it.", onClick = { chooseProfile = true })
     if (chooseProfile) AlertDialog(
-        onDismissRequest = { chooseProfile = false }, title = { Text("Choose catalog profile") },
+        onDismissRequest = { chooseProfile = false }, title = { Text("Choose catalog portal") },
         text = { LazyColumn { items(profiles) { entry ->
             NikTvTextActionButton(onClick = {
                 selectedId = CatalogScanPreferences.id(entry)
@@ -117,7 +117,7 @@ internal fun CatalogProfileSettings(
                 hours = value
                 CatalogScanPreferences.hours(context, id, value)
                 SearchMetadataSyncScheduler.configureProfile(context, profile)
-            }, "Append new pages and resume incomplete scans for this profile on this device. Android may delay background work.")
+            }, "Append new pages and resume incomplete scans for this portal on this device. Android may delay background work.")
         SettingsLinkRow(SettingsPage.CATALOG_MEDIA_TYPES, "Live TV, movies & series")
         SettingsLinkRow(SettingsPage.CATALOG_TOOLS, "Checkpoints & saved database")
     }
@@ -146,13 +146,13 @@ internal fun CatalogProfileSettings(
     }
     selectedCheckpoint?.let { entry ->
         AlertDialog(onDismissRequest = { selectedCheckpoint = null }, title = { Text("Merge catalog checkpoint?") },
-            text = { Text("Restore ${profile.name} from ${DateFormat.getDateTimeInstance().format(Date(entry.timestamp))}. Newer local records are retained. Reopen the profile afterward to reload the dashboard.") },
+            text = { Text("Restore ${profile.name} from ${DateFormat.getDateTimeInstance().format(Date(entry.timestamp))}. Newer local records are retained. Reopen the portal afterward to reload the dashboard.") },
             confirmButton = { NikTvTextActionButton(onClick = {
                 selectedCheckpoint = null; busy = true; message = "Restoring catalog…"
                 scope.launch {
                     try {
                         CatalogBackupManager(context).restoreCheckpoint(profile, entry)
-                        message = "Catalog restored. Search can use it now; reopen the profile to reload the dashboard."
+                        message = "Catalog restored. Search can use it now; reopen the portal to reload the dashboard."
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) { message = "Restore failed. Check GitHub settings and the original password if this checkpoint was encrypted. See activity for the outcome." }
                     finally { busy = false }

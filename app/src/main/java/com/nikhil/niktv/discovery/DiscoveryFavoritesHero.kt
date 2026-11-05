@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -103,7 +103,7 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         else if (favorite.source == FavoriteSource.TMDB) open(favorite)
         else details(requireNotNull(entry).type, favorite.media, listOf(favorite.media))
     }
-    Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInRoot())) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
+    Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow())) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             touching = true
@@ -113,7 +113,7 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         if (!phone) {
             // Artwork belongs to this scrolling header, never behind the saved rows.
             Box(Modifier.matchParentSize().clipToBounds()) {
-                DiscoveryBackdrop(card?.let { it.copy(backdrop = it.backdrop?.takeIf(String::isNotBlank) ?: it.poster) }, reduced)
+                DiscoveryBackdrop(card?.let { it.copy(backdrop = it.backdrop?.takeIf(String::isNotBlank) ?: it.poster) }, reduced, viewportShade = true)
                 DiscoveryHeroShade(Modifier.fillMaxSize())
             }
             DiscoveryHero(card, null, trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), true, context.isTvLikeDevice(configuration)).dp + navigationInset,

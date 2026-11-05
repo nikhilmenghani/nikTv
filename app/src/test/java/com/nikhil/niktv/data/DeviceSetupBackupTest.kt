@@ -59,6 +59,13 @@ class DeviceSetupBackupTest {
         val content = store.exportBackup()
         assertEquals("Backup identity and date must not change the fingerprint", fingerprint, store.backupFingerprint())
         val root = Json.parseToJsonElement(content).jsonObject
+        assertEquals(3, root.getValue("formatVersion").jsonPrimitive.int)
+        assertEquals("GitHub authentication remains on the device", "", root.getValue("backupConnection").jsonObject.getValue("token").jsonPrimitive.content)
+        assertEquals("Backup decryption passwords remain on the device", "", root.getValue("backupConnection").jsonObject.getValue("password").jsonPrimitive.content)
+        (root["remoteConfiguration"] as? JsonObject)?.let { remote ->
+            assertEquals("", remote.getValue("token").jsonPrimitive.content)
+            assertFalse(remote.getValue("values").jsonObject.containsKey("G_TOKEN"))
+        }
         assertFalse(root.getValue("strings").jsonObject.containsKey("active_session"))
         assertFalse(root.getValue("strings").jsonObject.containsKey("search_catalog_movies"))
         assertFalse(root.containsKey("database"))

@@ -11,7 +11,7 @@ import java.util.UUID
 /** User choices, kept separately from rebuildable provider catalogue caches. */
 object CategoryCollectionPreferences {
     private val json = Json { ignoreUnknownKeys = true }
-    private fun prefs(context: Context) = context.getSharedPreferences("browse_collections", Context.MODE_PRIVATE)
+    private fun prefs(context: Context) = UserProfilePreferences.get(context, "browse_collections")
     fun browseMode(context: Context, profile: String, type: CatalogType): CategoryBrowseMode = runCatching {
         CategoryBrowseMode.valueOf(prefs(context).getString("$profile|${type.name}|mode", "COLLECTIONS")!!)
     }.getOrDefault(CategoryBrowseMode.COLLECTIONS)

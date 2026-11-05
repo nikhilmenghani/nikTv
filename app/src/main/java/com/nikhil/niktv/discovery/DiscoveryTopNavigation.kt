@@ -66,6 +66,8 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
                 onClick = { change(false); navigate("Previous Home") })
             if (surface == DashboardSurface.MOVIES) NikDropdownMenuItem(text = { Text("Previous Movies") },
                 onClick = { change(false); navigate("Previous Movies") })
+            if (surface == DashboardSurface.SERIES) NikDropdownMenuItem(text = { Text("Previous Series") },
+                onClick = { change(false); navigate("Previous Series") })
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
             if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
@@ -94,7 +96,6 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
     library: DiscoveryLibraryDestination? = null, searchActive: Boolean = false) {
-    val providers = LocalOpenWatchProviders.current
     val experiment = LocalDiscoveryExperiment.current
     val tabs = rememberScrollState()
     val density = LocalDensity.current
@@ -109,7 +110,9 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
         DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), backdrop ?: LocalMobileGlassArtwork.current,
-            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds) {
+            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds,
+            fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
+            fillWidth = LocalMobileGlassFillWidth.current) {
             CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
             Row(Modifier.fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -118,7 +121,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         .graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
                 }
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
-                DiscoveryAction("Search", Icons.Default.Search, selected = searchActive, horizontalPadding = 10.dp,
+                DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive, horizontalPadding = 10.dp,
                     modifier = if (searchActive) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                     onFocus = headerFocus) { navigate("Search") }
                 StableTileFocusViewport {
@@ -134,9 +137,6 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                             onFocus = headerFocus) { navigate("Live TV") }
-                        DiscoveryAction("Providers", selected = library == DiscoveryLibraryDestination.PROVIDERS, horizontalPadding = 12.dp,
-                            modifier = if (library == DiscoveryLibraryDestination.PROVIDERS) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
-                            onFocus = headerFocus, onClick = providers)
                         DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.MY_LIST) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                             onFocus = headerFocus) { navigate("My List") }
@@ -156,6 +156,10 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
 @Composable
 private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, open: () -> Unit) {
     val context = LocalContext.current
+    val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
+    val viewerName = viewer?.name ?: profile
+    val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
+        ?: profile.firstOrNull()?.uppercase() ?: "N"
     val time by produceState(DateFormat.getTimeFormat(context).format(Date())) {
         while (true) {
             delay(60_000L - System.currentTimeMillis() % 60_000L)
@@ -163,15 +167,17 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
         }
     }
     var focused by remember { mutableStateOf(false) }
-    DiscoveryGlassPanel(modifier, backdrop, backdropBounds, focused) {
+    DiscoveryGlassPanel(modifier, backdrop, backdropBounds, focused,
+        fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
+        fillWidth = LocalMobileGlassFillWidth.current) {
     Surface(onClick = open, modifier = Modifier.fillMaxSize().onFocusChanged { focused = it.isFocused }
-        .semantics { contentDescription = "Profile: $profile" },
+        .semantics { contentDescription = "Profile: $viewerName" },
         shape = RoundedCornerShape(10.dp), color = Color.Transparent) {
         Row(Modifier.padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
-            Box(Modifier.size(40.dp).background(Color(0xFFE50925), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                Text(profile.firstOrNull()?.uppercase() ?: "N", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Box(Modifier.size(40.dp).background(viewer?.let { Color(it.color) } ?: Color(0xFFE50925), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                Text(viewerAvatar, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

@@ -124,7 +124,26 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile?) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit, openOfflineDownloads: () -> Unit,
-    sportsAvailable: Boolean = com.nikhil.niktv.data.RemoteCredentials.configured(LocalContext.current)) {
+    sportsAvailable: Boolean = true,
+    openUserProfiles: () -> Unit = {}) {
+    var requestedPortalType by remember { mutableStateOf(PortalType.STALKER) }
+    val profileContext = LocalContext.current
+    val deviceIdentity = remember(profileContext) { cast4kLegacyDeviceIdentity(profileContext) }
+    val configuredValues = com.nikhil.niktv.data.RemoteCredentials.values
+    val selectedUser = LocalSelectedUserProfile.current
+    fun configuredPortal(type: PortalType): PortalProfile? {
+        val values = configuredValues
+        return when (type) {
+            PortalType.STALKER -> values["NIKTV_DEFAULT_PORTAL_URL"].orEmpty().takeIf { it.isNotBlank() }?.let { url ->
+                PortalProfile("Stalker", url, values["NIKTV_DEFAULT_MAC_ADDRESS"].orEmpty().ifBlank { deviceIdentity.macAddress },
+                    values["NIKTV_DEFAULT_SERIAL_NUMBER"].orEmpty().ifBlank { deviceIdentity.serialNumber }, PortalType.STALKER)
+            }
+            PortalType.XTREAM -> values["NIKTV_XTREAM_PORTAL_URL"].orEmpty().takeIf { it.isNotBlank() && !values["NIKTV_XTREAM_USERNAME"].isNullOrBlank() && !values["NIKTV_XTREAM_PASSWORD"].isNullOrBlank() }?.let { url ->
+                PortalProfile("Xtream", url, "", portalType = PortalType.XTREAM,
+                    username = values["NIKTV_XTREAM_USERNAME"].orEmpty(), password = values["NIKTV_XTREAM_PASSWORD"].orEmpty())
+            }
+        }
+    }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(importBackup)
     }
@@ -201,7 +220,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             )
 
             Text(
-                "Who's watching?",
+                "Portals",
                 style = if (compactChooser) {
                     MaterialTheme.typography.headlineMedium
                 } else {
@@ -212,7 +231,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             )
 
             Text(
-                if (profiles.isEmpty()) "Add an IPTV profile to start watching" else "Choose an IPTV profile",
+                selectedUser?.let { "${it.name} · Choose a content connection or destination" } ?: "Choose a content connection or destination",
                 color = Color(0xFF9B9FA8),
                 style = if (compactChooser) {
                     MaterialTheme.typography.bodySmall
@@ -223,7 +242,8 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
 
             BoxWithConstraints(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
                 val gap = if (compactChooser) 12.dp else 24.dp
-                val tileCount = profiles.size + if (sportsAvailable) 5 else 4
+                val missingPortalTypes = PortalType.entries.filter { type -> profiles.none { it.portalType == type } }
+                val tileCount = profiles.size + missingPortalTypes.size + if (sportsAvailable) 6 else 5
                 val capacity = ((maxWidth + gap) / ((if (compactChooser) 148.dp else 180.dp) + gap)).toInt().coerceIn(1, 5)
                 val rowCount = (tileCount + capacity - 1) / capacity
                 val columns = (tileCount + rowCount - 1) / rowCount
@@ -244,8 +264,8 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                         saved?.cacheKey() == profileKey
 
                     ProfileChooserTile(
-                        title = profile.name,
-                        subtitle = profile.portalType.displayName(),
+                        title = if (profile.portalType == PortalType.STALKER) "Stalker" else "Xtream",
+                        subtitle = profile.name.takeUnless { it.equals("WIO", true) || it.equals("Nikhil", true) } ?: "Content connection",
                         icon = if (profile.portalType == PortalType.STALKER) {
                             Icons.Default.Tv
                         } else {
@@ -270,6 +290,15 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     }
                 }
 
+                missingPortalTypes.forEach { type -> ProfileChooserTile(
+                    title = if (type == PortalType.STALKER) "Stalker" else "Xtream",
+                    subtitle = if (configuredPortal(type) != null) "Content connection" else "Configure portal",
+                    icon = if (type == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key,
+                    tileWidth = chooserTileWidth, portraitCardHeight = portraitCardHeight, compact = compactChooser,
+                    modifier = if (preferredProfileKey == null && type == missingPortalTypes.firstOrNull()) Modifier.focusRequester(preferredRequester) else Modifier,
+                    onClick = { configuredPortal(type)?.let(connect) ?: run { requestedPortalType = type; addProfile() } }
+                ) }
+
                 if (sportsAvailable) ProfileChooserTile(
                     title = "Sports",
                     subtitle = "Live events & stream choices",
@@ -277,7 +306,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     tileWidth = chooserTileWidth,
                     portraitCardHeight = portraitCardHeight,
                     compact = compactChooser,
-                    modifier = if (preferredProfileKey == null) Modifier.focusRequester(preferredRequester) else Modifier
+                    modifier = Modifier
                 ) {
                     chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.sports.SportsActivity::class.java))
                 }
@@ -289,13 +318,13 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     tileWidth = chooserTileWidth,
                         portraitCardHeight = portraitCardHeight,
                         compact = compactChooser,
-                    modifier = if (preferredProfileKey == null && !sportsAvailable) Modifier.focusRequester(preferredRequester) else Modifier
+                    modifier = Modifier
                 ) { openOfflineDownloads() }
 
                 ProfileChooserTile(
-                    title = "Settings",
-                    subtitle = "Playback, display & orientation",
-                    icon = Icons.Default.Settings,
+                    title = "GitHub account",
+                    subtitle = "Token, sync & Settings",
+                    icon = Icons.Default.ManageAccounts,
                     tileWidth = chooserTileWidth,
                         portraitCardHeight = portraitCardHeight,
                         compact = compactChooser
@@ -304,13 +333,19 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                 }
 
                 ProfileChooserTile(
-                    title = "Add profile",
-                    subtitle = "New connection",
+                    title = "Configure portal",
+                    subtitle = "Add a content connection",
                     icon = Icons.Default.Add,
                     tileWidth = chooserTileWidth,
                         portraitCardHeight = portraitCardHeight,
                         compact = compactChooser,
                     onClick = addProfile
+                )
+
+                ProfileChooserTile(
+                    title = "User profiles", subtitle = "Choose who's watching", icon = Icons.Default.People,
+                    tileWidth = chooserTileWidth, portraitCardHeight = portraitCardHeight, compact = compactChooser,
+                    onClick = openUserProfiles
                 )
 
                 ProfileChooserTile(
@@ -356,7 +391,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
     var url by remember(saved, editorOpen) { mutableStateOf(initial.portalUrl) }
     var mac by remember(saved, editorOpen) { mutableStateOf(initial.macAddress) }
     var serial by remember(saved, editorOpen) { mutableStateOf(initial.serialNumber) }
-    var portalType by remember(saved, editorOpen) { mutableStateOf(saved?.portalType ?: PortalType.STALKER) }
+    var portalType by remember(saved, editorOpen) { mutableStateOf(saved?.portalType ?: requestedPortalType) }
     var username by remember(saved, editorOpen) { mutableStateOf(initial.username) }
     var password by remember(saved, editorOpen) { mutableStateOf(initial.password) }
     var advanced by remember(saved, editorOpen) { mutableStateOf(initial.serialNumber.isNotBlank()) }
@@ -373,14 +408,14 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
         Card(Modifier.widthIn(max = 520.dp).fillMaxHeight(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = cancelEditor) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to profiles") }
-                    Column { Text(if (saved == null) "Add profile" else "Edit ${saved.name}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Credentials stay local to this profile", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    IconButton(onClick = cancelEditor) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to portals") }
+                    Column { Text(if (saved == null) "Configure portal" else "Edit portal", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Portal credentials stay local to this device", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     SegmentedButton(portalType == PortalType.STALKER, { useDefaults(PortalType.STALKER) }, uniformSegmentShape(0, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(0, 2))) { Text("Stalker / MAG") }
                     SegmentedButton(portalType == PortalType.XTREAM, { useDefaults(PortalType.XTREAM) }, uniformSegmentShape(1, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(1, 2))) { Text("Xtream") }
                 }
-                SettingsTextEditRow("Profile name", name, { name = it }, "Name shown in the profile chooser.")
+                SettingsTextEditRow("Portal name", name, { name = it }, "An optional label for this content connection.")
                 SettingsTextEditRow("Portal URL", url, { url = it }, "The provider portal address.", placeholder = "https://provider.example")
                 if (portalType == PortalType.XTREAM) {
                     SettingsTextEditRow("Username", username, { username = it }, "The username supplied by your provider.")
@@ -401,7 +436,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                 }
                 val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NikTvPrimaryActionButton(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) { Text(if (saved == null) "Add profile" else "Save profile") }
+                    NikTvPrimaryActionButton(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim().ifBlank { if (portalType == PortalType.STALKER) "Stalker" else "Xtream" }, url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) { Text(if (saved == null) "Connect portal" else "Save portal") }
                     if (saved == null) NikTvSecondaryActionButton(onClick = { keyboard?.hide(); cancelEditor() }, modifier = Modifier.weight(1f)) { Text("Cancel") }
                 }
                 NikTvSecondaryActionButton(
@@ -570,7 +605,7 @@ internal fun ProfileChooserTile(
                     ) {
                         Icon(
                             Icons.Default.Check,
-                            contentDescription = "Last used profile",
+                            contentDescription = "Last used portal",
                             modifier = Modifier.size(
                                 if (compact) 14.dp else 15.dp
                             ),

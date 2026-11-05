@@ -30,6 +30,7 @@ class ProviderDiscoveryHeroDeviceTest {
     private var activeVm: ProviderDiscoveryViewModel? = null
     private var activeHost: PlaybackFixtureHostActivity? = null
     private fun node(label: String): AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 33) i.uiAutomation.clearCache()
         fun find(n: AccessibilityNodeInfo): AccessibilityNodeInfo? {
             if (n.contentDescription?.toString() == label || n.text?.toString() == label) return n
             for (index in 0 until n.childCount) n.getChild(index)?.let { find(it)?.let { found -> return found } }
@@ -56,20 +57,50 @@ class ProviderDiscoveryHeroDeviceTest {
         while (!target.isClickable && target.parent != null) target = target.parent
         assertTrue("Action $label accepts touch/accessibility click", target.performAction(AccessibilityNodeInfo.ACTION_CLICK))
     }
+    private fun selectFixtureTitle(items: List<MediaItem>) {
+        // The production fallback pool is deliberately shuffled. Choose the known fixture
+        // title through its real carousel before testing that title's actions and resume.
+        await("A cached fixture title is displayed") { items.any { node(it.title) != null } }
+        if (node(items.first().title) == null) click("Next featured title")
+        await("Requested fixture title is selected") { node(items.first().title) != null }
+    }
     @Test fun favoritesAndOriginalProviderActionsUpdateWithoutAFeedArrival() = fixture { host, vm, presentation, items, plays, infos ->
         await("First cached title") { node(items[0].title) != null }
+        val configuration = host.resources.configuration
+        val portraitPhone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
+            host.isTvLikeDevice(configuration)) && configuration.screenHeightDp >= configuration.screenWidthDp
+        val addLabel = if (portraitPhone) "Add to My List" else "My List"
+        val removeLabel = if (portraitPhone) "Remove from My List" else "In My List"
         val pages = vm.state.value.pages
-        click("My List")
-        await("Favorite icon updates immediately") { node("In My List") != null }
+        click(addLabel)
+        await("Favorite icon updates immediately") { node(removeLabel) != null }
         assertEquals(setOf(items[0].id), presentation.value.favoriteIds)
         assertSame("Favorite does not need a provider feed emission", pages, vm.state.value.pages)
-        click("In My List"); await("Favorite removal updates immediately") { node("My List") != null }
+        click(removeLabel); await("Favorite removal updates immediately") { node(addLabel) != null }
         click("Play"); click("Info")
         assertEquals(listOf(items[0]), plays); assertEquals(listOf(items[0]), infos)
         click("Next featured title"); await("Manual paging selects next provider identity") { node(items[1].title) != null }
         click("Play"); assertEquals(items[1], plays.last())
         assertFalse(plays.any { it.id.startsWith("tmdb-") })
     }
+    @Test fun seriesHeaderKeepsProviderActionsAndOnlyLabelsValidIptvProgressAsResume() = fixture(CatalogType.SERIES) { _, vm, presentation, items, plays, infos ->
+        await("First cached series title") { node(items[0].title) != null }
+        val profile = vm.state.value.profile
+        val episode = MediaItem("provider-episode", "Saved episode", null, "fixture://episode", seasonNumber = 2, episodeNumber = 9)
+        val recent = RecentItem(FavoriteKind.SERIES, items[0], lastPlayed = episode, profileKey = profile)
+        val progress = PlaybackProgress(requireNotNull(discoveryRecentProgressPrefix(recent)) + "fixture", 120_000, 1_200_000)
+        val lookup = DiscoveryProgressLookup.build(profile, listOf(recent), listOf(progress))
+        i.runOnMainSync { presentation.value = presentation.value.copy(progress = lookup, seriesRecents = listOf(recent)) }
+        await("Provider series offers valid Resume") { node("Resume") != null }
+        click("Resume"); click("Info")
+        assertSame(items[0], plays.single()); assertSame(items[0], infos.single())
+        i.runOnMainSync { presentation.value = presentation.value.copy(progress = null, seriesRecents = emptyList()) }
+        await("Unknown progress does not offer Resume") { node("Play") != null }
+        click("Next featured title"); await("Second series keeps provider identity") { node(items[1].title) != null }
+        click("Play"); assertSame(items[1], plays.last())
+        assertFalse(plays.any { it.id.startsWith("tmdb-") })
+    }
+
     @Test fun backgroundAndFocusedStatesPauseRotationWithoutNewFeedData() = fixture { _, _, presentation, items, _, _ ->
         await("First cached title") { node(items[0].title) != null }
         i.runOnMainSync { presentation.value = presentation.value.copy(active = false, mayRotate = true) }
@@ -118,7 +149,7 @@ class ProviderDiscoveryHeroDeviceTest {
             assertEquals(plays, infos)
         }
     }
-    private fun fixture(test: (PlaybackFixtureHostActivity, ProviderDiscoveryViewModel,
+    private fun fixture(type: CatalogType = CatalogType.MOVIES, test: (PlaybackFixtureHostActivity, ProviderDiscoveryViewModel,
         androidx.compose.runtime.MutableState<ProviderHeroPresentation>, List<MediaItem>, MutableList<MediaItem>, MutableList<MediaItem>) -> Unit) {
         check(i.targetContext.packageName.endsWith(".regression"))
         i.uiAutomation.serviceInfo = i.uiAutomation.serviceInfo.apply {
@@ -129,9 +160,10 @@ class ProviderDiscoveryHeroDeviceTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
         activeHost = host
         val profile = PortalProfile("Local fixture", "https://example.invalid", "fixture")
-        val category = Category("local", "Local cached movies", CatalogType.MOVIES)
-        val items = listOf(MediaItem("provider-one", "First cached fixture movie", null, "fixture://one"),
-            MediaItem("provider-two", "Second cached fixture movie", null, "fixture://two"))
+        val label = if (type == CatalogType.SERIES) "series" else "movie"
+        val category = Category("local", "Local cached $label", type)
+        val items = listOf(MediaItem("provider-one", "First cached fixture $label", null, "fixture://one"),
+            MediaItem("provider-two", "Second cached fixture $label", null, "fixture://two"))
         var reads = 0; var requests = 0
         val source = object : ProviderDiscoverySource {
             override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
@@ -154,7 +186,7 @@ class ProviderDiscoveryHeroDeviceTest {
                 val configuration = LocalConfiguration.current
                 val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
                     LocalContext.current.isTvLikeDevice(configuration))
-                ProviderDiscoveryHero(profile.cacheKey(), CatalogType.MOVIES, listOf(category), vm,
+                ProviderDiscoveryHero(profile.cacheKey(), type, listOf(category), vm,
                     landscape = !phone, phone = phone,
                     portraitPhone = phone && configuration.screenHeightDp >= configuration.screenWidthDp,
                     homeFrame = !phone, reduceMotion = false,
@@ -181,10 +213,11 @@ class ProviderDiscoveryHeroDeviceTest {
         host.application.registerActivityLifecycleCallbacks(callbacks)
         try {
             i.runOnMainSync {
-                vm.bind(PortalSession(profile, "", "https://example.invalid", "", "", ""), mapOf(CatalogType.MOVIES to listOf(category)),
-                    60_000, preview = true, initialPreviewWindow = mapOf(CatalogType.MOVIES to setOf(category.id)))
+                vm.bind(PortalSession(profile, "", "https://example.invalid", "", "", ""), mapOf(type to listOf(category)),
+                    60_000, preview = true, initialPreviewWindow = mapOf(type to setOf(category.id)))
                 mount(host)
             }
+            selectFixtureTitle(items)
             test(host, vm, presentation, items, plays, infos)
             assertEquals(1, reads); assertEquals(0, requests)
         } finally { i.runOnMainSync {

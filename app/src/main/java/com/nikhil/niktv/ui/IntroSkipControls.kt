@@ -102,10 +102,13 @@ internal class IntroSkipSettings(val target: IntroTarget?, private val store: In
 @Composable
 internal fun rememberIntroSkipSettings(media: PlayingMedia): IntroSkipSettings {
     val context = LocalContext.current.applicationContext
-    val target = remember(media.profileKey, media.catalogType, media.media.id, media.media.seasonNumber,
+    val target = remember(media.userScope, media.logicalPortalId, media.profileKey, media.catalogType, media.media.id, media.media.seasonNumber,
         media.media.episodeNumber, media.series, media.progressKey) { introTarget(media) }
     val scope = rememberCoroutineScope()
-    val store = remember(context) { IntroTimingStore { context.getSharedPreferences("player_intro_timings", Context.MODE_PRIVATE) } }
+    val store = remember(context, media.userScope) {
+        val preferences = com.nikhil.niktv.data.UserProfilePreferences.get(context, "player_intro_timings", owner = media.userScope)
+        IntroTimingStore { preferences }
+    }
     val settings = remember(target) {
         IntroSkipSettings(target, store, scope)
     }

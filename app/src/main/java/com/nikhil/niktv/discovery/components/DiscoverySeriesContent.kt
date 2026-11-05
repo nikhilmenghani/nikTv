@@ -950,7 +950,7 @@ internal fun DiscoverySeriesContent(
                         modifier = Modifier
                             .onSizeChanged { if (episode.id == filteredEpisodes.lastOrNull()?.id) lastEpisodeHeightPx = it.height }
                             .then(if (episodeListView) Modifier.fillMaxWidth() else Modifier.width(if (mobileEpisodeLayout) 170.dp else 200.dp))
-                            .focusRequester(landscapeRequesters.getOrPut(episode.id) { FocusRequester() })
+                            .focusRequester(remember(landscapeRequesters, episode.id) { landscapeRequesters.getOrPut(episode.id) { FocusRequester() } })
                             .onPreviewKeyEvent { event ->
                                 if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                     Key.DirectionUp -> if (episode.id == filteredEpisodes.firstOrNull()?.id) { requestWideFocus(SeriesDetailFocus.SORT); true } else false

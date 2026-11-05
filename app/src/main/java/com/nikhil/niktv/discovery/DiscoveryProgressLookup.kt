@@ -23,6 +23,7 @@ internal class DiscoveryProgressLookup private constructor(
             if (profile == null) return DiscoveryProgressLookup(null, emptyMap(), emptyMap(), emptyMap())
             // Prefix ranges preserve arbitrary profile/provider IDs without parsing their delimiters.
             val sorted = progress.withIndex().sortedBy { it.value.key }
+            val byKey = progress.associateBy { it.key }
             val byRecent = HashMap<RecentItem, PlaybackProgress?>()
             val byPrefix = HashMap<String, PlaybackProgress?>()
             val movies = HashMap<String, Float?>()
@@ -30,7 +31,8 @@ internal class DiscoveryProgressLookup private constructor(
             for (entry in recent) {
                 if (entry.profileKey != profile) continue
                 val prefix = discoveryRecentProgressPrefix(entry)
-                val match = if (entry.alternateTarget != null) progress.firstOrNull { it.key == prefix } else prefix?.let {
+                val providerMatch = discoveryRecentProviderProgressKey(entry)?.let(byKey::get)
+                val match = providerMatch ?: if (entry.alternateTarget != null) progress.firstOrNull { it.key == prefix } else prefix?.let {
                     if (!byPrefix.containsKey(it)) byPrefix[it] = latestPrefixProgress(sorted, it)
                     byPrefix[it]
                 }
@@ -72,6 +74,7 @@ private fun latestPrefixProgress(sorted: List<IndexedValue<PlaybackProgress>>, p
 }
 
 internal fun discoveryProgressFraction(progress: PlaybackProgress?): Float? = progress
+    ?.takeUnless { it.action == ViewingAction.MARK_UNWATCHED }
     ?.takeIf { it.durationMillis > 0 }
     ?.let { (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f) }
 

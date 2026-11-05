@@ -46,11 +46,11 @@ internal fun iptvFlagDescription(flag: IptvChannelFlag): String {
 }
 
 /** Profile-scoped local observations. Never stores provider URLs, credentials, media or player settings. */
-internal class IptvAvailabilityStore(context: Context, private val now: () -> Long = System::currentTimeMillis) {
-    internal val prefs = context.applicationContext.getSharedPreferences("iptv_channel_availability_v1", Context.MODE_PRIVATE)
+internal class IptvAvailabilityStore(private val context: Context, private val now: () -> Long = System::currentTimeMillis) {
+    internal val prefs get() = com.nikhil.niktv.data.UserProfilePreferences.get(context, "iptv_channel_availability_v1")
     private val json = Json { ignoreUnknownKeys = true }
-    private fun key(profile: String): String = MessageDigest.getInstance("SHA-256").digest(profile.toByteArray())
-        .joinToString("") { "%02x".format(it) }
+    private fun key(profile: String): String = if (com.nikhil.niktv.data.UserSyncStore.get(context).selectedScope.value != null) profile else
+        MessageDigest.getInstance("SHA-256").digest(profile.toByteArray()).joinToString("") { "%02x".format(it) }
     fun flags(profile: String): Map<String, IptvChannelFlag> = if (profile.isBlank()) emptyMap() else runCatching {
         json.decodeFromString<Map<String, IptvChannelFlag>>(prefs.getString("${key(profile)}:flags", "{}")!!)
     }.getOrDefault(emptyMap())

@@ -23,6 +23,7 @@ internal enum class UpdateChannel(val applicationId: String, val development: Bo
     companion object {
         fun forPackage(applicationId: String): UpdateChannel =
             entries.singleOrNull { it.applicationId == applicationId }
+                ?: DEVELOPMENT.takeIf { com.nikhil.niktv.BuildConfig.DEBUG && applicationId == "com.nikhil.niktv.regression" }
                 ?: error("No update channel configured for $applicationId")
     }
 }

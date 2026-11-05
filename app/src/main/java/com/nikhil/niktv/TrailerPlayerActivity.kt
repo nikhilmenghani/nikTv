@@ -84,7 +84,10 @@ class TrailerPlayerActivity : ComponentActivity() {
         })
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enterFullscreen()
-        root = FrameLayout(this).apply {
+        root = object : FrameLayout(this) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+                handlePlayerKeyEvent(event) || super.dispatchKeyEvent(event)
+        }.apply {
             setBackgroundColor(Color.BLACK)
             isFocusableInTouchMode = true
         }
@@ -319,7 +322,7 @@ class TrailerPlayerActivity : ComponentActivity() {
         failed = true; loadingProgress.visibility = View.GONE; handler.removeCallbacks(startupTimeout)
         ready = false; updateControls(); showChrome(); external.requestFocus()
     }
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    private fun handlePlayerKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
         if (revealKey == code) {
             if (event.action == KeyEvent.ACTION_UP) revealKey = null
@@ -350,7 +353,7 @@ class TrailerPlayerActivity : ComponentActivity() {
             }
             return true
         }
-        return super.dispatchKeyEvent(event)
+        return false
     }
     private inner class PlayerBridge {
         private fun update(block: () -> Unit) = runOnUiThread { if (!destroyed) block() }

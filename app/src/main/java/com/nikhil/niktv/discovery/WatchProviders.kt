@@ -7,6 +7,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
 internal val LocalOpenWatchProviders = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
+internal val WatchProviderSaver = androidx.compose.runtime.saveable.Saver<WatchProvider?, String>(
+    save = { it?.let { p -> Json.encodeToString(WatchProvider.serializer(), p) } ?: "" },
+    restore = { it.takeIf(String::isNotBlank)?.let { value -> Json.decodeFromString(WatchProvider.serializer(), value) } })
 @Serializable internal data class WatchProvider(val id: Int, val name: String, val logo: String? = null)
 @Serializable internal data class WatchRegion(val code: String, val name: String)
 @Serializable internal data class WatchProviderPage(val cards: List<DiscoveryCard>, val page: Int, val totalPages: Int)
@@ -118,7 +121,7 @@ internal class WatchProvidersModel(private val scope: CoroutineScope, private va
 
 /** Retain loaded pages across details/playback; visible UI still owns cancellation. */
 internal class WatchProvidersViewModel(app: android.app.Application) : androidx.lifecycle.AndroidViewModel(app) {
-    private val preferences = app.getSharedPreferences("watch_providers", 0)
+    private val preferences = com.nikhil.niktv.data.UserProfilePreferences.get(app, "watch_providers")
     val model = WatchProvidersModel(viewModelScope, DiscoveryRepository(app),
         preferences.getString("region", "IN") ?: "IN", initialSeries = preferences.getBoolean("series", false))
     override fun onCleared() { model.stop() }

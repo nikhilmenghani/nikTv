@@ -1115,7 +1115,7 @@ internal fun PlayerQueueOverlay(
     @Composable
     fun QueueMediaTile(index: Int, item: MediaItem) {
         val requester =
-            requesters.getOrPut(entryKey(index)) { FocusRequester() }
+            remember(requesters, entryKey(index)) { requesters.getOrPut(entryKey(index)) { FocusRequester() } }
         var focused by remember(entryKey(index)) { mutableStateOf(false) }
         val current = item.id == playingId
 
@@ -1865,8 +1865,8 @@ internal fun PlayerPictureModeEditor(
                             mutableStateOf(false)
                         }
                         val profileRequester =
-                            profileRequesters.getOrPut(profile.id) {
-                                FocusRequester()
+                            remember(profileRequesters, profile.id) {
+                                profileRequesters.getOrPut(profile.id) { FocusRequester() }
                             }
                         val leftRequester =
                             profiles.getOrNull(index - 1)
@@ -1986,7 +1986,7 @@ internal fun PlayerPictureModeEditor(
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
-                    PlayerEditorSlider("Brightness", brightness, -1f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester, compactMobileEditor) { brightness = it }
+                    PlayerEditorSlider("Brightness", brightness, -1f..1f, brightnessRequester, remember(profileRequesters, selected.id) { profileRequesters.getOrPut(selected.id) { FocusRequester() } }, warmthRequester, compactMobileEditor) { brightness = it }
                     PlayerEditorSlider("Warmth", warmth, 0f..1f, warmthRequester, brightnessRequester, coolnessRequester, compactMobileEditor) { warmth = it }
                     PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester, compactMobileEditor) { coolness = it }
                     PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester, compactMobileEditor) { tint = it }

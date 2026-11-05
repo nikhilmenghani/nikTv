@@ -10,7 +10,7 @@ import com.nikhil.niktv.ui.isTvLikeDevice
 /** Device-local presentation preference; never changes feeds or provider lookups. */
 internal object DiscoveryArtworkPreference {
     private const val KEY = "suggested_artwork"
-    private fun prefs(context: Context) = context.getSharedPreferences("discovery_experience", Context.MODE_PRIVATE)
+    private fun prefs(context: Context) = com.nikhil.niktv.data.UserProfilePreferences.get(context, "discovery_experience")
     fun enabled(context: Context, television: Boolean) = prefs(context).getBoolean(KEY, !television)
     fun setEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY, enabled).apply()
     fun observe(context: Context, changed: () -> Unit): () -> Unit {

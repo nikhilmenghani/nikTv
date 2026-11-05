@@ -6,6 +6,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import com.nikhil.niktv.data.UserSyncStore
 import androidx.compose.material3.MaterialTheme
 import com.nikhil.niktv.ui.NikColors
 
@@ -47,6 +50,11 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val users = UserSyncStore.get(applicationContext)
+        val owner = users.selectedScope.value
+        if (owner != null) lifecycleScope.launch {
+            users.selectedScope.collect { if (it != owner) finish() }
+        }
         showSportsContent()
     }
 

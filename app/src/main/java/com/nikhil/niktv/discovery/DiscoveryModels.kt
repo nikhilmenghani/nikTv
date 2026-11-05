@@ -142,6 +142,9 @@ internal fun discoveryRecentProgressPrefix(recent: RecentItem): String? {
 }
 
 internal fun discoveryRecentProgress(recent: RecentItem, progress: List<PlaybackProgress>): PlaybackProgress? {
+    discoveryRecentProviderProgressKey(recent)?.let { current ->
+        progress.firstOrNull { it.key == current }?.let { return it }
+    }
     val prefix = discoveryRecentProgressPrefix(recent) ?: return null
     if (recent.alternateTarget != null) return progress.firstOrNull { it.key == prefix }
     var latest: PlaybackProgress? = null
@@ -149,6 +152,14 @@ internal fun discoveryRecentProgress(recent: RecentItem, progress: List<Playback
         if (entry.key.startsWith(prefix) && (latest == null || entry.updatedAtMillis > latest.updatedAtMillis)) latest = entry
     }
     return latest
+}
+
+internal fun discoveryRecentProviderProgressKey(recent: RecentItem): String? {
+    if (recent.alternateTarget != null) return null
+    val type = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+    val item = if (type == CatalogType.SERIES) recent.lastPlayed ?: return null else recent.media
+    return com.nikhil.niktv.model.providerProgressKey(recent.profileKey, item, type,
+        recent.media.takeIf { type == CatalogType.SERIES })
 }
 
 internal fun discoveryFeedRequest(section: TmdbHomeSection) = com.nikhil.niktv.model.tmdbRegionalRequest(section, currentDiscoveryDate())

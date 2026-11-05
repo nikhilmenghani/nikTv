@@ -139,6 +139,7 @@ enum class InstallHandoff {
 
 object AppUpdates {
     private val distribution = UpdateChannel.forPackage(BuildConfig.APPLICATION_ID)
+    private val isolatedRegression = BuildConfig.DEBUG && BuildConfig.APPLICATION_ID == "com.nikhil.niktv.regression"
     private const val PERIODIC = "niktv-periodic-update"
     private const val STARTUP = "niktv-startup-update"
     private const val PREFS = "app_update_download"
@@ -188,9 +189,23 @@ object AppUpdates {
     @Synchronized
     fun initialize(context: Context) {
         if (initialized) return
-        check(context.packageName == distribution.applicationId) { "Update package identity mismatch" }
+        check(context.packageName == BuildConfig.APPLICATION_ID &&
+            (context.packageName == distribution.applicationId || isolatedRegression)) { "Update package identity mismatch" }
         appContext = context.applicationContext
         initialized = true
+        if (isolatedRegression) {
+            // Regression APKs share neither update/install nor public-download cleanup
+            // behavior with the user's installed development and release applications.
+            mutableUpdateEnforcementEnabled.value = false
+            mutableStartupUpdateCheckEnabled.value = false
+            mutablePendingUpdate.value = null
+            mutableDownloadState.value = UpdateDownloadState.Idle
+            runCatching {
+                WorkManager.getInstance(appContext).cancelUniqueWork(STARTUP)
+                WorkManager.getInstance(appContext).cancelUniqueWork(PERIODIC)
+            }
+            return
+        }
         mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !distribution.development)
         mutableStartupUpdateCheckEnabled.value =
             preferences().getBoolean(PREF_STARTUP_CHECK, true)
@@ -227,6 +242,7 @@ object AppUpdates {
 
     fun refreshPreferences() {
         if (!initialized) return
+        if (isolatedRegression) return
         mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !distribution.development)
         mutableStartupUpdateCheckEnabled.value = preferences().getBoolean(PREF_STARTUP_CHECK, true)
         mutableUpdatePackage.value = runCatching {
@@ -235,12 +251,14 @@ object AppUpdates {
     }
 
     fun setUpdateEnforcementEnabled(enabled: Boolean) {
+        if (isolatedRegression) return
         check(initialized) { "AppUpdates has not been initialized" }
         preferences().edit().putBoolean(PREF_ENFORCE_UPDATES, enabled).apply()
         mutableUpdateEnforcementEnabled.value = enabled
     }
 
     fun setStartupUpdateCheckEnabled(enabled: Boolean) {
+        if (isolatedRegression) return
         check(initialized) { "AppUpdates has not been initialized" }
         preferences().edit().putBoolean(PREF_STARTUP_CHECK, enabled).apply()
         mutableStartupUpdateCheckEnabled.value = enabled
@@ -250,6 +268,7 @@ object AppUpdates {
     }
 
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
+        if (isolatedRegression) return@withContext null
         val versionFileName = if (distribution.development) "dev.txt" else "release.txt"
         val versionFileUrl = if (distribution.development) DEV_VERSION_URL else RELEASE_VERSION_URL
 
@@ -326,6 +345,7 @@ object AppUpdates {
 
     @Synchronized
     fun download(context: Context, update: UpdateInfo): Long {
+        check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
         require(update.version.isNotBlank()) { "Update version is missing" }
         require(update.downloadUrl.startsWith("https://")) { "Update download URL is invalid" }
@@ -400,6 +420,7 @@ object AppUpdates {
 
     /** Starts one user-visible update flow and hands the APK to Android's installer when ready. */
     fun downloadAndInstall(context: Context, update: UpdateInfo): Long {
+        check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
         preferences().edit().putBoolean(PREF_INSTALL_AFTER_DOWNLOAD, true).apply()
         val id = download(context, update)
@@ -426,14 +447,16 @@ object AppUpdates {
             ) == PackageManager.PERMISSION_GRANTED
 
     fun canStartDownload(update: UpdateInfo): Boolean =
-        currentDownloadIfUsable()?.let { isNewer(update.version, it.version) } != false
+        !isolatedRegression && currentDownloadIfUsable()?.let { isNewer(update.version, it.version) } != false
 
     fun deferDownload(context: Context, update: UpdateInfo) {
+        check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
         persistPendingUpdate(update)
     }
 
     fun deferDownloadAndInstall(context: Context, update: UpdateInfo) {
+        check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
         preferences().edit().putBoolean(PREF_INSTALL_AFTER_DOWNLOAD, true).apply()
         persistPendingUpdate(update)
@@ -444,6 +467,7 @@ object AppUpdates {
     }
 
     fun install(context: Context): InstallHandoff {
+        check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
         val state = mutableDownloadState.value
         val candidate = when (state) {
@@ -556,6 +580,7 @@ object AppUpdates {
 
     suspend fun obsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
         withContext(Dispatchers.IO) {
+            if (isolatedRegression) return@withContext DownloadedApkCleanup(0, 0L)
             ensureInitialized(context)
             val files = obsoleteApkFiles()
             DownloadedApkCleanup(files.size, files.sumOf(File::length))
@@ -563,6 +588,7 @@ object AppUpdates {
 
     suspend fun deleteObsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
         withContext(Dispatchers.IO) {
+            if (isolatedRegression) return@withContext DownloadedApkCleanup(0, 0L)
             ensureInitialized(context)
             val files = obsoleteApkFiles()
             var deletedCount = 0
@@ -896,7 +922,7 @@ object AppUpdates {
         "NikTV-${expectedReleaseTag(version)}-${updatePackage.assetSuffix}.apk"
 
     private fun isUpdateForCurrentChannel(update: UpdateInfo): Boolean =
-        distribution.accepts(update.version, update.downloadUrl)
+        !isolatedRegression && distribution.accepts(update.version, update.downloadUrl)
 
     @Suppress("DEPRECATION")
     private fun validateDownloadedApk(
