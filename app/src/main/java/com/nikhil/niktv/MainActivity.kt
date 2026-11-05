@@ -91,12 +91,11 @@ class MainActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPic
         super.onStart()
         // The account gate performs initial setup/launch sync. This handles
         // returning from the background without duplicating the first request.
-        if (startedOnce) lifecycleScope.launch { AccountSyncManager.get(applicationContext).launchSync() }
+        if (startedOnce) AccountSyncManager.get(applicationContext).requestLaunchSync()
         startedOnce = true
     }
 
     override fun onStop() {
-        AccountSyncManager.get(applicationContext).requestSync("background", immediate = true)
         super.onStop()
     }
 

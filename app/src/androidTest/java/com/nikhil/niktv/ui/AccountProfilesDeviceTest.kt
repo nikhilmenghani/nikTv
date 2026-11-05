@@ -29,7 +29,9 @@ class AccountProfilesDeviceTest {
             return null
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
-        return walk(instrumentation.uiAutomation.rootInActiveWindow)
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        if (root?.packageName?.toString() != instrumentation.targetContext.packageName) return null
+        return walk(root)
     }
     private fun await(label: String, check: () -> Boolean) {
         val until = SystemClock.uptimeMillis() + 6_000
@@ -135,11 +137,27 @@ class AccountProfilesDeviceTest {
                 uiMode = (uiMode and Configuration.UI_MODE_TYPE_MASK.inv()) or Configuration.UI_MODE_TYPE_TELEVISION
             }
             CompositionLocalProvider(LocalConfiguration provides configuration) {
-                UserProfilesScreen(people, AccountSyncState(initialized = true), null, { selected.set(it.id) }, { _, _, _, _, _ -> }, {}, {}, {})
+                UserProfilesScreen(people, AccountSyncState(initialized = true, message = "Up to date"), null, { selected.set(it.id) }, { _, _, _, _, _ -> }, {}, {}, {}, selectedProfileId = people.first().id)
             }
         }) {
             await("People chooser is visible") { find("Who's watching?") != null }
-            assertNotNull(find("Family")); assertNotNull(find("Kids"))
+            assertNotNull(find("Watch as Family")); assertNotNull(find("Watch as Kids"))
+            fun tileNodes(label: String): List<AccessibilityNodeInfo> {
+                val nodes = mutableListOf<AccessibilityNodeInfo>()
+                var node = find(label)
+                repeat(5) { node?.let(nodes::add); node = node?.parent }
+                return nodes
+            }
+            fun announcesCurrentProfile() = tileNodes("Watch as Family").any {
+                it.stateDescription?.toString() == "Current profile"
+            }
+            val until = SystemClock.uptimeMillis() + 6_000
+            while (!announcesCurrentProfile() && SystemClock.uptimeMillis() < until) Thread.sleep(30)
+            assertTrue("The supplied permanent person identity is announced. Native tile/parents: " +
+                tileNodes("Watch as Family").joinToString { "package=${it.packageName}, text=${it.text}, description=${it.contentDescription}, state=${it.stateDescription}, selected=${it.isSelected}, checked=${it.isChecked}, extras=${it.extras}" },
+                announcesCurrentProfile())
+            val add = find("Add user profile")!!
+            assertNull("Add is never announced as a selected person", add.stateDescription)
             assertNull("No claims of active Kids restrictions", find("Restricted content"))
             assertNull("Portal navigation waits for a person", find("Stalker"))
             fun focused(text: String): Boolean {

@@ -102,7 +102,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     val measurer = rememberTextMeasurer()
     val style = LocalTextStyle.current.merge(TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
     fun textWidth(text: String) = with(density) { measurer.measure(text, style, maxLines = 1).size.width.toDp() }
-    val naturalProfile = textWidth("00:00 p.m.") + 68.dp
+    val naturalProfile = textWidth("00:00 p.m.") + textWidth("Portals") + 110.dp
     val height = maxOf(56.dp, (24f * density.fontScale + 24f).dp)
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
         .discoveryHeaderFocusEntry(tabRequester)) {
@@ -154,8 +154,9 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
 }
 
 @Composable
-private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, open: () -> Unit) {
+private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, openPortals: () -> Unit) {
     val context = LocalContext.current
+    val openUserProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
     val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
     val viewerName = viewer?.name ?: profile
     val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
@@ -170,17 +171,18 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
     DiscoveryGlassPanel(modifier, backdrop, backdropBounds, focused,
         fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
         fillWidth = LocalMobileGlassFillWidth.current) {
-    Surface(onClick = open, modifier = Modifier.fillMaxSize().onFocusChanged { focused = it.isFocused }
-        .semantics { contentDescription = "Profile: $viewerName" },
-        shape = RoundedCornerShape(10.dp), color = Color.Transparent) {
-        Row(Modifier.padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxSize().padding(5.dp).onFocusChanged { focused = it.hasFocus },
+            horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
-            Box(Modifier.size(40.dp).background(viewer?.let { Color(it.color) } ?: Color(0xFFE50925), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                Text(viewerAvatar, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
+                DiscoveryAction("Portals", Icons.Default.Dns, horizontalPadding = 8.dp,
+                    modifier = Modifier.semantics { contentDescription = "Portals" }, onClick = openPortals)
+                DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
+                    containerColor = viewer?.let { Color(it.color) } ?: Color(0xFFE50925), horizontalPadding = 0.dp,
+                    modifier = Modifier.size(40.dp).semantics { contentDescription = "Switch profile: $viewerName" },
+                    onClick = openUserProfiles)
             }
         }
-    }
     }
 }
 

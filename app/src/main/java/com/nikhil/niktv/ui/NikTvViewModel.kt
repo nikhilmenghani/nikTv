@@ -505,6 +505,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = authenticateProfileForOpening(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         store.save(session)
+        rememberPortalForViewer(session.profile)
         _state.update {
             it.copy(
                 session = session,
@@ -6509,10 +6510,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         readLatestPosition: (() -> Long)? = null) {
         val userScope = store.captureScope()
         if (!latestPlaybackRequest.isCurrent(requestId) || picker.profileKey != alternateProfile()) return
-        if (userScope != null && _state.value.nowPlaying == null) {
-            withTimeoutOrNull(8_000L) { runCatching { accountSync.syncNow() } }
-            if (userScope != store.captureScope() || !latestPlaybackRequest.isCurrent(requestId)) return
-        }
         val target = picker.target
         val beforePreparation = _state.value.nowPlaying
         val lease = try { alternatePlaybackPreparation(stream) }
@@ -6777,12 +6774,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         queueFilter: PlaybackQueueFilter? = null
     ) = latestPlaybackRequest.run(requestId) {
         val userScope = store.captureScope()
-        // Resume is refreshed before a new session starts; an unreachable server
-        // leaves the durable local resume position available.
-        if (userScope != null && !forceFreshUrl) {
-            withTimeoutOrNull(8_000L) { runCatching { accountSync.syncNow() } }
-            if (userScope != store.captureScope() || !latestPlaybackRequest.isCurrent(requestId)) return@run
-        }
         if (navigationCursor.pendingRequest != requestId) navigationCursor.select(requestId,
             _state.value.nowPlaying?.let(::playbackNavigationQueue).orEmpty().map { it.id }, item.id,
             playbackNavigationIndex)
@@ -7988,7 +7979,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             ?: throw IllegalStateException("${profile.name} did not finish authentication within 20 seconds. Check the provider connection and try again.")
 
     private suspend fun localFirstSession(profile: PortalProfile): PortalSession {
-        val cached = if (com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) store.sessionFor(profile) else null
+        val cached = store.sessionFor(profile)
         if (cached != null) {
             launchForViewer launch@ {
                 try {
@@ -8022,6 +8013,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // Reuse a saved session for local browsing while renewing it in the background.
         updateProfileLoad(0.08f, "Reading saved session for ${profile.name}…")
         val session = localFirstSession(profile)
+        rememberPortalForViewer(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             modernIptvCategory = null, modernTmdbSection = null, selectedCategory = null, playbackReturnFocusId = null,
@@ -8066,7 +8058,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
+    private suspend fun rememberPortalForViewer(profile: PortalProfile) {
+        store.captureScope()?.let { owner ->
+            userSyncStore.rememberDestination(owner, com.nikhil.niktv.data.ViewerDestination(
+                com.nikhil.niktv.data.ViewerDestinationKind.PORTAL, profile.cacheKey()))
+        }
+    }
+
     fun openOfflineDownloads() {
+        val owner = store.captureScope()
+        if (owner != null) viewModelScope.launch(Dispatchers.IO) {
+            userSyncStore.rememberDestination(owner, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.OFFLINE))
+        }
         searchSeriesReturn = null
         cancelPendingPlayback()
         _state.update {

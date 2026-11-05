@@ -2,6 +2,7 @@ package com.nikhil.niktv.ui
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -11,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.data.AccountSyncState
 import com.nikhil.niktv.data.UserProfile
@@ -56,6 +58,13 @@ class UserProfileManagementDeviceTest {
         }
         fail("$label must be reachable")
     }
+    private fun manage(label: String) {
+        await("Profile tile is available") { find(label) != null }
+        var node = find(label)
+        while (node != null && !node.isLongClickable) node = node.parent
+        assertTrue("Holding a profile opens its management menu", node?.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) == true)
+        await("Profile menu is available") { find("Manage profile") != null }
+    }
     private fun fixture(content: @Composable () -> Unit, verify: () -> Unit) {
         val context = i.targetContext
         check(context.packageName.endsWith(".regression"))
@@ -82,8 +91,10 @@ class UserProfileManagementDeviceTest {
                 assertNull("Create must not edit or copy another person", existing)
                 UserProfile(UUID.randomUUID().toString(), name, color, avatar, type).also { created.set(it); people.add(it) }
             }, {}, {}, {}, onImportLegacy = { imports.incrementAndGet() }) }) {
-            await("Existing profile is available") { find("Existing viewer") != null }
-            click("+  Add user profile")
+            await("Existing profile is available") { find("Watch as Existing viewer") != null }
+            val add = find("Add user profile")!!
+            assertFalse("Add is not a selected person", add.isSelected || add.isChecked)
+            click("Add user profile")
             await("Creation form explains the empty starting state") { find("Start with an empty viewing space. Configure portals after creating it.") != null }
             val input = roots().firstNotNullOfOrNull { root -> walk(root) { it.isEditable } }
             assertNotNull(input)
@@ -112,8 +123,10 @@ class UserProfileManagementDeviceTest {
         val deleted = AtomicReference<String>()
         fixture({ UserProfilesScreen(people, AccountSyncState(initialized = true), null, {}, { _, _, _, _, _ -> },
             { deleted.set(it.id); people.remove(it) }, {}, {}) }) {
-            await("Profile row is visible") { find("Existing viewer") != null }
-            click("Manage Existing viewer")
+            await("Profile tile is visible") { find("Watch as Existing viewer") != null }
+            manage("Watch as Existing viewer")
+            click("Manage profile")
+            await("Identity editor is available") { find("Save changes") != null }
             click("Delete profile")
             await("Deletion scope is explicit") { find("Delete Existing viewer across devices?") != null }
             assertNull("Opening confirmation is not deletion", deleted.get())
@@ -125,6 +138,65 @@ class UserProfileManagementDeviceTest {
             click("Delete across devices")
             await("Only the chosen profile is deleted") { deleted.get() == existing.id }
             assertTrue(people.isEmpty())
+        }
+    }
+
+    @Test fun remoteMenuEditsIdentityWithoutSelectingOrChangingUuidAndType() {
+        val existing = UserProfile(UUID.randomUUID().toString(), "Existing viewer", avatar = "K", type = UserProfileType.KIDS)
+        val selected = AtomicInteger()
+        val saved = AtomicReference<UserProfile>()
+        fixture({
+            val configuration = Configuration(LocalConfiguration.current).apply {
+                uiMode = (uiMode and Configuration.UI_MODE_TYPE_MASK.inv()) or Configuration.UI_MODE_TYPE_TELEVISION
+            }
+            CompositionLocalProvider(LocalConfiguration provides configuration) {
+                UserProfilesScreen(listOf(existing), AccountSyncState(initialized = true), null, { selected.incrementAndGet() },
+                    { original, name, type, color, avatar -> saved.set(requireNotNull(original).copy(name = name, type = type, color = color, avatar = avatar)) }, {}, {}, {}, selectedProfileId = existing.id)
+            }
+        }) {
+            i.setInTouchMode(false)
+            await("Selected tile receives initial remote focus") {
+                var node = find("Watch as Existing viewer")
+                repeat(5) { if (node?.isFocused == true) return@await true; node = node?.parent }
+                false
+            }
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_MENU)
+            await("Remote Menu exposes management") { find("Manage profile") != null }
+            assertEquals(0, selected.get())
+            click("Manage profile")
+            await("Identity editor opens") { find("Save changes") != null }
+            assertNotNull(find("Kids profile"))
+            click("Save changes")
+            await("Identity changes save to the existing UUID") { saved.get() != null }
+            assertEquals(existing.id, saved.get().id)
+            assertEquals(UserProfileType.KIDS, saved.get().type)
+            assertEquals(0, selected.get())
+            await("Returning from management restores tile focus") {
+                var node = find("Watch as Existing viewer")
+                repeat(5) { if (node?.isFocused == true) return@await true; node = node?.parent }
+                false
+            }
+            val down = SystemClock.uptimeMillis()
+            i.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            Thread.sleep(150)
+            i.uiAutomation.takeScreenshot()?.let { bitmap ->
+                i.targetContext.filesDir.resolve("user-profile-pressed-validation.png").outputStream().use {
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }; bitmap.recycle()
+            }
+            Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout().toLong())
+            i.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 1))
+            await("Holding OK opens management") { find("Manage profile") != null }
+            i.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            click("Cancel")
+            await("Cancel closes management and restores the tile before the next remote press") {
+                if (find("Manage profile") != null) return@await false
+                var node = find("Watch as Existing viewer")
+                repeat(5) { if (node?.isFocused == true) return@await true; node = node?.parent }
+                false
+            }
+            i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("A short OK after canceled hold selects on the first press") { selected.get() == 1 }
         }
     }
 }

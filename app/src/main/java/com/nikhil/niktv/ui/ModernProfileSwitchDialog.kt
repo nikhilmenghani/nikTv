@@ -14,11 +14,17 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.model.PortalProfile
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 
 /** Switching is explicit; opening or dismissing this modal leaves the active session intact. */
 @Composable
 internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: PortalProfile?,
-    close: () -> Unit, select: (PortalProfile) -> Unit, openChooser: () -> Unit = {}) {
+    close: () -> Unit, select: (PortalProfile) -> Unit, openChooser: () -> Unit = {},
+    openOffline: () -> Unit = {}, configurePortals: () -> Unit = {}) {
+    val context = LocalContext.current
+    val owner = LocalViewingOwner.current
+    val scope = rememberCoroutineScope()
     val entry = remember { FocusRequester() }
     val selected = profiles.indexOfFirst { it.cacheKey() == current?.cacheKey() }.coerceAtLeast(0)
     val closeFocus = remember { FocusRequester() }
@@ -31,12 +37,23 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                         close()
                         if (profile.cacheKey() != current?.cacheKey()) select(profile)
                     }, modifier = Modifier.fillMaxWidth().then(if (index == selected) Modifier.focusRequester(entry) else Modifier)) {
-                        Text(profile.name.trim().firstOrNull()?.uppercase() ?: "N")
+                        Text(if (profile.portalType == com.nikhil.niktv.model.PortalType.STALKER) "S" else "X")
                         Spacer(Modifier.width(12.dp))
-                        Text(profile.name, Modifier.weight(1f))
+                        Text(if (profile.portalType == com.nikhil.niktv.model.PortalType.STALKER) "Stalker" else "Xtream", Modifier.weight(1f))
                         if (profile.cacheKey() == current?.cacheKey()) Text("Current")
                     }
                 }
+                NikTvSecondaryActionButton(onClick = {
+                    scope.launch {
+                        owner?.let { captured -> com.nikhil.niktv.data.UserSyncStore.get(context).rememberDestination(captured,
+                            com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS))
+                        }
+                        close()
+                        context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Sports") }
+                NikTvSecondaryActionButton(onClick = { close(); openOffline() }, modifier = Modifier.fillMaxWidth()) { Text("Offline") }
+                NikTvTextActionButton(onClick = { close(); configurePortals() }, modifier = Modifier.fillMaxWidth()) { Text("Configure portals") }
             }
         }, confirmButton = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

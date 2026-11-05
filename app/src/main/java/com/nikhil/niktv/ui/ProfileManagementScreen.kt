@@ -157,6 +157,8 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
         // error/alert state.
         val configuration = LocalConfiguration.current
         val chooserContext = LocalContext.current
+        val destinationScope = rememberCoroutineScope()
+        val viewingOwner = LocalViewingOwner.current
         val isTv = chooserContext.isTvLikeDevice(configuration)
 
         val compactChooser = isTv || configuration.smallestScreenWidthDp < 600
@@ -308,6 +310,10 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     compact = compactChooser,
                     modifier = Modifier
                 ) {
+                    viewingOwner?.let { owner -> destinationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        com.nikhil.niktv.data.UserSyncStore.get(chooserContext).rememberDestination(owner,
+                            com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS))
+                    } }
                     chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.sports.SportsActivity::class.java))
                 }
 

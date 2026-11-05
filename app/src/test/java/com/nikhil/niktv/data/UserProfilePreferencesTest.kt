@@ -7,6 +7,13 @@ import com.nikhil.niktv.sports.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import androidx.room.withTransaction
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -31,6 +38,7 @@ class UserProfilePreferencesTest {
             context.getSharedPreferences(it, Context.MODE_PRIVATE).edit().clear().commit()
         }
         users.selectAccount("101"); users.initializeDefaults("101"); users.selectProfile(family().profileId)
+        UserProfilePreferences.warm(context, family())
         Unit
     }
 
@@ -129,5 +137,58 @@ class UserProfilePreferencesTest {
         assertEquals(listOf("two"), library.favourites().map { it.id })
         users.selectProfile(kids().profileId)
         assertTrue(SportsLibraryStore(context).favourites().isEmpty())
+    }
+
+    @Test fun cachedGettersStayImmediateWhileStorageTransactionIsBusy() = runBlocking {
+        val prefs = UserProfilePreferences.get(context, "iptv_pin_preferences")
+        prefs.edit().putString("pins", "committed").commit()
+        assertEquals("committed", prefs.getString("pins", null))
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val transaction = CoroutineScope(Dispatchers.IO).async {
+            users.withEditLock { users.db.withTransaction { entered.complete(Unit); release.await() } }
+        }
+        val executor = Executors.newSingleThreadExecutor()
+        entered.await()
+        try {
+            val reads = executor.submit(Callable {
+                repeat(10_000) {
+                    assertEquals("committed", prefs.getString("pins", null))
+                    assertTrue(prefs.contains("pins"))
+                    assertEquals("committed", prefs.all["pins"])
+                }
+                true
+            })
+            assertTrue(reads.get(2, TimeUnit.SECONDS))
+        } finally {
+            release.complete(Unit)
+            transaction.await()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test fun externalMergeRefreshesCacheBeforeReturningAndQueuedInvalidationsCannotRegressIt() = runBlocking {
+        val prefs = UserProfilePreferences.get(context, "iptv_pin_preferences")
+        prefs.edit().putString("pins", "original").commit()
+        val original = users.snapshot("101").single { it.recordId == "portable_preferences:iptv_pin_preferences|pins" }
+        val payload = Json.parseToJsonElement(original.payload).jsonObject
+        val remoteEntry = JsonObject(payload.getValue("entry").jsonObject + ("value" to JsonPrimitive("remote")))
+        val remote = original.copy(payload = JsonObject(payload + ("entry" to remoteEntry)).toString(),
+            revision = original.revision + 100, deviceId = "remote", mutationId = "remote-mutation")
+        users.merge("101", listOf(remote))
+        assertEquals("remote", prefs.getString("pins", null))
+        prefs.edit().putString("pins", "new-local").commit()
+        assertEquals("new-local", prefs.getString("pins", null))
+        delay(100L)
+        assertEquals("new-local", prefs.getString("pins", null))
+    }
+
+    @Test fun deletedProfileInvalidatesCapturedPreferenceCacheAndRejectsLateWrites() = runBlocking {
+        val prefs = UserProfilePreferences.get(context, "iptv_pin_preferences")
+        prefs.edit().putString("pins", "family").commit()
+        users.deleteProfile(family().profileId)
+        assertFalse(prefs.contains("pins"))
+        prefs.edit().putString("pins", "late-callback").commit()
+        assertFalse(prefs.contains("pins"))
     }
 }

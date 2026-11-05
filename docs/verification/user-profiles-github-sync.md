@@ -1,5 +1,93 @@
 # User profile / GitHub sync validation — 2026-11-04
 
+## Compact profile tiles and direct Home follow-up
+
+Checkpoint commit `cdf7c1f5` preserves the completed account/profile/sync work and
+restored `ac14cb11` discovery appearance. A pre-commit audit covered 110 changed files
+and found no actual Gradle development token or GitHub token-pattern matches.
+
+The follow-up replaces profile cards with compact avatar tiles, highlights the selected
+UUID, and provides touch hold, remote hold/Menu, and accessibility management routes.
+Manage profile opens a dedicated identity editor; deletion remains explicitly confirmed.
+Current profiles plus Add fit together in ordinary phone/tablet layouts. Existing hero
+artwork and fades are preserved. Root `AGENTS.md` records the existing compact NikTV
+visual conventions for subsequent UI work.
+
+Remembered person and destination are local-only, account-scoped selections. A fresh
+profile has no remembered portal. Startup validates the remembered UUID and associated
+portal before reusing a cached session for Home. Missing/deleted profiles return to
+the tile chooser; missing portals return to portal selection. Sports and Offline remain
+destinations. Home exposes distinct compact profile and portal controls.
+
+The user narrowed automatic sync to launch/foreground plus explicit manual sync.
+Home Settings includes Sync now, quiet progress, pending-local-change status, and errors.
+Ordinary viewing/preference/profile writes remain durable locally without starting
+network work. The two awaited playback-start sync operations were removed. Legacy
+periodic/playback workers are cancelled or ignored; only transient failures of an
+explicitly started sync arrange network-constrained retries.
+
+First validation pass: 60 JVM tests passed across scoped storage/preferences/dispatch,
+cached account startup, dashboard startup, sync engine, and GitHub transport. Regression
+debug and test APK builds and lint passed. Updated fixture UI checks passed **10/10 on
+tablet and 10/10 on Poco**: account/setup 5, profile management 3, and separate Home
+viewer/portal routes 2. Fixture callbacks never edited real profiles.
+
+Final performance pass: **64 JVM tests passed**, including 10,000 cached preference
+read/contains/getAll iterations while a storage transaction is deliberately blocked,
+immediate cache visibility after external merges, stale-invalidation resistance,
+deleted-profile cache invalidation, and cached screen recreation while the network
+mutex is occupied. Preference snapshots warm on IO before composing a viewer. Explicit
+local preference commit retains its durable synchronous contract; no universal frame
+timing or zero-jank claim is made.
+
+The final lint pass initially hit an internal ExperimentalDetector/Kotlin FIR analysis
+crash while UI sources were changing. Rerunning with frozen sources passed in 1m32s;
+no lint rule was disabled. The pressed/held effect now uses only the avatar's rounded
+shape, with a subtle shadow and contained tint; label backgrounds remain clear.
+Remote hold release uses event duration so cancelling management does not swallow
+the next short OK press. Add is never marked as the selected person.
+
+Integrated normal-app checks found and corrected two issues beyond isolated fixtures:
+the Home host still wired the portal callback to the people chooser, and leaving
+Settings cancelled its UI-owned manual sync coroutine. The host now uses the portal
+switcher; launch/manual requests run in the manager's IO SupervisorJob scope, capture
+the account before enqueueing, and survive navigation or activity recreation. Tests
+verify caller cancellation does not cancel queued sync and account switches reject
+stale queued requests. Retry workers still require their explicit persisted retry flag.
+
+Final frozen acceptance: **72 tests in 8 JVM suites passed**, normal debug APK built,
+and `lintDebug` passed in 1m36s with no disabled rules. This includes old-backup restore,
+cache consistency, migration/isolation, startup, merge/transport, and UI coroutine
+ownership. Fixture timing was corrected to await dialog dismissal and focused-tile
+restoration before injecting the next remote OK; creation/deletion and hold/cancel/
+first-OK cases pass on both devices. Selected tiles now expose the useful accessibility
+state description `Current profile`, independently of platform selected/checked flags.
+
+The final live Poco run restored its actual last viewer, Nikhil, directly to Stalker
+Home. Its portal modal listed only associated configured connections plus Sports and
+Offline; Configure portals showed all four Stalker/Xtream/Sports/Offline destinations
+without associating anything automatically. Home Options → Settings opened Settings
+directly. Sync now followed immediately by Back returned to Home responsively; reopening
+Settings showed Up to date with no interruption error. Compact grid and identity-editor
+screenshots were reviewed without saving or deleting real profiles.
+
+Samsung received the final debug update using install -r, preserving data. Its display
+was locked during the final visual check, so the new flow's live UI acceptance uses
+tablet and Poco. No release or push was performed.
+
+Final tablet live acceptance also passed direct Home Settings, manual sync followed by
+Back, and subsequent Up to date status. Separate avatar/portal routes and all configured
+destinations were checked. The final TV selected-profile case passed after the fixture
+filtered accessibility roots to its target package and awaited fresh semantics; an
+old foreground normal-app Family tile had been eligible for the unfiltered lookup.
+Management, held OK/cancel/first short OK, and navigation fixtures passed on both devices.
+Normal apps were left with authentication and real profiles preserved.
+
+Poco's final selected-state case also passed (2.29s). Combined final device coverage is
+10 distinct applicable account/management/header cases per device, all passing. Final
+Poco screenshots include `poco-normal-home-final.png` and
+`poco-normal-home-settings-sync-complete.png` under the local validation directory.
+
 ## Baseline and repository
 
 - Inspected `D:\AGENTS.md`, workspace/Android/repository ancestors, and repository descendants; no applicable AGENTS instructions were present.

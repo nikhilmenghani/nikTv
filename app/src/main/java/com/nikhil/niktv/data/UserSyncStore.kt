@@ -22,6 +22,9 @@ import java.util.UUID
     val type: UserProfileType = UserProfileType.GENERAL,
 )
 @Serializable data class UserScope(val accountId: String, val profileId: String)
+@Serializable enum class ViewerDestinationKind { PORTAL, SPORTS, OFFLINE }
+/** A device navigation preference. Portal cache keys never enter the sync document. */
+@Serializable data class ViewerDestination(val kind: ViewerDestinationKind, val portalKey: String = "")
 
 /** The wire record has no authentication or device configuration. Lamport revisions, then device
  * and mutation IDs, provide a total ordering even when devices disagree about wall clock time. */
@@ -81,7 +84,13 @@ class UserSyncStore private constructor(private val context: Context) {
      * must never wait for a lock whose holder needs a UI continuation to release it. */
     internal suspend fun <T> withEditLock(action: suspend () -> T): T =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            editMutex.withLock { action() }
+            editMutex.withLock {
+                val result = action()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    UserProfilePreferences.refreshCached(context, this@UserSyncStore)
+                }
+                result
+            }
         }
 
     internal val db = Room.databaseBuilder(context, UserSyncDatabase::class.java, "niktv-users.db").build()
@@ -92,9 +101,8 @@ class UserSyncStore private constructor(private val context: Context) {
         local.edit().putString("device_id", it).commit()
     }
     private val account = MutableStateFlow(local.getString("account", null))
-    private val scope = MutableStateFlow(local.getString("account", null)?.let { accountId ->
-        local.getString("profile_$accountId", null)?.let { UserScope(accountId, it) }
-    })
+    // The account gate validates remembered selections after restoring authentication/data.
+    private val scope = MutableStateFlow<UserScope?>(null)
     val selectedScope: StateFlow<UserScope?> = scope.asStateFlow()
     val selectedAccount: StateFlow<String?> = account.asStateFlow()
     val pendingChanges: Flow<Int> = account.flatMapLatest { id -> if (id == null) flowOf(0) else dao.observePendingCount(id) }.distinctUntilChanged()
@@ -106,19 +114,62 @@ class UserSyncStore private constructor(private val context: Context) {
         }
     }.distinctUntilChanged()
 
-    suspend fun selectAccount(accountId: String) {
+    suspend fun selectAccount(accountId: String) = withEditLock {
         require(accountId.toLongOrNull() != null) { "A numeric GitHub account ID is required." }
-        if (account.value == accountId) return
+        if (account.value == accountId) return@withEditLock
         local.edit().putString("account", accountId).commit()
         account.value = accountId
-        // Always land on the chooser; the previous device selection is not synced.
+        // The gate decides whether to restore this account's validated local selection.
         scope.value = null
     }
-    suspend fun selectProfile(profileId: String) {
+    suspend fun selectProfile(profileId: String) = withEditLock {
         val accountId = requireNotNull(account.value) { "Connect an account first." }
-        require(dao.records(accountId).any { it.collection == "profile" && it.recordId == profileId && !it.deleted }) { "This profile no longer exists. Sync and select another profile." }
+        require(isLiveProfile(UserScope(accountId, profileId))) { "This profile no longer exists. Sync and select another profile." }
+        require(account.value == accountId) { "The connected account changed. Select a profile again." }
         local.edit().putString("profile_$accountId", profileId).commit()
         scope.value = UserScope(accountId, profileId)
+    }
+    suspend fun rememberedProfileId(accountId: String): String? = withEditLock {
+        val id = local.getString("profile_$accountId", null) ?: return@withEditLock null
+        if (isLiveProfile(UserScope(accountId, id))) id else {
+            forgetViewer(UserScope(accountId, id))
+            null
+        }
+    }
+    suspend fun rememberDestination(owner: UserScope, destination: ViewerDestination) = withEditLock {
+        require(destination.kind != ViewerDestinationKind.PORTAL || destination.portalKey.isNotBlank()) { "A portal destination needs a local portal key." }
+        if (!isLiveProfile(owner)) { forgetViewer(owner); return@withEditLock }
+        local.edit().apply {
+            putString(destinationKey(owner), json.encodeToString(destination))
+            if (destination.kind == ViewerDestinationKind.PORTAL) putString(portalKey(owner), destination.portalKey)
+        }.commit()
+        Unit
+    }
+    suspend fun rememberedDestination(owner: UserScope): ViewerDestination? = withEditLock {
+        if (!isLiveProfile(owner)) { forgetViewer(owner); return@withEditLock null }
+        val saved = local.getString(destinationKey(owner), null) ?: return@withEditLock null
+        val destination = runCatching { json.decodeFromString<ViewerDestination>(saved) }.getOrNull()
+        if (destination == null || destination.kind == ViewerDestinationKind.PORTAL && destination.portalKey.isBlank()) {
+            local.edit().remove(destinationKey(owner)).commit()
+            null
+        } else destination
+    }
+    suspend fun rememberedPortalKey(owner: UserScope): String? = withEditLock {
+        if (!isLiveProfile(owner)) { forgetViewer(owner); return@withEditLock null }
+        local.getString(portalKey(owner), null)?.takeIf { it.isNotBlank() }
+    }
+    private fun destinationKey(owner: UserScope) = "destination_${owner.accountId}_${owner.profileId}"
+    private fun portalKey(owner: UserScope) = "portal_${owner.accountId}_${owner.profileId}"
+    private suspend fun isLiveProfile(owner: UserScope): Boolean =
+        owner.accountId.toLongOrNull() != null && runCatching { UUID.fromString(owner.profileId) }.isSuccess &&
+            dao.records(owner.accountId).any { it.collection == "profile" && it.recordId == owner.profileId && !it.deleted &&
+                runCatching { json.decodeFromString<UserProfile>(it.payload).id == owner.profileId }.getOrDefault(false) }
+    private fun forgetViewer(owner: UserScope) {
+        local.edit().apply {
+            if (local.getString("profile_${owner.accountId}", null) == owner.profileId) remove("profile_${owner.accountId}")
+            remove(destinationKey(owner)); remove(portalKey(owner))
+        }.commit()
+        if (scope.value == owner) scope.value = null
     }
     fun clearSelection() { scope.value = null }
     fun disconnect() { scope.value = null; account.value = null; local.edit().remove("account").commit() }
@@ -147,14 +198,14 @@ class UserSyncStore private constructor(private val context: Context) {
             mutate(UserScope(accountId, profile.id), "profile", profile.id, json.encodeToString(profile.copy(name = profile.name.trim())))
         }
     }
-    suspend fun deleteProfile(profileId: String) {
+    suspend fun deleteProfile(profileId: String) = withEditLock {
         val accountId = requireNotNull(account.value)
         db.withTransaction {
             dao.records(accountId).filter { it.profileId == profileId && !it.deleted }.forEach {
                 mutate(UserScope(accountId, profileId), it.collection, it.recordId, it.payload, deleted = true)
             }
         }
-        if (scope.value?.profileId == profileId) clearSelection()
+        forgetViewer(UserScope(accountId, profileId))
     }
     suspend fun snapshot(accountId: String): List<SyncRecord> = dao.records(accountId)
     suspend fun backupLocalPreferences(accountId: String): List<UserLocalPreference> = dao.allPreferences(accountId).filter { it.name != "offline_media_downloads" }
@@ -196,6 +247,9 @@ class UserSyncStore private constructor(private val context: Context) {
         }
         superseded.chunked(400).forEach { dao.acknowledge(accountId, it) }
         affected.filter { it.profileId.isNotBlank() }.forEach { rebuildPreferences(it, current.values.toList()) }
+        current.values.filter { it.collection == "profile" && it.deleted }.forEach {
+            forgetViewer(UserScope(accountId, it.recordId))
+        }
     } }
 
     internal suspend fun mutate(owner: UserScope, collection: String, recordId: String, payload: String, deleted: Boolean = false) {

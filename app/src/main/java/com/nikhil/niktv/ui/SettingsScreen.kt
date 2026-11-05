@@ -148,6 +148,27 @@ private fun TvSafeSettingsTextField(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
+private fun AccountSyncSettingsRow() {
+    val context = LocalContext.current
+    val manager = remember(context) { com.nikhil.niktv.data.AccountSyncManager.get(context) }
+    val sync by manager.state.collectAsStateWithLifecycle()
+    val pending by remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context).pendingChanges }.collectAsStateWithLifecycle(0)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Profile sync", style = MaterialTheme.typography.labelLarge)
+            Text(if (sync.syncing) "Syncing in background…" else sync.error ?: if (pending > 0) "Changes saved on this device" else sync.message,
+                style = MaterialTheme.typography.labelSmall, color = Color(0xFF9A9DA7), maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+        }
+        NikTvSecondaryActionButton(onClick = manager::requestManualSync,
+            enabled = !sync.syncing && sync.initialized && !sync.reconnectRequired) {
+            Text(if (sync.syncing) "Syncing…" else "Sync now")
+        }
+    }
+}
+
+@Composable
 internal fun ModernSettingsScreen(
     state: NikTvState,
     closeSettings: () -> Unit,
@@ -562,8 +583,11 @@ internal fun ModernSettingsScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing),
         containerColor = Color(0xFF07080A),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = { CompactSettingsTopBar(if (compactSettingsHeader) null else profile?.name, settingsBack,
-            compact = compactSettingsHeader) }
+        topBar = { Column {
+            CompactSettingsTopBar(if (compactSettingsHeader) null else profile?.name, settingsBack,
+                compact = compactSettingsHeader)
+            AccountSyncSettingsRow()
+        } }
     ) { padding ->
         val settingsPageContent: @Composable () -> Unit = {
         val activeDestination = LocalSettingsDestination.current ?: selectedSettingsDestination

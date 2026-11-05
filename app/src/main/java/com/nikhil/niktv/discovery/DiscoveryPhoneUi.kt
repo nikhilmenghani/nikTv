@@ -108,6 +108,7 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
     customize: (() -> Unit)?, profile: String = "", categoryManagerOpen: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {}, searchActive: Boolean = false) {
     val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
+    val openUserProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
     val viewerName = viewer?.name ?: profile
     val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
         ?: profile.trim().firstOrNull()?.uppercase() ?: "N"
@@ -132,10 +133,13 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             if (!detail) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
                     modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
+                DiscoveryAction("Portals", Icons.Default.Dns, iconOnly = true,
+                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Portals" }) { navigate("Profile") }
                 DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
                     containerColor = viewer?.let { Color(it.color) },
                     horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $viewerName" }
-                        .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play }) { navigate("Profile") }
+                        .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play },
+                    onClick = openUserProfiles)
                 DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
             }
         }

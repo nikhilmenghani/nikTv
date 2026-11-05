@@ -366,8 +366,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
-    val openAccount = LocalOpenAccountScreen.current
-    val openUserProfiles = LocalOpenUserProfiles.current
     androidx.compose.runtime.CompositionLocalProvider(
         LocalPlayAlternateSource provides vm::openAlternateSources,
         LocalRefreshProviderCategories provides { type -> vm.refreshProviderCategories(type) },
@@ -395,7 +393,7 @@ private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
                 "Previous Series" -> vm.openPreviousDiscovery(DashboardSurface.SERIES)
                 "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
-                "Settings" -> openAccount(); "Profile" -> openUserProfiles()
+                "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileSwitcher()
             } }, favorite = { vm.toggleFavorite(it) }, playEpisode = vm::openDiscoveryEpisode,
             recent = vm::openRecent, watched = vm::openWatchedEpisode, category = vm::openModernIptvCategory,
             section = vm::openModernTmdbSection, removeRecent = vm::removeRecent,
@@ -492,7 +490,9 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
         if (state.profileSwitcherOpen) ModernProfileSwitchDialog(state.profiles, state.savedProfile,
-            close = vm::closeProfileSwitcher, select = vm::switchProfile, openChooser = vm::openProfileChooser)
+            close = vm::closeProfileSwitcher, select = vm::switchProfile,
+            openChooser = { vm.closeProfileSwitcher(); openUserProfiles() },
+            openOffline = vm::openOfflineDownloads, configurePortals = vm::openProfileChooser)
         ParentalPinPrompt(vm)
         Surface(Modifier.fillMaxSize()) {
           if (updateEnforcementEnabled && !(state.session == null && state.settingsOpen) && (checkingForRequiredUpdate || requiredUpdate != null)) {
@@ -676,7 +676,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     openFavorite = { favorite -> if (favorite.kind == FavoriteKind.MOVIE && favorite.source != FavoriteSource.TMDB) vm.openProviderMovieDetails(favorite.media) else vm.openFavorite(favorite) },
                     toggleFavorite = vm::toggleFavorite,
                     toggleFavoriteEntry = { vm.toggleFavorite(it) },
-                    openSettings = openAccount,
+                    openSettings = vm::openSettings,
                     closeSettings = { vm.closeSettings(); closeAccountSettings() },
                     reauthenticate = vm::reauthenticate,
                     editProfile = vm::editProfile,
@@ -717,7 +717,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,exportBackup = vm::exportBackup
                     ,importBackup = vm::importBackup
                     ,importBackupContent = vm::importBackupContent
-                    ,openProfileSwitcher = openUserProfiles
+                    ,openProfileSwitcher = vm::openProfileSwitcher
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
                     ,setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled

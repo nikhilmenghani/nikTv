@@ -188,4 +188,25 @@ class ProfileDashboardStartupTest {
         assertFalse(vm.state.value.profileEditorOpen)
         assertNull(vm.state.value.session)
     }
+
+    @Test fun savedSessionOpensHomeWithoutWaitingForProviderAuthentication(): Unit = runBlocking {
+        val profile = PortalProfile("Cached", "https://unreachable.invalid", "00:00:00:00:00:08")
+        val session = PortalSession(profile, "cached-session", "https://unreachable.invalid/portal.php", "", "", "")
+        store.save(session)
+        com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(RuntimeEnvironment.getApplication(), false)
+        try {
+            vm.switchProfile(profile)
+            withTimeout(5_000) {
+                while (vm.state.value.session == null) {
+                    scheduler.runCurrent()
+                    delay(10)
+                }
+            }
+            assertEquals(session, vm.state.value.session)
+            assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
+            assertTrue(vm.state.value.homeOpen)
+        } finally {
+            com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(RuntimeEnvironment.getApplication(), true)
+        }
+    }
 }

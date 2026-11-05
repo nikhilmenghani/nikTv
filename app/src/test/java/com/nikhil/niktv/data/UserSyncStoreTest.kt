@@ -330,6 +330,111 @@ class UserSyncStoreTest {
         assertTrue(UserProfilePreferences.get(context, "home2_presentation").all.isEmpty())
     }
 
+    @Test fun rememberedNavigationIsLocalAndIndependentForEveryAccountAndPerson(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val family = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        val kids = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.KIDS))
+        users.selectProfile(family.profileId)
+        val records = users.snapshot("101")
+        val pending = users.pending("101")
+        users.rememberDestination(family, ViewerDestination(ViewerDestinationKind.PORTAL, "device-portal-one"))
+        users.rememberDestination(family, ViewerDestination(ViewerDestinationKind.SPORTS))
+        assertEquals(ViewerDestinationKind.SPORTS, users.rememberedDestination(family)?.kind)
+        assertEquals("device-portal-one", users.rememberedPortalKey(family))
+        users.selectProfile(kids.profileId)
+        assertNull(users.rememberedDestination(kids))
+        assertNull(users.rememberedPortalKey(kids))
+        users.rememberDestination(kids, ViewerDestination(ViewerDestinationKind.OFFLINE))
+        assertEquals(records, users.snapshot("101"))
+        assertEquals(pending, users.pending("101"))
+        val newPerson = users.createProfile("New person")
+        assertNull(users.rememberedDestination(UserScope("101", newPerson.id)))
+        users.selectProfile(family.profileId)
+
+        users.selectAccount("202"); users.initializeDefaults("202")
+        val other = UserScope("202", UserSyncStore.defaultProfileId("202", UserProfileType.GENERAL))
+        assertNull(users.rememberedProfileId("202"))
+        assertNull(users.rememberedDestination(other))
+        users.selectProfile(other.profileId)
+        users.rememberDestination(other, ViewerDestination(ViewerDestinationKind.PORTAL, "device-portal-two"))
+        users.selectAccount("101")
+        assertNull("The account gate must validate and restore explicitly", users.selectedScope.value)
+        assertEquals(family.profileId, users.rememberedProfileId("101"))
+        assertEquals(other.profileId, users.rememberedProfileId("202"))
+        assertEquals(ViewerDestination(ViewerDestinationKind.SPORTS), users.rememberedDestination(family))
+        assertEquals(ViewerDestination(ViewerDestinationKind.OFFLINE), users.rememberedDestination(kids))
+        users.disconnect()
+        assertNull(users.selectedScope.value)
+        assertEquals(family.profileId, users.rememberedProfileId("101"))
+    }
+
+    @Test fun localAndRemoteProfileDeletionForgetOnlyThatPersonsNavigation(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val family = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        val kids = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.KIDS))
+        users.selectProfile(family.profileId)
+        users.rememberDestination(family, ViewerDestination(ViewerDestinationKind.PORTAL, "deleted-portal"))
+        users.selectProfile(kids.profileId)
+        users.rememberDestination(kids, ViewerDestination(ViewerDestinationKind.OFFLINE))
+        users.deleteProfile(family.profileId)
+        assertEquals(kids.profileId, users.rememberedProfileId("101"))
+        assertEquals(kids, users.selectedScope.value)
+        assertEquals(ViewerDestinationKind.OFFLINE, users.rememberedDestination(kids)?.kind)
+        assertNull(users.rememberedDestination(family))
+        assertNull(users.rememberedPortalKey(family))
+        val live = users.snapshot("101").single { it.collection == "profile" && it.recordId == kids.profileId }
+        users.merge("101", listOf(live.copy(deleted = true, generation = live.generation + 1,
+            revision = live.revision + 1, deviceId = "other-device", mutationId = "remote-profile-removal")))
+        assertNull(users.selectedScope.value)
+        assertNull(users.rememberedProfileId("101"))
+        users.rememberDestination(kids, ViewerDestination(ViewerDestinationKind.PORTAL, "late-connect-callback"))
+        assertNull(users.rememberedDestination(kids))
+        assertNull(users.rememberedPortalKey(kids))
+        val replacement = users.createProfile("Kids")
+        assertNotEquals(kids.profileId, replacement.id)
+        assertNull(users.rememberedDestination(UserScope("101", replacement.id)))
+    }
+
+    @Test fun missingProfilesAndMalformedLocalNavigationCannotBeRestored(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val local = context.getSharedPreferences("niktv_user_selection", 0)
+        val missing = UserScope("101", java.util.UUID.randomUUID().toString())
+        local.edit().putString("profile_101", missing.profileId)
+            .putString("destination_101_${missing.profileId}", "{broken-json")
+            .putString("portal_101_${missing.profileId}", "missing-portal").commit()
+        assertNull(users.rememberedProfileId("101"))
+        assertFalse(local.contains("destination_101_${missing.profileId}"))
+        assertFalse(local.contains("portal_101_${missing.profileId}"))
+        local.edit().putString("profile_101", "not-a-profile-uuid").commit()
+        assertNull(users.rememberedProfileId("101"))
+        val family = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(family.profileId)
+        local.edit().putString("destination_101_${family.profileId}", "{broken-json").commit()
+        assertNull(users.rememberedDestination(family))
+        assertEquals(family.profileId, users.rememberedProfileId("101"))
+        assertThrows(IllegalArgumentException::class.java) { runBlocking {
+            users.rememberDestination(family, ViewerDestination(ViewerDestinationKind.PORTAL))
+        } }
+    }
+
+    @Test fun processRecreationWaitsForAccountGateBeforeRestoringAValidatedViewer(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val family = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(family.profileId)
+        users.rememberDestination(family, ViewerDestination(ViewerDestinationKind.OFFLINE))
+        val constructor = UserSyncStore::class.java.getDeclaredConstructor(android.content.Context::class.java)
+        constructor.isAccessible = true
+        val recreated = constructor.newInstance(context)
+        try {
+            assertEquals("101", recreated.selectedAccount.value)
+            assertNull(recreated.selectedScope.value)
+            assertEquals(family.profileId, recreated.rememberedProfileId("101"))
+            assertEquals(ViewerDestinationKind.OFFLINE, recreated.rememberedDestination(family)?.kind)
+            recreated.selectProfile(family.profileId)
+            assertEquals(family, recreated.selectedScope.value)
+        } finally { recreated.db.close() }
+    }
+
     private suspend fun populateViewingProfile(store: ProfileStore, portal: PortalProfile) {
         val media = MediaItem("movie-one", "Fixture movie", null, null)
         val series = MediaItem("series-one", "Fixture series", null, null)

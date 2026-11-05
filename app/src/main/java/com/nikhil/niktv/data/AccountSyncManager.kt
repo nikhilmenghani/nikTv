@@ -4,11 +4,9 @@ import android.content.Context
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -16,6 +14,7 @@ import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,19 +44,37 @@ class AccountSyncManager private constructor(context: Context) {
     private val prefs = vault.preferences
     private val store = UserSyncStore.get(context)
     private val mutex = Mutex()
+    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow(AccountSyncState())
     val state: StateFlow<AccountSyncState> = mutableState.asStateFlow()
-    init {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            store.pendingChanges.collect { count ->
-                if (count > 0) runCatching {
-                    val accountId = authenticatedAccount() ?: return@runCatching
-                    val pending = store.pending(accountId)
-                    val progressOnly = pending.isNotEmpty() && pending.all { it.collection in setOf("progress", "history", "series") }
-                    requestSync(if (progressOnly) "playback-progress" else "viewing-change")
-                }
-            }
+
+    /** Restore the last successful local account without waiting for a network request. */
+    suspend fun restoreCachedAccount(): AccountSyncState {
+        val live = mutableState.value
+        if (live.accountId?.toLongOrNull()?.let { it > 0 } == true &&
+            live.accountId == store.selectedAccount.value) return live
+        return mutex.withLock {
+            withContext(Dispatchers.IO) { restoreCachedAccountLocked(vault.token().isNotBlank()) }
         }
+    }
+
+    private suspend fun restoreCachedAccountLocked(tokenAvailable: Boolean): AccountSyncState {
+        val accountId = prefs.getString("accountId", null)
+        val login = prefs.getString("login", null)
+        val restored = cachedAccountState(accountId, login,
+            accountId != null && isInitialized(accountId),
+            accountId != null && prefs.getBoolean("reconnect:$accountId", false), tokenAvailable)
+        if (accountId == null) {
+            // Authentication can be cleared before a process interruption. This only
+            // deactivates selection; all account rows and queued changes remain intact.
+            if (store.selectedAccount.value != null) store.disconnect()
+        } else if (accountId.toLongOrNull()?.let { it > 0 } == true) {
+            if (store.selectedAccount.value != accountId) store.selectAccount(accountId)
+            RemoteCredentials.activateAccount(context, accountId, login.orEmpty())
+            cancelLegacySyncWork(accountId)
+        }
+        mutableState.value = restored
+        return restored
     }
 
     suspend fun connect(token: String) = mutex.withLock {
@@ -95,29 +112,47 @@ class AccountSyncManager private constructor(context: Context) {
 
     suspend fun launchSync() = mutex.withLock {
         withContext(Dispatchers.IO) {
-            val accountId = prefs.getString("accountId", null)
             val token = vault.token()
-            if (accountId == null || token.isBlank()) {
-                mutableState.value = AccountSyncState(reconnectRequired = accountId != null,
-                    error = if (accountId != null) "Your saved token could not be opened. Reconnect to keep using this account." else null)
-                return@withContext
-            }
-            if (store.selectedAccount.value != accountId) store.selectAccount(accountId)
-            mutableState.value = AccountSyncState(accountId, prefs.getString("login", null),
-                initialized = isInitialized(accountId), syncing = true, message = "Syncing account…",
-                reconnectRequired = prefs.getBoolean("reconnect:$accountId", false))
+            val cached = restoreCachedAccountLocked(token.isNotBlank())
+            val accountId = cached.accountId ?: return@withContext
+            if (accountId.toLongOrNull()?.let { it > 0 } != true || token.isBlank()) return@withContext
+            mutableState.value = cached.copy(syncing = true, error = null, message = "Syncing account…")
             runSavedSync(accountId, token)
         }
     }
 
     suspend fun syncNow() = syncForAccount(null)
 
-    internal suspend fun syncForAccount(expectedAccountId: String?) = mutex.withLock {
+    /** Explicit UI requests belong to the account manager, so closing Settings or
+     * recreating an Activity cannot interrupt an upload after it has started. */
+    fun requestManualSync(): Job? = requestAccountSync()
+    fun requestLaunchSync(): Job? = requestAccountSync()
+
+    private fun requestAccountSync(): Job? {
+        val capturedAccountId = prefs.getString("accountId", null)
+            ?.takeIf { it.toLongOrNull()?.let { id -> id > 0 } == true } ?: return null
+        return syncScope.launch {
+            try { syncForAccount(capturedAccountId, requireRetry = false) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutex.withLock {
+                if (prefs.getString("accountId", null) == capturedAccountId) failed(error)
+            } }
+        }
+    }
+
+    internal suspend fun syncForAccount(expectedAccountId: String?, requireRetry: Boolean = expectedAccountId != null) = mutex.withLock {
         withContext(Dispatchers.IO) {
             val accountId = prefs.getString("accountId", null) ?: return@withContext
             if (expectedAccountId != null && expectedAccountId != accountId) return@withContext
+            if (requireRetry && !retryNeeded(accountId)) return@withContext
             val token = vault.token()
-            if (token.isBlank()) return@withContext
+            if (mutableState.value.accountId != accountId || store.selectedAccount.value != accountId) {
+                restoreCachedAccountLocked(token.isNotBlank())
+            }
+            if (token.isBlank()) {
+                restoreCachedAccountLocked(tokenAvailable = false)
+                return@withContext
+            }
             mutableState.value = mutableState.value.copy(syncing = true, error = null, message = "Syncing account…")
             runSavedSync(accountId, token)
         }
@@ -179,9 +214,10 @@ class AccountSyncManager private constructor(context: Context) {
     private fun successful(identity: SyncIdentity) {
         check(prefs.edit().putBoolean("initialized:${identity.accountId}", true)
             .putBoolean("reconnect:${identity.accountId}", false).remove("retryAfter:${identity.accountId}")
+            .putBoolean("retryNeeded:${identity.accountId}", false)
             .putLong("lastSync:${identity.accountId}", System.currentTimeMillis()).commit())
         mutableState.value = AccountSyncState(identity.accountId, identity.login, initialized = true, message = "Up to date")
-        configureWork(identity.accountId)
+        cancelLegacySyncWork(identity.accountId)
     }
 
     private fun interrupted() {
@@ -192,7 +228,9 @@ class AccountSyncManager private constructor(context: Context) {
         val failure = error as? SyncFailure
         val accountId = prefs.getString("accountId", null)
         val reconnect = failure?.reconnect == true
+        val retryable = !reconnect && (failure?.retryable == true || error is IOException)
         if (accountId != null && reconnect) prefs.edit().putBoolean("reconnect:$accountId", true).commit()
+        if (accountId != null) prefs.edit().putBoolean("retryNeeded:$accountId", retryable).commit()
         if (accountId != null && failure?.retryAfterMillis != null && failure.retryAfterMillis > 0) {
             prefs.edit().putLong("retryAfter:$accountId", System.currentTimeMillis() + failure.retryAfterMillis).commit()
         }
@@ -207,7 +245,7 @@ class AccountSyncManager private constructor(context: Context) {
             message = if (accountId != null && isInitialized(accountId)) "Local data available" else "Setup incomplete",
             initialized = accountId != null && isInitialized(accountId), reconnectRequired = reconnect ||
                 accountId?.let { prefs.getBoolean("reconnect:$it", false) } == true)
-        if (accountId != null && !reconnect && (failure?.retryable == true || error is IOException)) requestSync("retry")
+        if (accountId != null && retryable) requestSync("retry")
     }
 
     suspend fun disconnect() = mutex.withLock {
@@ -220,34 +258,32 @@ class AccountSyncManager private constructor(context: Context) {
         }
     }
 
-    /** Call only after the transaction that persisted the user mutation completes. */
+    /** Ordinary changes remain local until app opening or manual sync. Only a transient
+     * failure of an explicitly started sync may arrange its own network-constrained retry. */
     fun requestSync(reason: String, immediate: Boolean = false) {
+        if (!allowsScheduledSync(reason)) return
         val accountId = prefs.getString("accountId", null) ?: return
-        if (!prefs.contains("ciphertext") || prefs.getBoolean("reconnect:$accountId", false)) return
+        if (!retryNeeded(accountId) || !prefs.contains("ciphertext") || prefs.getBoolean("reconnect:$accountId", false)) return
         val request = OneTimeWorkRequestBuilder<AccountSyncWorker>()
-            .setInputData(workDataOf("accountId" to accountId)).addTag(tag(accountId))
+            .setInputData(workDataOf("accountId" to accountId, "trigger" to "retry")).addTag(tag(accountId))
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setInitialDelay(if (immediate) 0 else if (reason == "playback-progress") 60 else 3, TimeUnit.SECONDS)
+            .setInitialDelay(30, TimeUnit.SECONDS)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build()
-        val queue = when {
-            immediate -> "flush"
-            reason in setOf("playback-progress", "playback") -> "progress"
-            else -> "edits"
-        }
-        WorkManager.getInstance(context).enqueueUniqueWork("niktv-sync-$queue:$accountId",
-            if (immediate) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, request)
+        WorkManager.getInstance(context).enqueueUniqueWork("niktv-sync-retry:$accountId", ExistingWorkPolicy.KEEP, request)
     }
 
-    private fun configureWork(accountId: String) {
-        val request = PeriodicWorkRequestBuilder<AccountSyncWorker>(15, TimeUnit.MINUTES)
-            .setInputData(workDataOf("accountId" to accountId)).addTag(tag(accountId))
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork("niktv-sync-periodic:$accountId", ExistingPeriodicWorkPolicy.KEEP, request)
+    private fun cancelLegacySyncWork(accountId: String) {
+        runCatching {
+            val work = WorkManager.getInstance(context)
+            listOf("periodic", "progress", "edits", "flush", "catchup").forEach {
+                work.cancelUniqueWork("niktv-sync-$it:$accountId")
+            }
+        }
     }
 
     internal fun authenticatedAccount(): String? = prefs.getString("accountId", null)
     internal suspend fun hasPending(accountId: String): Boolean = store.pending(accountId).isNotEmpty()
+    internal fun retryNeeded(accountId: String): Boolean = prefs.getBoolean("retryNeeded:$accountId", false)
     private fun isInitialized(accountId: String) = prefs.getBoolean("initialized:$accountId", false)
     private fun cancelWork(accountId: String) {
         WorkManager.getInstance(context).cancelAllWorkByTag(tag(accountId))
@@ -265,10 +301,33 @@ class AccountSyncManager private constructor(context: Context) {
 
 class AccountSyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
+        // Older periodic/playback jobs may survive an upgrade. They cannot initiate sync.
+        if (inputData.getString("trigger") != "retry") return Result.success()
         val manager = AccountSyncManager.get(applicationContext)
-        if (inputData.getString("accountId") != manager.authenticatedAccount()) return Result.success()
-        manager.syncForAccount(inputData.getString("accountId"))
-        val state = manager.state.value
-        return if (!state.reconnectRequired && (state.error != null || manager.hasPending(inputData.getString("accountId")!!))) Result.retry() else Result.success()
+        val accountId = inputData.getString("accountId") ?: return Result.success()
+        if (accountId != manager.authenticatedAccount() || !manager.retryNeeded(accountId)) return Result.success()
+        manager.syncForAccount(accountId)
+        return if (!manager.state.value.reconnectRequired && manager.retryNeeded(accountId)) Result.retry() else Result.success()
     }
+}
+
+internal fun allowsScheduledSync(reason: String): Boolean = reason == "retry"
+
+internal fun cachedAccountState(accountId: String?, login: String?, initialized: Boolean,
+    reconnect: Boolean, tokenAvailable: Boolean): AccountSyncState {
+    if (accountId == null) return AccountSyncState()
+    if (accountId.toLongOrNull()?.let { it > 0 } != true) return AccountSyncState(
+        reconnectRequired = true, error = "Reconnect to restore your saved account. Local data is preserved.")
+    val needsReconnect = reconnect || !tokenAvailable
+    return AccountSyncState(accountId, login, initialized = initialized,
+        message = when {
+            needsReconnect -> "Reconnect to GitHub. Local data is preserved."
+            initialized -> "Local data available"
+            else -> "Setup incomplete. Retry to finish connecting your account."
+        },
+        error = when {
+            !tokenAvailable -> "Your saved token could not be opened. Reconnect to keep using this account."
+            reconnect -> "Your GitHub connection needs attention. Reconnect to continue syncing."
+            else -> null
+        }, reconnectRequired = needsReconnect)
 }
