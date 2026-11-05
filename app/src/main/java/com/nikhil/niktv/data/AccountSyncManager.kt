@@ -131,9 +131,16 @@ class AccountSyncManager private constructor(context: Context) {
     fun requestManualSync(): Job? = requestAccountSync()
     fun requestLaunchSync(): Job? = requestAccountSync()
 
-    private fun requestAccountSync(): Job? {
+    /** Called only after the episode's history mutation is durable. Never borrow a
+     * different account's token if playback finishes while accounts are switching. */
+    fun requestEpisodeSync(scope: UserScope): Job? = requestAccountSync(scope.accountId)
+
+    fun requestPlaybackSync(scope: UserScope): Job? = requestAccountSync(scope.accountId)
+
+    private fun requestAccountSync(expectedAccountId: String? = null): Job? {
         val capturedAccountId = prefs.getString("accountId", null)
             ?.takeIf { it.toLongOrNull()?.let { id -> id > 0 } == true } ?: return null
+        if (expectedAccountId != null && expectedAccountId != capturedAccountId) return null
         return syncScope.launch {
             try { syncForAccount(capturedAccountId, requireRetry = false) }
             catch (cancelled: CancellationException) { throw cancelled }

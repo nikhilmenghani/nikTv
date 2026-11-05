@@ -1,6 +1,7 @@
 package com.nikhil.niktv.data
 
 import android.app.Application
+import androidx.room.withTransaction
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import com.nikhil.niktv.model.*
@@ -22,6 +23,28 @@ import org.robolectric.annotation.Config
 class UserSyncStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val users get() = UserSyncStore.get(context)
+
+    @Test fun pendingViewingWinsConcurrentUploadButCachedViewingAndDeletesDoNot(): Unit = runBlocking {
+        val owner = UserScope("101", "viewer")
+        users.db.withTransaction {
+            users.mutate(owner, "history", "series", "{\"episode\":2}")
+        }
+        val local = users.snapshot("101").single()
+        val remote = local.copy(payload = "{\"episode\":3}", revision = 100, deviceId = "other", mutationId = "other-start")
+        users.merge("101", listOf(remote))
+        val winner = users.snapshot("101").single()
+        assertEquals(local.payload, winner.payload)
+        assertTrue(winner.revision > remote.revision)
+        assertTrue(users.pending("101").any { it.mutationId == winner.mutationId })
+        users.acknowledge("101", users.pending("101").map { it.mutationId })
+        val later = remote.copy(revision = winner.revision + 1, mutationId = "later")
+        users.merge("101", listOf(later))
+        assertEquals(later, users.snapshot("101").single())
+        users.db.withTransaction { users.mutate(owner, "history", "series", local.payload) }
+        val deleted = later.copy(deleted = true, generation = 1, revision = 500, mutationId = "deleted")
+        users.merge("101", listOf(deleted))
+        assertEquals(deleted, users.snapshot("101").single())
+    }
 
     @Before fun reset(): Unit = runBlocking {
         withContext(Dispatchers.IO) { users.db.clearAllTables() }

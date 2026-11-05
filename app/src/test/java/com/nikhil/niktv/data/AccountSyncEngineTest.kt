@@ -5,6 +5,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AccountSyncEngineTest {
+    @Test fun episodeTransitionPublishesNextEpisodeBeforeItsFirstProgressTick() = runBlocking {
+        val previous = record("series-history").copy(payload = "{\"episode\":10}")
+        val server = Remote(previous)
+        val completed = record("episode-10").copy(collection = "progress", payload = "{\"action\":\"COMPLETED\"}")
+        val next = previous.copy(revision = 2, mutationId = "episode-11-start", payload = "{\"episode\":11}")
+        val watching = Local(completed, next)
+        synchronizeAccount("10", watching, server)
+        val otherDevice = Local(previous)
+        synchronizeAccount("10", otherDevice, server)
+        assertEquals(next, otherDevice.records.getValue("series-history"))
+        assertEquals(completed, otherDevice.records.getValue("episode-10"))
+        assertTrue(watching.queue.isEmpty())
+    }
+
     private fun record(id: String, mutation: String = id, revision: Long = 1) =
         SyncRecord("10", "person", "history", id, "{}", revision, "device-a", mutation)
 

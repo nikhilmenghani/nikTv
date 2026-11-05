@@ -7257,9 +7257,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val now = SystemClock.elapsedRealtime()
                     val explicit = flushProgressScopes.remove(scope) ||
                         sample.action in setOf(ViewingAction.COMPLETED, ViewingAction.REWIND, ViewingAction.RESTART)
-                    if (explicit || now - (lastProgressSync[scope] ?: 0L) >= 60_000L) {
+                    if (explicit || now - (lastProgressSync[scope] ?: 0L) >= 3 * 60_000L) {
                         lastProgressSync[scope] = now
-                        accountSync.requestSync("playback", immediate = explicit)
+                        if (playing.catalogType == CatalogType.SERIES &&
+                            scope == store.captureScope() &&
+                            _state.value.nowPlaying?.playbackAttemptId == playing.playbackAttemptId) {
+                            // Reassert the episode actually playing on this device,
+                            // rather than a concurrently downloaded last-played episode.
+                            recordRecent(playing.media, playing.catalogType, playing.series, profile, scope,
+                                syncEpisode = false)
+                        }
+                        accountSync.requestPlaybackSync(scope)
                     }
                 }
             }
@@ -7457,7 +7465,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun recordRecent(item: MediaItem, type: CatalogType, series: MediaItem?, profileKey: String, userScope: UserScope?) {
+    private suspend fun recordRecent(item: MediaItem, type: CatalogType, series: MediaItem?, profileKey: String, userScope: UserScope?, syncEpisode: Boolean = true) {
         if (userScope != store.captureScope()) return
         val additions = buildList {
             if (type == CatalogType.SERIES && series != null) {
@@ -7476,7 +7484,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(recentlyPlayed = updated) }
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
         store.saveRecentlyPlayed(allRecentlyPlayed, userScope)
-        accountSync.requestSync("playback-start")
+        if (!syncEpisode) return // Interval refresh needs no metadata/recommendation work.
+        if (type == CatalogType.SERIES && userScope != null) {
+            // History now points at the new episode, including before its first
+            // progress tick. Drain preceding completion saves before publishing.
+            // The manager owns the IO job; playback/navigation never await GitHub.
+            progressSaveMutex.withLock { accountSync.requestEpisodeSync(userScope) }
+        }
         if (type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) launchForViewer launch@ {
             try {
                 mediaIdentities.resolve(profileKey, type, if (type == CatalogType.SERIES) series ?: item else item)

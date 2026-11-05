@@ -46,6 +46,14 @@ data class SyncRecord(
 internal fun SyncRecord.newerThan(other: SyncRecord): Boolean =
     compareValuesBy(this, other, { it.generation }, { it.revision }, { it.deviceId }, { it.mutationId }) > 0
 
+/** Prefer only unsent local viewing edits, never stale cached rows or deletions. */
+internal fun prefersPendingViewing(local: SyncRecord, remote: SyncRecord, pending: Set<String>): Boolean =
+    local.accountId == remote.accountId && local.profileId == remote.profileId &&
+        local.collection == remote.collection && local.recordId == remote.recordId &&
+        local.collection in setOf("history", "progress", "series") &&
+        !local.deleted && !remote.deleted && local.generation == remote.generation &&
+        local.mutationId in pending && local.payload != remote.payload && remote.newerThan(local)
+
 @Entity(tableName = "sync_outbox")
 data class SyncOutbox(@PrimaryKey val mutationId: String, val accountId: String, val record: String)
 @Entity(tableName = "user_local_preferences", primaryKeys = ["accountId", "profileId", "name"])
@@ -227,11 +235,23 @@ class UserSyncStore private constructor(private val context: Context) {
     suspend fun merge(accountId: String, records: List<SyncRecord>) = withEditLock { db.withTransaction {
         require(records.all { it.accountId == accountId }) { "Remote data belongs to another account." }
         val current = dao.records(accountId).associateBy { Triple(it.profileId, it.collection, it.recordId) }.toMutableMap()
+        val pendingIds = pending(accountId).mapTo(mutableSetOf()) { it.mutationId }
+        var revision = maxOf(current.values.maxOfOrNull { it.revision } ?: 0L,
+            records.maxOfOrNull { it.revision } ?: 0L)
         val affected = mutableSetOf<UserScope>()
         records.forEach { remote ->
             require(remote.revision >= 0 && remote.generation >= 0 && remote.payload.length <= 1_000_000) { "Invalid sync record." }
             val key = Triple(remote.profileId, remote.collection, remote.recordId)
             val old = current[key]
+            if (old != null && prefersPendingViewing(old, remote, pendingIds)) {
+                // Rebase the uploading device's unsent viewing action after observing
+                // the remote revision. Persist winner + outbox atomically for retries.
+                val rebased = old.copy(revision = ++revision, mutationId = UUID.randomUUID().toString())
+                dao.put(rebased)
+                dao.enqueue(SyncOutbox(rebased.mutationId, accountId, json.encodeToString(rebased)))
+                current[key] = rebased
+                return@forEach
+            }
             if (old == null || remote.newerThan(old)) {
                 dao.put(remote); current[key] = remote
                 affected += UserScope(accountId, remote.profileId)
