@@ -35,7 +35,8 @@ class DiscoveryViewerNavigationDeviceTest {
             return null
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
-        return walk(instrumentation.uiAutomation.rootInActiveWindow)
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        return if (root?.packageName?.toString() == instrumentation.targetContext.packageName) walk(root) else null
     }
 
     private fun await(label: String, condition: () -> Boolean) {
@@ -82,6 +83,12 @@ class DiscoveryViewerNavigationDeviceTest {
             val portalBounds = android.graphics.Rect().also { find("Portals")!!.getBoundsInScreen(it) }
             val personBounds = android.graphics.Rect().also { find("Switch profile: Family")!!.getBoundsInScreen(it) }
             assertFalse("Compact controls retain distinct touch targets", android.graphics.Rect.intersects(portalBounds, personBounds))
+            val configuration = context.resources.configuration
+            if (!usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))) {
+                val minimumGap = (8 * context.resources.displayMetrics.density).toInt()
+                assertTrue("Tablet portal and avatar tiles have separate space between them",
+                    personBounds.left - portalBounds.right >= minimumGap)
+            }
             verify(actions)
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }

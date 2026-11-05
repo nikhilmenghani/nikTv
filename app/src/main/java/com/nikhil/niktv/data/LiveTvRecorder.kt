@@ -43,7 +43,8 @@ data class LiveRecordingState(
     val startedAtMillis: Long = 0L,
     val recordedDurationMillis: Long = 0L,
     val bytesWritten: Long = 0L,
-    val error: String? = null
+    val error: String? = null,
+    val owner: UserScope? = null
 )
 
 data class RecordedLiveTvMedia(
@@ -60,8 +61,8 @@ object LiveTvRecorder {
     private data class PlaybackSample(val url: String, val elapsedMillis: Long, val reportedAtMillis: Long)
     @Volatile private var playbackSample: PlaybackSample? = null
 
-    fun reportPlaybackElapsed(url: String, elapsedMillis: Long) {
-        if (mutableState.value.active && mutableState.value.sourceUrl == url) {
+    fun reportPlaybackElapsed(url: String, elapsedMillis: Long, owner: UserScope? = null) {
+        if (mutableState.value.active && mutableState.value.owner == owner && mutableState.value.sourceUrl == url) {
             playbackSample = PlaybackSample(url, elapsedMillis, android.os.SystemClock.elapsedRealtime())
         }
     }
@@ -71,12 +72,13 @@ object LiveTvRecorder {
     }?.elapsedMillis
 
     fun start(context: Context, title: String, url: String, liveOffsetMillis: Long? = null,
-              playbackElapsedMillis: Long? = null) {
+              playbackElapsedMillis: Long? = null, owner: UserScope? = null) {
+        if (mutableState.value.active) return
         mutableState.value = LiveRecordingState(
             active = true,
             sourceUrl = url,
             title = title,
-            startedAtMillis = System.currentTimeMillis()
+            startedAtMillis = System.currentTimeMillis(), owner = owner
         )
         val intent = Intent(context, LiveTvRecordingService::class.java)
             .setAction(LiveTvRecordingService.ACTION_START)
@@ -84,6 +86,7 @@ object LiveTvRecorder {
             .putExtra(LiveTvRecordingService.EXTRA_URL, url)
             .putExtra(LiveTvRecordingService.EXTRA_LIVE_OFFSET_MILLIS, liveOffsetMillis ?: -1L)
             .putExtra(LiveTvRecordingService.EXTRA_PLAYBACK_ELAPSED_MILLIS, playbackElapsedMillis ?: -1L)
+            .putRecordingOwner(owner)
         runCatching { ContextCompat.startForegroundService(context, intent) }
             .onFailure {
                 mutableState.value = LiveRecordingState(
@@ -174,8 +177,11 @@ object LiveTvRecorder {
         }.getOrDefault(emptyList())
     }
 
-    fun delete(context: Context, recording: RecordedLiveTvMedia): Boolean =
-        runCatching { context.contentResolver.delete(recording.uri, null, null) > 0 }.getOrDefault(false)
+    fun delete(context: Context, recording: RecordedLiveTvMedia): Boolean {
+        val deleted = runCatching { context.contentResolver.delete(recording.uri, null, null) > 0 }.getOrDefault(false)
+        if (deleted) RecordingOwnership(context).forget(recording.uri)
+        return deleted
+    }
 
     private fun readMediaDuration(context: Context, uri: android.net.Uri): Long {
         val retriever = MediaMetadataRetriever()
@@ -239,14 +245,14 @@ class LiveTvRecordingService : Service() {
                 if (url.isNotBlank() && recordingJob?.isActive != true) {
                     requestedLiveOffsetMillis = intent.getLongExtra(EXTRA_LIVE_OFFSET_MILLIS, -1L)
                         .takeIf { it >= 0L }
-                    startRecording(title, url, intent.playbackElapsedExtra())
+                    startRecording(title, url, intent.playbackElapsedExtra(), intent.recordingOwner())
                 }
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startRecording(title: String, sourceUrl: String, playbackElapsedMillis: Long?) {
+    private fun startRecording(title: String, sourceUrl: String, playbackElapsedMillis: Long?, owner: UserScope?) {
         val startedAt = System.currentTimeMillis()
         paused = false
         stopRequested = false
@@ -259,7 +265,8 @@ class LiveTvRecordingService : Service() {
             active = true,
             sourceUrl = sourceUrl,
             title = title,
-            startedAtMillis = startedAt
+            startedAtMillis = startedAt,
+            owner = owner
         )
         LiveTvRecorder.update(initial)
         startForeground(NOTIFICATION_ID, notification(initial))
@@ -272,7 +279,7 @@ class LiveTvRecordingService : Service() {
         recordingJob = scope.launch {
             var outputUri: android.net.Uri? = null
             try {
-                outputUri = createOutput(title)
+                outputUri = createOutput(title, owner)
                 contentResolver.openOutputStream(outputUri, "w")!!.use { output ->
                     if (isHls(sourceUrl)) recordHls(sourceUrl, output)
                     else copyStream(sourceUrl, output)
@@ -284,7 +291,9 @@ class LiveTvRecordingService : Service() {
                 LiveTvRecorder.update(LiveRecordingState())
             } catch (error: Throwable) {
                 if (error is UnsupportedHlsRecordingException) {
-                    outputUri?.let { uri -> runCatching { contentResolver.delete(uri, null, null) } }
+                    outputUri?.let { uri -> runCatching {
+                        if (contentResolver.delete(uri, null, null) > 0) RecordingOwnership(this@LiveTvRecordingService).forget(uri)
+                    } }
                 } else {
                     outputUri?.let(::finishOutput)
                 }
@@ -577,7 +586,7 @@ class LiveTvRecordingService : Service() {
             .build()
     }
 
-    private fun createOutput(title: String): android.net.Uri {
+    private fun createOutput(title: String, owner: UserScope?): android.net.Uri {
         val safe = title.replace(Regex("[\\/:*?\"<>|]+"), "_").trim().take(72).ifBlank { "Live TV" }
         val name = "$safe-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())}.ts"
         val values = ContentValues().apply {
@@ -594,8 +603,11 @@ class LiveTvRecordingService : Service() {
                 put(MediaStore.Video.Media.DATA, java.io.File(directory, name).absolutePath)
             }
         }
-        return contentResolver.insert(recordingCollectionUri(), values)
+        val uri = contentResolver.insert(recordingCollectionUri(), values)
             ?: error("Unable to create recording file")
+        try { RecordingOwnership(this).created(uri, owner) }
+        catch (error: Exception) { runCatching { contentResolver.delete(uri, null, null) }; throw error }
+        return uri
     }
 
     private fun finishOutput(uri: android.net.Uri) {
@@ -615,6 +627,8 @@ class LiveTvRecordingService : Service() {
         const val EXTRA_URL = "url"
         const val EXTRA_LIVE_OFFSET_MILLIS = "live_offset_millis"
         const val EXTRA_PLAYBACK_ELAPSED_MILLIS = "playback_elapsed_millis"
+        internal const val EXTRA_OWNER_ACCOUNT = "recording_owner_account"
+        internal const val EXTRA_OWNER_PROFILE = "recording_owner_profile"
         private const val CHANNEL_ID = "niktv_live_recordings"
         private const val NOTIFICATION_ID = 2114
         private const val MAX_STREAM_RETRIES = 8
@@ -630,6 +644,21 @@ private class RecordingHttpException(
 private fun Intent.playbackElapsedExtra(): Long? =
     getLongExtra(LiveTvRecordingService.EXTRA_PLAYBACK_ELAPSED_MILLIS, -1L)
         .takeIf { it >= 0L }
+
+internal fun Intent.putRecordingOwner(owner: UserScope?): Intent = apply {
+    if (owner != null) {
+        putExtra(LiveTvRecordingService.EXTRA_OWNER_ACCOUNT, owner.accountId)
+        putExtra(LiveTvRecordingService.EXTRA_OWNER_PROFILE, owner.profileId)
+    }
+}
+
+internal fun Intent.recordingOwner(): UserScope? = runCatching {
+    val account = getStringExtra(LiveTvRecordingService.EXTRA_OWNER_ACCOUNT) ?: return null
+    val profile = getStringExtra(LiveTvRecordingService.EXTRA_OWNER_PROFILE) ?: return null
+    require(account.toLongOrNull()?.let { it > 0 } == true)
+    java.util.UUID.fromString(profile)
+    UserScope(account, profile)
+}.getOrNull()
 
 private fun requireSuccessful(code: Int, successful: Boolean, label: String) {
     if (successful) return

@@ -42,7 +42,9 @@ internal class GitHubSyncTransport(
     private val token: String,
     private val http: OkHttpClient = OkHttpClient.Builder().callTimeout(40, TimeUnit.SECONDS).build(),
     private val pauseWrites: Boolean = true,
+    commitMessage: String = DEFAULT_SYNC_COMMIT_MESSAGE,
 ) {
+    private val commitMessage = sanitizeSyncCommitMessage(commitMessage)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var lastWriteAt = 0L
 
@@ -142,7 +144,7 @@ internal class GitHubSyncTransport(
 
     private suspend fun put(repository: SyncRepository, path: String, content: String, sha: String?, initializeEmptyRepository: Boolean = false) {
         require(content.toByteArray().size <= MAX_BYTES) { "Account data exceeds 16 MiB. Export a backup before reducing history." }
-        val payload = JSONObject().put("message", "Sync NikTV account data")
+        val payload = JSONObject().put("message", commitMessage)
             .put("content", Base64.encodeToString(content.toByteArray(Charsets.UTF_8), Base64.NO_WRAP))
         if (!initializeEmptyRepository) payload.put("branch", repository.branch)
         if (sha != null) payload.put("sha", sha)

@@ -52,8 +52,6 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                         context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
                     }
                 }, modifier = Modifier.fillMaxWidth()) { Text("Sports") }
-                NikTvSecondaryActionButton(onClick = { close(); openOffline() }, modifier = Modifier.fillMaxWidth()) { Text("Offline") }
-                NikTvTextActionButton(onClick = { close(); configurePortals() }, modifier = Modifier.fillMaxWidth()) { Text("Configure portals") }
             }
         }, confirmButton = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

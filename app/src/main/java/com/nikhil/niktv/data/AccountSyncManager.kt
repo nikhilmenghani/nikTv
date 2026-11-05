@@ -48,6 +48,9 @@ class AccountSyncManager private constructor(context: Context) {
     private val mutableState = MutableStateFlow(AccountSyncState())
     val state: StateFlow<AccountSyncState> = mutableState.asStateFlow()
 
+    private fun githubTransport(token: String) = GitHubSyncTransport(token,
+        commitMessage = currentDeviceSyncCommitMessage(context))
+
     /** Restore the last successful local account without waiting for a network request. */
     suspend fun restoreCachedAccount(): AccountSyncState {
         val live = mutableState.value
@@ -85,7 +88,7 @@ class AccountSyncManager private constructor(context: Context) {
             }
             mutableState.value = mutableState.value.copy(syncing = true, error = null, message = "Validating GitHub token…")
             try {
-                val transport = GitHubSyncTransport(token.trim())
+                val transport = githubTransport(token.trim())
                 val identity = transport.identity()
                 val previous = prefs.getString("accountId", null)
                 val previousToken = if (previous == identity.accountId) vault.token() else ""
@@ -162,7 +165,7 @@ class AccountSyncManager private constructor(context: Context) {
         try {
             val until = prefs.getLong("retryAfter:$accountId", 0)
             if (until > System.currentTimeMillis()) throw SyncFailure("GitHub requested a pause. Changes are saved locally and will retry automatically.", retryable = true, retryAfterMillis = until - System.currentTimeMillis())
-            val transport = GitHubSyncTransport(token)
+            val transport = githubTransport(token)
             val identity = transport.identity()
             if (identity.accountId != accountId) throw SyncFailure("The saved token belongs to a different GitHub account. Reconnect to switch accounts safely.", reconnect = true)
             RemoteCredentials.activateAccount(context, identity.accountId, identity.login)
@@ -181,6 +184,7 @@ class AccountSyncManager private constructor(context: Context) {
             override suspend fun prepare(emptyRemoteAccount: Boolean) {
                 if (emptyRemoteAccount) store.initializeDefaults(accountId)
                 ProfileStore(context).migrateLegacy(accountId, assignToFamily = emptyRemoteAccount)
+                ProfileStore(context).migrateLegacyPlaybackTiming(accountId)
                 syncConfigurationReference(accountId, repository.owner)
             }
             override suspend fun snapshot() = store.snapshot(accountId)

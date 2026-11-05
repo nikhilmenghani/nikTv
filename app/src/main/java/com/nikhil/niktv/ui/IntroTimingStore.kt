@@ -8,6 +8,16 @@ internal class IntroTimingStore(private val openPreferences: () -> SharedPrefere
     fun read(target: IntroTarget): IntroTimings = IntroTimings(readRange(target.episodeKey, target.legacyEpisodeKey),
         target.seasonKey?.let { readRange(it, target.legacySeasonKey) })
 
+    fun observe(target: IntroTarget, changed: () -> Unit): () -> Unit {
+        val captured = preferences
+        val keys = listOfNotNull(target.episodeKey, target.seasonKey, target.legacyEpisodeKey, target.legacySeasonKey).toSet()
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key in keys) changed()
+        }
+        captured.registerOnSharedPreferenceChangeListener(listener)
+        return { captured.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
     private fun readRange(key: String, legacy: String? = null): IntroRange? {
         val current = preferences.getString(key, null)
         if (current != null) return decode(current)

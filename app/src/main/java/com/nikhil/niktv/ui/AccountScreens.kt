@@ -66,6 +66,7 @@ internal val LocalOpenAccountScreen = staticCompositionLocalOf<() -> Unit> { {}
 internal val LocalOpenUserProfiles = staticCompositionLocalOf<() -> Unit> { {} }
 internal val LocalCloseAccountSettings = staticCompositionLocalOf<() -> Unit> { {} }
 internal val LocalSelectedUserProfile = staticCompositionLocalOf<UserProfile?> { null }
+internal val LocalCloseProfileDownloads = staticCompositionLocalOf<(() -> Unit)?> { null }
 
 /** Account authentication precedes both the people chooser and every content destination. */
 @Composable
@@ -89,6 +90,8 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
     var choosingProfile by remember { mutableStateOf(false) }
     var restoredAccount by remember { mutableStateOf<String?>(null) }
     var restoringViewer by remember { mutableStateOf(true) }
+    var useCachedProfiles by remember { mutableStateOf(false) }
+    var profileDownloads by remember { mutableStateOf(false) }
     var profileError by remember { mutableStateOf<String?>(null) }
     var mappingProfile by remember { mutableStateOf<UserProfile?>(null) }
     suspend fun profileAction(message: String, action: suspend () -> Unit) {
@@ -97,27 +100,37 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { profileError = message }
     }
-    fun openAccount() { showAccount = true; showSettings = false }
+    fun openAccount() { profileDownloads = false; showAccount = true; showSettings = false }
     fun openProfiles() {
+        profileDownloads = false
+        useCachedProfiles = account.initialized
         choosingProfile = true
         profileError = null
         showAccount = false
         showSettings = false
     }
-    suspend fun openViewer(profileId: String) {
+    suspend fun openViewer(profileId: String, offlineOnly: Boolean = false) {
         val owner = UserScope(requireNotNull(store.selectedAccount.value), profileId)
         com.nikhil.niktv.data.UserProfilePreferences.warm(context, owner)
         store.selectProfile(profileId)
         // Let the ViewModel dispose the previous viewer before starting portal work.
         yield()
-        vm.openProfileChooser()
+        if (offlineOnly) vm.openProfileDownloads() else vm.openProfileChooser()
+        profileDownloads = offlineOnly
         selectedUser = profileId
         choosingProfile = false
+        if (offlineOnly) return
         val destination = store.rememberedDestination(owner)
         val portals = legacyStore.scoped(owner).profiles.first()
         if (store.selectedScope.value != owner) return
         when (destination?.kind) {
-            ViewerDestinationKind.OFFLINE -> vm.openOfflineDownloads()
+            ViewerDestinationKind.OFFLINE -> {
+                // Older versions remembered Downloads as a portal destination. Resume
+                // the retained content portal now that Downloads lives on the people screen.
+                val previous = store.rememberedPortalKey(owner)
+                    ?: legacyStore.scoped(owner).activeProfile.first()?.cacheKey()
+                portals.firstOrNull { it.cacheKey() == previous }?.let(vm::switchProfile)
+            }
             ViewerDestinationKind.SPORTS -> context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
             ViewerDestinationKind.PORTAL -> portals.firstOrNull { it.cacheKey() == destination.portalKey }?.let(vm::switchProfile)
             null -> {
@@ -133,12 +146,12 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
         manager.requestLaunchSync()
         hasLegacy = legacyStore.hasLegacyViewingData()
     }
-    LaunchedEffect(account.accountId) { selectedUser = null; choosingProfile = false; profileError = null; mappingProfile = null }
+    LaunchedEffect(account.accountId) { selectedUser = null; choosingProfile = false; profileDownloads = false; useCachedProfiles = false; profileError = null; mappingProfile = null }
     LaunchedEffect(launchComplete, account.accountId, account.initialized) {
         if (!launchComplete) return@LaunchedEffect
         val id = account.accountId
         try {
-            if (account.initialized && id != null && restoredAccount != id) {
+            if (account.initialized && !account.reconnectRequired && id != null && restoredAccount != id) {
                 restoringViewer = true
                 restoredAccount = id
                 store.rememberedProfileId(id)?.let { profileId ->
@@ -156,6 +169,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
         }
     }
     CompositionLocalProvider(LocalOpenAccountScreen provides ::openAccount, LocalOpenUserProfiles provides ::openProfiles,
+        LocalCloseProfileDownloads provides if (profileDownloads) ({ vm.closeOfflineDownloads(); openProfiles() }) else null,
         LocalCloseAccountSettings provides { showSettings = false },
         LocalViewingOwner provides selectedScope,
         LocalSelectedUserProfile provides profiles.firstOrNull { it.id == selectedUser }) {
@@ -164,7 +178,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                 when {
                     !launchComplete || restoringViewer -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     showSettings -> content()
-                    showAccount || !account.initialized || account.reconnectRequired -> GitHubAccountScreen(
+                    showAccount || !account.initialized || (account.reconnectRequired && !useCachedProfiles) -> GitHubAccountScreen(
                         state = account,
                         onConnect = { token -> scope.launch {
                             manager.connect(token)
@@ -214,7 +228,12 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                         } } else null,
                         onAccount = ::openAccount,
                         onSync = manager::requestManualSync,
-                        selectedProfileId = selectedUser
+                        selectedProfileId = selectedUser,
+                        onOfflineDownloads = { profile -> scope.launch {
+                            profileAction("Could not open local downloads. Your files are preserved.") {
+                                openViewer(profile.id, offlineOnly = true)
+                            }
+                        } }
                     ) }
                     else -> {
                         BackHandler(enabled = appState.session == null && !appState.profileEditorOpen && !appState.offlineDownloadsOpen) { openProfiles() }
@@ -272,7 +291,7 @@ internal fun GitHubAccountScreen(
             } else if (state.message.isNotBlank()) Text(state.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (state.error != null || state.accountId != null) NikTvSecondaryActionButton(onClick = { if (token.isNotBlank()) onConnect(token.trim()) else onRetry() }, enabled = !state.syncing, modifier = Modifier.fillMaxWidth()) { Text("Retry sync") }
-            if (state.initialized && !state.reconnectRequired) NikTvPrimaryActionButton(onClick = onProfiles, enabled = !state.syncing, modifier = Modifier.fillMaxWidth()) { Text(if (state.error == null) "User profiles" else "Use cached profiles") }
+            if (state.initialized) NikTvPrimaryActionButton(onClick = onProfiles, modifier = Modifier.fillMaxWidth()) { Text(if (state.error == null && !state.reconnectRequired) "User profiles" else "Use cached profiles") }
             NikTvSecondaryActionButton(onClick = onSettings, modifier = Modifier.fillMaxWidth()) { Text("Settings") }
             if (state.accountId != null) NikTvTextActionButton(onClick = { token = ""; onDisconnect() }, enabled = !state.syncing, modifier = Modifier.fillMaxWidth()) { Text("Disconnect this device") }
             if (state.accountId != null) Text("Disconnect removes this device's account authentication. Local viewing data and remote data are kept. Delete a user profile across devices from User profiles.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -289,12 +308,14 @@ internal fun UserProfilesScreen(
     onDelete: (UserProfile) -> Unit, onAccount: () -> Unit, onSync: () -> Unit,
     onImportLegacy: ((UserProfile) -> Unit)? = null,
     onManagePortals: ((UserProfile) -> Unit)? = null,
-    selectedProfileId: String? = null
+    selectedProfileId: String? = null,
+    onOfflineDownloads: ((UserProfile) -> Unit)? = null
 ) {
     var editing by remember { mutableStateOf<UserProfile?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
     var managing by remember { mutableStateOf<UserProfile?>(null) }
     var managementPicker by remember { mutableStateOf(false) }
+    var offlinePicker by remember { mutableStateOf(false) }
     var tools by remember { mutableStateOf<UserProfile?>(null) }
     var deleting by remember { mutableStateOf<UserProfile?>(null) }
     var importing by remember { mutableStateOf<UserProfile?>(null) }
@@ -302,6 +323,7 @@ internal fun UserProfilesScreen(
     val configuration = LocalConfiguration.current
     val remote = context.usesRemoteNavigation(configuration)
     val first = remember(selectedProfileId, profiles.map { it.id }) { FocusRequester() }
+    val offlineEntry = remember { FocusRequester() }
     val preferred = selectedProfileId?.takeIf { id -> profiles.any { it.id == id } } ?: profiles.firstOrNull()?.id
     fun edit(profile: UserProfile?) { editing = profile; editorOpen = true; managing = null; managementPicker = false }
 
@@ -339,8 +361,18 @@ internal fun UserProfilesScreen(
             Text(if (remote) "Hold OK or press Menu to manage a profile" else "Touch and hold a profile to manage it",
                 color = Color(0xFF9699A2), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
-            if (profiles.isNotEmpty()) NikTvSecondaryActionButton(onClick = { managementPicker = true },
-                modifier = Modifier.heightIn(min = 44.dp)) { Text("Manage profiles") }
+            if (profiles.isNotEmpty()) Row(Modifier.widthIn(max = 440.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                NikTvSecondaryActionButton(onClick = { managementPicker = true },
+                    modifier = Modifier.weight(1f).heightIn(min = 44.dp)) {
+                    Text("Manage profiles", style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+                }
+                onOfflineDownloads?.let { open -> NikTvSecondaryActionButton(onClick = {
+                    if (profiles.size == 1) open(profiles.single()) else offlinePicker = true
+                }, modifier = Modifier.weight(1f).heightIn(min = 44.dp)) {
+                    Text("Offline downloads", style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+                } }
+            }
             Spacer(Modifier.height(10.dp))
             (error ?: state.error)?.let { Text(it, modifier = Modifier.widthIn(max = 640.dp),
                 color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
@@ -358,6 +390,19 @@ internal fun UserProfilesScreen(
         text = { Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             profiles.forEach { profile -> NikTvSecondaryActionButton(onClick = { managing = profile; managementPicker = false }, modifier = Modifier.fillMaxWidth()) { Text(profile.name) } }
         } }, confirmButton = { NikTvTextActionButton(onClick = { managementPicker = false }) { Text("Done") } })
+    if (offlinePicker && onOfflineDownloads != null) AlertDialog(
+        modifier = Modifier.initialFocusEntry(offlineEntry, remote),
+        onDismissRequest = { offlinePicker = false },
+        title = { Text("Offline downloads", style = MaterialTheme.typography.titleLarge) },
+        text = { Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Choose a profile to see downloads on this device.", style = MaterialTheme.typography.bodySmall)
+            profiles.forEach { profile -> NikTvSecondaryActionButton(onClick = {
+                offlinePicker = false
+                onOfflineDownloads(profile)
+            }, modifier = Modifier.fillMaxWidth()
+                .then(if (profile.id == preferred) Modifier.focusRequester(offlineEntry) else Modifier)
+                .semantics { contentDescription = "Offline downloads for ${profile.name}" }) { Text(profile.name) } }
+        } }, confirmButton = { NikTvTextActionButton(onClick = { offlinePicker = false }) { Text("Cancel") } })
     managing?.let { profile -> AlertDialog(onDismissRequest = { managing = null },
         title = { Text(profile.name, style = MaterialTheme.typography.titleLarge) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

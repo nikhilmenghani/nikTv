@@ -393,7 +393,7 @@ private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
                 "Previous Series" -> vm.openPreviousDiscovery(DashboardSurface.SERIES)
                 "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
-                "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileSwitcher()
+                "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileChooser()
             } }, favorite = { vm.toggleFavorite(it) }, playEpisode = vm::openDiscoveryEpisode,
             recent = vm::openRecent, watched = vm::openWatchedEpisode, category = vm::openModernIptvCategory,
             section = vm::openModernTmdbSection, removeRecent = vm::removeRecent,
@@ -410,6 +410,7 @@ private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
 private fun NikTvAppContent(vm: NikTvViewModel) {
     val openAccount = LocalOpenAccountScreen.current
     val openUserProfiles = LocalOpenUserProfiles.current
+    val closeProfileDownloads = LocalCloseProfileDownloads.current
     val closeAccountSettings = LocalCloseAccountSettings.current
     val pairingInvite = com.nikhil.niktv.data.PairingInvites.pending
     LaunchedEffect(pairingInvite) {
@@ -717,7 +718,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,exportBackup = vm::exportBackup
                     ,importBackup = vm::importBackup
                     ,importBackupContent = vm::importBackupContent
-                    ,openProfileSwitcher = vm::openProfileSwitcher
+                    ,openProfileSwitcher = vm::openProfileChooser
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
                     ,setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled
@@ -736,7 +737,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,findChannelsInCategory = vm::findChannelsInCategory
                     ,cancelCategoryFind = vm::cancelCategoryFind
                     ,openOfflineDownloads = vm::openOfflineDownloads
-                    ,closeOfflineDownloads = vm::closeOfflineDownloads
+                    ,closeOfflineDownloads = closeProfileDownloads ?: vm::closeOfflineDownloads
                     ,playOfflineDownload = vm::playOfflineDownload
                     ,playRecording = vm::playRecording
                     ,playProviderMovie = vm::playProviderMovieDetails

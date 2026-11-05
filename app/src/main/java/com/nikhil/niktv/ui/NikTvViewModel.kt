@@ -397,7 +397,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(initialCatalogItems = items) }
             }
         }
-        viewModelScope.launch { store.playerControlsTimeoutSeconds.collect { seconds -> _state.update { it.copy(playerControlsTimeoutSeconds = seconds) } } }
+        viewModelScope.launch { collectForViewer({ it.playerControlsTimeoutSeconds }) { seconds -> _state.update { it.copy(playerControlsTimeoutSeconds = seconds) } } }
         viewModelScope.launch { store.keepAwakeOnlyDuringPlayback.collect { enabled ->
             _state.update { it.copy(keepAwakeOnlyDuringPlayback = enabled) }
         } }
@@ -2456,9 +2456,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setPlayerControlsTimeoutSeconds(seconds: Int) {
         val normalized = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
+        val owner = store.captureScope()
+        val ownedStore = owner?.let(store::scoped) ?: store
         _state.update { it.copy(playerControlsTimeoutSeconds = normalized) }
         launchForViewer launch@ {
-            store.setPlayerControlsTimeoutSeconds(normalized)
+            ownedStore.setPlayerControlsTimeoutSeconds(normalized)
         }
     }
 
@@ -8065,11 +8067,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Local downloads never replace the person's last content portal. */
+    fun openProfileDownloads() {
+        viewerJobs.toList().forEach { it.cancel() }
+        viewerJobs.clear()
+        openProfileChooser()
+        openOfflineDownloads()
+    }
+
     fun openOfflineDownloads() {
-        val owner = store.captureScope()
-        if (owner != null) viewModelScope.launch(Dispatchers.IO) {
-            userSyncStore.rememberDestination(owner, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.OFFLINE))
-        }
         searchSeriesReturn = null
         cancelPendingPlayback()
         _state.update {

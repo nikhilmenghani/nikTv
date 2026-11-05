@@ -141,6 +141,50 @@ class UserProfileManagementDeviceTest {
         }
     }
 
+    @Test fun offlineDownloadsAsksForTheExactPersonWithoutPortalSelection() {
+        val family = UserProfile(UUID.randomUUID().toString(), "Family")
+        val kids = UserProfile(UUID.randomUUID().toString(), "Kids", type = UserProfileType.KIDS)
+        val opened = AtomicReference<UserProfile>()
+        val portalSelection = AtomicInteger()
+        val portalManagement = AtomicInteger()
+        fixture({ UserProfilesScreen(listOf(family, kids), AccountSyncState(initialized = true), null,
+            { portalSelection.incrementAndGet() }, { _, _, _, _, _ -> }, {}, {}, {},
+            onManagePortals = { portalManagement.incrementAndGet() }, selectedProfileId = family.id,
+            onOfflineDownloads = opened::set) }) {
+            await("Profile chooser offers device downloads") { find("Offline downloads") != null }
+            click("Offline downloads")
+            await("Multiple people require an explicit choice") { find("Choose a profile to see downloads on this device.") != null }
+            assertNull("The selected profile is not silently assigned", opened.get())
+            click("Cancel")
+            assertNull("Cancel does not open downloads", opened.get())
+            click("Offline downloads")
+            click("Offline downloads for Kids")
+            await("Downloads use the chosen permanent profile identity") { opened.get()?.id == kids.id }
+            assertEquals(kids, opened.get())
+            assertEquals("Downloads bypass portal navigation", 0, portalSelection.get())
+            assertEquals(0, portalManagement.get())
+            assertNull(find("Stalker"))
+        }
+    }
+
+    @Test fun onlyPersonsDownloadsOpenDirectlyEvenWhenAccountNeedsReconnect() {
+        val person = UserProfile(UUID.randomUUID().toString(), "Offline viewer")
+        val opened = AtomicReference<UserProfile>()
+        val portalSelection = AtomicInteger()
+        fixture({ UserProfilesScreen(listOf(person), AccountSyncState(initialized = true,
+            reconnectRequired = true, error = "Reconnect to sync. Downloads remain on this device."), null,
+            { portalSelection.incrementAndGet() }, { _, _, _, _, _ -> }, {}, {}, {},
+            onOfflineDownloads = opened::set) }) {
+            await("Cached profile keeps device downloads accessible") { find("Offline downloads") != null }
+            click("Offline downloads")
+            await("One person opens their own downloads directly") { opened.get()?.id == person.id }
+            assertEquals(person, opened.get())
+            assertEquals(0, portalSelection.get())
+            assertNull("Single-person downloads do not need a picker", find("Choose a profile to see downloads on this device."))
+            assertNull("No portal authentication is entered", find("Stalker"))
+        }
+    }
+
     @Test fun remoteMenuEditsIdentityWithoutSelectingOrChangingUuidAndType() {
         val existing = UserProfile(UUID.randomUUID().toString(), "Existing viewer", avatar = "K", type = UserProfileType.KIDS)
         val selected = AtomicInteger()

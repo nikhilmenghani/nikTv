@@ -117,14 +117,18 @@ class AccountProfilesDeviceTest {
         }
     }
 
-    @Test fun revokedAccountRequiresReconnectAndPreservesRecoveryActions() {
+    @Test fun revokedAccountKeepsExplicitCachedAccessAndRecoveryActions() {
+        val action = AtomicReference("")
         fixture({ GitHubAccountScreen(AccountSyncState(accountId = "42", login = "fixture", initialized = true,
-            reconnectRequired = true, error = "Token revoked. Enter a replacement token."), {}, {}, {}, {}, {}) }) {
+            reconnectRequired = true, error = "Token revoked. Enter a replacement token."), {}, {}, { action.set("cached") }, {}, { action.set("disconnect") }) }) {
             await("Replacement token is available") { find("Replacement GitHub token") != null }
-            assertNull("Revoked token cannot bypass reconnect", find("User profiles"))
-            assertNull(find("Use cached profiles"))
             assertNotNull(reveal("Retry sync"))
+            assertNotNull("Prior setup keeps local viewing data available", reveal("Use cached profiles"))
+            click("Use cached profiles")
+            await("Cached access is an explicit action") { action.get() == "cached" }
             assertNotNull(reveal("Settings"))
+            click("Disconnect this device")
+            await("Authentication can be removed without deleting data") { action.get() == "disconnect" }
         }
     }
 

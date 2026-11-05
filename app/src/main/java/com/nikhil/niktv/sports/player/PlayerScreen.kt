@@ -398,7 +398,7 @@ fun PlayerScreen(
         }
     }
     val liveRecording by LiveTvRecorder.state.collectAsState()
-    val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
+    val recordingThisChannel = liveRecording.active && liveRecording.owner == media.userScope && liveRecording.sourceUrl == media.url
     val playerConfiguration = LocalConfiguration.current
     val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
@@ -1477,7 +1477,7 @@ fun PlayerScreen(
                 livePlaybackElapsedMillis = livePlaybackClock.sample(
                     android.os.SystemClock.elapsedRealtime(), player.isPlaying
                 )
-                LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis)
+                LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis, owner = media.userScope)
                 if (player === localPlayer && !media.offlinePlayback) {
                     val now = android.os.SystemClock.elapsedRealtime()
                     val active = playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
@@ -2565,14 +2565,15 @@ PlayerChromeIconButton(
                         icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
                         contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
                         onClick = {
-                            if (liveRecording.active) LiveTvRecorder.stop(context,
+                            if (liveRecording.active && liveRecording.owner == media.userScope) LiveTvRecorder.stop(context,
                                 livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying))
                             else LiveTvRecorder.start(
                                 context,
                                 media.media.title,
                                 media.url,
                                 player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L },
-                                livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying)
+                                livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying),
+                                owner = media.userScope
                             )
                         },
                         modifier = Modifier

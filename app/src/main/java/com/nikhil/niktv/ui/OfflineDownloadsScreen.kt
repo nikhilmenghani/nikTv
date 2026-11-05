@@ -143,11 +143,19 @@ internal fun OfflineDownloadsScreen(
 ) {
     val context = LocalContext.current
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
-    val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
+    val owner = LocalViewingOwner.current
+    // The ViewModel already scopes downloads to the person. A portal is not required
+    // to browse their local library, including files downloaded from another portal.
+    val entries = if (owner != null) state.offlineDownloads else state.offlineDownloads.filter { it.profileKey == profileKey }
+    val libraryKey = owner?.let { "${it.accountId}|${it.profileId}" } ?: profileKey
+    val recordingOwnership = remember(context) { com.nikhil.niktv.data.RecordingOwnership(context) }
+    val scope = rememberCoroutineScope()
+    var unassignedRecordings by remember(libraryKey) { mutableStateOf<List<RecordedLiveTvMedia>>(emptyList()) }
+    var importingRecordings by remember(libraryKey) { mutableStateOf(false) }
     val remoteNavigationActive = context.usesRemoteNavigation(LocalConfiguration.current) ||
         LocalInputModeManager.current.inputMode == InputMode.Keyboard
-    val entryFocusRequester = remember(profileKey) { FocusRequester() }
-    var entryFocusComplete by rememberSaveable(profileKey) { mutableStateOf(false) }
+    val entryFocusRequester = remember(libraryKey) { FocusRequester() }
+    var entryFocusComplete by rememberSaveable(libraryKey) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
     var pendingRecordingRemoval by remember { mutableStateOf<RecordedLiveTvMedia?>(null) }
@@ -155,8 +163,14 @@ internal fun OfflineDownloadsScreen(
     var recordingsLoaded by remember { mutableStateOf(false) }
     val liveRecording by LiveTvRecorder.state.collectAsState()
     var storageRevision by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(storageRevision, liveRecording.active) {
-        recordings = withContext(Dispatchers.IO) { LiveTvRecorder.recordings(context) }
+    LaunchedEffect(libraryKey, storageRevision, liveRecording.active) {
+        val local = withContext(Dispatchers.IO) {
+            val all = LiveTvRecorder.recordings(context)
+            recordingOwnership.visible(all, owner) to
+                (if (owner != null) recordingOwnership.unassigned(all) else emptyList())
+        }
+        recordings = local.first
+        unassignedRecordings = local.second
         recordingsLoaded = true
     }
     val firstRecordingUri = recordings.firstOrNull()?.uri
@@ -180,6 +194,10 @@ internal fun OfflineDownloadsScreen(
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
         ModernScreenTopBar("Offline downloads", close,
             backModifier = if (!hasEntryMedia) Modifier.focusRequester(entryFocusRequester) else Modifier)
+        if (owner != null && unassignedRecordings.isNotEmpty()) NikTvTextActionButton(
+            onClick = { importingRecordings = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Text("Import device recordings (${unassignedRecordings.size})", style = MaterialTheme.typography.labelMedium)
+        }
         if (entries.isEmpty() && recordings.isEmpty()) {
             Box(
                 Modifier.weight(1f).fillMaxWidth(),
@@ -270,6 +288,19 @@ internal fun OfflineDownloadsScreen(
             }
         }
     }
+    if (importingRecordings && owner != null) AlertDialog(
+        onDismissRequest = { importingRecordings = false }, title = { Text("Import device recordings?") },
+        text = { Text("Assign older recordings without a profile to this person on this device. Other people's recordings stay separate. Files remain local.") },
+        confirmButton = { NikTvPrimaryActionButton(onClick = {
+            importingRecordings = false
+            val captured = unassignedRecordings
+            scope.launch {
+                withContext(Dispatchers.IO) { recordingOwnership.assignUnassigned(owner, captured) }
+                storageRevision++
+            }
+        }) { Text("Import") } },
+        dismissButton = { NikTvTextActionButton(onClick = { importingRecordings = false }) { Text("Cancel") } })
+
     pendingRemoval?.let { entry ->
         AlertDialog(
             onDismissRequest = { pendingRemoval = null },
@@ -325,6 +356,7 @@ internal fun OfflineStorageScreen(
     close: () -> Unit
 ) {
     val context = LocalContext.current
+    val owner = LocalViewingOwner.current
     val scope = rememberCoroutineScope()
     var pendingClear by remember { mutableStateOf<String?>(null) }
     var storageRevision by remember { mutableLongStateOf(0L) }
@@ -378,7 +410,9 @@ internal fun OfflineStorageScreen(
                     scope.launch {
                         when (target) {
                             "recordings" -> withContext(Dispatchers.IO) {
-                                LiveTvRecorder.recordings(context, includeDuration = false).forEach { LiveTvRecorder.delete(context, it) }
+                                val all = LiveTvRecorder.recordings(context, includeDuration = false)
+                                val visible = com.nikhil.niktv.data.RecordingOwnership(context).visible(all, owner)
+                                visible.forEach { LiveTvRecorder.delete(context, it) }
                             }
                             "media-cache" -> {
                                 OfflineMediaDownloads.clearCachedMedia(context)

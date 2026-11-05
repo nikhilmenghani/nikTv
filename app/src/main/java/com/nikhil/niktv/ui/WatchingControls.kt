@@ -21,22 +21,27 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.PlayingMedia
+import com.nikhil.niktv.data.UserProfilePreferences
+import com.nikhil.niktv.data.UserScope
+import com.nikhil.niktv.data.UserSyncStore
 import kotlinx.coroutines.delay
 import java.util.WeakHashMap
 
 internal object WatchingPreferences {
-    fun preferences(context: Context) = context.getSharedPreferences("niktv_playback_ui", Context.MODE_PRIVATE)
+    fun save(context: Context, value: WatchingConfiguration) = save(preferences(context), value)
+    fun preferences(context: Context, owner: UserScope? = UserSyncStore.get(context).selectedScope.value) =
+        UserProfilePreferences.get(context, "niktv_playback_ui", owner = owner)
     fun read(prefs: SharedPreferences) = WatchingConfiguration(prefs.getBoolean("watching_check_enabled", true),
         prefs.getInt("watching_check_minutes", 120).coerceIn(15, 480), prefs.getInt("watching_check_episodes", 4).coerceIn(1, 12))
-    fun save(context: Context, value: WatchingConfiguration) { preferences(context).edit()
-        .putBoolean("watching_check_enabled", value.enabled).putInt("watching_check_minutes", value.minutes)
-        .putInt("watching_check_episodes", value.episodes).apply() }
+    fun save(prefs: SharedPreferences, value: WatchingConfiguration) { prefs.edit()
+        .putBoolean("watching_check_enabled", value.enabled).putInt("watching_check_minutes", value.minutes.coerceIn(15, 480))
+        .putInt("watching_check_episodes", value.episodes.coerceIn(1, 12)).apply() }
 }
 
 @Composable
-internal fun rememberWatchingConfiguration(): WatchingConfiguration {
+internal fun rememberWatchingConfiguration(owner: UserScope? = LocalViewingOwner.current): WatchingConfiguration {
     val context = LocalContext.current.applicationContext
-    val prefs = remember(context) { WatchingPreferences.preferences(context) }
+    val prefs = remember(context, owner) { WatchingPreferences.preferences(context, owner) }
     var value by remember(prefs) { mutableStateOf(WatchingPreferences.read(prefs)) }
     DisposableEffect(prefs) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> value = WatchingPreferences.read(prefs) }
@@ -49,15 +54,17 @@ internal fun rememberWatchingConfiguration(): WatchingConfiguration {
 @Composable
 internal fun WatchingSettingsContent() {
     val context = LocalContext.current
+    val owner = LocalViewingOwner.current
+    val prefs = remember(context, owner) { WatchingPreferences.preferences(context, owner) }
     val config = rememberWatchingConfiguration()
     SettingsControlRow("Are you still watching?", checked = config.enabled,
         description = "Pause and ask before continuing after either limit, without interaction.",
-        onToggle = { WatchingPreferences.save(context, config.copy(enabled = it)) })
+        onToggle = { WatchingPreferences.save(prefs, config.copy(enabled = it)) })
     if (config.enabled) {
         SettingsPickerRow("Without interaction: watch time", listOf(30, 60, 90, 120, 180, 240).map { it to "$it minutes" },
-            config.minutes, { WatchingPreferences.save(context, config.copy(minutes = it)) }, "Counts time actually playing, across episodes.")
+            config.minutes, { WatchingPreferences.save(prefs, config.copy(minutes = it)) }, "Counts time actually playing, across episodes.")
         SettingsPickerRow("Without interaction: episodes", (1..8).map { it to "$it episodes" }, config.episodes,
-            { WatchingPreferences.save(context, config.copy(episodes = it)) }, "Whichever limit comes first. Using player controls restarts both counters.")
+            { WatchingPreferences.save(prefs, config.copy(episodes = it)) }, "Whichever limit comes first. Using player controls restarts both counters.")
     }
 }
 
@@ -91,14 +98,14 @@ internal class WatchingCheck(val session: WatchingSession, val eligible: Boolean
 internal fun rememberWatchingCheck(media: PlayingMedia): WatchingCheck {
     val context = LocalContext.current
     val owner = context.findActivity() ?: context.applicationContext
-    val identity = "${media.profileKey}:${media.series?.id ?: media.media.id}"
+    val identity = "${media.userScope}:${media.profileKey}:${media.series?.id ?: media.media.id}"
     val suppliedSession = LocalWatchingSession.current
     val session = remember(owner, suppliedSession) { suppliedSession ?: watchingSessions.getOrPut(owner) { WatchingSession() } }
     val check = remember(session, media.progressKey, identity) {
         session.begin(identity, media.media.id)
         WatchingCheck(session, media.catalogType != CatalogType.LIVE_TV)
     }
-    val config = rememberWatchingConfiguration()
+    val config = rememberWatchingConfiguration(media.userScope)
     SideEffect { check.config = config }
     return check
 }

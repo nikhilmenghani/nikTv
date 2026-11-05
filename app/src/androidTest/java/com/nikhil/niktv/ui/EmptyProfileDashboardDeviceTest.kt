@@ -29,7 +29,8 @@ class EmptyProfileDashboardDeviceTest {
             return null
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
-        return walk(instrumentation.uiAutomation.rootInActiveWindow)
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        return if (root?.packageName?.toString() == instrumentation.targetContext.packageName) walk(root) else null
     }
 
     private fun await(message: String, condition: () -> Boolean) {
@@ -62,27 +63,31 @@ class EmptyProfileDashboardDeviceTest {
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }
 
-    @Test fun tokenFreeDashboardShowsAvailableActionsWithoutTheRemovedYouTubeTile() = withDashboard { _, _ ->
-        for (label in listOf("Stalker", "Xtream", "Sports", "Offline", "GitHub account", "Configure portal", "User profiles", "Import backup"))
+    @Test fun tokenFreeDashboardShowsOnlyContentDestinationsAndPersonReturn() = withDashboard { _, _ ->
+        for (label in listOf("Stalker", "Xtream", "Sports", "Who's watching?"))
             assertNotNull("Dashboard exposes $label without a profile", find(label))
         assertNotNull("Sports is a destination even before private configuration", find("Sports"))
         assertNull("Must not force the profile form", find("Portal URL"))
-        assertNull(find("NikTube"))
-        assertNull("Portal actions must not be mislabeled as user profile creation", find("Add profile"))
+        for (removed in listOf("Offline", "GitHub account", "Configure portal", "User profiles", "Import backup", "Add profile", "NikTube"))
+            assertNull("Portal chooser does not expose $removed", find(removed))
     }
 
-    @Test fun firstProfileCanBeCanceledWithButtonAndSystemBack() = withDashboard { _, _ ->
-        click("Configure portal")
-        await("Add is explicit") { find("Portal URL") != null }
-        click("Cancel")
-        await("Cancel returns to the dashboard") { find("Portals") != null }
-        click("Configure portal")
-        await("Editor can reopen") { find("Portal URL") != null }
+    @Test fun missingConfigurationExplainsAvailabilityWithoutOpeningAnEditor() = withDashboard { _, editor ->
+        click("Stalker")
+        await("Unconfigured Stalker reports availability") { find("Stalker is not available yet") != null }
+        assertNull(find("Portal URL"))
+        assertFalse(editor.value)
+        click("OK")
+        await("OK dismisses the availability dialog") { find("Stalker is not available yet") == null }
+        click("Xtream")
+        await("Unconfigured Xtream reports availability") { find("Xtream is not available yet") != null }
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-        await("System Back returns to the dashboard") { find("Portals") != null }
+        await("System Back dismisses the availability dialog") { find("Xtream is not available yet") == null }
+        assertNotNull(find("Portals"))
+        assertFalse("Unavailable connections never invoke the old editor callback", editor.value)
     }
 
-    @Test fun configuredDashboardIncludesSportsAndUnconfiguredDashboardRemovesIt() = withDashboard { host, _ ->
+    @Test fun sportsAvailabilityOnlyChangesTheSportsDestination() = withDashboard { host, _ ->
         val available = mutableStateOf(true)
         instrumentation.runOnMainSync { host.setContent { MaterialTheme {
             ProfileScreen(null, emptyList(), false, false, {}, {}, {}, {}, {}, {}, {},
@@ -91,10 +96,12 @@ class EmptyProfileDashboardDeviceTest {
         await("Configured dashboard shows Sports") { find("Sports") != null }
         instrumentation.runOnMainSync { available.value = false }
         await("Configuration change removes Sports") { find("Sports") == null }
-        assertNotNull(find("Offline"))
+        assertNotNull(find("Stalker"))
+        assertNotNull(find("Xtream"))
+        assertNull(find("Offline"))
     }
 
-    @Test fun emptyTvDashboardStartsRemoteFocusOnOffline() = withDashboard { host, _ ->
+    @Test fun emptyTvDashboardStartsRemoteFocusOnStalker() = withDashboard { host, _ ->
         instrumentation.setInTouchMode(false)
         instrumentation.runOnMainSync { host.setContent {
             val configuration = Configuration(LocalConfiguration.current).apply {

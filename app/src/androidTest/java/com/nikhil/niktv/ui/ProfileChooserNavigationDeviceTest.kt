@@ -19,7 +19,7 @@ import kotlin.math.abs
 
 /** Fake chooser profiles only: navigation never connects to a provider. */
 class ProfileChooserNavigationDeviceTest {
-    @Test fun reversalsAndUnevenRowsKeepRemoteFocusWithoutOpeningTiles() {
+    @Test fun threeDestinationsAndPersonReturnKeepRemoteFocusWithoutOpeningTiles() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
@@ -28,7 +28,7 @@ class ProfileChooserNavigationDeviceTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
         val selections = CopyOnWriteArrayList<String>()
         fun find(node: AccessibilityNodeInfo?, text: String): AccessibilityNodeInfo? {
-            if (node == null) return null
+            if (node == null || node.packageName?.toString() != context.packageName) return null
             if (node.text?.toString() == text) return node
             for (i in 0 until node.childCount) find(node.getChild(i), text)?.let { return it }
             return null
@@ -45,14 +45,6 @@ class ProfileChooserNavigationDeviceTest {
             assertTrue("Remote focus reaches $text", focused(text))
         }
         fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
-        fun moveUntil(code: Int, label: String) {
-            repeat(5) {
-                if (focused(label)) return
-                key(code)
-                Thread.sleep(120)
-            }
-            await(label)
-        }
         fun moveTo(label: String, fallback: Int) {
             fun focusedNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
@@ -86,7 +78,8 @@ class ProfileChooserNavigationDeviceTest {
                 CompositionLocalProvider(LocalConfiguration provides config) { MaterialTheme {
                     ProfileScreen(profiles.first(), profiles, false, false,
                         { selections.add("settings") }, { fail("Never connect") }, { selections.add(it.name) },
-                        { selections.add("add") }, {}, {}, {}, sportsAvailable = true)
+                        { selections.add("add") }, {}, {}, {}, sportsAvailable = true,
+                        openUserProfiles = { selections.add("people") })
                 } }
             } }
             await("Xtream")
@@ -94,15 +87,19 @@ class ProfileChooserNavigationDeviceTest {
                 key(KeyEvent.KEYCODE_DPAD_RIGHT); await("Stalker")
                 key(KeyEvent.KEYCODE_DPAD_LEFT); await("Xtream")
             }
-            moveUntil(KeyEvent.KEYCODE_DPAD_DOWN, "GitHub account")
-            moveTo("Configure portal", KeyEvent.KEYCODE_DPAD_RIGHT)
-            moveTo("GitHub account", KeyEvent.KEYCODE_DPAD_LEFT)
-            moveUntil(KeyEvent.KEYCODE_DPAD_UP, "Xtream")
+            moveTo("Sports", KeyEvent.KEYCODE_DPAD_RIGHT)
+            moveTo("Stalker", KeyEvent.KEYCODE_DPAD_LEFT)
+            moveTo("Who's watching?", KeyEvent.KEYCODE_DPAD_DOWN)
             assertTrue("Focus movement must not launch a tile", selections.isEmpty())
             key(KeyEvent.KEYCODE_DPAD_CENTER)
+            val returned = SystemClock.uptimeMillis() + 3000
+            while (selections.isEmpty() && SystemClock.uptimeMillis() < returned) Thread.sleep(30)
+            assertEquals("The quiet return link opens people without connecting", listOf("people"), selections.toList())
+            moveTo("Xtream", KeyEvent.KEYCODE_DPAD_UP)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
             val end = SystemClock.uptimeMillis() + 3000
-            while (selections.isEmpty() && SystemClock.uptimeMillis() < end) Thread.sleep(30)
-            assertEquals(listOf("Fixture Nikhil"), selections.toList())
+            while (selections.size < 2 && SystemClock.uptimeMillis() < end) Thread.sleep(30)
+            assertEquals(listOf("people", "Fixture Nikhil"), selections.toList())
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }
 }

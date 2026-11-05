@@ -40,6 +40,13 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.put
+import androidx.room.withTransaction
+import androidx.datastore.preferences.core.mutablePreferencesOf
 import java.security.MessageDigest
 
 private val Context.dataStore by preferencesDataStore("nik_tv_profiles")
@@ -201,7 +208,17 @@ class ProfileStore @JvmOverloads constructor(
     val initialCatalogItems: Flow<Int> = this@ProfileStore.preferences.data.map { prefs ->
         prefs[initialCatalogItemsKey]?.takeIf { it in INITIAL_CATALOG_OPTIONS } ?: 14
     }
-    val playerControlsTimeoutSeconds: Flow<Int> = this@ProfileStore.preferences.data.map { it[playerControlsTimeoutKey] ?: 3 }
+    val playerControlsTimeoutSeconds: Flow<Int> = this@ProfileStore.preferences.data.decodedProfilePreference(
+        select = { prefs -> if (captureScope() == null) "legacy:${prefs[playerControlsTimeoutKey] ?: 3}"
+            else prefs[stringPreferencesKey("portable_preferences")] ?: "{}" },
+        decode = { raw ->
+            val value = if (raw?.startsWith("legacy:") == true) raw.removePrefix("legacy:").toIntOrNull() else runCatching {
+                val entries = Json.parseToJsonElement(raw ?: "{}") as JsonObject
+                val entry = entries["niktv_playback_ui|controls_timeout"] as? JsonObject
+                entry?.takeIf { it["type"]?.jsonPrimitive?.content == "int" }?.get("value")?.jsonPrimitive?.intOrNull
+            }.getOrNull()
+            normalizeControlsTimeout(value ?: 3)
+        })
     val keepAwakeOnlyDuringPlayback: Flow<Boolean> = this@ProfileStore.preferences.data.map {
         (it[keepAwakeOnlyDuringPlaybackKey] ?: 0) == 1
     }
@@ -389,8 +406,14 @@ class ProfileStore @JvmOverloads constructor(
         it[initialCatalogItemsKey] =
             items.takeIf { value -> value in INITIAL_CATALOG_OPTIONS } ?: 14
     }
-    suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = preferences.edit {
-        it[playerControlsTimeoutKey] = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
+    suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) {
+        val owner = captureScope()
+        val value = normalizeControlsTimeout(seconds)
+        if (owner == null) preferences.edit { it[playerControlsTimeoutKey] = value }
+        else withContext(kotlinx.coroutines.Dispatchers.IO) {
+            check(UserProfilePreferences.get(context, "niktv_playback_ui", owner = owner)
+                .edit().putInt("controls_timeout", value).commit())
+        }
     }
     suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = preferences.edit {
         it[keepAwakeOnlyDuringPlaybackKey] = if (enabled) 1 else 0
@@ -623,8 +646,58 @@ class ProfileStore @JvmOverloads constructor(
         val pendingImport = assignment.getString("pending_import_id", null)
         users.importPreferences(scope, source, pendingImport ?: "legacy-import")
         UserProfilePreferences.importLegacy(context, scope, migrationId = pendingImport?.let { "$it:browsing" } ?: "legacy-browsing-import", overrideExisting = pendingImport != null)
+        source[playerControlsTimeoutKey]?.let { timeout ->
+            importPlaybackTiming(scope, mapOf("niktv_playback_ui|controls_timeout" to timingEntry(normalizeControlsTimeout(timeout))),
+                "legacy-controls-timeout-import:${scope.profileId}:${pendingImport ?: "v1"}")
+        }
         assignment.edit().putBoolean("assigned", true).remove("pending_import_id").commit()
     }
+
+    /** Only the account already assigned this device's legacy data may inherit its timing.
+     * Other accounts and arbitrary remote people always start with their own defaults. */
+    suspend fun migrateLegacyPlaybackTiming(accountId: String): Boolean {
+        val assignment = context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE)
+        if (assignment.getString("portal_account", null) != accountId) return false
+        val owner = UserScope(accountId, UserSyncStore.defaultProfileId(accountId, UserProfileType.GENERAL))
+        val legacy = context.getSharedPreferences("niktv_playback_ui", Context.MODE_PRIVATE).all
+        val entries = linkedMapOf<String, JsonObject>()
+        (basePreferences.data.first()[playerControlsTimeoutKey] ?: legacy["controls_timeout"] as? Int)?.let {
+            entries["niktv_playback_ui|controls_timeout"] = timingEntry(normalizeControlsTimeout(it))
+        }
+        (legacy["watching_check_enabled"] as? Boolean)?.let { entries["niktv_playback_ui|watching_check_enabled"] = timingEntry(it) }
+        (legacy["watching_check_minutes"] as? Int)?.let { entries["niktv_playback_ui|watching_check_minutes"] = timingEntry(it.coerceIn(15, 480)) }
+        (legacy["watching_check_episodes"] as? Int)?.let { entries["niktv_playback_ui|watching_check_episodes"] = timingEntry(it.coerceIn(1, 12)) }
+        (context.getSharedPreferences("sports_playback_settings", Context.MODE_PRIVATE).all["controls_timeout"] as? Int)?.let {
+            entries["niktv_playback_ui|sports_controls_timeout"] = timingEntry(normalizeControlsTimeout(it))
+        }
+        return importPlaybackTiming(owner, entries, "legacy-playback-timing-import-v1")
+    }
+
+    private fun timingEntry(value: Int): JsonObject = buildJsonObject { put("type", "int"); put("value", value) }
+    private fun timingEntry(value: Boolean): JsonObject = buildJsonObject { put("type", "boolean"); put("value", value) }
+    private suspend fun importPlaybackTiming(owner: UserScope, entries: Map<String, JsonObject>, marker: String): Boolean =
+        users.withEditLock { users.db.withTransaction {
+            val records = users.dao.records(owner.accountId)
+            if (records.none { it.collection == "profile" && it.recordId == owner.profileId && !it.deleted } ||
+                records.any { it.collection == "account" && it.recordId == marker }) return@withTransaction false
+            val key = stringPreferencesKey("portable_preferences")
+            val raw = users.dao.preferences(owner.accountId, owner.profileId).firstOrNull { it.name == key.name }?.value
+            val old = raw?.let { runCatching { Json.parseToJsonElement(it) as JsonObject }.getOrNull() }.orEmpty()
+            val next = old.toMutableMap()
+            entries.forEach { (name, entry) ->
+                // A retained deletion is also a remote choice; migration cannot resurrect it.
+                if (name !in next && records.none { it.profileId == owner.profileId && it.collection == "preferences" && it.recordId == "portable_preferences:$name" }) {
+                    next[name] = entry
+                }
+            }
+            if (next != old) {
+                val before = mutablePreferencesOf().apply { if (raw != null) this[key] = raw }
+                val after = mutablePreferencesOf(key to JsonObject(next).toString())
+                users.persist(owner, before, after)
+            }
+            users.mutate(UserScope(owner.accountId, ""), "account", marker, "{\"imported\":true}")
+            true
+        } }
     suspend fun clear() = preferences.edit {
         CatalogDiskCache.clear(context)
         CatalogRepository(context).clear()
@@ -662,6 +735,7 @@ class ProfileStore @JvmOverloads constructor(
     private fun PortalProfile.identity() = "$portalType|${portalUrl.trimEnd('/').lowercase()}|${username.ifBlank { macAddress }.lowercase()}"
 
     companion object {
+        private fun normalizeControlsTimeout(value: Int): Int = if (value <= 0) 0 else value.coerceIn(1, 30)
         private val backupExportJson = Json {
             prettyPrint = true
             encodeDefaults = true

@@ -102,7 +102,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     val measurer = rememberTextMeasurer()
     val style = LocalTextStyle.current.merge(TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
     fun textWidth(text: String) = with(density) { measurer.measure(text, style, maxLines = 1).size.width.toDp() }
-    val naturalProfile = textWidth("00:00 p.m.") + textWidth("Portals") + 110.dp
+    val naturalProfile = textWidth("00:00 p.m.") + 182.dp // Clock, two separate tiles, and 8dp gaps.
     val height = maxOf(56.dp, (24f * density.fontScale + 24f).dp)
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
         .discoveryHeaderFocusEntry(tabRequester)) {
@@ -167,20 +167,38 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
             value = DateFormat.getTimeFormat(context).format(Date())
         }
     }
-    var focused by remember { mutableStateOf(false) }
-    DiscoveryGlassPanel(modifier, backdrop, backdropBounds, focused,
-        fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
-        fillWidth = LocalMobileGlassFillWidth.current) {
-        Row(Modifier.fillMaxSize().padding(5.dp).onFocusChanged { focused = it.hasFocus },
-            horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
-            CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
-                DiscoveryAction("Portals", Icons.Default.Dns, horizontalPadding = 8.dp,
-                    modifier = Modifier.semantics { contentDescription = "Portals" }, onClick = openPortals)
-                DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
-                    containerColor = viewer?.let { Color(it.color) } ?: Color(0xFFE50925), horizontalPadding = 0.dp,
-                    modifier = Modifier.size(40.dp).semantics { contentDescription = "Switch profile: $viewerName" },
-                    onClick = openUserProfiles)
+    var portalsFocused by remember { mutableStateOf(false) }
+    var personFocused by remember { mutableStateOf(false) }
+    BoxWithConstraints(modifier) {
+        val portalWidth = (maxWidth - 64.dp).coerceIn(80.dp, 110.dp)
+        val showClock = maxWidth >= portalWidth + 122.dp
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            verticalAlignment = Alignment.CenterVertically) {
+            if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,
+                modifier = Modifier.weight(1f))
+            DiscoveryGlassPanel(Modifier.width(portalWidth).fillMaxHeight(), backdrop, backdropBounds, portalsFocused,
+                fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
+                fillWidth = LocalMobileGlassFillWidth.current) {
+                Box(Modifier.fillMaxSize().padding(5.dp), contentAlignment = Alignment.Center) {
+                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
+                        DiscoveryAction("Portals", Icons.Default.Dns, horizontalPadding = 8.dp,
+                            modifier = Modifier.fillMaxSize().onFocusChanged { portalsFocused = it.isFocused }
+                                .semantics { contentDescription = "Portals" }, onClick = openPortals)
+                    }
+                }
+            }
+            DiscoveryGlassPanel(Modifier.width(56.dp).fillMaxHeight(), backdrop, backdropBounds, personFocused,
+                fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
+                fillWidth = LocalMobileGlassFillWidth.current) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
+                        DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
+                            containerColor = viewer?.let { Color(it.color) } ?: Color(0xFFE50925), horizontalPadding = 0.dp,
+                            modifier = Modifier.size(40.dp).onFocusChanged { personFocused = it.isFocused }
+                                .semantics { contentDescription = "Switch profile: $viewerName" },
+                            onClick = openUserProfiles)
+                    }
+                }
             }
         }
     }

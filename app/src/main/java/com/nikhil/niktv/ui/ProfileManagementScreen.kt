@@ -126,7 +126,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile?) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit, openOfflineDownloads: () -> Unit,
     sportsAvailable: Boolean = true,
     openUserProfiles: () -> Unit = {}) {
-    var requestedPortalType by remember { mutableStateOf(PortalType.STALKER) }
+    val requestedPortalType = PortalType.STALKER
+    var unavailablePortal by remember { mutableStateOf<String?>(null) }
     val profileContext = LocalContext.current
     val deviceIdentity = remember(profileContext) { cast4kLegacyDeviceIdentity(profileContext) }
     val configuredValues = com.nikhil.niktv.data.RemoteCredentials.values
@@ -144,9 +145,12 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             }
         }
     }
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let(importBackup)
-    }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(importBackup) }
+    unavailablePortal?.let { portal -> AlertDialog(onDismissRequest = { unavailablePortal = null },
+        title = { Text("$portal is not available yet") },
+        text = { Text("Connect your GitHub account and sync its configured connections from Who's watching?, then try again.") },
+        confirmButton = { NikTvTextActionButton(onClick = { unavailablePortal = null }) { Text("OK") } }) }
 
     if (!editorOpen) {
         // PROFILE_CHOOSER_POLISH_V18
@@ -245,14 +249,14 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             BoxWithConstraints(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
                 val gap = if (compactChooser) 12.dp else 24.dp
                 val missingPortalTypes = PortalType.entries.filter { type -> profiles.none { it.portalType == type } }
-                val tileCount = profiles.size + missingPortalTypes.size + if (sportsAvailable) 6 else 5
+                val tileCount = profiles.size + missingPortalTypes.size + if (sportsAvailable) 1 else 0
                 val capacity = ((maxWidth + gap) / ((if (compactChooser) 148.dp else 180.dp) + gap)).toInt().coerceIn(1, 5)
                 val rowCount = (tileCount + capacity - 1) / capacity
                 val columns = (tileCount + rowCount - 1) / rowCount
                 val portraitPhone = !isTv && compactChooser && configuration.orientation == Configuration.ORIENTATION_PORTRAIT
                 val portraitCardHeight = if (portraitPhone) {
                     ((configuration.screenHeightDp.dp - 260.dp - gap * (rowCount - 1)) / rowCount)
-                        .coerceIn(140.dp, 260.dp)
+                        .coerceIn(140.dp, 180.dp)
                 } else null
                 val chooserTileWidth = ((maxWidth - gap * (columns - 1)) / columns).coerceAtMost(220.dp)
             BalancedProfileGrid(
@@ -294,11 +298,11 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
 
                 missingPortalTypes.forEach { type -> ProfileChooserTile(
                     title = if (type == PortalType.STALKER) "Stalker" else "Xtream",
-                    subtitle = if (configuredPortal(type) != null) "Content connection" else "Configure portal",
+                    subtitle = if (configuredPortal(type) != null) "Content connection" else "Not configured on this device",
                     icon = if (type == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key,
                     tileWidth = chooserTileWidth, portraitCardHeight = portraitCardHeight, compact = compactChooser,
                     modifier = if (preferredProfileKey == null && type == missingPortalTypes.firstOrNull()) Modifier.focusRequester(preferredRequester) else Modifier,
-                    onClick = { configuredPortal(type)?.let(connect) ?: run { requestedPortalType = type; addProfile() } }
+                    onClick = { configuredPortal(type)?.let(connect) ?: run { unavailablePortal = if (type == PortalType.STALKER) "Stalker" else "Xtream" } }
                 ) }
 
                 if (sportsAvailable) ProfileChooserTile(
@@ -317,62 +321,10 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.sports.SportsActivity::class.java))
                 }
 
-                ProfileChooserTile(
-                    title = "Offline",
-                    subtitle = "Downloaded movies & episodes",
-                    icon = Icons.Default.DownloadDone,
-                    tileWidth = chooserTileWidth,
-                        portraitCardHeight = portraitCardHeight,
-                        compact = compactChooser,
-                    modifier = Modifier
-                ) { openOfflineDownloads() }
-
-                ProfileChooserTile(
-                    title = "GitHub account",
-                    subtitle = "Token, sync & Settings",
-                    icon = Icons.Default.ManageAccounts,
-                    tileWidth = chooserTileWidth,
-                        portraitCardHeight = portraitCardHeight,
-                        compact = compactChooser
-                ) {
-                    openSettings(saved ?: profiles.firstOrNull())
-                }
-
-                ProfileChooserTile(
-                    title = "Configure portal",
-                    subtitle = "Add a content connection",
-                    icon = Icons.Default.Add,
-                    tileWidth = chooserTileWidth,
-                        portraitCardHeight = portraitCardHeight,
-                        compact = compactChooser,
-                    onClick = addProfile
-                )
-
-                ProfileChooserTile(
-                    title = "User profiles", subtitle = "Choose who's watching", icon = Icons.Default.People,
-                    tileWidth = chooserTileWidth, portraitCardHeight = portraitCardHeight, compact = compactChooser,
-                    onClick = openUserProfiles
-                )
-
-                ProfileChooserTile(
-                    title = "Import backup",
-                    subtitle = "Restore NikTV setup",
-                    icon = Icons.Default.FileDownload,
-                    tileWidth = chooserTileWidth,
-                        portraitCardHeight = portraitCardHeight,
-                        compact = compactChooser
-                ) {
-                    importLauncher.launch(
-                        arrayOf(
-                            "application/json",
-                            "text/json",
-                            "text/plain"
-                        )
-                    )
-                }
             }
 
             }
+            NikTvTextActionButton(onClick = openUserProfiles) { Text("Who's watching?") }
             if (isTv) {
                 Spacer(
                     Modifier.height(

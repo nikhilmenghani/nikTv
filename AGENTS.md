@@ -6,4 +6,5 @@
 - Preserve the established Home artwork, hero fading, and navigation styling unless the task explicitly changes them.
 - Support touch, accessibility, keyboard, and TV remote navigation. Check relevant UI changes on phone and tablet; keep distinct actions as separate, reachable targets.
 - Match press, hold, and focus feedback to the target's shape and bounds. Avatar tile feedback uses the avatar's rounded shape and must not cast a rectangular overlay behind its separate name label.
+- On tablet/TV headers, keep Profile and Portals as independent glass tiles on the right; the clock is separate. Preserve the mobile header unless explicitly changing it.
 - Network requests, sync merges, and storage decoding must not run on the UI thread or block navigation. Show quiet progress and recovery status using the existing visual language.

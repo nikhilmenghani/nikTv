@@ -54,17 +54,48 @@ internal class IntroSkipSettings(val target: IntroTarget?, private val store: In
     var editScope by mutableStateOf(IntroScope.EPISODE)
     private var draftStarted = false
     private var writeJob: Job? = null
-    fun dispose() { writeJob?.cancel() }
+    private var reloadJob: Job? = null
+    private var stopObserving: (() -> Unit)? = null
+    private var loadRevision = 0L
+    private var reloadAfterWrite = false
+    @Volatile private var disposed = false
+    fun observe() {
+        val item = target ?: return
+        if (disposed || stopObserving != null) return
+        stopObserving = store.observe(item) { requestReload() }
+    }
+    private fun requestReload() {
+        if (disposed) return
+        reloadJob?.cancel()
+        reloadJob = scope.launch { load() }
+    }
+    fun dispose() {
+        disposed = true
+        loadRevision++
+        stopObserving?.invoke(); stopObserving = null
+        reloadJob?.cancel()
+        writeJob?.cancel()
+    }
 
     suspend fun load() {
-        try { target?.let { timings = withContext(Dispatchers.IO) { store.read(it) } } }
+        if (disposed) return
+        if (saving) { reloadAfterWrite = true; return }
+        val revision = ++loadRevision
+        try {
+            val updated = target?.let { withContext(Dispatchers.IO) { store.read(it) } } ?: IntroTimings()
+            if (disposed || revision != loadRevision) return
+            // Saved values refresh live; an open or parked editor owns its draft.
+            timings = updated
+            loaded = true
+        }
         catch (cancel: CancellationException) { throw cancel }
-        catch (_: Exception) { error = "Could not load saved intro timings." }
-        loaded = true
+        catch (_: Exception) {
+            if (!disposed && revision == loadRevision) { error = "Could not load saved intro timings."; loaded = true }
+        }
     }
     fun open(position: Long) {
         val item = target ?: return
-        if (!loaded) return
+        if (!loaded || disposed) return
         if (!draftStarted) {
             val saved = timings.effective
             autoSkip = saved?.autoSkip ?: false
@@ -79,22 +110,30 @@ internal class IntroSkipSettings(val target: IntroTarget?, private val store: In
     fun close() { if (!saving) editorOpen = false }
     fun write(range: IntroRange?, onSuccess: () -> Unit) {
         val item = target ?: return
-        if (saving) return
+        if (saving || disposed) return
         val selectedScope = editScope
+        val selectedAutoSkip = autoSkip
+        loadRevision++
+        reloadJob?.cancel()
+        reloadAfterWrite = false
         saving = true; error = null
         writeJob = scope.launch {
             try {
                 val updated = withContext(Dispatchers.IO) {
-                    store.save(item, selectedScope, range?.copy(autoSkip = autoSkip))
+                    store.save(item, selectedScope, range?.copy(autoSkip = selectedAutoSkip))
                     store.read(item)
                 }
+                if (disposed) return@launch
                 timings = updated
                 draftStarted = false
                 editorOpen = false
                 onSuccess()
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { error = "Could not save intro timing. Please retry." }
-            finally { saving = false }
+            finally {
+                saving = false
+                if (reloadAfterWrite && !disposed) { reloadAfterWrite = false; requestReload() }
+            }
         }
     }
 }
@@ -109,11 +148,11 @@ internal fun rememberIntroSkipSettings(media: PlayingMedia): IntroSkipSettings {
         val preferences = com.nikhil.niktv.data.UserProfilePreferences.get(context, "player_intro_timings", owner = media.userScope)
         IntroTimingStore { preferences }
     }
-    val settings = remember(target) {
+    val settings = remember(target, store, scope) {
         IntroSkipSettings(target, store, scope)
     }
     LaunchedEffect(settings) { settings.load() }
-    DisposableEffect(settings) { onDispose { settings.dispose() } }
+    DisposableEffect(settings) { settings.observe(); onDispose { settings.dispose() } }
     return settings
 }
 

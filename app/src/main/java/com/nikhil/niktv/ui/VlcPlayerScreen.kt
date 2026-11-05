@@ -190,7 +190,7 @@ internal fun VlcPlayerScreen(
     var extraControlsOpen by remember(media.progressKey) { mutableStateOf(false) }
     val extraControlsRequester = remember(media.progressKey) { FocusRequester() }
     val liveRecording by LiveTvRecorder.state.collectAsState()
-    val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
+    val recordingThisChannel = liveRecording.active && liveRecording.owner == media.userScope && liveRecording.sourceUrl == media.url
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
     LaunchedEffect(downloadRequested, offlineDownloadInProgress) {
         if (offlineDownloadInProgress) {
@@ -967,7 +967,7 @@ internal fun VlcPlayerScreen(
                 livePlaybackElapsedMillis = livePlaybackClock.sample(
                     android.os.SystemClock.elapsedRealtime(), player.isPlaying
                 )
-                LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis)
+                LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis, owner = media.userScope)
             }
             val knownDuration = player.length.coerceAtLeast(0L)
             duration = knownDuration
@@ -1890,11 +1890,11 @@ PlayerChromeIconButton(
                         icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
                         contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
                         onClick = {
-                            if (liveRecording.active) LiveTvRecorder.stop(context,
+                            if (liveRecording.active && liveRecording.owner == media.userScope) LiveTvRecorder.stop(context,
                                 livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying))
                             else LiveTvRecorder.start(context, media.media.title, media.url,
                                 playbackElapsedMillis = livePlaybackClock.sample(
-                                    android.os.SystemClock.elapsedRealtime(), player.isPlaying))
+                                    android.os.SystemClock.elapsedRealtime(), player.isPlaying), owner = media.userScope)
                         },
                         modifier = Modifier
                             .focusRequester(downloadRequester)

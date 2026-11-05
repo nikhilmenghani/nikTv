@@ -1,5 +1,28 @@
 # User profile / GitHub sync validation — 2026-11-04
 
+## 0.5.4 follow-up acceptance
+
+Implemented direct preconfigured portal tiles (Stalker/Xtream/Sports only), person-screen
+device-local Downloads access, explicit cached-profile recovery during GitHub reconnect,
+device-only commit provenance, profile-scoped timers, and live imported intro refresh.
+Tablet Profile and Portals use separate right-side glass surfaces; phone chrome is unchanged.
+Downloaded files/inventory/paths and MediaStore recording ownership are never synced.
+New recordings capture their owner; older unassigned recordings require explicit local
+assignment and cannot be taken from another existing owner. Downloads Back returns to
+the person chooser and does not replace their last content portal.
+
+Validation: 110 focused JVM cases passed in 13 suites (offline cancellation/isolation,
+timer replication/ranges/migration, intro identity/live refresh/draft preservation,
+device metadata sanitization/PUT payloads, recording ownership, account startup,
+transaction dispatch, merge/transport and old backup import). Another 30 existing
+watching/Sports/recording cases passed. Debug APK and instrumentation builds and lint
+passed with no rules disabled. Both tablet and Poco passed all18 updated account,
+profile-management, simplified-portal, session-free offline and header-navigation cases.
+
+The first instrumentation compile found old WatchingPreferences.save(Context, ...) fixture
+calls after adding the captured-preferences writer. A compatibility overload preserves
+those callers; the validated UI uses captured owner preferences for late-write isolation.
+
 ## Compact profile tiles and direct Home follow-up
 
 Checkpoint commit `cdf7c1f5` preserves the completed account/profile/sync work and

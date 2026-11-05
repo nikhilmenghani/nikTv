@@ -39,7 +39,9 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     var decoderRecoveries by remember(stream, sourceAttemptId) { mutableIntStateOf(0) }
     var authorizationRetries by remember(stream, sourceAttemptId) { mutableIntStateOf(0) }
     var decoderSession by remember(stream, sourceAttemptId) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
-    val source = remember(stream, title) { runCatching { stream.asPlayingMedia(title) } }
+    val context = LocalContext.current.applicationContext
+    val capturedOwner = remember(stream, sourceAttemptId) { com.nikhil.niktv.data.UserSyncStore.get(context).selectedScope.value }
+    val source = remember(stream, title, capturedOwner) { runCatching { stream.asPlayingMedia(title).copy(userScope = capturedOwner) } }
     val original = source.getOrNull()
     if (original == null) {
         if (onTerminalFailure != null) {

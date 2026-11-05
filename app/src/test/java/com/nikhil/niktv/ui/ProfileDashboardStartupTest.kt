@@ -8,7 +8,18 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.viewModelScope
 import com.nikhil.niktv.data.ProfileStore
+import com.nikhil.niktv.data.UserProfileType
+import com.nikhil.niktv.data.UserScope
+import com.nikhil.niktv.data.UserSyncStore
+import com.nikhil.niktv.data.ViewerDestination
+import com.nikhil.niktv.data.ViewerDestinationKind
+import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.DashboardSurface
+import com.nikhil.niktv.model.FavoriteItem
+import com.nikhil.niktv.model.FavoriteKind
+import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.OfflineMediaDownload
+import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.model.PortalSession
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +49,7 @@ class ProfileDashboardStartupTest {
     @Before fun setup() {
         Dispatchers.setMain(StandardTestDispatcher(scheduler))
         val application = RuntimeEnvironment.getApplication()
+        UserSyncStore.get(application).disconnect()
         storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         preferences = PreferenceDataStoreFactory.create(scope = storeScope,
             produceFile = { temporary.newFolder().resolve("dashboard.preferences_pb") })
@@ -209,4 +221,101 @@ class ProfileDashboardStartupTest {
             com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(RuntimeEnvironment.getApplication(), true)
         }
     }
+
+    @Test fun profileDownloadsCancelQueuedPortalOpeningAndNavigationWithoutHttp(): Unit = runTest(scheduler) {
+        // A socket sentinel detects even a connection attempt; it serves no provider responses.
+        java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { server ->
+            server.soTimeout = 300
+            val endpoint = "http://127.0.0.1:${server.localPort}"
+            val profile = PortalProfile("Unreachable cached provider", endpoint, "00:00:00:00:00:09")
+            val session = PortalSession(profile, "local-fixture-session", "$endpoint/portal.php", "", "", "")
+            store.save(session)
+            val state = mutableState()
+            state.value = NikTvState(profiles = listOf(profile), savedProfile = profile, session = session,
+                profileSwitcherOpen = true, searchOpen = true, settingsOpen = true, homeOpen = true,
+                loading = true, restoring = false)
+            val navigationRan = java.util.concurrent.atomic.AtomicBoolean()
+            val preparation = vm.viewModelScope.launch {
+                delay(1_000)
+                navigationRan.set(true)
+                state.value = state.value.copy(homeOpen = true, offlineDownloadsOpen = false, session = session)
+            }
+            NikTvViewModel::class.java.getDeclaredField("profilePreparationJob").apply { isAccessible = true }.set(vm, preparation)
+            val search = vm.viewModelScope.launch { delay(1_000); navigationRan.set(true) }
+            NikTvViewModel::class.java.getDeclaredField("searchServerJob").apply { isAccessible = true }.set(vm, search)
+            // A real queued portal opening would renew the cached session and prepare catalogs.
+            vm.switchProfile(profile)
+            @Suppress("UNCHECKED_CAST")
+            val openings = (NikTvViewModel::class.java.getDeclaredField("viewerJobs").apply { isAccessible = true }
+                .get(vm) as Set<Job>).filter { it.isActive }
+            assertTrue("A portal opening is pending before choosing downloads", openings.isNotEmpty())
+
+            vm.openProfileDownloads()
+            assertTrue(openings.all { it.isCancelled })
+            assertTrue(preparation.isCancelled)
+            assertTrue(search.isCancelled)
+            advanceUntilIdle()
+            assertFalse("Canceled jobs cannot reopen a portal over downloads", navigationRan.get())
+            assertTrue(vm.state.value.offlineDownloadsOpen)
+            assertNull(vm.state.value.session)
+            assertFalse(vm.state.value.homeOpen)
+            assertFalse(vm.state.value.searchOpen)
+            assertFalse(vm.state.value.settingsOpen)
+            assertFalse(vm.state.value.profileSwitcherOpen)
+            assertFalse(vm.state.value.loading)
+            assertEquals("The reusable portal session is kept locally", session, store.activeSession.first())
+            assertThrows("Downloads must not authenticate or request a catalog", java.net.SocketTimeoutException::class.java) {
+                server.accept().use { fail("Opening local downloads contacted the provider") }
+            }
+        }
+    }
+
+    @Test fun profileDownloadsPreserveSelectedPersonLastPortalAndViewingData(): Unit = runTest(scheduler) {
+        val users = UserSyncStore.get(RuntimeEnvironment.getApplication())
+        val accountId = "90302"
+        users.selectAccount(accountId)
+        users.initializeDefaults(accountId)
+        val family = UserScope(accountId, UserSyncStore.defaultProfileId(accountId, UserProfileType.GENERAL))
+        val kids = UserScope(accountId, UserSyncStore.defaultProfileId(accountId, UserProfileType.KIDS))
+        try {
+            val profile = PortalProfile("Cached provider", "https://unreachable.invalid", "00:00:00:00:00:10")
+            val session = PortalSession(profile, "local-fixture-session", "https://unreachable.invalid/portal.php", "", "", "")
+            val familyDownload = OfflineMediaDownload(requestId = "family-local-file", profileKey = profile.cacheKey(),
+                catalogType = CatalogType.MOVIES, media = MediaItem("movie-1", "Family download", null, null))
+            val kidsDownload = familyDownload.copy(requestId = "kids-local-file", media = familyDownload.media.copy(id = "movie-2", title = "Kids download"))
+            users.selectProfile(kids.profileId)
+            store.saveOfflineDownloads(listOf(kidsDownload))
+            users.selectProfile(family.profileId)
+            store.save(session)
+            store.saveOfflineDownloads(listOf(familyDownload))
+            store.saveFavorites(listOf(FavoriteItem(FavoriteKind.MOVIE, familyDownload.media, profileKey = profile.cacheKey())))
+            store.savePlaybackProgress(listOf(PlaybackProgress("progress-v3|${profile.cacheKey()}|MOVIES|movie:movie-1", 20_000, 200_000)))
+            val destination = ViewerDestination(ViewerDestinationKind.PORTAL, profile.cacheKey())
+            users.rememberDestination(family, destination)
+            val beforeRecords = users.snapshot(accountId)
+            val beforeOutbox = users.pending(accountId)
+            val beforeLocal = users.dao.preferences(accountId, family.profileId)
+            mutableState().value = NikTvState(profiles = listOf(profile), savedProfile = profile, session = session,
+                offlineDownloads = store.offlineDownloads.first(), restoring = false)
+
+            vm.openProfileDownloads()
+            advanceUntilIdle()
+            assertTrue(vm.state.value.offlineDownloadsOpen)
+            assertNull(vm.state.value.session)
+            assertEquals(family, users.selectedScope.value)
+            assertEquals(family, store.captureScope())
+            assertEquals(listOf(familyDownload), vm.state.value.offlineDownloads)
+            assertEquals(listOf(kidsDownload), store.scoped(kids).offlineDownloads.first())
+            assertEquals(session, store.activeSession.first())
+            assertEquals(destination, users.rememberedDestination(family))
+            assertEquals(profile.cacheKey(), users.rememberedPortalKey(family))
+            assertEquals("Opening downloads never adds or edits synced viewing data", beforeRecords, users.snapshot(accountId))
+            assertEquals(beforeOutbox, users.pending(accountId))
+            assertEquals(beforeLocal, users.dao.preferences(accountId, family.profileId))
+        } finally { users.disconnect() }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun mutableState(): MutableStateFlow<NikTvState> =
+        NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }.get(vm) as MutableStateFlow<NikTvState>
 }
