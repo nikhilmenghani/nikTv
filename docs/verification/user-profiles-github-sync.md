@@ -23,6 +23,21 @@ The first instrumentation compile found old WatchingPreferences.save(Context, ..
 calls after adding the captured-preferences writer. A compatibility overload preserves
 those callers; the validated UI uses captured owner preferences for late-write isolation.
 
+Final normal-app acceptance passed on tablet and Poco with Wi-Fi disabled over USB:
+cached people chooser → Offline downloads → explicitly selected person → local library,
+without entering or authenticating a portal. Back returned to the people chooser.
+Wi-Fi was restored to its original enabled state in finally blocks (Poco mobile data
+was already disabled and stayed disabled). No real profile, history, media or timer
+preferences were changed. Tablet separate right-side Profile/Portals glass tiles and
+the three-destination portal screen were visually checked; no NikTV ANR was recorded.
+Samsung also received the data-preserving debug update.
+
+Release publication was subsequently requested. Feature commit `cf32f62a` and upstream
+merge `663ca7ce` retain the validated source; the merge's only tree change is the existing
+0.5.3 release marker. Bumping release.txt to 0.5.4 and pushing main uses the repository's
+existing Android Release Build workflow and established signing credentials. Older
+no-publication statements in this log describe the earlier unrequested-release phase.
+
 ## Compact profile tiles and direct Home follow-up
 
 Checkpoint commit `cdf7c1f5` preserves the completed account/profile/sync work and
