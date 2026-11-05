@@ -39,8 +39,9 @@ class AccountSyncEngineTest {
         var generation = 1
         var writes = 0
         var conflicts = 0
+        var upgradeRequired = false
         var onUpload: (() -> Unit)? = null
-        override suspend fun fetch() = RemoteAccount(document, generation.toString())
+        override suspend fun fetch() = RemoteAccount(document, generation.toString(), needsUpgrade = upgradeRequired)
         override suspend fun upload(document: AccountDocument, sha: String?) {
             onUpload?.invoke()
             if (conflicts > 0) {
@@ -48,8 +49,18 @@ class AccountSyncEngineTest {
                 throw SyncFailure("conflict", conflict = true)
             }
             check(sha == generation.toString())
-            this.document = document; generation++; writes++
+            this.document = document; generation++; writes++; upgradeRequired = false
         }
+    }
+
+    @Test fun legacyFormatMigratesEvenWhenAllRecordsAlreadyMatch() = runBlocking {
+        val local = Local(record("already-synced"))
+        val server = Remote(record("already-synced")).apply { upgradeRequired = true }
+        synchronizeAccount("10", local, server)
+        assertEquals(1, server.writes)
+        assertTrue(local.queue.isEmpty())
+        synchronizeAccount("10", local, server)
+        assertEquals(1, server.writes)
     }
 
     @Test fun twoDevicesKeepBothHistoriesAndOnlyChangedDocumentsUpload() = runBlocking {

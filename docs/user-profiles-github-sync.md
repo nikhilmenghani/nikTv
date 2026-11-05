@@ -34,11 +34,13 @@ GitHub permissions differ:
 
 Connection verifies Contents write by creating an unreferenced constant Git blob; it does not alter user files. A fine-grained token restricted to selected existing repositories may require creating the repository first and then granting it access, or replacing the token after creation. SSO/organization policies can require authorization independently of these permissions.
 
+Version 2 uses the same Contents read/write capability for [Git tree creation](https://docs.github.com/en/rest/git/trees#create-a-tree), [commit creation](https://docs.github.com/en/rest/git/commits#create-a-commit), and [fast-forward reference updates](https://docs.github.com/en/rest/git/refs#update-a-reference). Profile files and their index are published in one commit; routine publication uses three content-generating requests, with existing pacing and rate-limit backoff.
+
 References checked during implementation: [repository creation](https://docs.github.com/en/rest/repos/repos?apiVersion=2026-03-10#create-a-repository-for-the-authenticated-user), [contents access](https://docs.github.com/en/rest/repos/contents?apiVersion=2026-03-10), [authenticated user](https://docs.github.com/en/rest/users/users?apiVersion=2026-03-10#get-the-authenticated-user), and [rate-limit/backoff guidance](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api).
 
 The development provisioning utility `tools/provision-sync-repository.py` reads `g_token` case-insensitively from project/user Gradle properties into memory. It emits only repository metadata. Runtime account authentication never consults this property, `BuildConfig.LOCAL_GITHUB_TOKEN`, a shared backup token, or remote configuration. The APK's local GitHub token field is always empty.
 
-## Version 1 wire format
+## Version 2 wire format and version 1 migration
 
 The repository contains:
 
@@ -46,11 +48,12 @@ The repository contains:
 README.md
 manifest.json
 account.json
+profiles/<profile-uuid>/account.json
 ```
 
-`manifest.json` contains `application: "niktv"`, `schemaVersion: 1`, the numeric `accountId` as a string, and `dataFile: "account.json"`.
+`manifest.json` contains `application: "niktv"`, `schemaVersion: 2`, the numeric `accountId` as a string, and `dataFile: "account.json"`.
 
-`account.json` has the same application/schema/account header and a `records` array. A record contains:
+`account.json` is a small index containing the application/schema/account header, account-wide records, profile identity/deletion records, and a `profileFiles` map from permanent profile UUID to Git blob SHA. Viewing history, progress, portal associations, favourites, series and preferences live in that person's `profiles/<UUID>/account.json`, with the same header plus `profileId`. Even a new empty profile has a data file. A record contains:
 
 | Field | Meaning |
 | --- | --- |
@@ -63,7 +66,9 @@ account.json
 | `deviceId`, `mutationId` | Random installation ID and unique mutation ID used for deterministic ordering and exact acknowledgments |
 | `deleted` | Retained deletion record |
 
-This combines the proposed per-profile files into one atomic GitHub Contents update to reduce request count and prevent torn multi-file uploads. Records still merge individually. Payload entries retain the legacy preference names, rather than renaming serialized portal fields. Unknown JSON properties are tolerated within a supported schema; an unsupported schema version blocks all account-data writes. Account size is capped at 16 MiB, with an actionable error rather than truncation.
+Sync pins reads to one Git commit, reads the small index, and downloads only profile files whose indexed SHA is absent from the account-isolated in-memory cache. The cache is bounded to 8 MiB; process death/eviction causes a cold download. Records still merge individually in Room. Only changed profile files are uploaded, together with the updated index. Git tree creation, commit creation and a fast-forward-only ref update publish all files atomically in one visible commit, preserving unrelated repository files. A stale branch head causes bounded fetch/merge/retry; an interrupted pre-publication upload cannot expose partial files. This saves transfer bytes for larger accounts, but adds Git API requests (three writes per normal publication), so a cold/small-account sync is not guaranteed faster.
+
+Version 1 account snapshots are read and migrated without changing UUIDs or record identities. The manifest, small index and per-profile files switch to version 2 in the same commit; interruption leaves version 1 readable. Earlier apps reject the version 2 manifest and preserve their queued local changes until upgraded. Upgrade all devices before allowing a new build to migrate the repository. Payload entries retain legacy preference names. Unknown properties are tolerated in a supported schema; newer schemas block all writes. Each file is limited to 16 MiB with an actionable error, never truncation.
 
 ## Merge, durability, deletion, and retry
 
@@ -71,7 +76,7 @@ Room stores records, local projections, local portal mappings, and an outbox. A 
 
 Ordering is generation, logical revision, device ID, then mutation ID. Ordinary stale edits cannot beat a known deletion merely because their unrelated logical counter is larger. Deletion increments the generation; an explicit re-add after observing deletion advances it again. Deleted user profile UUIDs cannot be edited back into existence. Rewind, restart, completion, and mark-unwatched are explicit progress actions, rather than maximum-position merges. Removing history/favourites produces tombstones scoped to the selected account/person.
 
-Tombstones and the defaults-initialized marker are retained indefinitely in v1. There is no unsafe time-based pruning. Older devices can rejoin and merge retained deletions; an intentional re-add must observe the deletion first. Future compaction requires a new protocol with an epoch/full-resync rule. The 16 MiB cap currently bounds this retention strategy.
+Tombstones and the defaults-initialized marker are retained indefinitely in versions 1 and 2. There is no unsafe time-based pruning. Older devices can rejoin after upgrading and merge retained deletions; an intentional re-add must observe the deletion first. Future compaction requires a new protocol with an epoch/full-resync rule. The per-file 16 MiB cap bounds this retention strategy.
 
 Only mutations included in the successful captured snapshot, or proved superseded by a downloaded winner, are acknowledged. Mutations arriving while an upload is in flight remain queued. A process interruption preserves the transaction and queue. One mutex serializes sync, connect, rotation, and disconnect on a device; each HTTP transport captures one token/account. Work requests carry the account ID and are canceled/ignored on account changes.
 

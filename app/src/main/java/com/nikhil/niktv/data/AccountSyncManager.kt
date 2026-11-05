@@ -47,9 +47,10 @@ class AccountSyncManager private constructor(context: Context) {
     private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow(AccountSyncState())
     val state: StateFlow<AccountSyncState> = mutableState.asStateFlow()
+    private val profileSyncCache = ProfileSyncCache()
 
     private fun githubTransport(token: String) = GitHubSyncTransport(token,
-        commitMessage = currentDeviceSyncCommitMessage(context))
+        commitMessage = currentDeviceSyncCommitMessage(context), profileCache = profileSyncCache)
 
     /** Restore the last successful local account without waiting for a network request. */
     suspend fun restoreCachedAccount(): AccountSyncState {

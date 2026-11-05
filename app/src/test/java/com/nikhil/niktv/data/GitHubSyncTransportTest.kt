@@ -56,7 +56,7 @@ class GitHubSyncTransportTest {
     }
 
     @Test fun newerManifestSchemaBlocksAllWrites() = runBlocking {
-        val encoded = android.util.Base64.encodeToString("""{"application":"niktv","schemaVersion":2,"accountId":"77"}""".toByteArray(), android.util.Base64.NO_WRAP)
+        val encoded = android.util.Base64.encodeToString("""{"application":"niktv","schemaVersion":3,"accountId":"77"}""".toByteArray(), android.util.Base64.NO_WRAP)
         val api = transport { method, path ->
             assertEquals("GET", method)
             if (path.endsWith("manifest.json")) 200 to """{"encoding":"base64","sha":"one","content":"$encoded"}"""

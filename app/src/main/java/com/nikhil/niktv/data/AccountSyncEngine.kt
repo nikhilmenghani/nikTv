@@ -13,7 +13,7 @@ internal interface SyncRemoteReplica {
     suspend fun upload(document: AccountDocument, sha: String?)
 }
 
-/** One atomic CAS document avoids torn updates between profile/history/preference files. */
+/** The transport atomically publishes the account index and changed profile files. */
 internal suspend fun synchronizeAccount(
     accountId: String,
     local: SyncLocalReplica,
@@ -32,7 +32,7 @@ internal suspend fun synchronizeAccount(
         local.prepare(downloaded.document.records.isEmpty())
         val pending = local.pending()
         val merged = local.snapshot()
-        if (downloaded.sha == null || downloaded.document.records.toSet() != merged.toSet()) {
+        if (downloaded.needsUpgrade || downloaded.sha == null || downloaded.document.records.toSet() != merged.toSet()) {
             status("Uploading queued changes…")
             try { remote.upload(AccountDocument(accountId = accountId, records = merged), downloaded.sha) }
             catch (failure: SyncFailure) {
