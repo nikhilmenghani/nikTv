@@ -43,6 +43,15 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+      - name: Verify release tag ownership
+        shell: bash
+        run: |
+          REFS=$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}")
+          EXISTING=$(awk '{ print $1 }' <<< "$REFS" | tail -n 1)
+          [[ -z "$EXISTING" || "$EXISTING" == "$GITHUB_SHA" ]] || {
+            echo "::error::Release tag already belongs to a different commit. Increase the release version."
+            exit 1
+          }
       - name: Configure signing
         shell: bash
         env:
