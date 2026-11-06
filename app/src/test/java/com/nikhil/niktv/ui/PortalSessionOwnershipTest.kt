@@ -86,4 +86,52 @@ class PortalSessionOwnershipTest {
         assertTrue(work.await().exceptionOrNull() is CancellationException)
         assertEquals("reactivated", state.value.session?.token)
     }
+    @Test fun manualAuthenticationTimesOutAndRestoresDismissal() = runTest {
+        state.value = state.value.copy(error = "Authorization failed")
+        vm.authenticatePortal = { awaitCancellation() }
+        vm.reauthenticate()
+        runCurrent()
+        assertTrue(state.value.reauthenticating)
+        advanceTimeBy(20_001)
+        runCurrent()
+        assertFalse(state.value.reauthenticating)
+        assertTrue(state.value.error.orEmpty().contains("20 seconds"))
+        vm.dismissError()
+        assertNull(state.value.error)
+    }
+    @Test fun dismissingDuringAuthenticationCancelsItAndCannotReopenTheDialog() = runTest {
+        state.value = state.value.copy(error = "Authorization failed")
+        var canceled = false
+        vm.authenticatePortal = { try { awaitCancellation() } finally { canceled = true } }
+        vm.reauthenticate()
+        runCurrent()
+        vm.dismissError()
+        runCurrent()
+        assertTrue(canceled)
+        assertFalse(state.value.reauthenticating)
+        assertNull(state.value.error)
+        assertEquals("old", state.value.session?.token)
+        advanceTimeBy(30_000)
+        runCurrent()
+        assertNull(state.value.error)
+    }
+    @Test fun repeatedAuthenticationClicksCannotQueueDuplicateAttempts() = runTest {
+        var requests = 0
+        vm.authenticatePortal = { requests++; awaitCancellation() }
+        vm.reauthenticate()
+        vm.reauthenticate()
+        runCurrent()
+        assertEquals(1, requests)
+        vm.dismissError()
+    }
+    @Test fun changingPortalCancelsManualAuthenticationAndClearsBusyState() = runTest {
+        vm.authenticatePortal = { awaitCancellation() }
+        vm.reauthenticate()
+        runCurrent()
+        assertTrue(state.value.reauthenticating)
+        vm.switchProfile(b)
+        assertFalse(state.value.reauthenticating)
+        vm.viewModelScope.coroutineContext.cancelChildren()
+        runCurrent()
+    }
 }

@@ -7174,6 +7174,10 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private fun beginPortalActivation(): Long {
         val activation = portalActivation.incrementAndGet()
         portalRenewalJob?.cancel()
+        manualReauthenticationGeneration++
+        manualReauthenticationJob?.cancel()
+        manualReauthenticationJob = null
+        _state.update { it.copy(reauthenticating = false) }
         cancelPendingPlayback()
         return activation
     }
@@ -7185,7 +7189,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             _state.value.savedProfile?.cacheKey() == profile.cacheKey() }
     }
 
-    internal suspend fun refreshSession(profile: PortalProfile): PortalSession {
+    internal suspend fun refreshSession(profile: PortalProfile): PortalSession = withTimeoutOrNull(20_000L) {
         val owns = sessionOwner(profile)
         if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         val ownedStore = store.captureScope()?.let(store::scoped) ?: store
@@ -7193,8 +7197,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         ownedStore.save(refreshed, owns)
         if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         _state.update { if (owns()) it.copy(session = refreshed, savedProfile = refreshed.profile) else it }
-        return refreshed
-    }
+        refreshed
+    } ?: throw IllegalStateException("Authentication did not finish within 20 seconds. You can close this message or retry.")
 
     /**
      * Replays a request once with a newly authenticated Stalker session.
@@ -7799,26 +7803,33 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         settingsReturnSurface = null
         _state.update { origin?.restore(it) ?: it.copy(settingsOpen = false) }
     }
+    private var manualReauthenticationJob: Job? = null
+    private var manualReauthenticationGeneration = 0L
     fun reauthenticate() {
         val profile = _state.value.savedProfile ?: return
-        if (_state.value.reauthenticating) return
-        launchForViewer launch@ {
+        if (_state.value.reauthenticating || manualReauthenticationJob?.isActive == true) return
+        val generation = ++manualReauthenticationGeneration
+        val owns = sessionOwner(profile)
+        portalRenewalJob?.cancel()
+        portal.prioritizePlayback()
+        manualReauthenticationJob = launchForViewer launch@ {
             _state.update { it.copy(reauthenticating = true) }
-            runCatching { refreshSession(profile) }
-                .onSuccess {
-                    // Refreshing a token must not rebuild catalogs, TMDB rows,
-                    // or navigation state. Removing the overlay reveals the
-                    // exact screen that was underneath it.
-                    _state.update { current -> current.copy(error = null, reauthenticating = false) }
-                }
-                .onFailure { failure ->
-                    _state.update { current ->
-                        current.copy(
-                            error = failure.message ?: "Re-authentication failed",
-                            reauthenticating = false
-                        )
-                    }
-                }
+            try {
+                refreshSession(profile)
+                if (owns() && generation == manualReauthenticationGeneration)
+                    _state.update { it.copy(error = null) }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                if (owns() && generation == manualReauthenticationGeneration)
+                    _state.update { it.copy(error = "Authentication did not finish within 20 seconds. You can close this message or retry.") }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (owns() && generation == manualReauthenticationGeneration)
+                    _state.update { it.copy(error = failure.message ?: "Re-authentication failed") }
+            } finally {
+                if (generation == manualReauthenticationGeneration)
+                    _state.update { it.copy(reauthenticating = false) }
+            }
         }
     }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }
@@ -8054,7 +8065,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             portalRenewalJob?.cancel()
             portalRenewalJob = launchForViewer launch@ {
                 try {
-                    val fresh = authenticatePortal(profile)
+                    val fresh = authenticateProfileForOpening(profile)
                     if (owns()) {
                         ownedStore.save(fresh, owns)
                         _state.update { if (owns() && it.session?.profile?.cacheKey() == profile.cacheKey()) it.copy(session = fresh) else it }
@@ -8699,7 +8710,15 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val otherEpisode = other.episodeNumber ?: other.title.episodeOrderFromTitle() ?: 0
         return thisEpisode > otherEpisode
     }
-    fun dismissError() = _state.update { it.copy(error = null) }
+    fun dismissError() {
+        val manual = manualReauthenticationJob?.isActive == true
+        if (manual) {
+            manualReauthenticationGeneration++
+            manualReauthenticationJob?.cancel()
+            manualReauthenticationJob = null
+        }
+        _state.update { it.copy(error = null, reauthenticating = if (manual) false else it.reauthenticating) }
+    }
     fun logout() = launchForViewer launch@ {
         searchSeriesReturn = null
         recommendationJob?.cancel()

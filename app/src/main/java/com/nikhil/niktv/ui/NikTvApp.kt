@@ -825,7 +825,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                 val reauthenticateRequester = remember(error) { FocusRequester() }
                 val diagnosticsCloseRequester = remember(error) { FocusRequester() }
                 Dialog(
-                    onDismissRequest = { if (!state.reauthenticating) vm.dismissError() },
+                    onDismissRequest = vm::dismissError,
                     properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
                 ) {
                     Surface(

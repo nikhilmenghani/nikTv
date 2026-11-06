@@ -27,7 +27,7 @@ internal fun PortalDiagnosticsActions(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically) {
         NikTvSecondaryActionButton(close, Modifier.size(48.dp).focusRequester(closeRequester),
-            enabled = !authenticating, contentPadding = PaddingValues(0.dp)) {
+            contentPadding = PaddingValues(0.dp)) {
             Icon(Icons.Default.Close, "Close", Modifier.size(24.dp))
         }
         if (showDiagnostics) {
