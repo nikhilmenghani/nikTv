@@ -39,6 +39,10 @@ jobs:
         run: |
           sed -i "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
           sed -i "s/versionCode = .*/versionCode = ${VERSION_CODE}/" app/build.gradle.kts
+      - name: Validate shipping sources
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
       - name: Configure signing
         shell: bash
         env:
@@ -83,6 +87,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ runner.temp }}/niktv-apks/*.apk
+          target_commitish: ${{ github.sha }}
           tag_name: ${{ env.TAG }}
           name: NikTV Development ${{ env.VERSION }}
           prerelease: true
