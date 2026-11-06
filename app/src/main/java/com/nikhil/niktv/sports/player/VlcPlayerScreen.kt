@@ -945,7 +945,7 @@ internal fun VlcPlayerScreen(
     LaunchedEffect(player, media.playbackAttemptId, playbackRequested) {
         if (playbackRequested) {
             delay(20_000L)
-            if (!streamWasPlaying && playbackRequested && error == null) {
+            if (com.nikhil.niktv.ui.vlcInitialStartupTimedOut(media.catalogType == CatalogType.LIVE_TV, channelHasPlayed, streamWasPlaying, playbackRequested, error != null)) {
                 buffering = false
                 error = "VLC did not start this source. Retry, switch player or choose another source."
                 controlsVisible = true

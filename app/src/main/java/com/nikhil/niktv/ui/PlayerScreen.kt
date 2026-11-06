@@ -776,7 +776,7 @@ fun PlayerScreen(
             MpvPlayerAdapter(context, media, playbackRestartPosition(media.catalogType,
                 resumePosition ?: engineSwitchResumePosition)).apply {
                 prepare()
-                playWhenReady = media.playWhenReady && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+                playWhenReady = playbackRequested && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             }
         } else {
         val renderersFactory = (if (effectiveEngine == PlaybackEngine.FLOW)
@@ -838,7 +838,7 @@ fun PlayerScreen(
                 resumePosition ?: engineSwitchResumePosition)
             if (startPosition > 0L) seekTo(startPosition)
             prepare()
-            playWhenReady = media.playWhenReady && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+            playWhenReady = playbackRequested && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             repeatMode = Player.REPEAT_MODE_OFF
         }
         }
@@ -952,6 +952,10 @@ fun PlayerScreen(
             }
         }
     }
+    DisposableEffect(castPlayer) {
+        onDispose { castPlayer?.release() }
+    }
+
     val currentCastSessionActive by rememberUpdatedState(castSessionActive)
 
     DisposableEffect(castPlayer, media.progressKey) {
@@ -959,22 +963,18 @@ fun PlayerScreen(
         val listener = object : SessionAvailabilityListener {
             override fun onCastSessionAvailable() {
                 if (currentCastSessionActive) return
-                pendingCastStartPosition =
-                    currentLocalPlayer
-                        ?.currentPosition
-                        ?.takeUnless { it == C.TIME_UNSET }
-                        ?.coerceAtLeast(0L)
-                        ?: 0L
+                val transfer = com.nikhil.niktv.ui.playbackTransfer(currentLocalPlayer?.currentPosition,
+                    currentLocalPlayer?.playWhenReady ?: playbackRequested)
+                playbackRequested = transfer.playWhenReady
+                pendingCastStartPosition = transfer.positionMillis
                 castSessionActive = true
             }
 
             override fun onCastSessionUnavailable() {
                 if (!currentCastSessionActive) return
-                pendingLocalResumePosition =
-                    castPlayer.currentPosition
-                        .takeUnless { it == C.TIME_UNSET }
-                        ?.coerceAtLeast(0L)
-                        ?: 0L
+                val transfer = com.nikhil.niktv.ui.playbackTransfer(castPlayer.currentPosition, castPlayer.playWhenReady)
+                playbackRequested = transfer.playWhenReady
+                pendingLocalResumePosition = transfer.positionMillis
                 castSessionActive = false
             }
         }
@@ -1018,7 +1018,7 @@ fun PlayerScreen(
                 requestedPosition ?: media.resumePositionMillis.coerceAtLeast(0L)
             )
             castPlayer.prepare()
-            castPlayer.play()
+            castPlayer.playWhenReady = playbackRequested
             preparedCastAttempt = media.playbackAttemptId
         }
 

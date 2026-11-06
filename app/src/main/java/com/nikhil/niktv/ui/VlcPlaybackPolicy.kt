@@ -19,3 +19,8 @@ internal fun vlcPlaybackOptions(live: Boolean, offline: Boolean, hls: Boolean = 
         add("--no-ts-trust-pcr")
     }
 }
+
+/** Reconnects belong to LiveStreamRecovery; the native-player timer only owns first startup. */
+internal fun vlcInitialStartupTimedOut(live: Boolean, channelHasPlayed: Boolean,
+    streamWasPlaying: Boolean, playbackRequested: Boolean, hasError: Boolean): Boolean =
+    (!live || !channelHasPlayed) && !streamWasPlaying && playbackRequested && !hasError
