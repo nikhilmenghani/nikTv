@@ -185,7 +185,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                             launchComplete = true
                             if (manager.state.value.initialized && !manager.state.value.reconnectRequired) openProfiles()
                         } },
-                        onRetry = { manager.requestLaunchSync(); launchComplete = true },
+                        onRetry = { manager.requestManualSync(); launchComplete = true },
                         onProfiles = ::openProfiles,
                         onSettings = {
                             settingsEntered = false

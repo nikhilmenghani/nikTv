@@ -122,13 +122,13 @@ class CachedAccountStartupTest {
         var heldByTest = true
         try {
             caller.launch {
-                requested.complete(listOf(requireNotNull(manager.requestManualSync()), requireNotNull(manager.requestLaunchSync())))
+                requested.complete(listOf(requireNotNull(manager.requestManualSync())))
                 awaitCancellation()
             }
             val jobs = withTimeout(1_000L) { requested.await() }
             caller.cancel()
             assertTrue(jobs.all { it.isActive })
-            // Both operations captured 101. Simulate switching while they wait for
+            // The manual operation captured 101. Simulate switching while they wait for
             // an earlier upload: neither may restore or sync the newly active 202.
             auth.edit().putString("accountId", "202").commit()
             users.selectAccount("202")
@@ -155,5 +155,23 @@ class CachedAccountStartupTest {
         assertEquals("101", manualManager.state.value.accountId)
         assertTrue(manualManager.state.value.initialized)
         assertTrue(manualManager.state.value.reconnectRequired)
+    }
+    @Test fun automaticSyncIsRestrictedToStableDistributionIncludingPerformanceDevBuilds() {
+        assertTrue(automaticAccountSyncEnabled("com.nikhil.niktv"))
+        assertFalse(automaticAccountSyncEnabled("com.nikhil.niktv.debug"))
+        assertFalse(automaticAccountSyncEnabled("com.nikhil.niktv.regression"))
+        assertFalse(automaticAccountSyncEnabled("other.package"))
+    }
+
+    @Test fun debugLaunchAndViewingTriggersCannotQueueASync() = runBlocking {
+        auth.edit().putString("accountId", "101").putBoolean("retryNeeded:101", true).commit()
+        val manager = manager()
+        val owner = UserScope("101", java.util.UUID.randomUUID().toString())
+        assertNull(manager.requestLaunchSync())
+        assertNull(manager.requestEpisodeSync(owner))
+        assertNull(manager.requestPlaybackSync(owner))
+        manager.launchSync()
+        manager.requestSync("retry")
+        assertEquals(AccountSyncState(), manager.state.value)
     }
 }

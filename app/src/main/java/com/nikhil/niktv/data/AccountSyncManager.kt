@@ -117,6 +117,7 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     suspend fun launchSync() = mutex.withLock {
+        if (!automaticAccountSyncEnabled()) return@withLock
         awaitSetupRecovery(context)
         withContext(Dispatchers.IO) {
             val token = vault.token()
@@ -133,13 +134,16 @@ class AccountSyncManager private constructor(context: Context) {
     /** Explicit UI requests belong to the account manager, so closing Settings or
      * recreating an Activity cannot interrupt an upload after it has started. */
     fun requestManualSync(): Job? = requestAccountSync()
-    fun requestLaunchSync(): Job? = requestAccountSync()
+    fun requestLaunchSync(): Job? = requestAutomaticSync()
 
     /** Called only after the episode's history mutation is durable. Never borrow a
      * different account's token if playback finishes while accounts are switching. */
-    fun requestEpisodeSync(scope: UserScope): Job? = requestAccountSync(scope.accountId)
+    fun requestEpisodeSync(scope: UserScope): Job? = requestAutomaticSync(scope.accountId)
 
-    fun requestPlaybackSync(scope: UserScope): Job? = requestAccountSync(scope.accountId)
+    fun requestPlaybackSync(scope: UserScope): Job? = requestAutomaticSync(scope.accountId)
+
+    private fun requestAutomaticSync(accountId: String? = null): Job? =
+        if (automaticAccountSyncEnabled()) requestAccountSync(accountId) else null
 
     private fun requestAccountSync(expectedAccountId: String? = null): Job? {
         val capturedAccountId = prefs.getString("accountId", null)
@@ -155,6 +159,7 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     internal suspend fun syncForAccount(expectedAccountId: String?, requireRetry: Boolean = expectedAccountId != null) = mutex.withLock {
+        if (requireRetry && !automaticAccountSyncEnabled()) return@withLock
         awaitSetupRecovery(context)
         withContext(Dispatchers.IO) {
             val accountId = prefs.getString("accountId", null) ?: return@withContext
@@ -277,7 +282,7 @@ class AccountSyncManager private constructor(context: Context) {
     /** Ordinary changes remain local until app opening or manual sync. Only a transient
      * failure of an explicitly started sync may arrange its own network-constrained retry. */
     fun requestSync(reason: String, immediate: Boolean = false) {
-        if (!allowsScheduledSync(reason)) return
+        if (!automaticAccountSyncEnabled() || !allowsScheduledSync(reason)) return
         val accountId = prefs.getString("accountId", null) ?: return
         if (!retryNeeded(accountId) || !prefs.contains("ciphertext") || prefs.getBoolean("reconnect:$accountId", false)) return
         val request = OneTimeWorkRequestBuilder<AccountSyncWorker>()
@@ -291,6 +296,7 @@ class AccountSyncManager private constructor(context: Context) {
     private fun cancelLegacySyncWork(accountId: String) {
         runCatching {
             val work = WorkManager.getInstance(context)
+            if (!automaticAccountSyncEnabled()) work.cancelUniqueWork("niktv-sync-retry:$accountId")
             listOf("periodic", "progress", "edits", "flush", "catchup").forEach {
                 work.cancelUniqueWork("niktv-sync-$it:$accountId")
             }
@@ -318,6 +324,7 @@ class AccountSyncManager private constructor(context: Context) {
 class AccountSyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
         // Older periodic/playback jobs may survive an upgrade. They cannot initiate sync.
+        if (!automaticAccountSyncEnabled()) return Result.success()
         if (inputData.getString("trigger") != "retry") return Result.success()
         awaitSetupRecovery(applicationContext)
         val manager = AccountSyncManager.get(applicationContext)
@@ -327,6 +334,10 @@ class AccountSyncWorker(context: Context, parameters: WorkerParameters) : Corout
         return if (!manager.state.value.reconnectRequired && manager.retryNeeded(accountId)) Result.retry() else Result.success()
     }
 }
+
+/** Distribution identity also excludes performance Dev builds, whose debugger flag is disabled. */
+internal fun automaticAccountSyncEnabled(applicationId: String = com.nikhil.niktv.BuildConfig.APPLICATION_ID): Boolean =
+    applicationId == "com.nikhil.niktv"
 
 internal fun allowsScheduledSync(reason: String): Boolean = reason == "retry"
 
