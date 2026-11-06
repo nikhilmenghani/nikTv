@@ -42,4 +42,17 @@ internal class TmdbAvailabilityRepository(private val context: Context) {
             memory[key] = cache
         }
     }
+
+    /** A plausible provider result makes a previously cached absence inconclusive. */
+    suspend fun forgetMiss(profile: String, type: CatalogType, id: Int) = withContext(Dispatchers.IO) {
+        read(profile, type)
+        mutex.withLock {
+            val key = key(profile, type)
+            val current = memory.getValue(key)
+            if (current.entries[id]?.matches?.isEmpty() != true) return@withLock
+            val cache = current.copy(entries = current.entries - id)
+            CatalogDiskCache.write(context, key, cache)
+            memory[key] = cache
+        }
+    }
 }

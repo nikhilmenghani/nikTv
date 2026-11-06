@@ -4238,8 +4238,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                             original
                         }
                     } else null
+                    var movieLookup: MovieMatchLookup? = null
                     val candidates = catalog?.items ?: runCatching {
-                        withAutomaticSessionRetry(session) { activeSession ->
+                        if (type == CatalogType.MOVIES) {
+                            resolveInitialTmdbMovieCandidates(session, movieEntries.first { it.tmdb.id == id })
+                                .also { movieLookup = it }.rawCandidates
+                        } else withAutomaticSessionRetry(session) { activeSession ->
                             val initial = portal.search(activeSession, searchTypeForCatalog(type), title, 1, "*", background = manualId == null).items
                             if (type != CatalogType.SERIES) initial else {
                                 val series = requireNotNull(matchingSeries)
@@ -4279,6 +4283,23 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     }
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     if (!accepts(_state.value)) return@launch
+                    val review = movieLookup?.takeIf { it.requiresConfirmation }
+                    if (found.isEmpty() && review != null) {
+                        // A provider title was found, but identity/type is uncertain. Do not cache
+                        // an absence or autoplay it: let the user inspect the original listing.
+                        tmdbAvailability.forgetMiss(profileKey, CatalogType.MOVIES, id)
+                        _state.update { latest ->
+                            if (!accepts(latest)) latest else latest.copy(
+                                movieMatchSelection = movieEntries.first { it.tmdb.id == id }.tmdb,
+                                movieMatchCandidates = review.reviewCandidates,
+                                movieMatchLoadingMore = false,
+                                modernTmdbMovieMatches = latest.modernTmdbMovieMatches - id,
+                                discoveryMatchCounts = if (discoveryCard == null) latest.discoveryMatchCounts else
+                                    latest.discoveryMatchCounts - com.nikhil.niktv.discovery.discoveryAvailabilityKey(profileKey, discoveryCard)
+                            )
+                        }
+                        continue
+                    }
                     tmdbAvailability.save(profileKey, type, id,
                         TmdbAvailabilityEntry(System.currentTimeMillis(), found, matchingVersion = 4))
                     _state.update { latest ->
@@ -4382,14 +4403,17 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             val prefetched = _state.value.modernTmdbMovieMatches[entry.tmdb.id]?.takeIf { !chooseVersion && it.isNotEmpty() }
             val lookup = if (prefetched != null) MovieMatchLookup(prefetched, prefetched,
                 if (session.profile.portalType == PortalType.XTREAM) emptyList()
-                else listOf(entry.tmdb.title to 1))
+                else listOf(MovieMatchRequest(entry.tmdb.title)))
                 else resolveInitialTmdbMovieCandidates(session, entry)
-            val candidates = lookup.matches
+            val candidates = lookup.selectionCandidates
             if (candidates.isEmpty()) {
                 showTmdbIptvLookupMiss(AlternateSourceRequest(entry.tmdb.asMediaItem(), CatalogType.MOVIES), session.profile.cacheKey(), requestId)
                 return@playbackTask
             }
-            if (candidates.size > 1 || chooseVersion) {
+            if (candidates.size > 1 || chooseVersion || lookup.requiresConfirmation) {
+                if (lookup.requiresConfirmation) {
+                    tmdbAvailability.forgetMiss(session.profile.cacheKey(), CatalogType.MOVIES, entry.tmdb.id)
+                }
                 _state.update {
                     it.copy(
                         movieMatchSelection = entry.tmdb,
@@ -4753,36 +4777,27 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             return MovieMatchLookup(matches, matches, emptyList())
         }
 
-        val queries = listOf(entry.tmdb.title, entry.tmdb.originalTitle)
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .distinct()
-
-        val candidates = localMovieCandidates(_state.value).toMutableList()
-        val pending = mutableListOf<Pair<String, Int>>()
-        queries.forEachIndexed { index, query ->
-            val page = portal.search(
-                session = session,
-                type = SearchContentType.MOVIES,
-                query = query,
-                page = 1,
-                categoryId = "*"
-            )
-            candidates += page.items
-            if (page.hasMore) pending += query to 2
-            if (rankTmdbMovieMatches(entry.tmdb, candidates).size >= MOVIE_MATCH_PREVIEW_THRESHOLD) {
-                pending += queries.drop(index + 1).map { it to 1 }
-                return MovieMatchLookup(
-                    rankTmdbMovieMatches(entry.tmdb, candidates),
-                    candidates.distinctBy { it.id },
-                    pending.distinct()
-                )
-            }
+        val profileKey = session.profile.cacheKey()
+        val persisted = store.searchCatalog(CatalogType.MOVIES, profileKey).first()?.items.orEmpty()
+        val searched = store.pagedSearches.first().cachedSearchItems(profileKey, SearchContentType.MOVIES, "*")
+        val browseCache = store.browseCatalog(CatalogType.MOVIES, profileKey).first()
+        val snapshot = _state.value
+        val localMatches = withContext(Dispatchers.Default) {
+            val sources = listOf(localMovieCandidates(snapshot), persisted, searched) +
+                browseCache?.itemsByCategory?.values.orEmpty()
+            sources.flatMap { rankTmdbMovieMatches(entry.tmdb, it) + stalkerMovieReviewCandidates(entry.tmdb, it) }
+                .distinctBy { it.id }
         }
-        return MovieMatchLookup(
-            rankTmdbMovieMatches(entry.tmdb, candidates.distinctBy { it.id }),
-            candidates.distinctBy { it.id },
-            pending.distinct()
+        return lookupProviderMovie(
+            movie = entry.tmdb,
+            localCandidates = localMatches,
+            categories = { prioritizedProviderCategories(session, CatalogType.MOVIES).map { it.id } },
+            search = { request ->
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.search(activeSession, SearchContentType.MOVIES, request.query, request.page, request.categoryId,
+                        movieLookup = true)
+                }
+            }
         )
     }
 
@@ -4799,14 +4814,15 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             current.movieMatchSelection?.id == entry.tmdb.id && current.session?.profile?.cacheKey() == profile
         try {
             while (accepts(_state.value)) {
-                val (query, pageNumber) = pages.next() ?: break
+                val request = pages.next() ?: break
                 val page = withAutomaticSessionRetry(session) { activeSession ->
-                    portal.search(activeSession, SearchContentType.MOVIES, query, pageNumber, "*")
+                    portal.search(activeSession, SearchContentType.MOVIES, request.query, request.page, request.categoryId,
+                        movieLookup = true)
                 }
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 if (!accepts(_state.value)) return@launch
                 candidates += page.items
-                pages.completed(query, pageNumber, page.items.map { it.id }, page.hasMore)
+                pages.completed(request, page.providerItemIds, page.hasMore)
                 val ranked = withContext(Dispatchers.Default) {
                     rankTmdbMovieMatches(entry.tmdb, candidates.distinctBy { it.id })
                 }
@@ -4821,12 +4837,6 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             _state.update { current -> if (!accepts(current)) current else current.copy(movieMatchLoadingMore = false) }
         }
     }
-
-    private data class MovieMatchLookup(
-        val matches: List<MediaItem>,
-        val rawCandidates: List<MediaItem>,
-        val pendingRequests: List<Pair<String, Int>>
-    )
 
     private suspend fun resolveInitialTmdbSeriesCandidates(
         session: PortalSession,
@@ -8858,7 +8868,6 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30
-        private const val MOVIE_MATCH_PREVIEW_THRESHOLD = 5
         private const val SEARCH_PREVIEW_DEBOUNCE_MS = 220L
         private const val SEARCH_PROVIDER_FALLBACK_DELAY_MS = 900L
         private const val SEARCH_CATEGORY_CONCURRENCY = 3

@@ -109,7 +109,11 @@ data class SearchResultCache(
 data class PortalSearchPage(
     val items: List<MediaItem>,
     val page: Int,
-    val hasMore: Boolean
+    val hasMore: Boolean,
+    /** Unfiltered rows let movie lookup advance past a page containing only other media types. */
+    val providerItemIds: List<String> = items.map { it.id },
+    /** Conflicting top-level VOD flags: offer explicit review, never automatic movie playback. */
+    val movieReviewCandidates: List<MediaItem> = emptyList()
 )
 
 data class PortalCatalogPage(

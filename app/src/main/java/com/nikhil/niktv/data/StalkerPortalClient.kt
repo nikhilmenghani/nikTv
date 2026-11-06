@@ -331,7 +331,7 @@ class StalkerPortalClient(private val context: Context) {
     }
 
     /** One bounded server operation used by the dedicated search screen. */
-    suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int, categoryId: String = "*", background: Boolean = false): PortalSearchPage = withContext(Dispatchers.IO) {
+    suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int, categoryId: String = "*", background: Boolean = false, movieLookup: Boolean = false): PortalSearchPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             val catalogType = when (type) {
                 SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
@@ -352,11 +352,12 @@ class StalkerPortalClient(private val context: Context) {
         )), background = background)
         val payload = response.payload()
         val data = payload.arrayFromData()
+        val movieReviewCandidates = mutableListOf<MediaItem>()
         val items = data.mapNotNull { node ->
             val item = node as? JsonObject ?: return@mapNotNull null
             val id = item.string("id") ?: item.string("movie_id") ?: return@mapNotNull null
             val series = item.boolish("is_series") || item.string("series") == "1" ||
-                item.string("type").equals("series", ignoreCase = true) || item.string("name").orEmpty().contains("series", ignoreCase = true)
+                item.string("type").equals("series", ignoreCase = true)
             val episode = isPortalEpisodeRow(item.boolish("is_episode"), item.string("episode_id"))
             val matchesType = when (type) {
                 SearchContentType.ALL -> error("Search each provider media type separately")
@@ -365,14 +366,22 @@ class StalkerPortalClient(private val context: Context) {
                 SearchContentType.MOVIES -> !series && !episode
                 SearchContentType.EPISODES -> episode
             }
-            if (!matchesType) return@mapNotNull null
-            MediaItem(id, item.string("name") ?: item.string("title") ?: "Untitled",
+            val media = MediaItem(id, item.string("name") ?: item.string("title") ?: "Untitled",
                 portalAssetUrl(session, item.string("logo") ?: item.string("screenshot_uri") ?: item.string("pic")),
                 item.string("cmd"), item.string("description") ?: item.string("genres_str"),
                 item.string("season_number")?.toIntOrNull(), item.string("episode")?.toIntOrNull(),
                 item.string("season_id"), item.string("category_id") ?: item.string("genre_id") ?: categoryId, item.string("episode_id"),
-                isAdult = item.boolish("is_adult") || item.boolish("adult"))
-        }.filter { it.title.matchesTitleKeywords(query) }.distinctBy { it.id }
+                isAdult = item.boolish("is_adult") || item.boolish("adult"),
+                externalTmdbId = item.string("tmdb_id")?.toIntOrNull()?.takeIf { it > 0 })
+            if (!matchesType) {
+                // Ministra can mark the same container as both movie and series. Keep it
+                // available for explicit review instead of treating the contradictory row as absent.
+                if (type == SearchContentType.MOVIES && !episode && series && item.boolish("is_movie") &&
+                    (movieLookup || media.title.matchesTitleKeywords(query))) movieReviewCandidates += media
+                return@mapNotNull null
+            }
+            media
+        }.filter { movieLookup && type == SearchContentType.MOVIES || it.title.matchesTitleKeywords(query) }.distinctBy { it.id }
             .sortedByDescending { it.title.titleKeywordScore(query) }
         val metadata = payload as? JsonObject
         val maxPage = metadata?.string("max_page")?.toIntOrNull()
@@ -386,7 +395,10 @@ class StalkerPortalClient(private val context: Context) {
             total != null && pageSize != null -> page * pageSize < total
             else -> data.isNotEmpty()
         }
-        PortalSearchPage(items, page, hasMore)
+        PortalSearchPage(items, page, hasMore, providerItemIds = data.map { node ->
+            (node as? JsonObject)?.let { it.string("id") ?: it.string("movie_id") }
+                ?: "row:${node.hashCode()}"
+        }, movieReviewCandidates = movieReviewCandidates.distinctBy { it.id })
     }
 
     suspend fun refreshPlaybackItem(session: PortalSession, item: MediaItem, type: CatalogType, series: MediaItem? = null): MediaItem {
