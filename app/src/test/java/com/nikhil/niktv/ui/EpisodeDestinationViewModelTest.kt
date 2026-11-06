@@ -2,6 +2,9 @@ package com.nikhil.niktv.ui
 
 import android.app.Application
 import androidx.lifecycle.viewModelScope
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import com.nikhil.niktv.data.ProfileStore
+import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,6 +13,8 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -19,7 +24,9 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class EpisodeDestinationViewModelTest {
+    @get:Rule val temporary = TemporaryFolder()
     private val scheduler = TestCoroutineScheduler()
+    private lateinit var storeScope: CoroutineScope
     private lateinit var vm: NikTvViewModel
     private lateinit var mutable: MutableStateFlow<NikTvState>
     private val profile = PortalProfile("Fixture", "https://fixture.invalid", "00:00:00:00:00:01")
@@ -30,8 +37,16 @@ class EpisodeDestinationViewModelTest {
 
     @Before fun setup() {
         Dispatchers.setMain(StandardTestDispatcher(scheduler))
-        vm = NikTvViewModel(RuntimeEnvironment.getApplication())
+        val application = RuntimeEnvironment.getApplication()
+        UserSyncStore.get(application).disconnect()
+        storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val preferences = PreferenceDataStoreFactory.create(scope = storeScope,
+            produceFile = { temporary.newFolder().resolve("episode-destination.preferences_pb") })
+        vm = NikTvViewModel(application)
         vm.viewModelScope.coroutineContext.cancelChildren()
+        scheduler.runCurrent()
+        NikTvViewModel::class.java.getDeclaredField("store").apply { isAccessible = true }
+            .set(vm, ProfileStore(application, preferences))
         @Suppress("UNCHECKED_CAST")
         val state = NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }.get(vm) as MutableStateFlow<NikTvState>
         mutable = state
@@ -44,6 +59,7 @@ class EpisodeDestinationViewModelTest {
     @After fun teardown() {
         vm.viewModelScope.cancel()
         scheduler.runCurrent()
+        runBlocking { storeScope.coroutineContext.job.cancelAndJoin() }
         Dispatchers.resetMain()
     }
     private fun await(predicate: () -> Boolean) {
