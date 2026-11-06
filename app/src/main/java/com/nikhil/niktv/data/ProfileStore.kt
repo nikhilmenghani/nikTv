@@ -535,6 +535,8 @@ class ProfileStore @JvmOverloads constructor(
         backupExportJson.encodeToString(backupSnapshot(now, DeviceBackupIdentity.create(context, now)))
     }
 
+    internal var backupWriteCheckpoint: (String) -> Unit = {}
+
     suspend fun importBackup(content: String, scope: UserScope? = captureScope()) = withContext(kotlinx.coroutines.Dispatchers.IO) {
         val backup = backupImportJson.decodeFromString<NikTvBackup>(content)
         val importAccount = scope?.accountId ?: users.selectedAccount.value
@@ -558,49 +560,65 @@ class ProfileStore @JvmOverloads constructor(
             }
         }
         if (scope != null) require(users.snapshot(scope.accountId).any { it.collection == "profile" && it.recordId == scope.profileId && !it.deleted }) { "Select a user profile before assigning this backup." }
-        val legacyBackup = backup.formatVersion < 3 || backup.userRecords.isEmpty()
-        val restoredPortals = decodeProfiles(backup.strings[profilesKey.name], backup.strings[key.name])
-        if (scope != null && legacyBackup) restoredPortals.forEach { users.associatePortal(scope, it) }
-        // With no chosen person, old snapshot fields remain unassigned on-device until the
-        // user explicitly imports them from the chooser. Never pick an arbitrary remote UUID.
-        val targetPreferences = when {
-            scope != null -> scopedPreferences(scope)
-            legacyBackup -> basePreferences
-            else -> preferences
-        }
-        targetPreferences.edit { prefs ->
-            BACKUP_STRING_KEYS.filter { legacyBackup || it !in UserSyncStore.SCOPED_KEYS }.forEach { prefs.remove(stringPreferencesKey(it)) }
-            BACKUP_INT_KEYS.forEach { prefs.remove(intPreferencesKey(it)) }
-            backup.strings.filterKeys { it in BACKUP_STRING_KEYS && (legacyBackup || it !in UserSyncStore.SCOPED_KEYS) }.forEach { (name, value) ->
-                prefs[stringPreferencesKey(name)] = value
+        users.validateBackup(backup.userRecords, backup.userLocalPreferences, backup.portalMappings)
+        users.withEditLock {
+            val originalPreferences = basePreferences.data.first()
+            val deviceRollback = BackupPreferenceRollback(context, importAccount)
+            try { users.backupTransaction {
+            val legacyBackup = backup.formatVersion < 3 || backup.userRecords.isEmpty()
+            val restoredPortals = decodeProfiles(backup.strings[profilesKey.name], backup.strings[key.name])
+            if (scope != null && legacyBackup) restoredPortals.forEach { users.associatePortal(scope, it) }
+            // With no chosen person, old snapshot fields remain unassigned on-device until the
+            // user explicitly imports them from the chooser. Never pick an arbitrary remote UUID.
+            val targetPreferences = when {
+                scope != null -> scopedPreferences(scope)
+                legacyBackup -> basePreferences
+                else -> preferences
             }
-            backup.integers.filterKeys { it in BACKUP_INT_KEYS }.forEach { (name, value) ->
-                prefs[intPreferencesKey(name)] = value
+            targetPreferences.edit { prefs ->
+                BACKUP_STRING_KEYS.filter { legacyBackup || it !in UserSyncStore.SCOPED_KEYS }.forEach { prefs.remove(stringPreferencesKey(it)) }
+                BACKUP_INT_KEYS.forEach { prefs.remove(intPreferencesKey(it)) }
+                backup.strings.filterKeys { it in BACKUP_STRING_KEYS && (legacyBackup || it !in UserSyncStore.SCOPED_KEYS) }.forEach { (name, value) ->
+                    prefs[stringPreferencesKey(name)] = value
+                }
+                backup.integers.filterKeys { it in BACKUP_INT_KEYS }.forEach { (name, value) ->
+                    prefs[intPreferencesKey(name)] = value
+                }
+                // Portal tokens are intentionally device-local and must be refreshed.
+                prefs.remove(sessionKey)
+                prefs.remove(sessionsKey)
             }
-            // Portal tokens are intentionally device-local and must be refreshed.
-            prefs.remove(sessionKey)
-            prefs.remove(sessionsKey)
-        }
-        if (backup.formatVersion >= 2) {
-            DevicePreferencesBackup.restore(context, backup.devicePreferences)
-            RemoteCredentials.restoreDeviceConfiguration(context, backup.remoteConfiguration)
-            backup.backupConnection?.let {
-                GitHubBackupManager(context).saveConfig(GitHubBackupConfig(username = it.username,
-                    repository = it.repository, token = it.token, passphrase = it.password,
-                    rememberPassphrase = it.password.isNotBlank(), backupMode = BackupMode.valueOf(it.mode),
-                    autoBackupIntervalHours = it.intervalHours), reschedule = false)
+            backupWriteCheckpoint("settings")
+            if (backup.formatVersion >= 2) {
+                DevicePreferencesBackup.restore(context, backup.devicePreferences)
+                RemoteCredentials.restoreDeviceConfiguration(context, backup.remoteConfiguration)
+                backup.backupConnection?.let {
+                    GitHubBackupManager(context).saveConfig(GitHubBackupConfig(username = it.username,
+                        repository = it.repository, token = it.token, passphrase = it.password,
+                        rememberPassphrase = it.password.isNotBlank(), backupMode = BackupMode.valueOf(it.mode),
+                        autoBackupIntervalHours = it.intervalHours), reschedule = false)
+                }
+            }
+            backupWriteCheckpoint("device")
+            if (backup.formatVersion >= 3 && backup.userRecords.isNotEmpty()) {
+                val accountId = requireNotNull(importAccount) { "Connect the backup's GitHub account before importing user data." }
+                require(backup.userRecords.all { it.accountId == accountId }) { "This backup belongs to a different GitHub account." }
+                users.restoreBackupRecords(accountId, backup.userRecords)
+                users.restoreLocalBackup(accountId, backup.userLocalPreferences, backup.portalMappings)
+            }
+            backupWriteCheckpoint("records")
+            val restoreId = "backup-import:${java.util.UUID.randomUUID()}"
+            if (scope != null && legacyBackup) UserProfilePreferences.importLegacy(context, scope, migrationId = restoreId, overrideExisting = true, portalKeysOverride = restoredPortals.map { it.cacheKey() })
+            if (scope == null && legacyBackup) context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE)
+                .edit().remove("assigned").putString("pending_import_id", restoreId).commit()
+            } } catch (failure: Throwable) {
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    try { basePreferences.updateData { originalPreferences } } catch (rollback: Throwable) { failure.addSuppressed(rollback) }
+                    try { deviceRollback.restore(); RemoteCredentials.reloadAfterRestoreRollback(context) } catch (rollback: Throwable) { failure.addSuppressed(rollback) }
+                }
+                throw failure
             }
         }
-        if (backup.formatVersion >= 3 && backup.userRecords.isNotEmpty()) {
-            val accountId = requireNotNull(importAccount) { "Connect the backup's GitHub account before importing user data." }
-            require(backup.userRecords.all { it.accountId == accountId }) { "This backup belongs to a different GitHub account." }
-            users.restoreBackupRecords(accountId, backup.userRecords)
-            users.restoreLocalBackup(accountId, backup.userLocalPreferences, backup.portalMappings)
-        }
-        val restoreId = "backup-import:${java.util.UUID.randomUUID()}"
-        if (scope != null && legacyBackup) UserProfilePreferences.importLegacy(context, scope, migrationId = restoreId, overrideExisting = true)
-        if (scope == null && legacyBackup) context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE)
-            .edit().remove("assigned").putString("pending_import_id", restoreId).commit()
     }
 
     suspend fun hasLegacyViewingData(): Boolean {

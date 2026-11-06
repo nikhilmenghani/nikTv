@@ -135,4 +135,51 @@ class DeviceSetupBackupTest {
         assertNull(SearchMetadataSyncScheduler.requestRestore(context, PortalProfile("Fixture", "https://setup.invalid", "00")))
         assertFalse(DevicePreferencesBackup.capture(context).getValue("catalog_device").containsKey("upload"))
     }
+    @Test fun invalidPortalMappingFailsBeforeAnySettingsWrite() = runBlocking {
+        store.setInitialCatalogItems(42)
+        UserSyncStore.get(context).selectAccount("1")
+        val malformed = """{"formatVersion":3,"strings":{},"integers":{"initial_catalog_items":14},"portalMappings":[{"accountId":"1","localKey":"portal","portalId":"invalid"}]}"""
+        assertTrue(runCatching { store.importBackup(malformed) }.isFailure)
+        assertEquals(42, store.initialCatalogItems.first())
+    }
+
+    @Test fun preferenceCompensationDoesNotTouchUnrelatedStores() {
+        val own = context.getSharedPreferences("discovery_trial_v1", 0)
+        val unrelated = context.getSharedPreferences("unrelated_fixture", 0)
+        own.edit().putString("original", "before").commit()
+        val rollback = BackupPreferenceRollback(context, null)
+        own.edit().putString("original", "after").putBoolean("introduced", true).commit()
+        unrelated.edit().putString("keep", "new unrelated change").commit()
+        rollback.restore()
+        assertEquals("before", own.getString("original", null))
+        assertFalse(own.contains("introduced"))
+        assertEquals("new unrelated change", unrelated.getString("keep", null))
+    }
+    @Test fun failureAtEachWriteBoundaryRestoresPriorSettings() = runBlocking {
+        val original = store.exportBackup()
+        for (boundary in listOf("settings", "device", "records")) {
+            store.setInitialCatalogItems(42)
+            context.getSharedPreferences("discovery_trial_v1", 0).edit().putString("marker", "keep").commit()
+            store.backupWriteCheckpoint = { if (it == boundary) error("Injected failure") }
+            assertTrue(runCatching { store.importBackup(original) }.isFailure)
+            assertEquals(42, store.initialCatalogItems.first())
+            assertEquals("keep", context.getSharedPreferences("discovery_trial_v1", 0).getString("marker", null))
+        }
+        store.backupWriteCheckpoint = {}
+    }
+
+    @Test fun roomRecordsRollbackTogetherWithFailedRestore() = runBlocking {
+        val users = UserSyncStore.get(context)
+        val account = "fixture"
+        val owner = UserScope(account, java.util.UUID.randomUUID().toString())
+        assertTrue(runCatching {
+            users.backupTransaction {
+                users.mutate(owner, "fixture", "one", "{}")
+                users.restoreLocalBackup(account, emptyList(), listOf(LocalPortalMapping(account, "fixture", java.util.UUID.randomUUID().toString())))
+                error("Injected late failure")
+            }
+        }.isFailure)
+        assertTrue(users.snapshot(account).none { it.profileId == owner.profileId })
+        assertTrue(users.backupPortalMappings(account).isEmpty())
+    }
 }

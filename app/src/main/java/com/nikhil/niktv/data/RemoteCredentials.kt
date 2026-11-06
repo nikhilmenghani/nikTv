@@ -222,6 +222,12 @@ object RemoteCredentials {
         }
     }
 
+    internal fun reloadAfterRestoreRollback(context: Context) {
+        val prefs = preferences(context)
+        values = effectiveValues(context, parseKnownValues(decrypt(prefs.getString("cached_values", null))))
+        lastUpdatedAt = prefs.getLong("updated_at", 0L)
+    }
+
     internal fun restoreDeviceConfiguration(context: Context, backup: RemoteConfigurationBackup?) {
         validateDeviceConfiguration(backup)
         val prefs = preferences(context)

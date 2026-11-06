@@ -94,8 +94,12 @@ abstract class UserSyncDatabase : RoomDatabase() { abstract fun syncDao(): UserS
 class UserSyncStore private constructor(private val context: Context) {
     /** Acquire, run and release on IO. A synchronous preferences caller on the UI thread
      * must never wait for a lock whose holder needs a UI continuation to release it. */
-    internal suspend fun <T> withEditLock(action: suspend () -> T): T =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    private class EditOwner(val store: UserSyncStore) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<EditOwner>
+    }
+    internal suspend fun <T> withEditLock(action: suspend () -> T): T {
+        if (kotlinx.coroutines.currentCoroutineContext()[EditOwner]?.store === this) return action()
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + EditOwner(this)) {
             editMutex.withLock {
                 val result = action()
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
@@ -104,6 +108,8 @@ class UserSyncStore private constructor(private val context: Context) {
                 result
             }
         }
+
+    }
 
     internal val db = Room.databaseBuilder(context, UserSyncDatabase::class.java, "niktv-users.db").build()
     internal val dao = db.syncDao()
@@ -245,6 +251,18 @@ class UserSyncStore private constructor(private val context: Context) {
             else runCatching { JsonArray(json.parseToJsonElement(raw).jsonArray.filterNot { privateViewingEntry(name, it, maps, keys) }).toString() }.getOrDefault(raw)
         }
     }
+    internal suspend fun <T> backupTransaction(block: suspend () -> T): T = withEditLock { db.withTransaction { block() } }
+
+    internal fun validateBackup(records: List<SyncRecord>, preferences: List<UserLocalPreference>, mappings: List<LocalPortalMapping>) {
+        mappings.forEach { require(it.localKey.isNotBlank()); UUID.fromString(it.portalId) }
+        preferences.forEach { UUID.fromString(it.profileId); require(it.name.isNotBlank()) }
+        records.forEach {
+            if (it.profileId.isNotBlank()) UUID.fromString(it.profileId)
+            require(it.recordId.isNotBlank() && it.collection.isNotBlank() && it.revision >= 0 && it.generation >= 0 && it.payload.length <= 1_000_000)
+            json.parseToJsonElement(it.payload)
+        }
+    }
+
     suspend fun backupPortalMappings(accountId: String): List<LocalPortalMapping> = dao.mappings(accountId)
     suspend fun restoreLocalBackup(accountId: String, preferences: List<UserLocalPreference>, mappings: List<LocalPortalMapping>) = withEditLock { db.withTransaction {
         require(preferences.all { it.accountId == accountId } && mappings.all { it.accountId == accountId }) { "This backup belongs to another account." }

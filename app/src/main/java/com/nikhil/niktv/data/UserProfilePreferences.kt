@@ -132,9 +132,9 @@ internal object UserProfilePreferences {
 
     /** Both preference maps and their migration marker commit together; interruptions retry safely. */
     suspend fun importLegacy(context: Context, owner: UserScope,
-        migrationId: String = "legacy-browsing-import", overrideExisting: Boolean = false) {
+        migrationId: String = "legacy-browsing-import", overrideExisting: Boolean = false, portalKeysOverride: List<String>? = null) {
         val users = UserSyncStore.get(context)
-        val portalKeys = ProfileStore(context).scoped(owner).profiles.first().map { it.cacheKey() }
+        val portalKeys = portalKeysOverride ?: ProfileStore(context).scoped(owner).profiles.first().map { it.cacheKey() }
         val portable = linkedMapOf<String, JsonElement>()
         val local = linkedMapOf<String, JsonElement>()
         for (domain in portableDomains - "sports_favorites_v2") {
