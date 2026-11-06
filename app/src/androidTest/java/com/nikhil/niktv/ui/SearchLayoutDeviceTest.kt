@@ -30,6 +30,96 @@ class SearchLayoutDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
 
+    @Test fun deletingRecentSearchKeepsFocusOnReplacementOrPreviousRow() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val originalRotation = host.display?.rotation ?: 0
+        val automaticRotation = android.provider.Settings.System.getInt(context.contentResolver,
+            android.provider.Settings.System.ACCELEROMETER_ROTATION, 1) != 0
+        val profile = PortalProfile("History fixture", "https://search.invalid", "")
+        val history = (1..10).map { RecentSearch("Recent fixture $it", SearchContentType.ALL,
+            searchedAtMillis = 100L - it, profileKey = profile.cacheKey()) }
+        val state = mutableStateOf(NikTvState(savedProfile = profile, restoring = false,
+            session = PortalSession(profile, "fixture", "https://search.invalid", "", "", ""),
+            searchOpen = true, searchType = SearchContentType.ALL, recentSearches = history))
+        val query = AtomicReference<FocusRequester>()
+        val opened = AtomicInteger()
+        try {
+            instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90)
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme {
+                DiscoverySearchScreen(state.value, {}, {}, {}) {
+                    val queryFocus = LocalDiscoverySearchQueryFocus.current
+                    SideEffect { query.set(queryFocus) }
+                    DiscoverySearchContent(state.value, {}, setType = {}, setCategory = {}, setQuery = {},
+                        search = {}, useRecent = { opened.incrementAndGet() }, deleteRecent = { recent ->
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                state.value = state.value.copy(recentSearches = state.value.recentSearches
+                                    .filterNot { it.key == recent.key })
+                            }, 80L)
+                        }, openResult = {}, loadMore = {}, toggleFavorite = {},
+                        headerFocusRequester = LocalDiscoverySearchHeaderFocus.current,
+                        queryFocusRequester = queryFocus)
+                }
+            } } }
+            await("History is visible") { label("Recent fixture 1") != null }
+            stableBounds()
+            await("History query accepts focus") {
+                instrumentation.runOnMainSync { query.get().requestFocus() }
+                find(root()) { it.className == "android.widget.EditText" && it.isFocused } != null
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Arrow receives focus beside the query") { focused("Search") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Scope receives focus") { focused("All") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("History receives focus") { focused("Recent fixture 1") }
+            for (index in 2..8) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down reaches recent $index") { focused("Recent fixture $index") }
+            }
+            fun removeAndExpect(removed: Int, replacement: Int?) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right reaches remove $removed") { focused("Remove Recent fixture $removed") }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Deleting $removed retains the nearest available target") {
+                    state.value.recentSearches.none { it.query == "Recent fixture $removed" } &&
+                        if (replacement != null) focused("Recent fixture $replacement") &&
+                            !focused("Remove Recent fixture $replacement")
+                        else find(root()) { it.className == "android.widget.EditText" && it.isFocused } != null
+                }
+            }
+            removeAndExpect(8, 9) // The next older row enters the eight-entry window.
+            removeAndExpect(9, 10)
+            removeAndExpect(10, 7) // Last entry: retain the preceding row.
+            screenshot(host, "recent-search-delete-last-focused")
+            for (index in 6 downTo 4) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Up reaches recent $index") { focused("Recent fixture $index") }
+            }
+            removeAndExpect(4, 5) // Middle entry: select its successor.
+            for (index in 3 downTo 1) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Up reaches recent $index") { focused("Recent fixture $index") }
+            }
+            removeAndExpect(1, 2)
+            for ((removed, replacement) in listOf(2 to 3, 3 to 5, 5 to 6, 6 to 7)) {
+                removeAndExpect(removed, replacement)
+            }
+            removeAndExpect(7, null)
+            assertTrue(state.value.recentSearches.isEmpty())
+            assertEquals("Removing a recent entry must never execute its search", 0, opened.get())
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            currentHost = null
+            instrumentation.setInTouchMode(true)
+            instrumentation.uiAutomation.setRotation(if (automaticRotation) android.app.UiAutomation.ROTATION_UNFREEZE else originalRotation)
+        }
+    }
+
     @Test fun compactControlsPreserveResultsDuringLoadingScrollingAndRemoteNavigation() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
@@ -53,6 +143,7 @@ class SearchLayoutDeviceTest {
         val body = AtomicReference<androidx.compose.ui.geometry.Rect>()
         val query = AtomicReference<FocusRequester>()
         val searches = AtomicInteger()
+        val openedResult = AtomicReference<MediaItem>()
         try {
             instrumentation.setInTouchMode(true)
             instrumentation.runOnMainSync { host.setContent { MaterialTheme {
@@ -64,7 +155,7 @@ class SearchLayoutDeviceTest {
                             setType = { state.value = state.value.copy(searchType = it) }, setCategory = {},
                             setQuery = { state.value = state.value.copy(searchQuery = it) },
                             search = { searches.incrementAndGet() }, useRecent = {}, deleteRecent = {},
-                            openResult = {}, loadMore = {}, toggleFavorite = {},
+                            openResult = { openedResult.set(it) }, loadMore = {}, toggleFavorite = {},
                             headerFocusRequester = LocalDiscoverySearchHeaderFocus.current,
                             queryFocusRequester = queryFocus)
                     }
@@ -108,7 +199,7 @@ class SearchLayoutDeviceTest {
                     instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream",
                         "SEARCH_RECORDS $name ${type.title} fullyVisible=$count\n") })
                     if (tablet) assertTrue("$name ${type.title} shows more records: $count",
-                        count >= if (name == "landscape") 7 else 12)
+                        count >= if (name == "landscape") 12 else 24)
                     screenshot(host, "compact-search-$name-${type.name.lowercase()}-records")
                 }
                 assertTrue(clickable(label("Series · 60")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
@@ -134,14 +225,31 @@ class SearchLayoutDeviceTest {
                 instrumentation.runOnMainSync { query.get().requestFocus() }
                 focused("fixture")
             }
-            for (target in listOf("Clear search", "Search", "Search provider again")) {
+            for (target in listOf("Clear search", "Search", "All", "Live TV", "Series", "Movies", "All categories")) {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
                 await("Right moves to $target") { focused(target) }
             }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Provider action is reachable beside the query") { focused("Search provider again") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Provider action activates exactly once") { searches.get() == 1 }
             assertEquals(1, searches.get())
+            instrumentation.runOnMainSync { query.get().requestFocus() }
+            for (target in listOf("Clear search", "Search")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right returns to $target") { focused(target) }
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Arrow Down enters result tabs instead of the horizontal filters") { focused("Series · 60") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down enters the first result") { focused(entries.first { it.id == "SERIES-1" }.title) }
+            for ((key, index) in listOf(KeyEvent.KEYCODE_DPAD_RIGHT to 2, KeyEvent.KEYCODE_DPAD_DOWN to 4,
+                KeyEvent.KEYCODE_DPAD_LEFT to 3, KeyEvent.KEYCODE_DPAD_UP to 1)) {
+                instrumentation.sendKeyDownUpSync(key)
+                await("Two-column navigation reaches record $index") { focused(entries.first { it.id == "SERIES-$index" }.title) }
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("The focused record opens") { openedResult.get()?.id == "SERIES-1" }
         } finally {
             instrumentation.runOnMainSync { host.finish() }
             currentHost = null
@@ -150,7 +258,10 @@ class SearchLayoutDeviceTest {
         }
     }
 
-    private fun root() = instrumentation.uiAutomation.rootInActiveWindow
+    private fun root(): AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        return instrumentation.uiAutomation.rootInActiveWindow
+    }
     private fun find(node: AccessibilityNodeInfo?, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         node ?: return null
         if (predicate(node)) return node
@@ -186,10 +297,21 @@ class SearchLayoutDeviceTest {
         return records.size
     }
     private fun focused(text: String): Boolean {
+        fun matches(node: AccessibilityNodeInfo) =
+            node.text?.toString()?.lineSequence()?.any { it == text } == true ||
+                node.contentDescription?.toString() == text
+        val tree = root()
+        val current = tree?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        current?.refresh()
+        val currentOwner = current?.let { generateSequence(it) { it.parent }.firstOrNull { it.isClickable } ?: it }
         // The header and query submit action both have the accessible name Search.
-        return find(root()) { node ->
-            (node.text?.toString() == text || node.contentDescription?.toString() == text) &&
-                generateSequence(node) { it.parent }.take(8).any { it.isFocused }
+        // Match the nearest action so a focused row does not also count as its X.
+        return find(tree) { node ->
+            if (!matches(node)) false else {
+                val owner = generateSequence(node) { it.parent }.firstOrNull { it.isClickable } ?: node
+                owner.refresh()
+                owner.isFocused || owner == currentOwner
+            }
         } != null
     }
     private fun stableBounds() {
@@ -207,8 +329,14 @@ class SearchLayoutDeviceTest {
         while (SystemClock.uptimeMillis() < end) { if (condition()) return; Thread.sleep(60) }
         currentHost?.let { host ->
             screenshot(host, "compact-search-failure")
+            val focusDetails = mutableListOf<String>()
+            find(root()) { node ->
+                if (node.isFocused || node.text?.contains("Recent fixture") == true)
+                    focusDetails += "text=${node.text} description=${node.contentDescription} focused=${node.isFocused} class=${node.className}"
+                false
+            }
             instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream",
-                "SEARCH_FAILURE orientation=${host.resources.configuration.orientation} focus=${host.hasWindowFocus()} root=${root()?.packageName}\n") })
+                "SEARCH_FAILURE orientation=${host.resources.configuration.orientation} focus=${host.hasWindowFocus()} root=${root()?.packageName}\n${focusDetails.joinToString("\n")}\n") })
         }
         fail(message)
     }
