@@ -399,6 +399,7 @@ object RemoteCredentials {
 
 class RemoteCredentialsWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = try {
+        awaitSetupRecovery(applicationContext)
         RemoteCredentials.refresh(applicationContext)
         Result.success()
     } catch (_: Exception) {

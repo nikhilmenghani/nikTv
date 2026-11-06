@@ -29,6 +29,7 @@ internal object NewEpisodeNotificationScheduler {
 
 class NewEpisodeNotificationWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
+        awaitSetupRecovery(applicationContext)
         if (!NewEpisodeNotifications.supported(applicationContext) || CatalogPlaybackActivity.playing) return Result.success()
         val users = UserSyncStore.get(applicationContext)
         val accountId = users.selectedAccount.value ?: return Result.success()

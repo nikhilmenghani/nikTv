@@ -72,11 +72,12 @@ class ProfileStore @JvmOverloads constructor(
     preferences: DataStore<Preferences> = context.dataStore,
     private val fixedUserScope: UserScope? = null,
 ) {
-    private val basePreferences = preferences
+    private val rawPreferences = preferences
+    private val basePreferences = RestoreReadyPreferences(context, preferences)
     private val users = UserSyncStore.get(context)
     private val preferences: DataStore<Preferences> = UserScopedPreferences(basePreferences, users, fixedUserScope)
     fun captureScope(): UserScope? = fixedUserScope ?: users.selectedScope.value
-    fun scoped(scope: UserScope): ProfileStore = ProfileStore(context, basePreferences, scope)
+    fun scoped(scope: UserScope): ProfileStore = ProfileStore(context, rawPreferences, scope)
     private fun scopedPreferences(scope: UserScope?): DataStore<Preferences> =
         if (scope == null) preferences else UserScopedPreferences(basePreferences, users, scope)
     private val key = stringPreferencesKey("active_profile")
@@ -535,6 +536,29 @@ class ProfileStore @JvmOverloads constructor(
         backupExportJson.encodeToString(backupSnapshot(now, DeviceBackupIdentity.create(context, now)))
     }
 
+    /** Room rolls back an interrupted transaction. Compensate the other stores before readers resume. */
+    internal suspend fun recoverPendingRestore() = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        users.withEditLock {
+            val journal = SetupRestoreJournal(context)
+            val snapshot = journal.read() ?: return@withEditLock
+            val allowed = BACKUP_STRING_KEYS + BACKUP_INT_KEYS + setOf("active_session", "saved_sessions")
+            require(snapshot.keys.all { name -> name in allowed || name.removePrefix("account_").let { scoped ->
+                name.startsWith("account_") && scoped.substringBefore('_').toLongOrNull() != null && scoped.substringAfter('_') in allowed
+            } }) { "Invalid restore recovery keys; data was not changed." }
+            val committed = users.dao.preferences(SetupRestoreJournal.MARKER_ACCOUNT, "")
+                .any { it.name == SetupRestoreJournal.MARKER_NAME && it.value == snapshot.id }
+            if (!committed) {
+                val shared = BackupPreferenceRollback.fromJournal(context, snapshot.shared)
+                rawPreferences.updateData { current -> current.toMutablePreferences().apply {
+                    snapshot.keys.forEach { remove(stringPreferencesKey(it)) }
+                    snapshot.preferences.forEach { (name, value) -> putRestoreValue(name, value) }
+                } }
+                shared.restore()
+            }
+            journal.clear()
+        }
+    }
+
     internal var backupWriteCheckpoint: (String) -> Unit = {}
 
     suspend fun importBackup(content: String, scope: UserScope? = captureScope()) = withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -562,8 +586,16 @@ class ProfileStore @JvmOverloads constructor(
         if (scope != null) require(users.snapshot(scope.accountId).any { it.collection == "profile" && it.recordId == scope.profileId && !it.deleted }) { "Select a user profile before assigning this backup." }
         users.validateBackup(backup.userRecords, backup.userLocalPreferences, backup.portalMappings)
         users.withEditLock {
+            recoverPendingRestore()
             val originalPreferences = basePreferences.data.first()
             val deviceRollback = BackupPreferenceRollback(context, importAccount)
+            val journal = SetupRestoreJournal(context)
+            val restoreId = java.util.UUID.randomUUID().toString()
+            val names = BACKUP_STRING_KEYS + BACKUP_INT_KEYS + setOf("active_session", "saved_sessions")
+            val keys = names + names.filter { it in UserSyncStore.ACCOUNT_KEYS }.mapNotNull { name -> importAccount?.let { "account_${it}_$name" } }
+            val snapshot = SetupRestoreSnapshot(restoreId, keys, originalPreferences.asMap().entries
+                .filter { it.key.name in keys }.associate { it.key.name to encodeRestorePreference(it.value) }, deviceRollback.journalSnapshot())
+            journal.write(snapshot)
             try { users.backupTransaction {
             val legacyBackup = backup.formatVersion < 3 || backup.userRecords.isEmpty()
             val restoredPortals = decodeProfiles(backup.strings[profilesKey.name], backup.strings[key.name])
@@ -607,17 +639,22 @@ class ProfileStore @JvmOverloads constructor(
                 users.restoreLocalBackup(accountId, backup.userLocalPreferences, backup.portalMappings)
             }
             backupWriteCheckpoint("records")
-            val restoreId = "backup-import:${java.util.UUID.randomUUID()}"
-            if (scope != null && legacyBackup) UserProfilePreferences.importLegacy(context, scope, migrationId = restoreId, overrideExisting = true, portalKeysOverride = restoredPortals.map { it.cacheKey() })
+            val migrationId = "backup-import:${java.util.UUID.randomUUID()}"
+            if (scope != null && legacyBackup) UserProfilePreferences.importLegacy(context, scope, migrationId = migrationId, overrideExisting = true, portalKeysOverride = restoredPortals.map { it.cacheKey() })
             if (scope == null && legacyBackup) context.getSharedPreferences("niktv_legacy_assignment", Context.MODE_PRIVATE)
-                .edit().remove("assigned").putString("pending_import_id", restoreId).commit()
-            } } catch (failure: Throwable) {
+                .edit().remove("assigned").putString("pending_import_id", migrationId).commit()
+            users.dao.putPreference(UserLocalPreference(SetupRestoreJournal.MARKER_ACCOUNT, "", SetupRestoreJournal.MARKER_NAME, restoreId))
+            } }
+            catch (failure: Throwable) {
                 withContext(kotlinx.coroutines.NonCancellable) {
-                    try { basePreferences.updateData { originalPreferences } } catch (rollback: Throwable) { failure.addSuppressed(rollback) }
-                    try { deviceRollback.restore(); RemoteCredentials.reloadAfterRestoreRollback(context) } catch (rollback: Throwable) { failure.addSuppressed(rollback) }
+                    try {
+                        recoverPendingRestore()
+                        RemoteCredentials.reloadAfterRestoreRollback(context)
+                    } catch (rollback: Throwable) { failure.addSuppressed(rollback) }
                 }
                 throw failure
             }
+            journal.clear()
         }
     }
 

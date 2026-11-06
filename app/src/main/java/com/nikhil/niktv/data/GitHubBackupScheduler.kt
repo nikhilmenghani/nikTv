@@ -70,6 +70,7 @@ class GitHubBackupWorker(
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
+        awaitSetupRecovery(applicationContext)
         val accountId = inputData.getString("accountId")
         val users = UserSyncStore.get(applicationContext)
         if (users.selectedAccount.value != accountId) return Result.success()

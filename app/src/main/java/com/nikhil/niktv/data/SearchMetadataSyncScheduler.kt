@@ -342,6 +342,7 @@ object SearchMetadataSyncScheduler {
 
 class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = scanMutex.withLock {
+        awaitSetupRecovery(applicationContext)
         val context = applicationContext
         val id = inputData.getString(SearchMetadataSyncScheduler.PROFILE_ID) ?: return@withLock Result.success()
         val profile = ProfileStore(context).profiles.first().firstOrNull { CatalogScanPreferences.id(it) == id }
@@ -716,6 +717,7 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
 /** Class name retained so already-enqueued work remains resolvable across app upgrades. */
 class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = backupMutex.withLock {
+        awaitSetupRecovery(applicationContext)
         if (!CatalogPreferences.backupEnabled(applicationContext)) return@withLock Result.success()
         var notificationJob: Job? = null
         try {
@@ -770,6 +772,7 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
 
 class CatalogRestoreWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = restoreMutex.withLock {
+        awaitSetupRecovery(applicationContext)
         if (!CatalogPreferences.CLOUD_BACKUP_AVAILABLE) return@withLock Result.success()
         val id = inputData.getString(SearchMetadataSyncScheduler.PROFILE_ID) ?: return@withLock Result.failure()
         val profile = ProfileStore(applicationContext).profiles.first()

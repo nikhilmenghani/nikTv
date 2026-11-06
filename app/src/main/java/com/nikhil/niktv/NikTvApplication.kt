@@ -15,12 +15,20 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class NikTvApplication : Application(), SingletonImageLoader.Factory {
+    internal val setupReady = kotlinx.coroutines.CompletableDeferred<Unit>()
     override fun onCreate() {
         super.onCreate()
-        RemoteCredentials.initialize(this)
-        RemoteCredentials.schedule(this)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            runCatching { RemoteCredentials.refresh(this@NikTvApplication) }
+            try {
+                com.nikhil.niktv.data.ProfileStore(this@NikTvApplication).recoverPendingRestore()
+                RemoteCredentials.initialize(this@NikTvApplication)
+                RemoteCredentials.schedule(this@NikTvApplication)
+                setupReady.complete(Unit)
+                runCatching { RemoteCredentials.refresh(this@NikTvApplication) }
+            } catch (failure: Throwable) {
+                setupReady.completeExceptionally(failure)
+                android.util.Log.e("NikTvRestore", "Setup recovery failed (${failure.javaClass.simpleName}); profile access remains blocked")
+            }
         }
     }
 

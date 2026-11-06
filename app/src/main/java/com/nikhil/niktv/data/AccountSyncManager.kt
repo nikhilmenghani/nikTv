@@ -54,6 +54,7 @@ class AccountSyncManager private constructor(context: Context) {
 
     /** Restore the last successful local account without waiting for a network request. */
     suspend fun restoreCachedAccount(): AccountSyncState {
+        awaitSetupRecovery(context)
         val live = mutableState.value
         if (live.accountId?.toLongOrNull()?.let { it > 0 } == true &&
             live.accountId == store.selectedAccount.value) return live
@@ -82,6 +83,7 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     suspend fun connect(token: String) = mutex.withLock {
+        awaitSetupRecovery(context)
         withContext(Dispatchers.IO) {
             if (token.isBlank()) {
                 mutableState.value = mutableState.value.copy(error = "Enter a GitHub personal access token.")
@@ -115,6 +117,7 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     suspend fun launchSync() = mutex.withLock {
+        awaitSetupRecovery(context)
         withContext(Dispatchers.IO) {
             val token = vault.token()
             val cached = restoreCachedAccountLocked(token.isNotBlank())
@@ -152,6 +155,7 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     internal suspend fun syncForAccount(expectedAccountId: String?, requireRetry: Boolean = expectedAccountId != null) = mutex.withLock {
+        awaitSetupRecovery(context)
         withContext(Dispatchers.IO) {
             val accountId = prefs.getString("accountId", null) ?: return@withContext
             if (expectedAccountId != null && expectedAccountId != accountId) return@withContext
@@ -315,6 +319,7 @@ class AccountSyncWorker(context: Context, parameters: WorkerParameters) : Corout
     override suspend fun doWork(): Result {
         // Older periodic/playback jobs may survive an upgrade. They cannot initiate sync.
         if (inputData.getString("trigger") != "retry") return Result.success()
+        awaitSetupRecovery(applicationContext)
         val manager = AccountSyncManager.get(applicationContext)
         val accountId = inputData.getString("accountId") ?: return Result.success()
         if (accountId != manager.authenticatedAccount() || !manager.retryNeeded(accountId)) return Result.success()

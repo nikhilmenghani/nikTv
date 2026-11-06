@@ -63,11 +63,12 @@ class MainActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPic
             playerTransportKeyHandler?.invoke(event) == true
         }
         PairingInvites.accept(intent?.data)
-        AppUpdates.initialize(applicationContext)
-        GitHubBackupScheduler.initialize(applicationContext)
-        SearchMetadataSyncScheduler.initialize(applicationContext)
-        com.nikhil.niktv.data.NewEpisodeNotificationScheduler.initialize(applicationContext)
-        setContent { NikTvApp() }
+        setContent { com.nikhil.niktv.ui.SetupRecoveryGate(prepare = {
+            AppUpdates.initialize(applicationContext)
+            GitHubBackupScheduler.initialize(applicationContext)
+            SearchMetadataSyncScheduler.initialize(applicationContext)
+            com.nikhil.niktv.data.NewEpisodeNotificationScheduler.initialize(applicationContext)
+        }) { NikTvApp() } }
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             lifecycleScope.launch {
