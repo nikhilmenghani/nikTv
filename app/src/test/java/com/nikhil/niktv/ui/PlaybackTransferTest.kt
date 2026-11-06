@@ -27,4 +27,20 @@ class PlaybackTransferTest {
         assertFalse(recovery.shouldRecover(24_000, 0, true, true))
         assertTrue(recovery.shouldRecover(29_000, 0, true, true))
     }
+    @Test fun castLoadAppliesPauseBeforeMediaIsLoaded() {
+        for (playing in listOf(false, true)) {
+            val calls = mutableListOf<String>()
+            val player = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader,
+                arrayOf(androidx.media3.common.Player::class.java)) { _, method, args ->
+                when (method.name) {
+                    "setPlayWhenReady" -> { calls += "intent:${args!![0]}"; null }
+                    "setMediaItem" -> { calls += "load:${args!![1]}"; null }
+                    "prepare" -> { calls += "prepare"; null }
+                    else -> error("Unexpected player API: ${method.name}")
+                }
+            } as androidx.media3.common.Player
+            player.preparePlaybackTransfer(androidx.media3.common.MediaItem.Builder().setMediaId("fixture").build(), playbackTransfer(75_000, playing))
+            assertEquals(listOf("intent:$playing", "load:75000", "prepare"), calls)
+        }
+    }
 }

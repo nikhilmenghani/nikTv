@@ -741,18 +741,15 @@ fun PlayerScreen(
     }
     val isTvDevice = rememberPlayerTvDevice()
     // Fire TV has no Google Cast module. Local playback must not depend on it.
+    val castPlayIntent = rememberUpdatedState(playbackRequested)
     val castPlayer = remember(context, isTvDevice) {
         if (isTvDevice) null
-        else runCatching { CastPlayer(CastContext.getSharedInstance(context)) }.getOrNull()
+        else runCatching { CastPlayer(CastContext.getSharedInstance(context), com.nikhil.niktv.ui.IntentAwareCastConverter { castPlayIntent.value }) }.getOrNull()
     }
     val castMediaItem = remember(media.url, media.media.title, media.playbackFormat) {
         MediaItem.Builder()
             .setUri(media.url)
-            .setMimeType(
-                if (media.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true) ||
-                    media.playbackFormat.contains("HLS", ignoreCase = true)
-                ) MimeTypes.APPLICATION_M3U8 else null
-            )
+            .setMimeType(playbackMimeType(media.playbackFormat, media.url) ?: MimeTypes.VIDEO_MP4)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(media.media.title).build())
             .build()
     }
@@ -1013,12 +1010,8 @@ fun PlayerScreen(
 
         if (requestedPosition != null || currentUri != requestedUri ||
             preparedCastAttempt != media.playbackAttemptId) {
-            castPlayer.setMediaItem(
-                castMediaItem,
-                requestedPosition ?: media.resumePositionMillis.coerceAtLeast(0L)
-            )
-            castPlayer.prepare()
-            castPlayer.playWhenReady = playbackRequested
+            castPlayer.preparePlaybackTransfer(castMediaItem,
+                com.nikhil.niktv.ui.playbackTransfer(requestedPosition ?: media.resumePositionMillis, playbackRequested))
             preparedCastAttempt = media.playbackAttemptId
         }
 
