@@ -9,7 +9,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /** The pairing secret never enters the relay or the encrypted transfer file. */
 object PairingCrypto {
-    private const val TRANSFER_VERSION = 1
+    private const val TRANSFER_VERSION = 2
     private const val MAX_AGE_MILLIS = 24 * 60 * 60 * 1000L
 
     fun newSecret(): String = ByteArray(16).also(SecureRandom()::nextBytes).let(::encode)
@@ -18,6 +18,8 @@ object PairingCrypto {
         require(expiry > System.currentTimeMillis()) { "The pairing package has expired." }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(decodeSecret(secret), "AES"))
+        require(expiry - System.currentTimeMillis() <= MAX_AGE_MILLIS) { "Pairing expiry exceeds 24 hours." }
+        cipher.updateAAD(metadata(TRANSFER_VERSION, expiry))
         val data = cipher.iv + cipher.doFinal(configuration.toByteArray(Charsets.UTF_8))
         return JSONObject().put("version", TRANSFER_VERSION).put("expiresAt", expiry)
             .put("payload", encode(data)).toString()
@@ -26,7 +28,7 @@ object PairingCrypto {
     fun open(packageJson: String, secret: String): String {
         require(packageJson.length <= 32_768) { "Pairing package is too large." }
         val envelope = JSONObject(packageJson)
-        require(envelope.getInt("version") == TRANSFER_VERSION) { "Unsupported pairing package." }
+        require(envelope.getInt("version") == TRANSFER_VERSION) { "Unsupported pairing package. Generate a new pairing file with the updated app." }
         val expiry = envelope.getLong("expiresAt")
         val now = System.currentTimeMillis()
         require(expiry > now && expiry - now <= MAX_AGE_MILLIS) { "Pairing package expired or invalid." }
@@ -35,8 +37,11 @@ object PairingCrypto {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(decodeSecret(secret), "AES"),
             GCMParameterSpec(128, data.copyOfRange(0, 12)))
+        cipher.updateAAD(metadata(TRANSFER_VERSION, expiry))
         return String(cipher.doFinal(data.copyOfRange(12, data.size)), Charsets.UTF_8)
     }
+
+    private fun metadata(version: Int, expiry: Long) = "NikTV-pairing:$version:$expiry".toByteArray(Charsets.UTF_8)
 
     private fun decodeSecret(secret: String): ByteArray =
         Base64.decode(secret.trim(), Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)

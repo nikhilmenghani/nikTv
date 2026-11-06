@@ -23,6 +23,15 @@ class PairingCryptoTest {
         assertThrows(Exception::class.java) { PairingCrypto.open(encrypted, PairingCrypto.newSecret()) }
     }
 
+    @Test fun extendingExpiryOrChangingVersionFailsAuthentication() {
+        val code = PairingCrypto.newSecret()
+        val envelope = JSONObject(PairingCrypto.seal("config", code, System.currentTimeMillis() + 60_000))
+        envelope.put("expiresAt", envelope.getLong("expiresAt") + 60_000)
+        assertThrows(Exception::class.java) { PairingCrypto.open(envelope.toString(), code) }
+        envelope.put("version", 1)
+        assertThrows(IllegalArgumentException::class.java) { PairingCrypto.open(envelope.toString(), code) }
+    }
+
     @Test fun expiredPackageIsRejected() {
         val code = PairingCrypto.newSecret()
         val encrypted = JSONObject(PairingCrypto.seal("config", code, System.currentTimeMillis() + 60_000))
