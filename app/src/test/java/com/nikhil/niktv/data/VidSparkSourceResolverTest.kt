@@ -47,7 +47,7 @@ class VidSparkSourceResolverTest {
 
     @Test fun publicClientDiscoveryReturnsExactTitleAutoAndMuxedQualities() = runBlocking {
         val fixture = Fixture()
-        val streams = fixture.resolver.resolve(movie)
+        val streams = fixture.resolver.resolveNativeGroup(movie)
         assertEquals(listOf(null, 1080, 720), streams.map { it.height })
         assertTrue(streams.first().label.contains("VidSpark"))
         assertEquals(4, fixture.requests.size)
@@ -68,7 +68,7 @@ class VidSparkSourceResolverTest {
             cdnApi = api
             master = "#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST\n"
         }
-        val streams = fixture.resolver.resolve(movie)
+        val streams = fixture.resolver.resolveNativeGroup(movie)
         assertEquals(1, streams.size)
         assertTrue(streams.single().label.contains("VidSpark Alpha"))
         assertEquals("https://cdn.vidspark.to/", streams.single().headers["Referer"])
@@ -87,7 +87,7 @@ class VidSparkSourceResolverTest {
             cdnApiCode = 200
             cdnApi = """{"result":true,"type":"tv","tmdb_id":"1668","season":3,"episode":25,"sources":[{"url":"https://cdn.example.test/master.m3u8"}]}"""
         }
-        assertFalse(fixture.resolver.resolve(movie.copy(title = "Friends", series = true, tmdbId = 1668, season = 3, episode = 25)).isEmpty())
+        assertFalse(fixture.resolver.resolveNativeGroup(movie.copy(title = "Friends", series = true, tmdbId = 1668, season = 3, episode = 25)).isEmpty())
         val api = fixture.requests.filter { "/api/vidora/" in it.url }
         assertEquals(2, api.size)
         assertTrue(api.last().url.endsWith("/v1/tv/1668/3/25?source=scrapify"))
@@ -96,7 +96,7 @@ class VidSparkSourceResolverTest {
 
     @Test fun alphaAuthorizationFailureIsNotRetriedOrHiddenByLegacyLookup() = runBlocking {
         val fixture = Fixture().apply { apiCode = 404; cdnApiCode = 403 }
-        try { fixture.resolver.resolve(movie); fail() }
+        try { fixture.resolver.resolveNativeGroup(movie); fail() }
         catch (safe: AlternateSourceException) {
             assertEquals(AlternateSourceFailure.AUTHORIZATION, safe.kind)
             assertTrue(safe.message.orEmpty().contains("VidSpark Alpha source lookup"))
@@ -109,7 +109,7 @@ class VidSparkSourceResolverTest {
         val fixture = Fixture().apply {
             api = """{"result":true,"type":"tv","tmdb_id":"1668","view_id":999,"season":2,"episode":3,"sources":[{"url":"https://cdn.example.test/master.m3u8"}]}"""
         }
-        assertFalse(fixture.resolver.resolve(movie.copy(title = "Friends", series = true, tmdbId = 1668, season = 2, episode = 3)).isEmpty())
+        assertFalse(fixture.resolver.resolveNativeGroup(movie.copy(title = "Friends", series = true, tmdbId = 1668, season = 2, episode = 3)).isEmpty())
         assertTrue(fixture.requests.any { it.url == "https://moviesapi.to/tv/1668/2/3" })
         assertTrue(fixture.requests.any { it.url == "https://moviesapi.to/api/vidora/v1/tv/1668/2/3" })
     }
@@ -124,7 +124,7 @@ class VidSparkSourceResolverTest {
             """{"result":true,"type":"movie","tmdb_id":"603","year":2024,"sources":[]}""",
         )) {
             val fixture = Fixture().apply { this.api = api }
-            try { fixture.resolver.resolve(movie); fail("Different identity accepted") }
+            try { fixture.resolver.resolveNativeGroup(movie); fail("Different identity accepted") }
             catch (safe: AlternateSourceException) { assertEquals(AlternateSourceFailure.IDENTITY, safe.kind) }
             assertEquals(3, fixture.requests.size)
         }
@@ -132,7 +132,7 @@ class VidSparkSourceResolverTest {
 
     @Test fun deniedApiIsNotRetriedOrHiddenByAnotherSource() = runBlocking {
         val fixture = Fixture().apply { apiCode = 403 }
-        try { fixture.resolver.resolve(movie); fail() }
+        try { fixture.resolver.resolveNativeGroup(movie); fail() }
         catch (safe: AlternateSourceException) {
             assertEquals(AlternateSourceFailure.AUTHORIZATION, safe.kind)
             assertTrue(safe.message.orEmpty().contains("VidSpark source lookup"))
@@ -143,7 +143,7 @@ class VidSparkSourceResolverTest {
 
     @Test fun genuineNoResultsCanUseLegacyLookupWithoutSendingClientHeader() = runBlocking {
         val fixture = Fixture().apply { api = """{"result":false,"sources":[]}""" }
-        assertTrue(fixture.resolver.resolve(movie).isEmpty())
+        assertTrue(fixture.resolver.resolveNativeGroup(movie).isEmpty())
         assertEquals(7, fixture.requests.size)
         assertTrue(fixture.requests.last().url.startsWith("https://streamingunity.fun/it/search"))
         assertFalse(fixture.requests.last().headers.containsKey("x-player-key"))
@@ -152,7 +152,7 @@ class VidSparkSourceResolverTest {
 
     @Test fun unavailablePublicIdentityIsANormalEmptyResultAndFallbackRemainsBounded() = runBlocking {
         val fixture = Fixture().apply { apiCode = 404 }
-        assertTrue(fixture.resolver.resolve(movie).isEmpty())
+        assertTrue(fixture.resolver.resolveNativeGroup(movie).isEmpty())
         assertEquals(7, fixture.requests.size)
         assertEquals(1, fixture.requests.count { it.url.startsWith("https://moviesapi.to/api/vidora/") })
         assertEquals(1, fixture.requests.count { it.url.startsWith("https://cdn.vidspark.to/api/vidora/") })
@@ -168,7 +168,7 @@ class VidSparkSourceResolverTest {
                 else -> AlternateSourceHttpResponse(request.url, 200, if (request.url.startsWith("https://cdn.vidspark.to/")) fixture.cdnPage else fixture.page)
             }
         })
-        try { resolver.resolve(movie); fail() }
+        try { resolver.resolveNativeGroup(movie); fail() }
         catch (safe: AlternateSourceException) {
             assertEquals(AlternateSourceFailure.AUTHORIZATION, safe.kind)
             assertTrue(safe.message.orEmpty().contains("VidSpark has no source"))
@@ -192,7 +192,7 @@ class VidSparkSourceResolverTest {
 720/index.m3u8
 """
             }
-            val streams = fixture.resolver.resolve(movie)
+            val streams = fixture.resolver.resolveNativeGroup(movie)
             assertEquals(1, streams.size)
             assertTrue(streams.single().label.startsWith("Auto"))
             assertTrue(streams.single().url.contains("master.m3u8"))
@@ -203,16 +203,16 @@ class VidSparkSourceResolverTest {
 video-only.m3u8
 """
         }
-        assertEquals(1, fixture.resolver.resolve(movie).size)
+        assertEquals(1, fixture.resolver.resolveNativeGroup(movie).size)
     }
 
     @Test fun scriptMustBelongToPublicSiteAndPlainClientValueIsNeverEvaluated() = runBlocking {
         val fixture = Fixture().apply { page = """<script src="https://other.example.test/assets/index-external.js"></script>""" }
-        assertTrue(fixture.resolver.resolve(movie).isEmpty()) // unsupported source -> empty legacy lookup
+        assertTrue(fixture.resolver.resolveNativeGroup(movie).isEmpty()) // unsupported source -> empty legacy lookup
         assertEquals(5, fixture.requests.size)
         assertFalse(fixture.requests.any { "other.example.test" in it.url })
         val dynamic = Fixture().apply { bundle = "const token=account.unlock();fetch('/api/vidora',{headers:{'x-player-key':token}})" }
-        assertTrue(dynamic.resolver.resolve(movie).isEmpty())
+        assertTrue(dynamic.resolver.resolveNativeGroup(movie).isEmpty())
         assertTrue(dynamic.requests.none { it.url.startsWith("https://moviesapi.to/api/vidora/") })
     }
 
@@ -220,7 +220,7 @@ video-only.m3u8
     @Test fun publicScriptDifferentSchemeOrPortIsNotTheSameOrigin() = runBlocking {
         for (script in listOf("https://moviesapi.to:9443/assets/index-other.js", "http://moviesapi.to/assets/index-other.js")) {
             val fixture = Fixture().apply { page = """<script src="$script"></script>""" }
-            assertTrue(fixture.resolver.resolve(movie).isEmpty())
+            assertTrue(fixture.resolver.resolveNativeGroup(movie).isEmpty())
             assertEquals(5, fixture.requests.size) // page, unavailable Alpha, then safe legacy search
             assertFalse(fixture.requests.any { it.url == script })
         }
@@ -237,7 +237,7 @@ video-only.m3u8
                 else -> AlternateSourceHttpResponse(request.url, 200, fixture.page)
             }
         })
-        try { resolver.resolve(movie); fail("Different API origin accepted") }
+        try { resolver.resolveNativeGroup(movie); fail("Different API origin accepted") }
         catch (safe: AlternateSourceException) { assertEquals(AlternateSourceFailure.AUTHORIZATION, safe.kind) }
         assertEquals(3, requests.size)
         assertFalse(requests.any { "cdn.example.test" in it.url })

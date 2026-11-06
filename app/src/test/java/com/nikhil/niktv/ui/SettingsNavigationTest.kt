@@ -10,7 +10,7 @@ class SettingsNavigationTest {
             listOf(
                 "Playback",
                 "Display & controls",
-                "Profiles & access",
+                "Portals & access",
                 "Library & backup",
                 "App & updates"
             ),

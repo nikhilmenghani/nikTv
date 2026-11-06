@@ -20,26 +20,44 @@ import org.robolectric.annotation.Config
 class SyncCommitMetadataTest {
     private val fixture = SyncDeviceInfo("Xiaomi", "M2102J20SI", "13", "1.2.3", "abcd1234")
 
+    private fun fixtureClient(branch: String, onCommit: (JSONObject) -> Unit) = OkHttpClient.Builder().addInterceptor { chain ->
+        val request = chain.request()
+        val path = request.url.encodedPath.substringAfter("/niktv-data")
+        val body = request.body?.let { JSONObject(Buffer().apply { it.writeTo(this) }.readUtf8()) }
+        val response = when {
+            path == "/git/ref/heads/$branch" -> """{"object":{"sha":"old-sha"}}"""
+            path == "/contents/manifest.json" -> encodedFile("""{"application":"niktv","schemaVersion":1,"accountId":"77"}""")
+            path == "/contents/account.json" -> encodedFile("""{"application":"niktv","schemaVersion":1,"accountId":"77","records":[]}""")
+            path == "/git/commits/old-sha" -> """{"tree":{"sha":"old-tree"}}"""
+            path == "/git/trees" && request.method == "POST" -> """{"sha":"new-tree"}"""
+            path == "/git/commits" && request.method == "POST" -> {
+                onCommit(requireNotNull(body)); """{"sha":"new-commit"}"""
+            }
+            path == "/git/refs/heads/$branch" && request.method == "PATCH" -> {
+                assertFalse(requireNotNull(body).getBoolean("force")); "{}"
+            }
+            else -> error("Unexpected fixture request: ${request.method} $path")
+        }
+        Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("fixture")
+            .body(response.toResponseBody()).build()
+    }.build()
+
+    private fun encodedFile(content: String) = JSONObject().put("encoding", "base64").put("sha", gitBlobSha(content))
+        .put("size", content.toByteArray().size).put("content", android.util.Base64.encodeToString(content.toByteArray(), android.util.Base64.NO_WRAP)).toString()
+
     @Test fun uploadedCommitIncludesOnlyBoundedDeviceAndSoftwareMetadata() = runBlocking {
         val expected = "Sync NikTV account data · Xiaomi M2102J20SI · Android 13 · NikTV v1.2.3 · device abcd1234"
         val message = syncCommitMessage(fixture)
         assertEquals(expected, message)
         var captured: JSONObject? = null
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            val request = chain.request()
-            assertEquals("PUT", request.method)
-            assertEquals("/repos/fixture-owner/niktv-data/contents/account.json", request.url.encodedPath)
-            captured = JSONObject(Buffer().apply { requireNotNull(request.body).writeTo(this) }.readUtf8())
-            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(201).message("fixture")
-                .body("{}".toResponseBody()).build()
-        }.build()
-        GitHubSyncTransport("fixture-auth-token", client, pauseWrites = false, commitMessage = message)
-            .upload(SyncRepository("fixture-owner", "actual-branch", "unused"), AccountDocument(accountId = "77"), "old-sha")
+        val client = fixtureClient("actual-branch") { captured = it }
+        val transport = GitHubSyncTransport("fixture-auth-token", client, pauseWrites = false, commitMessage = message)
+        val repository = SyncRepository("fixture-owner", "actual-branch", "unused")
+        val remote = transport.fetch(repository, "77")
+        transport.upload(repository, remote.document, remote.sha)
         assertEquals(expected, captured!!.getString("message"))
-        assertEquals("actual-branch", captured!!.getString("branch"))
-        assertEquals("old-sha", captured!!.getString("sha"))
+        assertEquals("old-sha", captured!!.getJSONArray("parents").getString(0))
         assertFalse(captured.toString().contains("fixture-auth-token"))
-        Unit
     }
 
     @Test fun customDeviceNamesAreNotSentAndBackupInstallIdentityIsReused() {
@@ -77,17 +95,13 @@ class SyncCommitMetadataTest {
 
     @Test fun transportDefaultStaysPlainAndUnsafeOverrideCannotLeakIntoCommit() = runBlocking {
         val messages = mutableListOf<String>()
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            val request = chain.request()
-            messages += JSONObject(Buffer().apply { requireNotNull(request.body).writeTo(this) }.readUtf8()).getString("message")
-            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(201).message("fixture")
-                .body("{}".toResponseBody()).build()
-        }.build()
+        val client = fixtureClient("main") { messages += it.getString("message") }
         val repository = SyncRepository("fixture-owner", "main", "unused")
-        val document = AccountDocument(accountId = "77")
-        GitHubSyncTransport("fixture-auth-token", client, pauseWrites = false).upload(repository, document, null)
-        GitHubSyncTransport("fixture-auth-token", client, pauseWrites = false, commitMessage = "secret token=fixture-secret")
-            .upload(repository, document, null)
+        for (message in listOf(DEFAULT_SYNC_COMMIT_MESSAGE, "secret token=fixture-secret")) {
+            val transport = GitHubSyncTransport("fixture-auth-token", client, pauseWrites = false, commitMessage = message)
+            val remote = transport.fetch(repository, "77")
+            transport.upload(repository, remote.document, remote.sha)
+        }
         assertEquals(listOf(DEFAULT_SYNC_COMMIT_MESSAGE, DEFAULT_SYNC_COMMIT_MESSAGE), messages)
     }
 }

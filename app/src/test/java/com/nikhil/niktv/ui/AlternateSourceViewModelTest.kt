@@ -19,6 +19,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -117,6 +118,8 @@ class AlternateSourceViewModelTest {
     }
     private val scheduler = TestCoroutineScheduler()
     private val pending = mutableListOf<CompletableDeferred<List<AlternateStream>>>()
+    @get:org.junit.Rule val temporary = org.junit.rules.TemporaryFolder()
+    private lateinit var storageScope: CoroutineScope
     private lateinit var vm: NikTvViewModel
     private lateinit var mutableState: MutableStateFlow<NikTvState>
     private val profile = PortalProfile("Fixture", "https://provider.invalid", "00:00:00:00:00:00")
@@ -128,7 +131,10 @@ class AlternateSourceViewModelTest {
         app.getSharedPreferences("parental_controls", Context.MODE_PRIVATE).edit().clear().commit()
         Settings.Global.putInt(app.contentResolver, Settings.Global.BOOT_COUNT, 7)
         Dispatchers.setMain(StandardTestDispatcher(scheduler))
-        vm = NikTvViewModel(app)
+        storageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val preferences = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(scope = storageScope,
+            produceFile = { temporary.newFolder().resolve("alternate.preferences_pb") })
+        vm = NikTvViewModel(app, ProfileStore(app, preferences))
         // Constructor collectors/profile preparation are unrelated to these entry points.
         // Cancel them before the test scheduler executes, retaining the live ViewModel scope.
         vm.viewModelScope.coroutineContext.cancelChildren()
@@ -145,17 +151,18 @@ class AlternateSourceViewModelTest {
         pending.forEach { it.complete(emptyList()) }
         vm.viewModelScope.cancel()
         scheduler.runCurrent()
+        storageScope.cancel()
         Dispatchers.resetMain()
     }
 
-    @Test fun lookupAndSelectionPlayWithoutAPortalSessionAndPreserveProviderDataAndMappings() {
+    @Test fun lookupAndSelectionPlayWithoutAPortalSessionAndPreserveProviderDataAndMappings() = runTest(scheduler) {
         val category = Category("movies", "Fixture movies", CatalogType.MOVIES)
         val cache = BrowseCatalogCache(profile.cacheKey(), CatalogType.MOVIES, 1L,
             listOf(category), mapOf(category.id to listOf(movie)))
         val mapping = TmdbIptvMapping(profile.cacheKey(), CatalogType.MOVIES, 12, movie,
             confirmedByUser = true, playbackVerified = true)
         val store = NikTvViewModel::class.java.getDeclaredField("store").apply { isAccessible = true }.get(vm) as ProfileStore
-        runBlocking { store.saveTmdbMapping(mapping) }
+        store.saveTmdbMapping(mapping)
         mutableState.value = mutableState.value.copy(items = listOf(movie), selectedCategory = category,
             browseCachesByType = mapOf(CatalogType.MOVIES to cache))
         val calls = mutableListOf<AlternateSourceTarget>()
@@ -176,7 +183,7 @@ class AlternateSourceViewModelTest {
         assertNotNull(playing.alternateSource)
         assertEquals(listOf(movie), vm.state.value.items)
         assertEquals(cache, vm.state.value.browseCachesByType[CatalogType.MOVIES])
-        assertEquals(listOf(mapping), runBlocking { store.tmdbMappings.first() })
+        assertEquals(listOf(mapping), store.tmdbMappings.first())
         assertNull(PlayingMedia(movie, "https://fixture.invalid/normal.m3u8", CatalogType.MOVIES).alternateSource)
     }
 
@@ -343,7 +350,8 @@ class AlternateSourceViewModelTest {
         vm.chooseAlternateStream("low")
         scheduler.runCurrent()
 
-        assertEquals(1, positionReads)
+        // Selection and post-preparation commit each sample the still-playing decoder.
+        assertEquals(2, positionReads)
         assertEquals(67_000L, vm.state.value.nowPlaying?.resumePositionMillis)
         assertFalse(vm.state.value.nowPlaying!!.playWhenReady)
         assertEquals(playing.progressKey, vm.state.value.nowPlaying?.progressKey)

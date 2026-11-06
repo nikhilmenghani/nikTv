@@ -80,6 +80,7 @@ class AlternateSourceResolver(
     private val timeoutMillis: Long = 25_000L,
     private val identityLookup: suspend (AlternateSourceTarget) -> AlternateSourceTarget = { it },
     private val movyLookup: (suspend (AlternateSourceTarget) -> List<AlternateStream>)? = null,
+
 ) {
     private data class Cached(val expiresAt: Long, val streams: List<AlternateStream>)
     private val cache = object : LinkedHashMap<AlternateSourceTarget, Cached>(16, .75f, true) {
@@ -128,7 +129,7 @@ class AlternateSourceResolver(
 
     private suspend fun lookup(target: AlternateSourceTarget): List<AlternateStream> {
         if (target.provider !in nativeSourceProviders) throw AlternateSourceException("This browser source is no longer supported. Choose a native source.")
-        if (target.provider != AlternateSourceProvider.AUTO) return lookupNative(target)
+        if (target.provider != AlternateSourceProvider.AUTO) return resolveNativeGroup(target)
         // At most two bounded source lookups. A failed source cannot discard another's results.
         return coroutineScope {
             val slots = Semaphore(2)
@@ -150,7 +151,7 @@ class AlternateSourceResolver(
                         // at the outer 25-second deadline after four seven-second waves.
                         val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
                         (if (remaining > 0) withTimeoutOrNull(minOf(7_000L, remaining)) {
-                            lookupNative(target.copy(provider = provider))
+                            resolveNativeGroup(target.copy(provider = provider))
                         } else null)
                             ?.let { it to null } ?: (emptyList<AlternateStream>() to AlternateSourceException("Source lookup timed out.", stage = "source timeout"))
                     } catch (cancelled: CancellationException) { throw cancelled }
@@ -191,7 +192,7 @@ class AlternateSourceResolver(
         }
     }
 
-    private suspend fun lookupNative(target: AlternateSourceTarget): List<AlternateStream> {
+    internal suspend fun resolveNativeGroup(target: AlternateSourceTarget): List<AlternateStream> {
         var remainingRequests = 12
         suspend fun read(url: HttpUrl, headers: Map<String, String> = emptyMap(), maxBytes: Int = MAX_PAGE_BYTES, phase: String = "source", method: String = "GET", jsonBody: String? = null): AlternateSourceHttpResponse {
             if (--remainingRequests < 0) throw AlternateSourceException("The source required too many requests.")

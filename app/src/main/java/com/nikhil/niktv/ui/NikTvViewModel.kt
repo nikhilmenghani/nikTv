@@ -203,9 +203,9 @@ data class NikTvState(
 )
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-class NikTvViewModel(application: Application) : AndroidViewModel(application) {
+class NikTvViewModel @JvmOverloads constructor(application: Application, profileStore: ProfileStore? = null) : AndroidViewModel(application) {
     private val discoveryMetadataRequests = com.nikhil.niktv.discovery.DiscoveryMetadataRequests()
-    private val store = ProfileStore(application)
+    private val store = profileStore ?: ProfileStore(application)
     private val userSyncStore = UserSyncStore.get(application)
     private val accountSync = AccountSyncManager.get(application)
     private val progressSaveMutex = Mutex()
