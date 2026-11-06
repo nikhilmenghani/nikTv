@@ -28,3 +28,14 @@ internal suspend fun DataStore<Preferences>.editProfileMetadata(
 ): Preferences = edit { preferences ->
     withContext(profileMetadataDispatcher) { transform(preferences) }
 }
+
+/** Ownership is rechecked at the underlying DataStore commit, after any queued work. */
+internal suspend fun DataStore<Preferences>.editOwnedProfileMetadata(owns: () -> Boolean,
+    transform: suspend (MutablePreferences) -> Unit): Preferences {
+    val update: suspend (Preferences) -> Preferences = { before ->
+        if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
+        before.toMutablePreferences().also { mutable -> withContext(profileMetadataDispatcher) { transform(mutable) } }
+    }
+    return if (this is UserScopedPreferences) updateOwnedData(owns, update)
+        else updateData { before -> update(before).also { if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed") } }
+}

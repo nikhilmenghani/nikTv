@@ -494,7 +494,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             profileEditorOpen = false, restoring = false) }
     }
 
-    fun connect(profile: PortalProfile) = task {
+    fun connect(profile: PortalProfile) = connectOwned(profile, beginPortalActivation())
+    private fun connectOwned(profile: PortalProfile, activation: Long) = task {
         portal.prioritizePlayback()
         profilePreparationJob?.cancel()
         searchPreviewJob?.cancel()
@@ -502,9 +503,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         catalogueTitleIndex = null
         _state.update { it.copy(savedProfile = profile, providerMovieDetails = null) }
         updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
+        val owns = sessionOwner(profile)
+        val ownedStore = store.captureScope()?.let(store::scoped) ?: store
         val session = authenticateProfileForOpening(profile)
+        if (!owns() || portalActivation.get() != activation) throw kotlinx.coroutines.CancellationException("Portal changed")
         updateProfileLoad(0.24f, "Authentication complete")
-        store.save(session)
+        ownedStore.save(session, owns)
+        if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         rememberPortalForViewer(session.profile)
         _state.update {
             it.copy(
@@ -6804,7 +6809,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, requestId, queueFilter, userScope)
             } else {
                 withAutomaticSessionRetry(session, playbackRequestId = requestId) { activeSession ->
-                    resolvePlayback(item, type, series, episodes, forceFreshUrl,
+                    resolvePlayback(item, type, series, episodes, forceFreshUrl || activeSession.token != session.token,
                         authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter, userScope)
                 }
             }
@@ -6839,6 +6844,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         queueFilter: PlaybackQueueFilter?,
         userScope: UserScope?
     ) {
+        val ownsPortal = sessionOwner(session.profile)
         val playbackStartedAt = SystemClock.elapsedRealtime()
         val logicalPortalId = userScope?.let { userSyncStore.registerPortal(it.accountId, session.profile) }.orEmpty()
         val offlineEntry = _state.value.offlineDownloads
@@ -7027,10 +7033,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if (!ownsPortal()) return
         if (!latestPlaybackRequest.isCurrent(requestId) ||
             userScope != store.captureScope() ||
             _state.value.session?.profile?.cacheKey() != session.profile.cacheKey() ||
-            _state.value.session != session) return
+            _state.value.session != session) {
+            if (latestPlaybackRequest.isCurrent(requestId) && userScope == store.captureScope() &&
+                _state.value.session?.profile?.cacheKey() == session.profile.cacheKey())
+                throw SessionRotatedDuringPlayback()
+            return
+        }
         channelScheduleJob?.cancel()
         _state.update {
             it.copy(
@@ -7153,10 +7165,34 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return listOf(item)
     }
 
-    private suspend fun refreshSession(profile: PortalProfile): PortalSession {
-        val refreshed = portal.authenticate(profile)
-        store.save(refreshed)
-        _state.update { it.copy(session = refreshed, savedProfile = refreshed.profile) }
+    internal class SessionRotatedDuringPlayback : IllegalStateException("Session changed again during playback. Please retry.")
+
+    internal var authenticatePortal: suspend (PortalProfile) -> PortalSession = { portal.authenticate(it) }
+
+    private val portalActivation = java.util.concurrent.atomic.AtomicLong()
+    private var portalRenewalJob: Job? = null
+    private fun beginPortalActivation(): Long {
+        val activation = portalActivation.incrementAndGet()
+        portalRenewalJob?.cancel()
+        cancelPendingPlayback()
+        return activation
+    }
+
+    private fun sessionOwner(profile: PortalProfile): () -> Boolean {
+        val activation = portalActivation.get()
+        val scope = store.captureScope()
+        return { portalActivation.get() == activation && store.captureScope() == scope &&
+            _state.value.savedProfile?.cacheKey() == profile.cacheKey() }
+    }
+
+    internal suspend fun refreshSession(profile: PortalProfile): PortalSession {
+        val owns = sessionOwner(profile)
+        if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
+        val ownedStore = store.captureScope()?.let(store::scoped) ?: store
+        val refreshed = authenticatePortal(profile)
+        ownedStore.save(refreshed, owns)
+        if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
+        _state.update { if (owns()) it.copy(session = refreshed, savedProfile = refreshed.profile) else it }
         return refreshed
     }
 
@@ -7165,18 +7201,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
      * Callers pass the active session into the operation so the replay cannot
      * accidentally reuse the rejected token captured by the first attempt.
      */
-    private suspend fun <T> withAutomaticSessionRetry(
+    internal suspend fun <T> withAutomaticSessionRetry(
         initialSession: PortalSession,
         playbackRequestId: Long? = null,
         operation: suspend (PortalSession) -> T
     ): T {
+        val owns = sessionOwner(initialSession.profile)
+        if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         // A background coroutine may have captured the previous token before
         // another request refreshed it. Prefer the newest session for the same profile.
         val activeSession = _state.value.session
             ?.takeIf { it.profile.cacheKey() == initialSession.profile.cacheKey() }
             ?: initialSession
         return try {
-            operation(activeSession)
+            try { operation(activeSession) }
+            catch (rotated: SessionRotatedDuringPlayback) {
+                if (!owns() || (playbackRequestId != null && !latestPlaybackRequest.isCurrent(playbackRequestId)))
+                    throw kotlinx.coroutines.CancellationException("Playback selection changed")
+                val newest = _state.value.session ?: throw rotated
+                if (newest.profile.cacheKey() != activeSession.profile.cacheKey()) throw kotlinx.coroutines.CancellationException("Portal changed")
+                operation(newest)
+            }
         } catch (firstError: Throwable) {
             if (firstError is kotlinx.coroutines.CancellationException) throw firstError
             val snapshot = _state.value
@@ -7187,7 +7232,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 throw firstError
             }
 
-            if (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId))
+            if (owns() && (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId)))
                 _state.update { it.copy(reauthenticating = true) }
             val refreshed = try {
                 sessionRefreshMutex.withLock {
@@ -7199,9 +7244,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         ?: refreshSession(activeSession.profile)
                 }
             } finally {
-                if (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId))
+                if (owns() && (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId)))
                     _state.update { it.copy(reauthenticating = false) }
             }
+            if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
             operation(refreshed)
         }
     }
@@ -7997,18 +8043,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun authenticateProfileForOpening(profile: PortalProfile): PortalSession =
-        withTimeoutOrNull(20_000L) { portal.authenticate(profile) }
+        withTimeoutOrNull(20_000L) { authenticatePortal(profile) }
             ?: throw IllegalStateException("${profile.name} did not finish authentication within 20 seconds. Check the provider connection and try again.")
 
     private suspend fun localFirstSession(profile: PortalProfile): PortalSession {
+        val owns = sessionOwner(profile)
+        val ownedStore = store.captureScope()?.let(store::scoped) ?: store
         val cached = store.sessionFor(profile)
         if (cached != null) {
-            launchForViewer launch@ {
+            portalRenewalJob?.cancel()
+            portalRenewalJob = launchForViewer launch@ {
                 try {
-                    val fresh = portal.authenticate(profile)
-                    if (_state.value.savedProfile?.cacheKey() == profile.cacheKey()) {
-                        store.save(fresh)
-                        _state.update { if (it.session?.profile?.cacheKey() == profile.cacheKey()) it.copy(session = fresh) else it }
+                    val fresh = authenticatePortal(profile)
+                    if (owns()) {
+                        ownedStore.save(fresh, owns)
+                        _state.update { if (owns() && it.session?.profile?.cacheKey() == profile.cacheKey()) it.copy(session = fresh) else it }
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                 catch (_: Exception) { /* Browsing remains available; playback can reauthenticate. */ }
@@ -8016,9 +8065,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return cached.copy(profile = profile)
         }
         updateProfileLoad(0.12f, "Connecting to ${profile.name}; waiting for provider authentication…")
-        return authenticateProfileForOpening(profile).also { store.save(it) }
+        return authenticateProfileForOpening(profile).also { ownedStore.save(it, owns) }
     }
-    fun switchProfile(profile: PortalProfile) = task {
+    fun switchProfile(profile: PortalProfile) = switchProfileOwned(profile, beginPortalActivation())
+    private fun switchProfileOwned(profile: PortalProfile, activation: Long) = task {
         movieStructureJob?.cancel()
         categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
         categoryMetadataRefreshJobs.clear()
@@ -8035,6 +8085,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // Reuse a saved session for local browsing while renewing it in the background.
         updateProfileLoad(0.08f, "Reading saved session for ${profile.name}…")
         val session = localFirstSession(profile)
+        if (portalActivation.get() != activation) throw kotlinx.coroutines.CancellationException("Portal changed")
         rememberPortalForViewer(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,

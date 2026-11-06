@@ -638,16 +638,22 @@ internal class UserScopedPreferences(
             else -> base.data
         }
     }
-    override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+    override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences = updateOwnedData({ true }, transform)
+    internal suspend fun updateOwnedData(owns: () -> Boolean, transform: suspend (Preferences) -> Preferences): Preferences {
         val captured = owner()
         val capturedAccount = captured?.accountId ?: users.selectedAccount.value
-        if (capturedAccount == null) return base.updateData(transform)
+        if (capturedAccount == null) return base.updateData { before ->
+            if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
+            transform(before).also { if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed") }
+        }
         return users.withEditLock {
             val raw = base.data.first()
             val before = if (captured == null) users.project(users.accountPreferences(raw, capturedAccount), emptyList()) else users.project(raw, captured)
             val after = transform(before)
             if (captured != null) users.persist(captured, before, after)
-            base.updateData { latest -> latest.toMutablePreferences().apply {
+            base.updateData { latest ->
+                if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
+                latest.toMutablePreferences().apply {
                 (before.asMap().keys + after.asMap().keys).filter { it.name !in UserSyncStore.SCOPED_KEYS && before.asMap()[it] != after.asMap()[it] }.forEach { key ->
                     val value = after.asMap()[key]
                     val target = if (key.name in UserSyncStore.ACCOUNT_KEYS) "account_${capturedAccount}_${key.name}" else key.name

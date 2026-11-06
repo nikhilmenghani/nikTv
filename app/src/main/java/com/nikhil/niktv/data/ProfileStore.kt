@@ -268,9 +268,11 @@ class ProfileStore @JvmOverloads constructor(
             ?.let { runCatching { Json.decodeFromString<List<TmdbIptvMapping>>(it) }.getOrNull() }
             .orEmpty()
     })
-    suspend fun save(session: PortalSession): Preferences {
+    suspend fun save(session: PortalSession, owns: () -> Boolean = { true }): Preferences {
+        if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         captureScope()?.let { users.associatePortal(it, session.profile) }
-        return preferences.editProfileMetadata {
+        return preferences.editOwnedProfileMetadata(owns) {
+        if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         val profiles = decodeProfiles(it[profilesKey], it[key])
         val sessions = decodeSessions(it[sessionsKey], it[sessionKey])
         it[profilesKey] = Json.encodeToString((profiles.filterNot { saved -> saved.identity() == session.profile.identity() } + session.profile))
