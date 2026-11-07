@@ -25,11 +25,11 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
-enum class AlternateSourceProvider { AUTO, MOVY, CINEJOY, CNO, STREAMING_UNITY, RIVE_VANGUARD, RIVE_PRIMEVIDS, RIVE_CITADEL, ATLANTIC_ATHENA, ONLYFLIX, SEVEN_MOVIES, ABIBLI }
+enum class AlternateSourceProvider { AUTO, MOVY, CINEJOY, CNO, STREAMING_UNITY, RIVE_VANGUARD, RIVE_PRIMEVIDS, RIVE_CITADEL, ATLANTIC_ATHENA, ONLYFLIX, SEVEN_MOVIES, ABIBLI, HDHUB4U }
 internal val nativeSourceProviders = listOf(AlternateSourceProvider.AUTO, AlternateSourceProvider.MOVY,
     AlternateSourceProvider.STREAMING_UNITY, AlternateSourceProvider.ATLANTIC_ATHENA,
     AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX,
-    AlternateSourceProvider.SEVEN_MOVIES, AlternateSourceProvider.ABIBLI)
+    AlternateSourceProvider.SEVEN_MOVIES, AlternateSourceProvider.ABIBLI, AlternateSourceProvider.HDHUB4U)
 enum class AlternatePlaybackRoute { NATIVE, VIDY_EMBEDDED, CINEJOY_WEB, CNO_WEB }
 
 @kotlinx.serialization.Serializable
@@ -60,7 +60,8 @@ data class AlternateStream(
 /** Injectable transport keeps source parsing deterministic and never requires a provider profile. */
 data class AlternateSourceHttpRequest(val url: String, val headers: Map<String, String>, val maxBytes: Int,
     val method: String = "GET", val jsonBody: String? = null)
-data class AlternateSourceHttpResponse(val url: String, val code: Int, val body: String)
+data class AlternateSourceHttpResponse(val url: String, val code: Int, val body: String,
+    val headers: Map<String, String> = emptyMap())
 enum class AlternateSourceFailure { SOURCE, AUTHORIZATION, CHALLENGE, RATE_LIMIT, PROTECTED_MEDIA, IDENTITY }
 class AlternateSourceException(
     message: String,
@@ -137,7 +138,8 @@ class AlternateSourceResolver(
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budget)
             val providers = listOf(AlternateSourceProvider.MOVY, AlternateSourceProvider.AUTO,
                 AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL,
-                AlternateSourceProvider.ONLYFLIX, AlternateSourceProvider.SEVEN_MOVIES, AlternateSourceProvider.ABIBLI)
+                AlternateSourceProvider.ONLYFLIX, AlternateSourceProvider.SEVEN_MOVIES, AlternateSourceProvider.ABIBLI,
+                AlternateSourceProvider.HDHUB4U)
             val searches = providers.map { provider ->
                 // Reserve slots in provider priority order, then yield before any
                 // potentially blocking adapter work. IO scheduling must not let
@@ -171,6 +173,7 @@ class AlternateSourceResolver(
                         AlternateSourceProvider.ONLYFLIX -> "OnlyFlix"
                         AlternateSourceProvider.SEVEN_MOVIES -> "7Movies"
                         AlternateSourceProvider.ABIBLI -> "Abibli"
+                        AlternateSourceProvider.HDHUB4U -> "HDHub4u"
                         else -> provider.name
                     }
                     val failure = result.second
@@ -246,6 +249,11 @@ class AlternateSourceResolver(
         if (target.provider == AlternateSourceProvider.ABIBLI) {
             return AbibliSourceResolver { request, phase ->
                 read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase, request.method, request.jsonBody)
+            }.resolve(target)
+        }
+        if (target.provider == AlternateSourceProvider.HDHUB4U) {
+            return Hdhub4uSourceResolver { request, phase ->
+                read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase)
             }.resolve(target)
         }
         var preferredIssue: AlternateSourceException? = null
@@ -500,7 +508,10 @@ internal suspend fun fetchAlternateSource(request: AlternateSourceHttpRequest): 
                         if (output.size() > request.maxBytes) throw AlternateSourceException("The alternate source response was too large.")
                     }
                 }
-                null to AlternateSourceHttpResponse(response.request.url.toString(), response.code, output.toString(Charsets.UTF_8.name()))
+                null to AlternateSourceHttpResponse(response.request.url.toString(), response.code,
+                    output.toString(Charsets.UTF_8.name()), response.headers.names().associate { name ->
+                        name.lowercase(Locale.ROOT) to response.header(name).orEmpty()
+                    })
             }
         }
         result.second?.let { return it }

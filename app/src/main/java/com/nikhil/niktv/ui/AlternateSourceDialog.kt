@@ -172,6 +172,7 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
                                 AlternateSourceProvider.ONLYFLIX -> "OnlyFlix";
                                 AlternateSourceProvider.SEVEN_MOVIES -> "7Movies";
                                 AlternateSourceProvider.ABIBLI -> "Abibli";
+                                AlternateSourceProvider.HDHUB4U -> "HDHub4u";
                                 else -> error("Browser sources are not selectable") },
                             { if (provider != state.target.provider) search(editedTarget(provider)) }, Modifier.weight(1f),
                             enabled = validInput, chosen = provider == state.target.provider)
@@ -335,6 +336,7 @@ private fun AlternateSourceInput(value: String, change: (String) -> Unit, label:
 internal fun alternateHistoryProvider(selected: AlternateSourceProvider, label: String): AlternateSourceProvider {
     if (selected != AlternateSourceProvider.AUTO) return selected
     return when {
+        label.contains("HDHub4u", true) -> AlternateSourceProvider.HDHUB4U
         label.contains("Abibli", true) -> AlternateSourceProvider.ABIBLI
         label.contains("7Movies", true) -> AlternateSourceProvider.SEVEN_MOVIES
         label.contains("OnlyFlix", true) -> AlternateSourceProvider.ONLYFLIX

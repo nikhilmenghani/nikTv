@@ -26,7 +26,8 @@ class AlternateAutoSourceTest {
         try { resolver.resolve(target); fail("Expected combined Auto failure") }
         catch (failure: AlternateSourceException) {
             val message = failure.message.orEmpty()
-            assertTrue(message.contains("8 source groups"))
+            assertTrue(message.contains("9 source groups"))
+            assertTrue(message.contains("HDHub4u: HTTP 403"))
             assertTrue(message.contains("Movy: HTTP 500"))
             assertTrue(message.contains("Unity / fallback: HTTP 403"))
             assertTrue(message.contains("7Movies: HTTP 403"))
