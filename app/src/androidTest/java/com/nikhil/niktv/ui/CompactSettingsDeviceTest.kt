@@ -32,6 +32,7 @@ class CompactSettingsDeviceTest {
     private val reauthenticationChanges = AtomicInteger()
     private val initialLoad = AtomicInteger(14)
     private val safeBottom = AtomicInteger()
+    private val accountNavigation = AtomicReference<String?>(null)
     private fun await(message: String, test: () -> Boolean) {
         val end = SystemClock.uptimeMillis() + 8_000
         while (!test() && SystemClock.uptimeMillis() < end) Thread.sleep(40)
@@ -113,6 +114,7 @@ class CompactSettingsDeviceTest {
         val destructive = AtomicInteger()
         reauthenticationChanges.set(0)
         initialLoad.set(14)
+        accountNavigation.set(null)
         val oldSystemBrightness = AppBrightnessPreferences.followsSystem(context)
         AppBrightnessPreferences.setFollowsSystem(context, true)
         try {
@@ -125,7 +127,9 @@ class CompactSettingsDeviceTest {
                 val updates = remember { SettingsUpdateStreams(MutableStateFlow(UpdateDownloadState.Idle),
                     MutableStateFlow<UpdateInfo?>(null), MutableStateFlow(false), MutableStateFlow(false),
                     MutableStateFlow(UpdatePackage.AUTO), { null }) }
-                CompositionLocalProvider(LocalConfiguration provides config, LocalSettingsUpdateStreams provides updates) { MaterialTheme(colorScheme = NikColors) {
+                CompositionLocalProvider(LocalConfiguration provides config, LocalSettingsUpdateStreams provides updates,
+                    LocalOpenUserProfiles provides { accountNavigation.set("profiles") },
+                    LocalOpenAccountScreen provides { accountNavigation.set("account") }) { MaterialTheme(colorScheme = NikColors) {
                     Surface(Modifier.fillMaxSize()) {
                     ModernSettingsScreen(
                         state = state, closeSettings = { closed.set(true) }, reauthenticate = {}, editProfile = {}, addProfile = {},
@@ -198,7 +202,7 @@ class CompactSettingsDeviceTest {
         assertEquals(0, destructive.get())
     }
 
-    @Test fun tabletBackupRoutesAndResetConfirmation() = fixture(false) { _, closed, destructive ->
+    @Test fun tabletBackupRoutesAndExplicitAccountActions() = fixture(false) { _, closed, destructive ->
         click("Library & backup")
         click("Back up & restore")
         assertNull("Catalog cloud backup stays hidden", button("Catalog backup"))
@@ -210,12 +214,15 @@ class CompactSettingsDeviceTest {
         await("Destination is a compact picker") { button("Save backups to") != null }
         screenshot("settings-tablet-destination.png")
         click("App & updates")
-        click("Reset app")
-        click("Clear all app data")
-        await("Clearing requires a separate confirmation") { find("Clear all app data?") != null }
-        assertEquals("Opening reset never clears anything", 0, destructive.get())
+        click("Account & profile data")
+        await("Account actions are explicit destinations") { button("User profiles") != null && button("GitHub account") != null }
+        assertNull("Global app wipe stays absent", button("Clear all app data"))
+        click("User profiles")
+        await("User-profile action opens its own management screen") { accountNavigation.get() == "profiles" }
+        click("GitHub account")
+        await("GitHub action opens account management") { accountNavigation.get() == "account" }
         key(KeyEvent.KEYCODE_BACK)
-        await("Back dismisses the touch reset confirmation") { find("Clear all app data?") == null }
+        await("Back returns to App settings") { button("Account & profile data") != null }
         assertFalse(closed.get())
         assertEquals(0, destructive.get())
         click("Playback")
@@ -242,9 +249,9 @@ class CompactSettingsDeviceTest {
         assertNotNull(find("During playback"))
         move(KeyEvent.KEYCODE_DPAD_UP, "Screen orientation")
         move(KeyEvent.KEYCODE_DPAD_LEFT, "Display & controls")
-        move(KeyEvent.KEYCODE_DPAD_DOWN, "Profiles & access")
+        move(KeyEvent.KEYCODE_DPAD_DOWN, "Portals & access")
         key(KeyEvent.KEYCODE_DPAD_CENTER)
-        move(KeyEvent.KEYCODE_DPAD_RIGHT, "Manage profiles")
+        move(KeyEvent.KEYCODE_DPAD_RIGHT, "Manage portals")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Connection")
         key(KeyEvent.KEYCODE_DPAD_CENTER)
         await("Connection enters its first interactive row") { focused("Renew expired sessions automatically") }
@@ -256,7 +263,7 @@ class CompactSettingsDeviceTest {
         await("Second OK toggles once again") { reauthenticationChanges.get() == 2 }
         key(KeyEvent.KEYCODE_BACK)
         await("Nested Back restores Connection") { focused("Connection") }
-        move(KeyEvent.KEYCODE_DPAD_LEFT, "Profiles & access")
+        move(KeyEvent.KEYCODE_DPAD_LEFT, "Portals & access")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Library & backup")
         key(KeyEvent.KEYCODE_DPAD_CENTER)
         move(KeyEvent.KEYCODE_DPAD_RIGHT, "Catalog updates")
@@ -277,10 +284,10 @@ class CompactSettingsDeviceTest {
         assertEquals(0, destructive.get())
     }
 
-    @Test fun tabletDpadScrollsLongFormAndCancelsReset() = fixture(false) { _, closed, destructive ->
+    @Test fun tabletDpadScrollsLongFormAndReturnsFromAccountActions() = fixture(false) { _, closed, destructive ->
         await("Playback category has initial focus") { focused("Playback") }
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Display & controls")
-        move(KeyEvent.KEYCODE_DPAD_DOWN, "Profiles & access")
+        move(KeyEvent.KEYCODE_DPAD_DOWN, "Portals & access")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Library & backup")
         key(KeyEvent.KEYCODE_DPAD_CENTER)
         move(KeyEvent.KEYCODE_DPAD_RIGHT, "Catalog updates")
@@ -326,16 +333,18 @@ class CompactSettingsDeviceTest {
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Check for updates")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Delete older update APKs")
         move(KeyEvent.KEYCODE_DPAD_DOWN, "Update preferences")
-        move(KeyEvent.KEYCODE_DPAD_DOWN, "Reset app")
+        move(KeyEvent.KEYCODE_DPAD_DOWN, "Account & profile data")
         key(KeyEvent.KEYCODE_DPAD_CENTER)
-        await("Reset page enters its action") { focused("Clear all app data") }
+        await("Account page enters User profiles") { focused("User profiles") }
+        assertNull("Global app wipe stays absent", button("Clear all app data"))
         key(KeyEvent.KEYCODE_DPAD_CENTER)
-        await("Reset defaults to Cancel") { focused("Cancel") }
+        await("Remote opens User profiles explicitly") { accountNavigation.get() == "profiles" }
+        move(KeyEvent.KEYCODE_DPAD_DOWN, "GitHub account")
+        key(KeyEvent.KEYCODE_DPAD_CENTER)
+        await("Remote opens GitHub account explicitly") { accountNavigation.get() == "account" }
+        assertEquals("Account navigation never clears local data", 0, destructive.get())
         key(KeyEvent.KEYCODE_BACK)
-        await("Cancelling reset restores its action") { focused("Clear all app data") && find("Clear all app data?") == null }
-        assertEquals("Back cancels reset", 0, destructive.get())
-        key(KeyEvent.KEYCODE_BACK)
-        await("Back restores Reset app") { focused("Reset app") }
+        await("Back restores Account & profile data") { focused("Account & profile data") }
         assertFalse(closed.get())
     }
 
@@ -359,21 +368,21 @@ class CompactSettingsDeviceTest {
             instrumentation.runOnMainSync { host.setContent {
                 val entries = remember { SettingsFocusEntries() }
                 val profile = remember { PortalProfile("Profile fixture", "https://settings.invalid", "00:11:22:33:44:55") }
-                LaunchedEffect(Unit) { withFrameNanos { }; withFrameNanos { }; entries.requestFirst() }
+                LaunchedEffect(Unit) { repeat(60) { withFrameNanos { }; if (host.hasWindowFocus() && entries.requestFirst()) return@LaunchedEffect } }
                 MaterialTheme(colorScheme = NikColors) { CompositionLocalProvider(LocalSettingsFocusEntries provides entries) {
                     ProfileScreen(profile, listOf(profile), true, false, {}, { saves.incrementAndGet() }, {}, {}, {}, {}, {})
                 } }
             } }
-            await("Profile name row takes focus") { focused("Profile name") }
+            await("Portal name row takes focus") { focused("Portal name") }
             assertFalse("Profile focus must not open an input", hasEditableField())
             move(KeyEvent.KEYCODE_DPAD_DOWN, "Portal URL")
             assertFalse("Portal URL focus must not open an input", hasEditableField())
-            move(KeyEvent.KEYCODE_DPAD_UP, "Profile name")
+            move(KeyEvent.KEYCODE_DPAD_UP, "Portal name")
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Explicit OK opens profile editor input") { hasEditableField(requireFocus = true) }
             move(KeyEvent.KEYCODE_DPAD_DOWN, "Cancel")
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Cancel restores profile row focus") { focused("Profile name") && !hasEditableField() }
+            await("Cancel restores profile row focus") { focused("Portal name") && !hasEditableField() }
             assertEquals(0, saves.get())
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }

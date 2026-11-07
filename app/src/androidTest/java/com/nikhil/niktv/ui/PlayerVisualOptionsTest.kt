@@ -20,15 +20,28 @@ class PlayerVisualOptionsTest {
         for (index in 0 until node.childCount) find(node.getChild(index), predicate)?.let { return it }
         return null
     }
-    private fun label(value: String) = find(instrumentation.uiAutomation.rootInActiveWindow) {
-        it.text?.toString() == value || it.contentDescription?.toString() == value
+    private fun label(value: String): AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        return find(instrumentation.uiAutomation.rootInActiveWindow) {
+            it.text?.toString() == value || it.contentDescription?.toString() == value
+        }
     }
     private fun await(message: String, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 15_000L
         while (System.currentTimeMillis() < deadline) { if (condition()) return; Thread.sleep(100) }
+        NavigationAuditEvidence.capture("player-options-failure-${message.take(32)}")
         fail(message)
     }
     private fun click(value: String) {
+        if (label(value) == null && label("Hide extra controls") != null) {
+            var toggle = label("Hide extra controls")
+            while (toggle != null && !toggle.isFocusable) toggle = toggle.parent
+            toggle?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            repeat(16) {
+                if (label(value) == null) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                Thread.sleep(80)
+            }
+        }
         await("Missing control $value") { label(value) != null }
         var node = label(value)
         while (node != null) { if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return; node = node.parent }

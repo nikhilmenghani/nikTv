@@ -116,10 +116,11 @@ class ModernModalAndMatchDeviceTest {
     private fun find(text: String): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (node == null) return null
-            if (node.text?.toString() == text || node.contentDescription?.toString() == text) return node
+            if (node.text?.toString()?.lineSequence()?.any { it == text } == true || node.contentDescription?.toString() == text) return node
             for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
             return null
         }
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
         return walk(instrumentation.uiAutomation.rootInActiveWindow)
     }
     private fun button(text: String): AccessibilityNodeInfo? {
@@ -237,15 +238,15 @@ class ModernModalAndMatchDeviceTest {
     }
     @Test fun profilePopupStartsOnCurrentSecondProfileAndKeepsUserMovement() {
         val chosen = AtomicInteger(0)
-        val profiles = listOf(PortalProfile("Fixture Wio", "https://one.invalid", ""), PortalProfile("Fixture Nikhil", "https://two.invalid", ""))
+        val profiles = listOf(PortalProfile("Fixture Wio", "https://one.invalid", ""), PortalProfile("Fixture Nikhil", "https://two.invalid", "", portalType = com.nikhil.niktv.model.PortalType.XTREAM))
         fixture({ ModernProfileSwitchDialog(profiles, profiles[1], {}, { chosen.incrementAndGet() }) }) {
-            await("Current profile owns initial focus") { focused("Fixture Nikhil") }
+            await("Current profile owns initial focus") { focused("Xtream") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Up reaches the other profile") { focused("Fixture Wio") }
+            await("Up reaches the other profile") { focused("Stalker") }
             Thread.sleep(200)
-            assertTrue(focused("Fixture Wio"))
+            assertTrue(focused("Stalker"))
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down returns to current profile") { focused("Fixture Nikhil") }
+            await("Down returns to current profile") { focused("Xtream") }
             assertEquals(0, chosen.get())
         }
     }

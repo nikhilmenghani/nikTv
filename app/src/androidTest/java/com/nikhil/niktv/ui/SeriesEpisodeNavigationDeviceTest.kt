@@ -230,7 +230,13 @@ class SeriesEpisodeNavigationDeviceTest {
             assertFalse("Entry focus alone must not open a keyboard", instrumentation.uiAutomation.windows.any {
                 it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD })
             key(KeyEvent.KEYCODE_DPAD_CENTER)
+            instrumentation.waitForIdleSync()
+            await("Explicit activation makes the number field editable") {
+                find { node -> node.isEditable && node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT } } != null
+            }
+            instrumentation.waitForIdleSync()
             key(KeyEvent.KEYCODE_3)
+            await("First remote digit reaches the field") { find { it.isEditable && it.text?.toString() == "3" } != null }
             key(KeyEvent.KEYCODE_7)
             await("Remote number input reaches the field") { find { it.isEditable && it.text?.toString() == "37" } != null }
             key(KeyEvent.KEYCODE_BACK)
@@ -593,6 +599,319 @@ class SeriesEpisodeNavigationDeviceTest {
         } finally { finishHost(activity) }
     }
 
+    @Test fun tmdbListTraversesEveryOffscreenEpisodeInBothDirections() = fixture(episodeCount = 45) { seasons, plays ->
+        key(KeyEvent.KEYCODE_DPAD_DOWN)
+        await("Episode 45 receives initial list focus") { focused("Fixture episode 45") }
+        NavigationAuditEvidence.capture("tmdb-episode-list-start")
+        for (number in 44 downTo 1) {
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches episode $number") { focused("Fixture episode $number") }
+            assertTrue("Focused episode $number is visible", label("Fixture episode $number")?.isVisibleToUser == true)
+        }
+        NavigationAuditEvidence.capture("tmdb-episode-list-end")
+        key(KeyEvent.KEYCODE_DPAD_DOWN)
+        assertTrue("Last episode Down stays in the episode pane", focused("Fixture episode 1"))
+        for (number in 2..45) {
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Up restores episode $number") { focused("Fixture episode $number") }
+        }
+        NavigationAuditEvidence.capture("tmdb-episode-list-offscreen-restored")
+        assertEquals("Focus movement does not fetch other seasons", listOf(1), seasons.toList())
+        assertTrue("Focus movement does not play", plays.isEmpty())
+    }
+
+    @Test fun providerListTraversesEveryOffscreenEpisodeInBothDirections() {
+        val context = instrumentation.targetContext
+        org.junit.Assume.assumeTrue(context.resources.configuration.smallestScreenWidthDp >= 600)
+        val series = MediaItem("provider-traversal-series", "Provider traversal fixture", null, null)
+        val episodes = (1..45).map { MediaItem("provider-traversal-$it", "Provider traversal episode $it", null, null,
+            seasonNumber = 1, episodeNumber = it) }
+        runBlocking { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")).write(
+            "provider-presentation-v1:SERIES:null:${providerSeriesTmdbTitle(series.title)}", "[]") }
+        val state = NikTvState(selectedSeries = series, selectedType = CatalogType.SERIES, items = episodes,
+            availableSeriesSeasons = listOf(1, 2), selectedSeriesSeason = 1, useTmdbEpisodeMetadata = false,
+            restoring = false, homeOpen = false)
+        val activity = startHost()
+        val plays = CopyOnWriteArrayList<String>()
+        val seasons = CopyOnWriteArrayList<Int>()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                DiscoverySeriesContent(state, play = { plays.add(it.id) }, closeSeries = {},
+                    toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = { seasons.add(it) },
+                    setUseTmdbEpisodeMetadata = {}, refreshTmdbEpisodeCache = {},
+                    downloadForOffline = { _, _, _ -> fail("Focus must not download") }, removeOfflineDownload = { _, _ -> },
+                    openSearch = {}, openSettings = {}, refreshCatalog = {}, loadMoreEpisodes = {},
+                    openTmdbMovie = {}, openTmdbSeries = {})
+            } } }
+            await("Provider header owns Play latest") { focused("Play latest") }
+            NavigationAuditEvidence.capture("provider-series-traversal-header")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Provider Play Down reaches Related") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Provider Related Down reaches Sort") { focused("Sort episodes") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Provider Sort Down reaches episode 45") { focused("Provider traversal episode 45") }
+            NavigationAuditEvidence.capture("provider-episode-list-start")
+            for (number in 44 downTo 1) {
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Provider Down reaches episode $number") { focused("Provider traversal episode $number") }
+                assertTrue("Provider focused episode $number is visible", label("Provider traversal episode $number")?.isVisibleToUser == true)
+            }
+            NavigationAuditEvidence.capture("provider-episode-list-end")
+            for (number in 2..45) {
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                await("Provider Up restores episode $number") { focused("Provider traversal episode $number") }
+            }
+            NavigationAuditEvidence.capture("provider-episode-list-offscreen-restored")
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Provider episode Left returns to Season 1") { focused("Season 1") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Season Right restores the remembered provider episode") { focused("Provider traversal episode 45") }
+            assertTrue("Focus alone does not reload a provider season", seasons.isEmpty())
+            assertTrue("Focus alone does not play a provider episode", plays.isEmpty())
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun tmdbEmptyAndFailedSeasonsExposeRemoteRecoveryControls() {
+        val context = instrumentation.targetContext
+        org.junit.Assume.assumeTrue(context.resources.configuration.smallestScreenWidthDp >= 600)
+        val card = DiscoveryCard(0, true, "Empty TMDB season fixture")
+        val retryLabel = "Could not load episodes. Retry"
+        val model = mutableStateOf(DiscoveryState(profile = "fixture-only", detail = card,
+            details = DiscoveryDetails(card, seasons = listOf(1, 2)), season = 1,
+            episodes = emptyList(), errors = mapOf("season" to retryLabel)))
+        val loads = CopyOnWriteArrayList<Int>()
+        val activity = startHost()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                com.nikhil.niktv.discovery.DiscoverySeriesDetailScreen(model.value,
+                    NikTvState(restoring = false), loadSeason = { season ->
+                        loads.add(season)
+                        model.value = model.value.copy(season = season, errors = emptyMap())
+                    }, play = { _, _, _ -> fail("Recovery must not play") }, download = { _, _, _ -> },
+                    close = {}, favorite = {}, openMovie = {}, openSeries = {})
+            } } }
+            await("Back remains available while Play has no episode") { label("Back") != null }
+            var back = label("Back")
+            while (back != null && !back.isFocusable) back = back.parent
+            assertTrue(back?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Back Down skips disabled Play and reaches header tools") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Tools Up also skips disabled Play and returns to Back") { focused("Back") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Back re-enters enabled header tools") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Tools Down reaches episode recovery toolbar") { focused("Search episodes") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Toolbar Down reaches the visible Retry action") { focused(retryLabel) }
+            NavigationAuditEvidence.capture("tmdb-season-error-recovery")
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Retry Up returns to toolbar") { focused("Search episodes") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Retry invokes only the selected season and retains a surviving focus target") {
+                loads.toList() == listOf(1) && focused("Search episodes") && label(retryLabel) == null
+            }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Valid empty season directs Down to the season sidebar") { focused("Season 1") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Another season is reachable without loading it on focus") { focused("Season 2") }
+            assertEquals(listOf(1), loads.toList())
+            NavigationAuditEvidence.capture("tmdb-empty-season-recovery")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Selecting a different season invokes its recovery load") { loads.toList() == listOf(1, 2) }
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun tmdbPhoneEmptyAndFailedSeasonsExposeDropdownAndBackRecovery() {
+        val card = DiscoveryCard(0, true, "Phone empty season fixture")
+        val retry = "Could not load episodes. Retry"
+        val model = mutableStateOf(DiscoveryState(profile = "fixture-only", detail = card,
+            details = DiscoveryDetails(card, seasons = listOf(1, 2)), season = 1,
+            errors = mapOf("season" to retry)))
+        val loads = CopyOnWriteArrayList<Int>()
+        val activity = startHost()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                val phone = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).apply {
+                    screenWidthDp = 400; screenHeightDp = 800; smallestScreenWidthDp = 400
+                    orientation = android.content.res.Configuration.ORIENTATION_PORTRAIT
+                }
+                CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides phone) {
+                    com.nikhil.niktv.discovery.DiscoverySeriesDetailScreen(model.value, NikTvState(restoring = false),
+                        loadSeason = { season -> loads.add(season); model.value = model.value.copy(season = season, errors = emptyMap()) },
+                        play = { _, _, _ -> fail("Recovery must not play") }, download = { _, _, _ -> },
+                        close = {}, favorite = {}, openMovie = {}, openSeries = {})
+                }
+            } } }
+            await("Phone Back is rendered") { label("Back") != null }
+            var back = label("Back")
+            while (back != null && !back.isFocusable) back = back.parent
+            assertTrue(back?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Phone Back Down skips unavailable Play and reaches the first enabled compact action") { focused("Add to My List") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Phone compact actions expose Watch trailer") { focused("Watch trailer") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Phone compact actions skip unavailable Cast and reach Related") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Phone header enters the season dropdown") { focused("Season 1") }
+            var search = label("Search episodes")
+            while (search != null && !search.isFocusable) search = search.parent
+            assertTrue(search?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Phone toolbar reaches season Retry") { focused(retry) }
+            NavigationAuditEvidence.capture("tmdb-phone-season-error-recovery")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Phone Retry preserves toolbar focus") { loads.toList() == listOf(1) && focused("Search episodes") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Empty phone season directs Down to dropdown") { focused("Season 1") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Dropdown selects current season on entry") { focused("Season 1") && label("Season 2") != null }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Dropdown exposes another season without loading on focus") { focused("Season 2") }
+            assertEquals(listOf(1), loads.toList())
+            NavigationAuditEvidence.capture("tmdb-phone-empty-season-dropdown")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Dropdown selection loads another season") { loads.toList() == listOf(1, 2) }
+            // The menu callback precedes its popup-window dismissal. Wait for
+            // the host's input window and surviving toolbar before focusing it.
+            await("Season selection returns input focus to the episode toolbar window") {
+                if (!activity.hasWindowFocus() || label("Search episodes") == null) false
+                else if (focused("Search episodes")) true
+                else {
+                    var toolbar = label("Search episodes")
+                    while (toolbar != null && !toolbar.isFocusable) toolbar = toolbar.parent
+                    toolbar?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    focused("Search episodes")
+                }
+            }
+            NavigationAuditEvidence.capture("tmdb-phone-empty-season-selected")
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Empty phone episode pane Up skips disabled Play and returns to Back") { focused("Back") }
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun tmdbEpisodeSearchSurvivesKeyboardDismissalAndBackClosesItExplicitly() {
+        val context = instrumentation.targetContext
+        val card = DiscoveryCard(0, true, "Phone TMDB search fixture")
+        val state = DiscoveryState(profile = "fixture-only", detail = card,
+            details = DiscoveryDetails(card, seasons = listOf(1)), season = 1,
+            episodes = (1..35).map { DiscoveryEpisode(1, it, "Phone TMDB episode $it") })
+        val activity = startHost()
+        fun activate(text: String) {
+            var node = label(text)
+            while (node != null && !node.isClickable) node = node.parent
+            assertTrue("Action is available: $text", node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+        }
+        fun keyboardVisible() = androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)
+            ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+        try {
+            instrumentation.setInTouchMode(true)
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                val phone = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).apply {
+                    screenWidthDp = 400; screenHeightDp = 800; smallestScreenWidthDp = 400
+                    orientation = android.content.res.Configuration.ORIENTATION_PORTRAIT
+                }
+                CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides phone) {
+                    DiscoverySeriesEpisodes(state, SeriesStartSeason.FIRST, remember { FocusRequester() },
+                        loadSeason = {}, play = { _, _, _ -> fail("Search must not play") }, download = { _, _, _ -> },
+                        onFocus = {}, up = { false }, down = { false }, modifier = Modifier.fillMaxSize())
+                }
+            } } }
+            await("Search is available") { label("Search episodes") != null }
+            activate("Search episodes")
+            await("Explicit episode search focuses the field and opens keyboard") { find { it.isEditable } != null && keyboardVisible() }
+            NavigationAuditEvidence.capture("tmdb-phone-episode-search-keyboard")
+            instrumentation.runOnMainSync {
+                (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
+            }
+            await("Keyboard is dismissed") { !keyboardVisible() }
+            assertNotNull("Keyboard dismissal preserves the search field", find { it.isEditable })
+            val args = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "15") }
+            assertTrue(find { it.isEditable }!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
+            await("Local search still filters after keyboard dismissal") { label("1 match in loaded episodes") != null }
+            NavigationAuditEvidence.capture("tmdb-phone-episode-search-keyboard-dismissed")
+            instrumentation.setInTouchMode(false)
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Field Up reaches the search button above it") { focused("Search episodes") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Toolbar Down reaches the expanded field") { find { it.isEditable && it.isFocused } != null }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Field Down enters the filtered episode") { focused("Phone TMDB episode 15") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("First episode Up returns to the field above it") { find { it.isEditable && it.isFocused } != null }
+            NavigationAuditEvidence.capture("tmdb-phone-episode-search-dpad-restored")
+            instrumentation.runOnMainSync {
+                (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
+            }
+            await("Keyboard is hidden before the explicit search Back") { !keyboardVisible() }
+            key(KeyEvent.KEYCODE_BACK)
+            await("Back explicitly closes search") { find { it.isEditable } == null && label("Search episodes") != null }
+            activate("Search episodes")
+            await("Search can be reopened with its previous query") { find { it.isEditable && it.text?.toString() == "15" } != null }
+            activate("Clear episode search")
+            await("Clear empties the query without closing search") { find { it.isEditable && it.text?.toString().orEmpty().isEmpty() } != null }
+            activate("Close episode search")
+            await("The separate close action collapses search") { find { it.isEditable } == null }
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun tmdbDetailHeaderAndEpisodesHaveCompleteVerticalRemotePathsInShortViewport() {
+        val context = instrumentation.targetContext
+        org.junit.Assume.assumeTrue(context.resources.configuration.smallestScreenWidthDp >= 600)
+        val activity = startHost()
+        val card = DiscoveryCard(0, true, "TMDB detail viewport fixture", overview = "A long synopsis for the detail viewport. ".repeat(20))
+        val state = DiscoveryState(profile = "fixture-only", detail = card,
+            details = DiscoveryDetails(card, seasons = listOf(1, 2)), season = 1,
+            episodes = (1..45).map { DiscoveryEpisode(1, it, "Viewport episode $it", overview = "Fixture episode synopsis") })
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                Box(Modifier.fillMaxWidth().height(480.dp)) {
+                    com.nikhil.niktv.discovery.DiscoverySeriesDetailScreen(state,
+                        NikTvState(savedProfile = com.nikhil.niktv.model.PortalProfile("Viewport", "https://fixture.invalid", ""), restoring = false),
+                        loadSeason = {}, play = { _, _, _ -> fail("Navigation must not play") }, download = { _, _, _ -> },
+                        close = {}, favorite = {}, openMovie = {}, openSeries = {})
+                }
+            } } }
+            await("Play latest receives initial focus") { focused("Play latest") }
+            NavigationAuditEvidence.capture("tmdb-short-viewport-series-header")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Play Down reaches More info") { focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Info Down reaches Related when there is no cast") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Related Down enters the episode toolbar") { focused("Search episodes") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Episode toolbar Down reaches episode 45") { focused("Viewport episode 45") }
+            NavigationAuditEvidence.capture("tmdb-short-viewport-series-episode-pane")
+            val fullyVisible = (1..45).count { number -> label("Viewport episode $number")?.let { node ->
+                if (!node.isVisibleToUser) false else {
+                    var owner = node
+                    while (!owner.isClickable && owner.parent != null) owner = owner.parent
+                    val rect = bounds(owner)
+                    val screen = android.graphics.Rect(0, 0, context.resources.displayMetrics.widthPixels,
+                        (480 * context.resources.displayMetrics.density).toInt())
+                    screen.contains(rect)
+                }
+            } == true }
+            assertTrue("Episode browsing exposes at least three full records in a 480dp viewport (actual=$fullyVisible)", fullyVisible >= 3)
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("First episode Up restores toolbar") { focused("Search episodes") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Toolbar Up restores the header tools") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Tools Up restores More info") { focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("More info Up restores Play") { focused("Play latest") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Play Up restores Back") { focused("Back") }
+        } finally { finishHost(activity) }
+    }
+
     private fun fixture(episodeCount: Int = 30, test: (CopyOnWriteArrayList<Int>, CopyOnWriteArrayList<Int>) -> Unit) {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression")) { "Run only against the isolated regression package" }
@@ -655,9 +974,20 @@ class SeriesEpisodeNavigationDeviceTest {
     private fun bounds(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen)
     private fun label(value: String) = find { it.text?.toString() == value || it.contentDescription?.toString() == value }
     private fun focused(value: String): Boolean {
-        var node = label(value)
-        repeat(6) { if (node?.isFocused == true) return true; node = node?.parent }
-        return false
+        val tree = root()
+        val current = tree?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val currentOwner = current?.let { generateSequence(it) { node -> node.parent }.firstOrNull { it.isClickable } ?: it }
+        return find { node ->
+            if (node.text?.toString() != value && node.contentDescription?.toString() != value) false
+            else {
+                val owner = generateSequence(node) { it.parent }.firstOrNull { it.isClickable } ?: node
+                owner.isFocused || owner == currentOwner
+            }
+        } != null
+    }
+    private fun root(): AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        return instrumentation.uiAutomation.rootInActiveWindow
     }
     private fun find(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -666,7 +996,7 @@ class SeriesEpisodeNavigationDeviceTest {
             for (index in 0 until node.childCount) walk(node.getChild(index))?.let { return it }
             return null
         }
-        val root = instrumentation.uiAutomation.rootInActiveWindow
+        val root = root()
         if (root?.packageName?.toString() != instrumentation.targetContext.packageName) return null
         return walk(root)
     }
@@ -698,6 +1028,7 @@ class SeriesEpisodeNavigationDeviceTest {
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
             } } finally { bitmap.recycle() }
         }
+        NavigationAuditEvidence.capture("episode-navigation-failure")
         fail(message)
     }
 

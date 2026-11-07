@@ -122,10 +122,15 @@ internal fun MandatoryNikTvUpdateScreen(
     update: UpdateInfo?,
     downloadState: UpdateDownloadState,
     enforcementEnabled: Boolean,
-    setEnforcementEnabled: (Boolean) -> Unit
+    setEnforcementEnabled: (Boolean) -> Unit,
+    downloadUpdate: ((UpdateInfo) -> Unit)? = null,
+    installUpdate: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val actionRequester = remember { FocusRequester() }
+    val settingsRequester = remember { FocusRequester() }
+    val enforcementRequester = remember { FocusRequester() }
+    var restoreSettingsFocus by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var permissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -147,6 +152,10 @@ internal fun MandatoryNikTvUpdateScreen(
 
     fun downloadAndInstall(target: UpdateInfo) {
         actionError = null
+        if (downloadUpdate != null) {
+            runCatching { downloadUpdate(target) }.onFailure { actionError = it.message ?: "Could not start the update" }
+            return
+        }
         if (!AppUpdates.canWritePublicDownloads(context) && AppUpdates.requiresLegacyStoragePermission()) {
             permissionUpdate = target
             AppUpdates.deferDownloadAndInstall(context, target)
@@ -157,10 +166,16 @@ internal fun MandatoryNikTvUpdateScreen(
         }
     }
 
-    LaunchedEffect(actionable, downloadState) {
-        if (actionable) {
-            withFrameNanos { }
-            runCatching { actionRequester.requestFocus() }
+    LaunchedEffect(actionable, busy, checking, update != null, settingsOpen) {
+        if (!checking && update != null && !settingsOpen) {
+            val entry = if (restoreSettingsFocus || !actionable) settingsRequester else actionRequester
+            repeat(20) {
+                withFrameNanos { }
+                if (runCatching { entry.requestFocus() }.getOrDefault(false)) {
+                    restoreSettingsFocus = false
+                    return@LaunchedEffect
+                }
+            }
         }
     }
     BackHandler(enabled = true) { }
@@ -176,7 +191,7 @@ internal fun MandatoryNikTvUpdateScreen(
                 colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF181818))
             ) {
                 Column(
-                    Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 34.dp),
+                    Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 34.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
@@ -234,7 +249,7 @@ internal fun MandatoryNikTvUpdateScreen(
                             onClick = {
                                 when (downloadState) {
                                     is UpdateDownloadState.Ready,
-                                    is UpdateDownloadState.InstallerLaunched -> runCatching { AppUpdates.install(context) }
+                                    is UpdateDownloadState.InstallerLaunched -> runCatching { if (installUpdate != null) installUpdate() else AppUpdates.install(context) }
                                         .onFailure { actionError = it.message ?: "Could not open the installer" }
                                     else -> downloadAndInstall(update)
                                 }
@@ -259,8 +274,8 @@ internal fun MandatoryNikTvUpdateScreen(
                             )
                         }
                         NikTvSecondaryActionButton(
-                            onClick = { settingsOpen = true },
-                            modifier = Modifier.fillMaxWidth().height(50.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
+                            onClick = { restoreSettingsFocus = true; settingsOpen = true },
+                            modifier = Modifier.fillMaxWidth().height(50.dp).focusRequester(settingsRequester).remoteFocusFrame(RoundedCornerShape(10.dp)),
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Icon(Icons.Default.Settings, null)
@@ -290,6 +305,7 @@ internal fun MandatoryNikTvUpdateScreen(
                     },
                     trailingContent = {
                         Switch(
+                            modifier = Modifier.focusRequester(enforcementRequester).initialFocusEntry(enforcementRequester),
                             checked = enforcementEnabled,
                             onCheckedChange = {
                                 setEnforcementEnabled(it)

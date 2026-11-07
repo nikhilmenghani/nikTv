@@ -46,14 +46,17 @@ internal fun DiscoveryMatchScreen(app: NikTvState, close: () -> Unit,
     val columns = if (phone) 1 else 2
     val header = remember(app.savedProfile?.cacheKey(), title) { FocusRequester() }
     val first = remember(app.savedProfile?.cacheKey(), title) { FocusRequester() }
+    // Empty/loading results have no first card. A directional route must not
+    // target an unattached FocusRequester while the provider is still searching.
+    val contentEntry = if (candidates.isEmpty()) FocusRequester.Cancel else first
     val remote = context.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == androidx.compose.ui.input.InputMode.Keyboard
     var menu by remember { mutableStateOf(false) }
     val surface = app.discoverySurface ?: if (series) DashboardSurface.SERIES else DashboardSurface.MOVIES
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).safeDrawingPadding()
         .initialFocusEntry(if (candidates.isEmpty()) header else first, remote)) {
-        if (phone) DiscoveryPhoneNavigation(surface, header, first, close, selectSurface, navigate,
+        if (phone) DiscoveryPhoneNavigation(surface, header, contentEntry, close, selectSurface, navigate,
             menu, { menu = it }, profile = app.savedProfile?.name.orEmpty())
-        else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), header, first,
+        else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), header, contentEntry,
             close, selectSurface, navigate, {}, menu, { menu = it }, null)
         Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 16.dp else 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {

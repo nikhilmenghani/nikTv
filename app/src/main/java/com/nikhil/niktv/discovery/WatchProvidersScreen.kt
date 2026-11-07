@@ -111,17 +111,15 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
         if (nav != null) Dialog(onDismissRequest = { selected = null; restore() },
             properties = DialogProperties(usePlatformDefaultWidth = false)) {
             val vm: DiscoveryViewModel = viewModel(key = "watch-provider-detail:${com.nikhil.niktv.ui.LocalViewingOwner.current}:$profile")
-            var initialized by remember(card.key) { mutableStateOf(false) }
-            val current by vm.state.collectAsState()
             val surface = if (card.series) DashboardSurface.SERIES else DashboardSurface.MOVIES
-            LaunchedEffect(card.key) { vm.bind(profile, surface, emptyList()); vm.openRootDetails(card); initialized = true }
-            LaunchedEffect(initialized, current.detail) { if (initialized && current.detail == null && vm.state.value.detail == null) { selected = null; restore() } }
+            ProviderRelatedDetailRoute(profile, card, vm, close = { selected = null; restore() }) {
             DiscoveryPreviewScreen(app, surface, selectSurface = { selected = null; select(it) },
                 exit = { selected = null; restore() }, navigate = { selected = null; navigate(it) },
                 playCard = playCard, playEpisode = nav.playEpisode, openRecent = nav.recent, openWatched = nav.watched,
                 toggleFavorite = nav.favorite, openCategory = nav.category, openSection = nav.section,
                 removeRecent = nav.removeRecent, markWatched = nav.markWatched, dismissEpisode = nav.dismissEpisode,
-                vm = vm, detailVisibilityChanged = detailVisibilityChanged)
+                vm = vm, detailVisibilityChanged = detailVisibilityChanged, honorLandingNavigation = false)
+            }
         }
     }
 }
@@ -139,7 +137,26 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
     val list = rememberLazyListState()
     val rowStates = rememberSaveableStateHolder()
     val filtered = remember(state.providers, query) { state.providers.filter { it.name.contains(query, true) } }
-    LaunchedEffect(state.region, state.series, query) { list.scrollToItem(0) }
+    val headerRegistry = remember(state.region, state.series) { mutableMapOf<Int, FocusRequester>() }
+    val headers = remember(filtered.map { it.id }, state.region, state.series) {
+        filtered.associate { provider -> provider.id to (viewAllRequesters?.getOrPut(provider.id) { FocusRequester() }
+            ?: headerRegistry.getOrPut(provider.id) { FocusRequester() }) }
+    }
+    val navigationScope = rememberCoroutineScope()
+    var headingMove by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    fun interactiveRow(row: WatchProviderRow?) = row != null &&
+        (row.cards.isNotEmpty() || (!row.loading && (row.error != null || row.more)))
+    fun moveToHeader(index: Int) {
+        val target = filtered.getOrNull(index)?.id ?: return
+        headingMove?.cancel()
+        headingMove = navigationScope.launch {
+            // The first list item is the filter toolbar. Materialize the target
+            // provider before requesting focus across an empty/loading row.
+            if (list.layoutInfo.visibleItemsInfo.none { it.index == index + 1 }) list.scrollToItem(index + 1)
+            repeat(30) { withFrameNanos { }; if (runCatching { headers[target]?.requestFocus() == true }.getOrDefault(false)) return@launch }
+        }
+    }
+    LaunchedEffect(state.region, state.series, query) { headingMove?.cancel(); list.scrollToItem(0) }
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item(key = "filters") {
@@ -160,11 +177,12 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
                 if (!state.loading && state.error == null && filtered.isEmpty()) Text("No providers found for this selection.", color = Color.LightGray)
             }
         }
-        items(filtered, key = { "${state.region}:${state.series}:${it.id}" }) { provider ->
+        itemsIndexed(filtered, key = { _, provider -> "${state.region}:${state.series}:${provider.id}" }) { providerIndex, provider ->
             LaunchedEffect(provider.id, state.region, state.series, state.revision, metadataActive) { if (metadataActive) load(provider.id, false) else leave(provider.id) }
             DisposableEffect(provider.id, state.region, state.series, state.revision) { onDispose { leave(provider.id) } }
             val row = state.rows[provider.id] ?: WatchProviderRow(loading = true)
-            val allFocus = remember(provider.id) { viewAllRequesters?.getOrPut(provider.id) { FocusRequester() } ?: FocusRequester() }
+            val allFocus = headers.getValue(provider.id)
+            val rowEntry = remember(provider.id) { FocusRequester() }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.padding(horizontal = if (phone) 16.dp else 28.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -172,7 +190,21 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
                     Text(provider.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp,
                         modifier = Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                     DiscoveryAction("View all ${provider.name}", visualLabel = "View all",
-                        modifier = Modifier.focusRequester(allFocus).semantics { contentDescription = "View all ${provider.name}" }) { viewAll(provider, allFocus) }
+                        modifier = Modifier.focusRequester(allFocus).onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) false
+                            else when {
+                                event.key == Key.DirectionDown && !interactiveRow(row) && providerIndex < filtered.lastIndex -> {
+                                    moveToHeader(providerIndex + 1); true
+                                }
+                                event.key == Key.DirectionUp && providerIndex > 0 &&
+                                    !interactiveRow(state.rows[filtered[providerIndex - 1].id]) -> {
+                                    moveToHeader(providerIndex - 1); true
+                                }
+                                else -> false
+                            }
+                        }.focusProperties {
+                            down = if (interactiveRow(row)) rowEntry else FocusRequester.Default
+                        }.semantics { contentDescription = "View all ${provider.name}" }) { viewAll(provider, allFocus) }
                 }
                 rowStates.SaveableStateProvider("${state.region}:${state.series}:${provider.id}") {
                     val horizontal = rememberLazyListState()
@@ -195,7 +227,9 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
                             val requester = remember { FocusRequester() }
                             val actualFocus = if (pendingPage >= 0 && index == pendingIndex.coerceAtMost(row.cards.lastIndex)) firstNew else requester
                             DiscoveryPosterTile(card.title, card.poster, card.date?.take(4).orEmpty(), width,
-                                modifier = Modifier.focusRequester(actualFocus), focusVerticalInset = 4.dp, reduceMotion = reducedMotion,
+                                modifier = Modifier.focusRequester(actualFocus)
+                                    .then(if (index == horizontal.firstVisibleItemIndex.coerceAtMost(row.cards.lastIndex)) Modifier.focusRequester(rowEntry) else Modifier)
+                                    .focusProperties { up = allFocus }, focusVerticalInset = 4.dp, reduceMotion = reducedMotion,
                                 source = DiscoveryTileSource.TMDB, onClick = { open(card, actualFocus) })
                         }
                         if (row.loading && row.cards.isEmpty()) items(3) {
@@ -207,7 +241,9 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
                                     row.loading || row.error != null || row.more -> DiscoveryAction(
                                         if (row.loading) "Loading…" else if (row.error != null) "Retry" else "More",
                                         if (row.loading) Icons.Default.HourglassTop else if (row.error != null) Icons.Default.Refresh else Icons.Default.ChevronRight,
-                                        modifier = Modifier.focusRequester(moreFocus)) {
+                                        modifier = Modifier.focusRequester(moreFocus)
+                                            .then(if (row.cards.isEmpty()) Modifier.focusRequester(rowEntry) else Modifier)
+                                            .focusProperties { up = allFocus }) {
                                             if (!row.loading) {
                                                 pendingIndex = row.cards.size
                                                 pendingPage = row.page + 1

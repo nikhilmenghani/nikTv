@@ -84,15 +84,15 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
                     }
                 } }
             }
-            await("Parent detail owns the window and focuses Play") {
-                focused("Play") && vm.state.value.episodes.isNotEmpty()
+            await("Parent detail owns the window and focuses Play latest") {
+                focused("Play latest") && vm.state.value.episodes.isNotEmpty()
             }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Parent Down enters episode toolbar") { focused("Search episodes") }
+            await("Parent Down reaches visible Cast action") { focused("Cast") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Cast panel expands") { focused("Hide cast") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Parent toolbar Down enters episode") { focused("Parent episode") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Last parent episode Down enters cast") { focused(actor.name) }
+            await("Expanded cast Down enters actor") { focused(actor.name) }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Actor credits dialog opens and focuses target series") {
                 label("Featuring ${actor.name}") != null && focused(target.title)
@@ -100,10 +100,13 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Cast selection opens the complete target detail route") {
                 vm.state.value.detail?.key == target.key && vm.state.value.season == 1 &&
-                    vm.state.value.episodes.size == 7 && focused("Play") && label("Featuring ${actor.name}") == null
+                    vm.state.value.episodes.size == 7 && focused("Play latest") && label("Featuring ${actor.name}") == null
             }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Cast detail Down reaches Search toolbar") { focused("Search episodes") }
+            await("Cast detail Down reaches visible Related action") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Cast detail Related Down reaches Search toolbar") { focused("Search episodes") }
+            NavigationAuditEvidence.capture("cast-series-detail-episode-toolbar")
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Cast detail toolbar Down enters first episode") { focused("Cast series episode 7") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
@@ -128,6 +131,8 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Toolbar Down restores the episode") { focused("Cast series episode 6") }
             assertFalse("Focus alone must never load Season 2", loads.any { it.endsWith(":2") })
+            assertEquals("Revealing the header/episode pane must not reload the first season", 1,
+                loads.count { it == "${target.key}:1" })
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Return to first season before selecting another") { focused("Season 1") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -153,9 +158,17 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
     private fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
     private fun label(value: String) = find { it.text?.toString() == value || it.contentDescription?.toString() == value }
     private fun focused(value: String): Boolean {
-        var node = label(value)
-        repeat(6) { if (node?.isFocused == true) return true; node = node?.parent }
-        return false
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        val tree = instrumentation.uiAutomation.rootInActiveWindow
+        val current = tree?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        val owner = current?.let { generateSequence(it) { node -> node.parent }.firstOrNull { it.isClickable } ?: it }
+        return find { node ->
+            if (node.text?.toString() != value && node.contentDescription?.toString() != value) false
+            else {
+                val action = generateSequence(node) { it.parent }.firstOrNull { it.isClickable } ?: node
+                action.isFocused || action == owner
+            }
+        } != null
     }
     private fun find(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -164,6 +177,7 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
             for (index in 0 until node.childCount) walk(node.getChild(index))?.let { return it }
             return null
         }
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
         val root = instrumentation.uiAutomation.rootInActiveWindow
         if (root?.packageName?.toString() != instrumentation.targetContext.packageName) return null
         return walk(root)

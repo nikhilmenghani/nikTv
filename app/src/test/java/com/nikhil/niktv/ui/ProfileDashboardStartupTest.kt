@@ -8,6 +8,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.viewModelScope
 import com.nikhil.niktv.data.ProfileStore
+import com.nikhil.niktv.data.TmdbMovie
+import com.nikhil.niktv.data.TmdbSeries
 import com.nikhil.niktv.data.UserProfileType
 import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.data.UserSyncStore
@@ -125,6 +127,40 @@ class ProfileDashboardStartupTest {
         }
         vm.openHome()
         assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
+    }
+
+    @Test fun primaryDestinationsReplaceProviderDetailsMatchChoosersAndSearchSeriesRoutes() = runTest(scheduler) {
+        @Suppress("UNCHECKED_CAST")
+        val state = NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }
+            .get(vm) as MutableStateFlow<NikTvState>
+        val item = MediaItem("fixture", "Fixture", null, null)
+        val origin = NikTvState(searchOpen = true, selectedSeries = item,
+            seriesOpenedFromHome = true, seriesOpenedFromFavorites = true, seriesOpenedFromModernSection = true,
+            providerMovieDetails = com.nikhil.niktv.discovery.ProviderMovieDetails("fixture", item, listOf(item)),
+            movieMatchSelection = TmdbMovie(1, "Movie", "Movie", null, null, null, null, null),
+            movieMatchCandidates = listOf(item), movieMatchLoadingMore = true,
+            seriesMatchSelection = TmdbSeries(2, "Series", "Series", null, null, null, null, null),
+            seriesMatchCandidates = listOf(item))
+        val destinations: List<() -> Unit> = listOf(
+            vm::openHome, { vm.openDiscovery(DashboardSurface.MOVIES) },
+            { vm.openDiscovery(DashboardSurface.SERIES) }, { vm.openCatalogType(CatalogType.LIVE_TV) },
+            vm::openFavorites, vm::openOfflineDownloads)
+        destinations.forEach { navigate ->
+            state.value = origin
+            navigate()
+            val result = vm.state.value
+            assertFalse(result.searchOpen)
+            assertNull(result.selectedSeries)
+            assertNull(result.providerMovieDetails)
+            assertNull(result.movieMatchSelection)
+            assertTrue(result.movieMatchCandidates.isEmpty())
+            assertFalse(result.movieMatchLoadingMore)
+            assertNull(result.seriesMatchSelection)
+            assertTrue(result.seriesMatchCandidates.isEmpty())
+            assertFalse(result.seriesOpenedFromHome)
+            assertFalse(result.seriesOpenedFromFavorites)
+            assertFalse(result.seriesOpenedFromModernSection)
+        }
     }
 
     @Test fun optimizedHomeIsDefaultAndPreviousHomeRemainsAnExplicitDestination() = runTest(scheduler) {

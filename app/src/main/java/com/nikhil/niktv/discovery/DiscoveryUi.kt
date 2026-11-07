@@ -120,18 +120,19 @@ internal fun DiscoveryPreviewScreen(
     detailVisibilityChanged: (Boolean) -> Unit = {},
     dismissRecommendation: ((com.nikhil.niktv.data.HistoryRecommendationRow) -> Unit)? = null,
     parentModalOpen: Boolean = false,
-    experiment: Boolean = false
+    experiment: Boolean = false,
+    honorLandingNavigation: Boolean = true
 ) {
     val actions = remember(selectSurface, exit, navigate, playCard, playEpisode, openRecent, openWatched, toggleFavorite, openCategory, openSection, removeRecent, markWatched, dismissEpisode, detailVisibilityChanged, dismissRecommendation) {
         DiscoveryScreenActions(selectSurface, exit, navigate, playCard, playEpisode, openRecent, openWatched, toggleFavorite, openCategory, openSection, removeRecent, markWatched, dismissEpisode, detailVisibilityChanged, dismissRecommendation)
     }
-    DiscoveryPreviewContent(app, surface, actions, vm, parentModalOpen, experiment)
+    DiscoveryPreviewContent(app, surface, actions, vm, parentModalOpen, experiment, honorLandingNavigation)
 }
 
 @Composable
 private fun DiscoveryPreviewContent(
     app: NikTvState, surface: DashboardSurface, actions: DiscoveryScreenActions,
-    vm: DiscoveryViewModel, parentModalOpen: Boolean, experiment: Boolean
+    vm: DiscoveryViewModel, parentModalOpen: Boolean, experiment: Boolean, honorLandingNavigation: Boolean
 ) {
     var experimentSettings by remember { mutableStateOf(false) }
     var experimentSettingsReturn by remember { mutableStateOf<(() -> Boolean)?>(null) }
@@ -442,6 +443,18 @@ private fun DiscoveryPreviewContent(
     val watchProviders = homeWatchProviders(profile, experiment && surface == DashboardSurface.HOME && state.detail == null)
     val openWatchProviders = LocalOpenWatchProviders.current
     var chosenWatchProvider by rememberSaveable(profile, stateSaver = WatchProviderSaver) { mutableStateOf<WatchProvider?>(null) }
+    LaunchedEffect(vm, app.discoveryNavigationId, honorLandingNavigation) {
+        if (honorLandingNavigation && vm.enterLanding(app.discoveryNavigationId)) {
+            // Menu tabs are destinations, not Back operations. A retained Home
+            // VM and saved collection must not cover a newly selected landing.
+            actor = null; actorOrigin = null; actorFocusOrigin = null
+            activityCollection = null; providerCollection = null; providerCollectionCategory = null
+            chosenWatchProvider = null; menu = false; configure = false
+            experimentSettings = false; experimentSettingsReturn = null
+            focusOrigins.returningTo = null
+        }
+        if (honorLandingNavigation) navigationTrace?.invoke("landing-ready nav=${app.discoveryNavigationId}")
+    }
     val providerRailModels = remember(profile, surface, windowedProviderPreview, progressLookup, scrollVariant.tileLimit) {
         linkedMapOf<String, Pair<List<Any?>, Rail>>()
     }
@@ -595,7 +608,7 @@ private fun DiscoveryPreviewContent(
             DiscoverySeriesDetailScreen(state, app, vm::loadSeason, actions.playEpisode, downloadEpisode,
                 close = ::closeRoute, favorite = { state.detail?.let { actions.toggleFavorite(favorite(it)) } },
                 openMovie = { details(it.tmdb.discovery(), "related:${it.tmdb.id}") },
-                openSeries = { details(it.tmdb.discovery(), "related:${it.tmdb.id}") })
+                openSeries = { details(it.tmdb.discovery(), "related:${it.tmdb.id}") }, metadataSource = vm.metadataSource)
         }
         return
     }
@@ -1043,7 +1056,10 @@ private fun DiscoveryPreviewContent(
                         revealOnly = (fastTvLanding || (scrollVariant.minimalReveal && remoteNavigation && !phone)) && index >= positions.firstRail) {
                         if (!ownsFocusRoute()) false else when (index) {
                             positions.header -> runCatching { tabRequester.requestFocus() }.getOrDefault(false)
-                            positions.hero -> runCatching { playRequester.requestFocus() }.getOrDefault(false)
+                            positions.hero -> runCatching {
+                                if (phonePortrait && state.detail == null && surface != DashboardSurface.HOME) tabRequester.requestFocus()
+                                else playRequester.requestFocus()
+                            }.getOrDefault(false)
                             else -> focusHandlers[index]?.invoke() == true
                         }
                     }
@@ -1074,7 +1090,7 @@ private fun DiscoveryPreviewContent(
                         }) {
                             DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
                                 back = ::closeRoute,
-                                select = { tab -> if (tab != surface) selectRoute(tab) else if (state.detail != null) closeRoute() },
+                                select = ::selectRoute,
                                 navigate = ::navigateRoute, headerFocus = { if (ownsFocusRoute()) { contentFocused = false; alignFocusedRow("navigation", 0) } },
                                 menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null,
                                 backdrop = prepared?.backdrop.takeIf { showBackdrop }, backdropBounds = glassBounds,
@@ -1085,11 +1101,17 @@ private fun DiscoveryPreviewContent(
                     item("hero") {
                         if (state.detail == null && surface != DashboardSurface.HOME) {
                             Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                                if (phonePortrait) DiscoveryPhoneHeader(surface, false, tabRequester, playRequester,
-                                    back = ::closeRoute, select = { if (it != surface) selectRoute(it) }, navigate = ::navigateRoute,
-                                    menu = menu, changeMenu = { menu = it }, customize = null,
-                                    profile = app.savedProfile?.name.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
-                                    categoryPopupChanged = { categoryPopup = it })
+                                if (phonePortrait) Box(Modifier.onPreviewKeyEvent { event ->
+                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && moveRow(positions.hero, 1)
+                                }) {
+                                    // These catalog landings have no hero action. The header
+                                    // must enter the first rail rather than an unattached Play.
+                                    DiscoveryPhoneHeader(surface, false, tabRequester, FocusRequester.Default,
+                                        back = ::closeRoute, select = { if (it != surface) selectRoute(it) }, navigate = ::navigateRoute,
+                                        menu = menu, changeMenu = { menu = it }, customize = null,
+                                        profile = app.savedProfile?.name.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
+                                        categoryPopupChanged = { categoryPopup = it })
+                                }
                                 if (!phonePortrait) Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp).onPreviewKeyEvent {
                                     if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) moveRow(positions.hero, 1) else false
                                 }) {

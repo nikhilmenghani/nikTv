@@ -41,6 +41,7 @@ class NativeDiscoveryRowsDeviceTest {
             if (condition()) return
             Thread.sleep(30)
         }
+        NavigationAuditEvidence.capture("native-failure-$message")
         fail(message)
     }
     private fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
@@ -53,6 +54,7 @@ class NativeDiscoveryRowsDeviceTest {
 
     private fun verifyNativeInput(animateFocus: Boolean, remoteOnly: Boolean = false) {
         val context = instrumentation.targetContext
+        val traceNative = InstrumentationRegistry.getArguments().getString("navigationTrace") == "true"
         check(context.packageName.endsWith(".regression"))
         val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
@@ -86,6 +88,16 @@ class NativeDiscoveryRowsDeviceTest {
             instrumentation.runOnMainSync { result = host.currentFocus?.tag as? String }
             return result
         }
+        fun snapshot(label: String) {
+            if (!traceNative) return
+            val native = nativeRoot()
+            instrumentation.runOnMainSync {
+                fun field(name: String) = native?.javaClass?.getDeclaredField(name)?.apply { isAccessible = true }?.get(native)
+                val focus = host.currentFocus
+                val diagnostic = "native-snapshot $label host=${focus?.javaClass?.simpleName}:${focus?.tag} nativeOwns=${native?.hasFocus()} touch=${native?.isInTouchMode} saved=${field("currentFocusId")} pending=${field("pendingTouchFocusId")} restored=${field("restoredFocus")} initial=${field("initialFocusPending")}"
+                instrumentation.sendStatus(2, android.os.Bundle().apply { putString("stream", "\n$diagnostic\n") })
+            }
+        }
         try {
             instrumentation.setInTouchMode(false)
             instrumentation.runOnMainSync {
@@ -109,7 +121,11 @@ class NativeDiscoveryRowsDeviceTest {
                         }
                         val saved = rememberSaveableStateHolder()
                         if (showRows.value) saved.SaveableStateProvider("native") {
-                            NativeDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, up = { header.requestFocus() }, animateFocus = animateFocus)
+                            CompositionLocalProvider(LocalDiscoveryNavigationTrace provides if (traceNative) ({ event ->
+                                instrumentation.sendStatus(2, android.os.Bundle().apply { putString("stream", "\n$event\n") })
+                            }) else null) {
+                                NativeDiscoveryRows(rows, Modifier.weight(1f).fillMaxWidth(), entry, up = { header.requestFocus() }, animateFocus = animateFocus)
+                            }
                         } else Text("Detail destination")
                     }
                     } }
@@ -205,8 +221,21 @@ class NativeDiscoveryRowsDeviceTest {
             } finally { tapDown.recycle(); tapUp.recycle() }
             await("A single physical touch activates without an initial focus-only tap") { clicks.get() == 2 }
             assertEquals(1, longClicks.get())
+            val touchedRoot = requireNotNull(nativeRoot())
+            instrumentation.runOnMainSync {
+                val touched = touchedRoot.javaClass.getDeclaredField("currentFocusId").apply { isAccessible = true }.get(touchedRoot)
+                assertEquals("Touch commits its return selection before remote reentry", "row0:item0", touched)
+            }
+            snapshot("after-touch")
             instrumentation.setInTouchMode(false)
+            await("The view receives the remote touch-mode transition before focus entry") {
+                var remoteMode = false
+                instrumentation.runOnMainSync { remoteMode = !host.window.decorView.isInTouchMode }
+                remoteMode
+            }
+            snapshot("after-leaving-touch-mode")
             instrumentation.runOnMainSync { entry.requestFocus() }
+            snapshot("after-compose-entry")
             await("Remote reentry restores the tile selected by touch") { focused() == "row0:item0" }
             } else {
                 assertEquals("Remote-only coverage retains its pre-touch native selection", "row0:item1", focused())

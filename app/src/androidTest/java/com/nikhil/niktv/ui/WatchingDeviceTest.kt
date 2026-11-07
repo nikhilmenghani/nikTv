@@ -58,8 +58,10 @@ class WatchingDeviceTest {
 
     private fun exercise(engine: PlaybackEngine, sports: Boolean, episodes: Boolean) {
         check(context.packageName.endsWith(".regression"))
-        val old = WatchingPreferences.read(WatchingPreferences.preferences(context))
-        WatchingPreferences.save(context, WatchingConfiguration())
+        // Match this fixture's explicit unscoped viewer instead of another test's selected account.
+        val preferences = WatchingPreferences.preferences(context, owner = null)
+        val old = WatchingPreferences.read(preferences)
+        WatchingPreferences.save(preferences, WatchingConfiguration())
         val video = File(context.cacheDir, "watching-fixture.mp4")
         ZipInputStream(instrumentation.context.assets.open("playback-fixtures.zip")).use { zip ->
             while (true) { val entry = zip.nextEntry ?: error("Missing video fixture")
@@ -71,11 +73,10 @@ class WatchingDeviceTest {
         val media = PlayingMedia(episode, Uri.fromFile(video).toString(), CatalogType.SERIES,
             series = series, nextEpisode = next, progressKey = "watch-fixture", profileKey = "watch-profile")
         val session = WatchingSession().apply {
-            begin("watch-profile:watch-series")
-            if (episodes) repeat(3) { completeEpisode() }
-            else for (second in 0..7199) sample(second * 1000L, true)
-            // Reset the sampling clock without resetting accumulated watch time.
-            sample(7_200_000, false)
+            // The injected session must already belong to the exact media owner,
+            // profile and series; entering a different identity correctly clears it.
+            begin("${media.userScope}:${media.profileKey}:${series.id}", media.media.id)
+
         }
         val progress = AtomicLong()
         val requested = AtomicBoolean(true)
@@ -100,10 +101,19 @@ class WatchingDeviceTest {
                 }
             } } }
             await("Actual video renders") { frames.get() > 0 }
+            // Seed after the real player owns its session and renders a frame. This
+            // tests prompt navigation without a setup identity change clearing the
+            // counters, or a near-limit fixture pausing before its first frame.
+            main {
+                if (episodes) repeat(3) { session.completeEpisode() }
+                else for (second in 0..7199) session.sample(second * 1000L, true)
+                session.sample(7_200_000, false)
+            }
             await("Watch check opens at the configured limit") { node("Are you still watching?") != null }
             await("Prompt pauses playback intent") { !requested.get() }
             assertEquals("Autoplay cannot advance behind the question", 0, advances.get())
             capture("still-watching-$engine.png")
+            NavigationAuditEvidence.capture("watching-prompt-${engine.name.lowercase()}")
             Thread.sleep(3500)
             assertNotNull("Refresh or time must not dismiss the question", node("Are you still watching?"))
             assertFalse(requested.get())
@@ -116,23 +126,26 @@ class WatchingDeviceTest {
                 assertEquals(0, advances.get())
             }
             assertEquals(0, session.completedEpisodes)
-        } finally { main { host.finish() }; WatchingPreferences.save(context, old) }
+            NavigationAuditEvidence.capture("watching-prompt-confirmed-${engine.name.lowercase()}")
+        } finally { main { host.finish() }; WatchingPreferences.save(preferences, old) }
     }
 
     @Test fun settingsPersistBothLimitsAndDisableTheCheck() {
         check(context.packageName.endsWith(".regression"))
-        val old = WatchingPreferences.read(WatchingPreferences.preferences(context))
-        WatchingPreferences.save(context, WatchingConfiguration())
+        // Match this fixture's explicit unscoped viewer instead of another test's selected account.
+        val preferences = WatchingPreferences.preferences(context, owner = null)
+        val old = WatchingPreferences.read(preferences)
+        WatchingPreferences.save(preferences, WatchingConfiguration())
         val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as PlaybackFixtureHostActivity
         try {
             main { host.setContent { MaterialTheme { Column(Modifier.width(520.dp)) { WatchingSettingsContent() } } } }
             click("Without interaction: watch time"); click("60 minutes")
             click("Without interaction: episodes"); click("2 episodes")
-            assertEquals(WatchingConfiguration(minutes = 60, episodes = 2), WatchingPreferences.read(WatchingPreferences.preferences(context)))
+            assertEquals(WatchingConfiguration(minutes = 60, episodes = 2), WatchingPreferences.read(preferences))
             click("Are you still watching?")
-            assertFalse(WatchingPreferences.read(WatchingPreferences.preferences(context)).enabled)
-        } finally { main { host.finish() }; WatchingPreferences.save(context, old) }
+            assertFalse(WatchingPreferences.read(preferences).enabled)
+        } finally { main { host.finish() }; WatchingPreferences.save(preferences, old) }
     }
     @Test fun remoteCanChooseStopWatchingWithoutAdvancing() {
         check(context.packageName.endsWith(".regression"))

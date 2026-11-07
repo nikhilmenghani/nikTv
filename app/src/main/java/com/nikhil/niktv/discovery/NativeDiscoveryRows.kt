@@ -50,10 +50,12 @@ internal fun NativeDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Modif
     focusEntry: FocusRequester, up: () -> Unit, animateFocus: Boolean = false) {
     val position = rememberSaveable(saver = NativeRowsPosition.Saver) { NativeRowsPosition() }
     val composeHost = LocalView.current
+    val navigationTrace = LocalDiscoveryNavigationTrace.current
     AndroidView(factory = { context -> NativeDiscoveryScroll(context).apply {
         restoredFocus = position.focus; restoredTop = position.top
     } }, modifier = modifier.focusRequester(focusEntry), onReset = null,
         onRelease = { it.dispose() }, update = { native ->
+            native.navigationTrace = navigationTrace
             native.onUp = { native.releaseFocusToCompose(composeHost, up) }
             native.animateFocus = animateFocus
             native.onPosition = { focus, top -> position.focus = focus; position.top = top }
@@ -71,20 +73,30 @@ private class NativeRowsPosition(var focus: String? = null, var top: Int = 0) {
 }
 
 private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
+    var navigationTrace: ((String) -> Unit)? = null
     var onUp: () -> Unit = {}
     var onPosition: (String?, Int) -> Unit = { _, _ -> }
     var restoredFocus: String? = null
     var restoredTop = 0
     private var currentFocusId: String? = null
+    // Android/Compose may provisionally restore the old keyboard descendant
+    // before the touch-mode observer runs. That cannot replace a newer tap.
+    private var pendingTouchFocusId: String? = null
+    private val preferredFocusId: String? get() = pendingTouchFocusId ?: currentFocusId ?: restoredFocus
     private var initialFocusPending = true
     private var touchModeObserver: ViewTreeObserver? = null
     private val touchModeListener = ViewTreeObserver.OnTouchModeChangeListener { touchMode ->
+        trace("touch-mode changed=$touchMode")
         if (!touchMode) post {
+            trace("touch-mode posted")
             // Touch can leave the Compose AndroidView bridge focused while no card
             // owns platform focus. Restore only inside this still-focused native island.
-            if (isAttachedToWindow && hasWindowFocus() && hasFocus() && findFocus()?.tag !is String) {
-                val saved = currentFocusId ?: restoredFocus
-                (cardRows.flatten().firstOrNull { it.tag == saved } ?: cardRows.firstOrNull()?.firstOrNull())?.requestFocus()
+            if (isAttachedToWindow && hasWindowFocus() && hasFocus() &&
+                (pendingTouchFocusId != null || findFocus()?.tag !is String)) {
+                val saved = preferredFocusId
+                val target = cardRows.flatten().firstOrNull { it.tag == saved } ?: cardRows.firstOrNull()?.firstOrNull()
+                trace("touch-mode restore target=${target?.tag}")
+                target?.requestFocus()
             }
         }
     }
@@ -109,6 +121,9 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var imageJob: Job? = null
     private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
+    private fun trace(event: String) {
+        navigationTrace?.invoke("native $event focus=${findFocus()?.tag ?: findFocus()?.javaClass?.simpleName} saved=$currentFocusId pending=$pendingTouchFocusId restored=$restoredFocus initial=$initialFocusPending touch=$isInTouchMode owns=${hasFocus()} window=${hasWindowFocus()}")
+    }
 
     init {
         isFillViewport = true
@@ -158,20 +173,24 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
     }
 
     override fun onRequestFocusInDescendants(direction: Int, previouslyFocusedRect: Rect?): Boolean {
-        val saved = currentFocusId ?: restoredFocus
+        trace("request-descendants direction=$direction")
+        val saved = preferredFocusId
         val target = cardRows.flatten().firstOrNull { it.tag == saved }
             ?: if (initialFocusPending && restoredFocus != null) null else cardRows.firstOrNull()?.firstOrNull()
         if (target == null && initialFocusPending && restoredFocus != null) return false
+        trace("request-descendants target=${target?.tag}")
         return target?.requestFocus(direction, previouslyFocusedRect)
             ?: super.onRequestFocusInDescendants(direction, previouslyFocusedRect)
     }
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+        trace("bridge-focus gain=$gainFocus")
         if (gainFocus && !parkingRebuild && !handingOffToCompose) post {
+            trace("bridge-focus posted")
             // A queued bridge-entry request must not replace a descendant already focused.
             if (!isAttachedToWindow || !hasWindowFocus() || !isFocused) return@post
-            val saved = currentFocusId ?: restoredFocus
+            val saved = preferredFocusId
             val target = cardRows.flatten().firstOrNull { it.tag == saved } ?: cardRows.firstOrNull()?.firstOrNull()
             target?.requestFocus()
         }
@@ -239,10 +258,15 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
                     fun rememberSelection() {
                         initialFocusPending = false
                         currentFocusId = identity; lastColumn[row.id] = column
+                        if (isInTouchMode) pendingTouchFocusId = identity
+                        trace("touch-selection identity=$identity")
                         onPosition(identity, scrollY)
                         // Keep a native touch-focus anchor while cards remain one-tap
                         // clickable. Leaving touch mode can then restore the selected card.
-                        if (isInTouchMode) this@NativeDiscoveryScroll.requestFocus()
+                        if (isInTouchMode) {
+                            val anchored = this@NativeDiscoveryScroll.requestFocus()
+                            trace("touch-anchor result=$anchored")
+                        }
                     }
                     setOnClickListener { rememberSelection(); currentRows.getOrNull(rowIndex)?.items?.getOrNull(column)?.onClick?.invoke() }
                     setOnLongClickListener {
@@ -251,6 +275,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
                         action?.invoke(); action != null
                     }
                     setOnFocusChangeListener { _, focused ->
+                        trace("card-focus identity=$identity gain=$focused")
                         background = frame(focused)
                         animate().cancel()
                         if (animateFocus && motionAllowed) {
@@ -258,18 +283,24 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
                             val target = if (focused) 1.025f else 1f
                             animate().scaleX(target).scaleY(target).setDuration(320L).withLayer().start()
                         } else { scaleX = 1f; scaleY = 1f }
-                        if (focused && !handingOffToCompose && !(initialFocusPending && restoredFocus != null && identity != restoredFocus)) {
+                        if (focused && !handingOffToCompose && !(initialFocusPending && restoredFocus != null && identity != restoredFocus) &&
+                            (pendingTouchFocusId == null || identity == pendingTouchFocusId)) {
                             // Platform attachment may provisionally focus the first child.
                             // It must not erase a saved return target farther down the feed.
                             initialFocusPending = false
                             currentFocusId = identity; lastColumn[row.id] = column
+                            if (identity == pendingTouchFocusId) pendingTouchFocusId = null
                             onPosition(identity, scrollY)
                             // ScrollView/HorizontalScrollView already reveal focused descendants.
                             // A second posted rectangle request would retarget their native scrolling.
                         }
                     }
                     setOnKeyListener { _, key, event ->
-                        if (event.action == KeyEvent.ACTION_DOWN) initialFocusPending = false
+                        if (event.action == KeyEvent.ACTION_DOWN) {
+                            initialFocusPending = false
+                            // An actual remote action supersedes pending touch restoration.
+                            pendingTouchFocusId = null
+                        }
                         if (event.action != KeyEvent.ACTION_DOWN) false else when (key) {
                             KeyEvent.KEYCODE_DPAD_UP -> {
                                 if (rowIndex == 0) onUp() else focusRow(rowIndex - 1, column)
@@ -322,6 +353,8 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
             }
             cardRows += cards
         }
+        if (pendingTouchFocusId != null && cardRows.flatten().none { it.tag == pendingTouchFocusId })
+            pendingTouchFocusId = null
         post {
             if (!isAttachedToWindow || revision != renderRevision) return@post
             // Focus may already have revealed its tile before this posted callback.
@@ -329,7 +362,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
             if (findFocus()?.tag !is String) scrollTo(0, top)
             // Header/popup focus changes after the rebuild always win over restoration.
             if ((hadFocus || initialFocusPending) && hasWindowFocus() && hasFocus()) {
-                val saved = if (initialFocusPending) restoredFocus else currentFocusId ?: restoredFocus
+                val saved = if (initialFocusPending) restoredFocus else preferredFocusId
                 val target = cardRows.flatten().firstOrNull { it.tag == saved } ?: cardRows.firstOrNull()?.firstOrNull()
                 if (target?.tag != restoredFocus) initialFocusPending = false
                 target?.requestFocus()

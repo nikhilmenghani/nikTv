@@ -1041,6 +1041,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun openCatalogType(type: CatalogType) {
         searchSeriesReturn = null
         com.nikhil.niktv.discovery.modernCatalogSurface(type)?.let { openDiscovery(it); return }
+        cancelPendingPlayback()
+        movieStructureJob?.cancel()
         _state.update { current ->
             current.enterCatalogRoot(type).copy(
                 modernTmdbSection = null,
@@ -8134,8 +8136,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun openFavorites() {
         searchSeriesReturn = null
         cancelPendingPlayback()
+        movieStructureJob?.cancel()
         _state.update {
-            it.copy(
+            it.withoutContentOverlays().copy(
                 favoritesOpen = true,
                 homeOpen = false,
                 settingsOpen = false,
@@ -8170,8 +8173,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun openOfflineDownloads() {
         searchSeriesReturn = null
         cancelPendingPlayback()
+        movieStructureJob?.cancel()
         _state.update {
-            it.copy(
+            it.withoutContentOverlays().copy(
                 offlineDownloadsOpen = true,
                 favoritesOpen = false,
                 homeOpen = false,
@@ -8247,7 +8251,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private fun openDiscoveryRoute(surface: DashboardSurface, experiment: Boolean) {
         searchSeriesReturn = null
         cancelPendingPlayback()
-        _state.update { it.copy(discoverySurface = surface, discoveryExperiment = experiment, watchProvidersOpen = false,
+        movieStructureJob?.cancel()
+        pendingDiscoveryEpisode = null
+        _state.update { it.withoutContentOverlays().copy(discoverySurface = surface, discoveryExperiment = experiment, watchProvidersOpen = false,
             discoveryNavigationId = it.discoveryNavigationId + 1, homeOpen = true, favoritesOpen = false,
             settingsOpen = false, searchOpen = false, offlineDownloadsOpen = false,
             selectedSeries = null, modernTmdbSection = null, modernIptvCategory = null) }

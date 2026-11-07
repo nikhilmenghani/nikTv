@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.*
 
 internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val repository: DiscoveryDataSource = DiscoveryRepository(app)) : AndroidViewModel(app) {
+    /** Shared public metadata boundary for nested cast/related presentations on this route. */
+    val metadataSource: DiscoveryDataSource get() = repository
     private val preferences = com.nikhil.niktv.data.UserProfilePreferences.get(app, "discovery_trial_v1")
     private val _state = MutableStateFlow(DiscoveryState())
     val state = _state.asStateFlow()
@@ -26,6 +28,20 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private var heroRequestKey: String? = null
     private val jobs = mutableMapOf<String, Job>()
     private val stack = mutableListOf<DiscoveryCard>()
+    private var landingNavigationId: Long? = null
+
+    /** Explicit top-level navigation clears every nested detail, even on the selected tab.
+     * Recomposition and Back returning from Search retain the current detail instead. */
+    fun enterLanding(navigationId: Long): Boolean {
+        val previous = landingNavigationId
+        landingNavigationId = navigationId
+        if (previous == null || previous == navigationId) return false
+        stack.clear()
+        clearFocusedPresentation()
+        preparedPresentation = null
+        clearDetails()
+        return true
+    }
     private var boundExperiment = false
     private fun preferenceKey(profile: String, surface: DashboardSurface, experiment: Boolean = false) =
         "$profile:${surface.name}" + if (experiment) ":scroll-experiment" else ""
@@ -175,12 +191,13 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     fun openDetails(card: DiscoveryCard) { stack.add(card); showDetails(card) }
     fun closeDetails() {
         if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex)
-        stack.lastOrNull()?.let(::showDetails) ?: run {
-            detail.next(); seasonGeneration.next()
-            jobs.filterKeys { !it.startsWith("feed:") }.values.forEach { it.cancel() }
-            _state.update { it.copy(detail = null, details = null, episodes = emptyList(), related = emptyList(), collection = emptyList(), reviews = emptyList(), season = null,
-                loading = it.loading.filter { key -> key.startsWith("feed:") }.toSet(), errors = it.errors.filterKeys { key -> key.startsWith("feed:") }) }
-        }
+        stack.lastOrNull()?.let(::showDetails) ?: clearDetails()
+    }
+    private fun clearDetails() {
+        detail.next(); seasonGeneration.next()
+        jobs.keys.filter { !it.startsWith("feed:") }.forEach { jobs.remove(it)?.cancel() }
+        _state.update { it.copy(detail = null, details = null, episodes = emptyList(), related = emptyList(), collection = emptyList(), reviews = emptyList(), season = null,
+            loading = it.loading.filter { key -> key.startsWith("feed:") }.toSet(), errors = it.errors.filterKeys { key -> key.startsWith("feed:") }) }
     }
     private fun showDetails(card: DiscoveryCard) {
         pauseHeroMetadata()

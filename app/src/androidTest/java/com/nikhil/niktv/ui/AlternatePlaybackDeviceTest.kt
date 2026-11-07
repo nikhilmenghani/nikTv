@@ -58,6 +58,7 @@ class AlternatePlaybackDeviceTest {
             if (condition()) return
             Thread.sleep(75L)
         }
+        NavigationAuditEvidence.capture("alternate-player-failure-${message.take(32)}")
         fail(message)
     }
 
@@ -67,8 +68,25 @@ class AlternatePlaybackDeviceTest {
         for (index in 0 until node.childCount) find(node.getChild(index), value)?.let { return it }
         return null
     }
-    private fun label(value: String) = find(instrumentation.uiAutomation.rootInActiveWindow, value)
+    private fun label(value: String): AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        return find(instrumentation.uiAutomation.rootInActiveWindow, value)
+    }
     private fun click(value: String) {
+        if (label(value) == null && label("Playback sources") != null) {
+            repeat(10) {
+                if (label(value) == null) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                Thread.sleep(100)
+            }
+        } else if (label(value) == null && label("Hide extra controls") != null) {
+            var toggle = label("Hide extra controls")
+            while (toggle != null && !toggle.isFocusable) toggle = toggle.parent
+            toggle?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            repeat(16) {
+                if (label(value) == null) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                Thread.sleep(80)
+            }
+        }
         await("Missing control: $value") { label(value) != null }
         var node = label(value)
         while (node != null) {
@@ -252,9 +270,19 @@ class AlternatePlaybackDeviceTest {
         }
         fun sources() {
             await("Player controls must settle before opening source choices") {
-                label("Source and quality") != null || label("More controls") != null
+                label("Source and quality") != null || label("More controls") != null || label("Hide extra controls") != null
             }
-            if (label("Source and quality") == null) click("More controls")
+            if (label("Source and quality") == null) {
+                if (label("More controls") != null) click("More controls")
+                await("Expanded controls are ready") { label("Hide extra controls") != null }
+                var toggle = label("Hide extra controls")
+                while (toggle != null && !toggle.isFocusable) toggle = toggle.parent
+                assertTrue("Expanded controls accept D-pad focus", toggle?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
+                repeat(12) {
+                    if (label("Source and quality") == null) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                    Thread.sleep(100)
+                }
+            }
             click("Source and quality")
             await("Source and quality chooser must open") { vm.state.value.alternateSources != null && label("Playback sources") != null }
         }
@@ -476,7 +504,7 @@ class AlternatePlaybackDeviceTest {
             assertTrue("$engine current stream must keep playing while chooser is open", selectedAt > openedAt + 500L)
             val framesBeforeSwitch = harness.firstFrames.get()
             harness.progress.set(-1L)
-            click("Fixture B")
+            click("360p")
             await("$engine alternate quality selection must commit") {
                 harness.vm.state.value.nowPlaying?.alternateSource?.selectedId == "b" && harness.vm.state.value.alternateSources == null
             }
@@ -497,7 +525,7 @@ class AlternatePlaybackDeviceTest {
             Thread.sleep(700L)
             assertTrue("$engine must remain paused while choosing another quality", kotlin.math.abs(harness.position() - pausedAt) < 300L)
             val pausedFrames = harness.firstFrames.get()
-            click("Fixture A")
+            click("720p")
             await("Paused quality selection must commit") { harness.vm.state.value.nowPlaying?.alternateSource?.selectedId == "a" }
             val pausedReplacement = requireNotNull(harness.vm.state.value.nowPlaying)
             assertFalse("Quality change must preserve pause intent", pausedReplacement.playWhenReady)
@@ -579,17 +607,19 @@ class AlternatePlaybackDeviceTest {
                 // State dismissal precedes removal of the separate dialog window.
                 // Wait for player semantics before deciding whether its toolbar is collapsed.
                 await("Player controls must settle before opening the engine picker") {
-                    label(origin) != null || label("More controls") != null
+                    label(origin) != null || label("More controls") != null || label("Hide extra controls") != null
                 }
-                if (label(origin) == null) click("More controls")
+                if (label(origin) == null && label("More controls") != null) click("More controls")
                 click(origin)
                 await("In-player engine overlay must open") { label("Choose player") != null }
+                NavigationAuditEvidence.capture("player-engine-picker-${current.name.lowercase()}")
                 val frames = harness.firstFrames.get()
                 click(target.playerChoiceLabel())
                 await("Engine selection must reach the existing player callback") { harness.engineSelections.lastOrNull() == target }
                 await("$target must render the existing alternate source") { harness.firstFrames.get() > frames }
 
                 harness.sources()
+                NavigationAuditEvidence.capture("player-source-picker-${target.name.lowercase()}")
                 val after = harness.position()
                 // A rendered opening frame can precede asynchronous native resume.
                 // Record the trajectory without waiting until a wrong clock catches up.

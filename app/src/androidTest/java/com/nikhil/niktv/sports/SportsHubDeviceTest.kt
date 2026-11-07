@@ -12,6 +12,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.ui.NikColors
+import com.nikhil.niktv.ui.NavigationAuditEvidence
 import com.nikhil.niktv.ui.SportsFixtureHostActivity
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
@@ -25,6 +26,7 @@ class SportsHubDeviceTest {
     private fun await(label: String, timeout: Long = 10_000, condition: () -> Boolean) {
         val end = SystemClock.uptimeMillis() + timeout
         while (SystemClock.uptimeMillis() < end) { if (condition()) return; Thread.sleep(70) }
+        NavigationAuditEvidence.capture("sports-failure-$label")
         assertTrue(label, condition())
     }
     private fun find(label: String): AccessibilityNodeInfo? {
@@ -158,6 +160,7 @@ class SportsHubDeviceTest {
             await("Empty Sports directory renders") { focused("Sports") && find("Nothing to show") != null }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Focus remains on the tab without a crash") { focused("Sports") }
+            NavigationAuditEvidence.capture("sports-empty-directory-focus")
         } finally { ins.runOnMainSync { activity.finish() } }
     }
 
@@ -236,6 +239,7 @@ class SportsHubDeviceTest {
             await("Up reaches the active tab") { focused("Sports") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("An empty filtered directory still exposes recovery") { focused("Availability: Flagged only") }
+            NavigationAuditEvidence.capture("sports-empty-filter-recovery-focus")
             availability("Flagged only", "All channels")
             await("Both channels return without flags") { find("Fixture A") != null && find("Fixture B") != null && find("Flagged unavailable") == null }
             assertFalse("Flagging/filtering cannot play a stream", played)

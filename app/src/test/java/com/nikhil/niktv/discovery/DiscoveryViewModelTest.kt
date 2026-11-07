@@ -15,6 +15,55 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryViewModelTest {
+    @Test fun selectedTabActivationClearsTheEntireDetailStackWithoutReloadingLandingFeeds() {
+        val vm = DiscoveryViewModel(app, Source())
+        vm.bind("landing-reset", DashboardSurface.HOME, emptyList()); pump()
+        assertFalse(vm.enterLanding(10))
+        val feeds = vm.state.value.feeds
+        vm.openRootDetails(card(21, true)); pump()
+        vm.openDetails(card(22, true)); pump()
+        vm.loadSeason(2); pump()
+        assertTrue(vm.state.value.episodes.isNotEmpty())
+        vm.presentFocusedCard("old-detail", card(22, true))
+        assertTrue(vm.enterLanding(11)); pump()
+        assertNull(vm.state.value.detail)
+        assertNull(vm.state.value.details)
+        assertTrue(vm.state.value.episodes.isEmpty())
+        assertNull(vm.state.value.focusedPresentation)
+        assertEquals(feeds, vm.state.value.feeds)
+        vm.openRootDetails(card(23)); pump(); vm.closeDetails(); pump()
+        assertNull("Back must not reveal the abandoned detail stack", vm.state.value.detail)
+        vm.pause()
+    }
+
+    @Test fun sameNavigationEventAndInitialDetailMountKeepTheirCurrentRoute() {
+        val vm = DiscoveryViewModel(app, Source())
+        vm.bind("landing-preserve", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.openRootDetails(card(1)); pump()
+        assertFalse(vm.enterLanding(42))
+        assertFalse(vm.enterLanding(42))
+        assertEquals(1, vm.state.value.detail?.id)
+        assertTrue(vm.enterLanding(43))
+        assertNull(vm.state.value.detail)
+        vm.pause()
+    }
+
+    @Test fun landingNavigationRejectsLateDetailsAfterTheUserSelectedHome() {
+        val delayed = CompletableDeferred<DiscoveryDetails>()
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
+                withContext(NonCancellable) { delayed.await() }
+        })
+        vm.bind("landing-late", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.enterLanding(1); vm.openRootDetails(card(1)); pump()
+        vm.enterLanding(2)
+        delayed.complete(DiscoveryDetails(card(1))); pump()
+        assertNull(vm.state.value.detail)
+        assertNull(vm.state.value.details)
+        assertTrue(vm.state.value.loading.isEmpty())
+        vm.pause()
+    }
+
     @Test fun trialPreparationCanMoveRepositoryWorkOffTheCallingThread() {
         val caller = Thread.currentThread()
         val invoked = java.util.concurrent.CountDownLatch(1)
@@ -42,6 +91,19 @@ class DiscoveryViewModelTest {
         assertEquals(3, vm.state.value.detail?.id)
         vm.closeDetails(); pump()
         assertNull(vm.state.value.detail)
+    }
+
+    @Test fun reopeningCastAndRelatedRootsRequiresOnlyOneBackForBothMediaTypes() {
+        val vm = DiscoveryViewModel(app, Source())
+        vm.bind("related-visits", DashboardSurface.SERIES, emptyList()); pump()
+        for (series in listOf(true, false)) {
+            val selected = card(if (series) 21 else 22, series)
+            // A provider-related dialog can disappear without destroying its VM.
+            repeat(3) { vm.openRootDetails(selected); pump() }
+            assertEquals(selected.key, vm.state.value.detail?.key)
+            vm.closeDetails(); pump()
+            assertNull("One Back closes a reopened cast/related root", vm.state.value.detail)
+        }
     }
 
     @Test fun clearingFocusedPresentationRejectsLateProviderMetadataAndPreservesFeedAndHero() {

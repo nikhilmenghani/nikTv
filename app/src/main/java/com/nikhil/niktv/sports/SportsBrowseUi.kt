@@ -265,7 +265,9 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
       if (compact) SportsBottomNavigation(state.tab, { keyboard?.hide(); selectTab(it) }, tabFocus,
           content = if (selected != null) sourceFocus.firstOrNull() ?: backFocus
               else if (state.tab == SportsTab.EVENTS && !state.favouritesOnly) firstFilter
-              else if (availableKeys.isNotEmpty()) gridEntry else optionsAction)
+              else if (showsAvailability && state.availabilityFilter != SportsAvailabilityFilter.ALL &&
+                  availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) }) availabilityAction
+              else if (availableKeys.isNotEmpty()) gridEntry else null)
     }
     contextItem?.let { item -> SportsItemDialog(item, state.favourites.any { it.key == item.key },
         toggle = { toggleFavourite(item); contextItem = null; restore(restoreTile) }, close = { contextItem = null; restore(restoreTile) },

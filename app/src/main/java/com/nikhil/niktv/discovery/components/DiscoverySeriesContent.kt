@@ -254,7 +254,6 @@ internal fun DiscoverySeriesContent(
     var episodeMove by remember { mutableStateOf<Job?>(null) }
 
     fun closeEpisodeSearch() {
-        searchQuery = ""
         episodeTextEditing = false
         expandedPanel = null
         keyboardController?.hide()
@@ -303,7 +302,8 @@ internal fun DiscoverySeriesContent(
             }
         }
     }
-    // Closing search clears its query; hidden search never filters episodes.
+    // Closing search preserves the query for reopening. Only the explicit Clear
+    // action erases it; a closed search never filters the episode list.
     val activeSearchQuery = searchQuery.takeIf { expandedPanel == SeriesDetailPanel.SEARCH }.orEmpty()
 
     val isFavorite = remember(state.favorites, series) {

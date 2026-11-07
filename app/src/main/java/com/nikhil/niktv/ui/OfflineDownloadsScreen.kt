@@ -353,7 +353,8 @@ internal fun OfflineDownloadsScreen(
 internal fun OfflineStorageScreen(
     state: NikTvState,
     removeAll: () -> Unit,
-    close: () -> Unit
+    close: () -> Unit,
+    storageSnapshot: AppStorageSnapshot? = null
 ) {
     val context = LocalContext.current
     val owner = LocalViewingOwner.current
@@ -363,8 +364,8 @@ internal fun OfflineStorageScreen(
     var storage by remember { mutableStateOf<AppStorageSnapshot?>(null) }
     var clearing by remember { mutableStateOf(false) }
 
-    LaunchedEffect(state.offlineDownloadRevision, storageRevision) {
-        storage = runCatching { appStorageSnapshot(context, state.offlineDownloads) }.getOrNull()
+    LaunchedEffect(state.offlineDownloadRevision, storageRevision, storageSnapshot) {
+        storage = storageSnapshot ?: runCatching { appStorageSnapshot(context, state.offlineDownloads) }.getOrNull()
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {

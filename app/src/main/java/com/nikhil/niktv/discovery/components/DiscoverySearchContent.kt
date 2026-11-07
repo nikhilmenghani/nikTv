@@ -1357,6 +1357,9 @@ private fun SearchResultsContent(
     modifier: Modifier = Modifier
 ) {
     val all = state.searchType == SearchContentType.ALL
+    val configuration = LocalConfiguration.current
+    val phoneLayout = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
+        LocalContext.current.isTvLikeDevice(configuration))
     var resultTab by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(SearchContentType.SERIES) }
     val tabRequesters = remember { globalSearchTypes.associateWith { FocusRequester() } }
     val resultRequester = if (all) remember { FocusRequester() } else firstItemRequester
@@ -1441,8 +1444,11 @@ private fun SearchResultsContent(
         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
         when (event.key) {
             Key.DirectionUp, Key.DirectionDown -> {
-                moveTo(searchVerticalTarget(index, columns, results.size, event.key == Key.DirectionDown, footer))
-                true
+                val target = searchVerticalTarget(index, columns, results.size, event.key == Key.DirectionDown, footer)
+                // The phone dock is below the results. At the last row, leave
+                // ordinary focus search free to reach Home and the other tabs.
+                if (phoneLayout && event.key == Key.DirectionDown && target == index) false
+                else { moveTo(target); true }
             }
             Key.DirectionLeft -> {
                 when {

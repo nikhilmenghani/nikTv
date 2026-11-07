@@ -111,6 +111,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     seasonCounts: (Map<Int, Int>) -> Unit = {},
     compactSeries: Boolean = false,
     discoveryDetails: DiscoveryDetails? = null,
+    metadataSource: DiscoveryDataSource? = null,
+    openDiscoveryDetail: ((DiscoveryCard) -> Unit)? = null,
     tools: @Composable RowScope.() -> Unit = {},
     layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
         cast: (() -> Boolean)?, related: (() -> Boolean)?) -> Unit = { hero, castRow, supplementary, _, _ ->
@@ -120,7 +122,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val navigation = LocalProviderDetailNavigation.current
     val configuration = LocalConfiguration.current
     val profile = app.savedProfile?.cacheKey().orEmpty()
-    val repository = remember(context) { DiscoveryRepository(context) }
+    val defaultRepository = remember(context) { DiscoveryRepository(context) }
+    val repository = metadataSource ?: defaultRepository
     var metadata by remember(profile, item.id, type) { mutableStateOf(DiscoveryDetails(providerDetailFallback(item, type))) }
     var related by remember(profile, item.id, type) { mutableStateOf(emptyList<DiscoveryCard>()) }
     var relatedLoading by remember(profile, item.id, type) { mutableStateOf(false) }
@@ -132,6 +135,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     var relatedDetail by remember(profile, item.id, type) { mutableStateOf<DiscoveryCard?>(null) }
     var movieOptions by remember(profile, item.id) { mutableStateOf(false) }
     var actorOrigin by remember { mutableStateOf<FocusRequester?>(null) }
+    var relatedOrigin by remember(profile, item.id, type) { mutableStateOf<FocusRequester?>(null) }
     val actorPages = rememberSaveableStateHolder()
     val host = LocalView.current
     val scope = rememberCoroutineScope()
@@ -173,6 +177,17 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             repeat(60) {
                 withFrameNanos { }
                 if (host.hasWindowFocus() && runCatching { actorOrigin?.requestFocus() == true }.getOrDefault(false)) return@launch
+            }
+        }
+    }
+    fun dismissRelated() {
+        relatedDetail = null
+        // Actor credits restore their own selected poster. A direct related-row
+        // visit returns to the poster that opened it in the provider detail.
+        if (actor == null) scope.launch {
+            repeat(60) {
+                withFrameNanos { }
+                if (host.hasWindowFocus() && runCatching { relatedOrigin?.requestFocus() == true }.getOrDefault(false)) return@launch
             }
         }
     }
@@ -341,12 +356,16 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                     else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { if (type == CatalogType.SERIES) (episodeDown ?: down)(); true } else false
                 }, contentPadding = PaddingValues(start = if (phone) 14.dp else 24.dp, end = if (phone) 14.dp else 24.dp, top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(related, key = { _, card -> card.key }) { index, card ->
+                        val requester = remember(card.key, index == 0) { if (index == 0) relatedEntry else FocusRequester() }
                         var alternateOpen by remember(card.key) { mutableStateOf(false) }
                         Box {
                         DiscoveryPhoneMediaCard(card.title, card.poster, card.date?.take(4).orEmpty(), if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else 112.dp,
                             source = DiscoveryTileSource.TMDB,
-                            wide = false, modifier = if (index == 0) Modifier.focusRequester(relatedEntry) else Modifier,
-                            onClick = { relatedDetail = card }, onLongClick = { alternateOpen = true }, onFocus = {})
+                            wide = false, modifier = Modifier.focusRequester(requester),
+                            onClick = {
+                                if (openDiscoveryDetail != null) openDiscoveryDetail(card)
+                                else { relatedOrigin = requester; relatedDetail = card }
+                            }, onLongClick = { alternateOpen = true }, onFocus = {})
                         AlternateSourceOnlyMenu(alternateOpen, card.media,
                             if (card.series) CatalogType.SERIES else CatalogType.MOVIES, dismiss = { alternateOpen = false })
                         }
@@ -380,20 +399,18 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     actor?.takeIf { relatedDetail == null }?.let { person ->
         actorPages.SaveableStateProvider("actor:${person.id}") {
             DiscoveryActorDialog(person, load = repository::actorCredits, loadInfo = repository::actorInfo,
-                close = ::restoreActor, reduceMotion = reduceMotion, open = { relatedDetail = it })
+                close = ::restoreActor, reduceMotion = reduceMotion, open = {
+                    if (it.key == metadata.card.key) restoreActor()
+                    else if (openDiscoveryDetail != null) { actor = null; openDiscoveryDetail(it) }
+                    else relatedDetail = it
+                })
         }
     }
     relatedDetail?.takeIf { navigation != null }?.let { card ->
         val nav = requireNotNull(navigation)
-        Dialog(onDismissRequest = { relatedDetail = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Dialog(onDismissRequest = ::dismissRelated, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             val vm: DiscoveryViewModel = viewModel(key = "provider-related:$profile:${item.id}:${card.key}")
-            var initialized by remember { mutableStateOf(false) }
-            val current by vm.state.collectAsState()
-            LaunchedEffect(card.key) {
-                vm.bind(profile, if (card.series) DashboardSurface.SERIES else DashboardSurface.MOVIES, emptyList())
-                vm.openDetails(card); initialized = true
-            }
-            LaunchedEffect(initialized, current.detail) { if (initialized && current.detail == null) relatedDetail = null }
+            ProviderRelatedDetailRoute(profile, card, vm, close = ::dismissRelated) {
             DiscoveryPreviewScreen(app, if (card.series) DashboardSurface.SERIES else DashboardSurface.MOVIES,
                 selectSurface = { relatedDetail = null; close(); nav.openDiscovery(it) }, exit = { relatedDetail = null },
                 navigate = { relatedDetail = null; close(); nav.navigate(it) },
@@ -402,9 +419,31 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 openRecent = nav.recent, openWatched = nav.watched,
                 toggleFavorite = nav.favorite, openCategory = { relatedDetail = null; close(); nav.category(it) },
                 openSection = { relatedDetail = null; close(); nav.section(it) }, removeRecent = nav.removeRecent,
-                markWatched = nav.markWatched, dismissEpisode = nav.dismissEpisode, vm = vm)
+                markWatched = nav.markWatched, dismissEpisode = nav.dismissEpisode, vm = vm, honorLandingNavigation = false)
+            }
         }
     }
+}
+
+/** Wait for the selected detail to reach the UI before treating null as Back. The
+ * initialization coroutine can complete before collectAsState publishes that detail. */
+@Composable
+internal fun ProviderRelatedDetailRoute(profile: String, card: DiscoveryCard, vm: DiscoveryViewModel,
+    close: () -> Unit, content: @Composable () -> Unit) {
+    val current by vm.state.collectAsState()
+    var detailObserved by remember(vm, profile, card.key) { mutableStateOf(false) }
+    val currentClose by rememberUpdatedState(close)
+    LaunchedEffect(vm, profile, card.key) {
+        vm.bind(profile, if (card.series) DashboardSurface.SERIES else DashboardSurface.MOVIES, emptyList())
+        // The ViewModel survives dialog disposal. Reopening a credit is a new
+        // root visit, not another copy of the old detail on its retained stack.
+        vm.openRootDetails(card)
+    }
+    LaunchedEffect(vm, profile, card.key, current.detail?.key) {
+        if (current.detail != null) detailObserved = true
+        else if (detailObserved) currentClose()
+    }
+    content()
 }
 
 @Composable

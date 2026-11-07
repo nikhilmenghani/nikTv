@@ -136,6 +136,7 @@ internal fun DiscoveryFavoritesContent(
     val availabilityFocus = remember(profileKey) { FocusRequester() }
     val availabilityScope = rememberCoroutineScope()
     val entryFocusRequester = remember(profileKey) { FocusRequester() }
+    val heroFocusRequester = remember(profileKey) { FocusRequester() }
     val gridState = rememberLazyGridState()
     val posterColumns = modernPosterColumns(configuration, isTv)
     val phoneLibrary = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
@@ -145,6 +146,14 @@ internal fun DiscoveryFavoritesContent(
             availability.filter.includes(availability.flags[it.media.id])) }.takeIf { it.isNotEmpty() }?.let { kind to it }
     }
     val firstFavoriteKey = groups.firstOrNull()?.second?.firstOrNull()?.key
+    fun enterSavedItems() { availabilityScope.launch {
+        gridState.scrollToItem(2 + if (state.favorites.any { it.kind == FavoriteKind.CHANNEL }) 1 else 0)
+        repeat(8) { withFrameNanos { }; if (runCatching { entryFocusRequester.requestFocus() }.getOrDefault(false)) return@launch }
+    } }
+    fun returnToHero() { availabilityScope.launch {
+        gridState.scrollToItem(0)
+        repeat(8) { withFrameNanos { }; if (runCatching { heroFocusRequester.requestFocus() }.getOrDefault(false)) return@launch }
+    } }
     LazyVerticalGrid(
         // Match the dashboard's Continue Watching geometry. The old adaptive
         // 180dp rule collapsed compact phones to one nearly full-width poster.
@@ -160,7 +169,8 @@ internal fun DiscoveryFavoritesContent(
     ) {
         if (phoneLibrary) item("favorites-hero", span = { GridItemSpan(maxLineSpan) }) {
             com.nikhil.niktv.discovery.DiscoveryFavoritesHero(state, gridState.isScrollInProgress || gridState.firstVisibleItemIndex > 0,
-                openFavorite, toggleFavorite, heroPresentation)
+                openFavorite, toggleFavorite, heroPresentation, playRequester = heroFocusRequester,
+                onDown = { if (groups.isNotEmpty()) enterSavedItems() })
         }
         if (!phoneLibrary) item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
             ModernSectionHeader("My List", "Saved for this profile")
@@ -197,7 +207,13 @@ internal fun DiscoveryFavoritesContent(
                         aspectRatio = 16f / 9f,
                         open = { openFavorite(favorite) },
                         remove = { toggleFavorite(favorite) },
-                        modifier = if (favorite.key == firstFavoriteKey) Modifier.focusRequester(entryFocusRequester) else Modifier,
+                        modifier = if (favorite.key == firstFavoriteKey) Modifier.focusRequester(entryFocusRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (phoneLibrary && event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp &&
+                                    com.nikhil.niktv.discovery.libraryFavoriteHeroes(state.favorites, profileKey).isNotEmpty()) {
+                                    returnToHero(); true
+                                } else false
+                            } else Modifier,
                         discoveryState = state.takeIf { discoveryCards || kind == FavoriteKind.CHANNEL }, refreshLiveProgramme = refreshLiveProgramme,
                         onChannelAvailabilityChanged = { if (availability.filter != IptvAvailabilityFilter.ALL) availabilityScope.launch {
                             gridState.scrollToItem(0); withFrameNanos { }; runCatching { availabilityFocus.requestFocus() }

@@ -103,6 +103,8 @@ class DiscoveryNavigationDeviceTest {
         val playedIds = java.util.concurrent.CopyOnWriteArrayList<Int>()
         val favoriteIds = java.util.concurrent.CopyOnWriteArrayList<String>()
         val providerOpens = java.util.concurrent.CopyOnWriteArrayList<Triple<CatalogType, String, List<String>>>()
+        val selectedSurface = androidx.compose.runtime.mutableStateOf(DashboardSurface.HOME)
+        val navigationId = androidx.compose.runtime.mutableLongStateOf(0L)
         val source = object : DiscoveryDataSource {
             override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) =
                 if (section.series) listOf(DiscoveryCard(101, true, "Fixture television row", date = "2020-01-01"))
@@ -124,16 +126,6 @@ class DiscoveryNavigationDeviceTest {
         lateinit var vm: DiscoveryViewModel
         var vmReady = false
         fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
-        fun upToHero() {
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            await("IPTV poster Up reaches its Search / All header") { focused("Search / All") }
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Provider row returns to series row") { focused("Fixture television row") }
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Series row returns to movie row") { focused("Fixture hero one") }
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Movie row returns to hero Play") { focused("Play") }
-        }
         try {
             await("TV landing fixture window") { host.hasWindowFocus() }
             instrumentation.setInTouchMode(false)
@@ -162,8 +154,9 @@ class DiscoveryNavigationDeviceTest {
                             session = PortalSession(profile, "fixture", "https://tv-landing.invalid", "", "", ""),
                             categoryFilters = mapOf("${profile.cacheKey()}|MOVIES" to listOf(category.id)),
                             rawCategoriesByType = mapOf(CatalogType.MOVIES to listOf(category)),
-                            tmdbSectionsBySurface = mapOf(DashboardSurface.HOME to emptyList())),
-                            DashboardSurface.HOME, {}, {}, {}, { playedIds += it.id }, { _, _, _ -> }, {}, { _, _ -> },
+                            tmdbSectionsBySurface = mapOf(DashboardSurface.HOME to emptyList()),
+                            discoverySurface = selectedSurface.value, discoveryNavigationId = navigationId.longValue),
+                            selectedSurface.value, { selectedSurface.value = it; navigationId.longValue++ }, {}, {}, { playedIds += it.id }, { _, _, _ -> }, {}, { _, _ -> },
                             { favoriteIds += it.media.id }, {}, {}, {}, { _, _ -> }, { _, _ -> }, vm)
                     } }
                 }
@@ -176,20 +169,13 @@ class DiscoveryNavigationDeviceTest {
             await("TV movie rail") { focused("Fixture hero one") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("TV series rail") { focused("Fixture television row") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("TV IPTV rail") { focused(provider.title) }
-            Thread.sleep(500) // Rich mode previously started a public provider lookup after 150 ms.
-            assertEquals("TV focus performs no provider presentation lookups", 0, providerLookups.get())
-            assertTrue("TV focus also leaves explicit detail loading idle", detailIds.isEmpty())
-            assertNull(vm.state.value.focusedEntryKey)
-            assertNull(vm.state.value.focusedPresentation)
+            assertNull("Home keeps IPTV categories on their dedicated media destinations", text(provider.title))
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Series row returns to the movie row") { focused("Fixture hero one") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Movie row returns to hero Play") { focused("Play") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Provider tile retains its explicit open callback") { providerOpens.singleOrNull()?.second == provider.id }
-            assertEquals(CatalogType.MOVIES, providerOpens.single().first)
-            assertEquals(listOf(provider.id), providerOpens.single().third)
-            upToHero()
-            key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Hero Play keeps hero identity after provider focus") { playedIds.singleOrNull() == 1 }
+            await("Hero Play keeps its current identity") { playedIds.singleOrNull() == 1 }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Hero My List") { focused("My List") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -212,7 +198,29 @@ class DiscoveryNavigationDeviceTest {
             key(KeyEvent.KEYCODE_BACK)
             await("Detail Back restores originating tile") { focused("Fixture movie two") && vm.state.value.detail == null }
             assertEquals(listOf(1, 2), detailIds.toList())
+            instrumentation.runOnMainSync { selectedSurface.value = DashboardSurface.MOVIES; navigationId.longValue++ }
+            await("Movies destination owns the IPTV collection") { focused("Movies") && text(provider.title) != null }
+            repeat(5) {
+                if (!focused(provider.title)) { key(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(80) }
+            }
+            await("TV Movies IPTV rail") { focused(provider.title) }
+            NavigationAuditEvidence.capture("tv-movies-provider-focus")
+            Thread.sleep(500)
+            assertEquals("TV provider focus performs no background presentation lookup", 0, providerLookups.get())
+            assertEquals("Provider focus does not load TMDB detail metadata", listOf(1, 2), detailIds.toList())
+            assertNull(vm.state.value.focusedEntryKey)
+            assertNull(vm.state.value.focusedPresentation)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Provider tile retains its explicit open callback") { providerOpens.singleOrNull()?.second == provider.id }
+            assertEquals(CatalogType.MOVIES, providerOpens.single().first)
+            assertEquals(listOf(provider.id), providerOpens.single().third)
             assertEquals(0, providerLookups.get())
+            instrumentation.runOnMainSync { selectedSurface.value = DashboardSurface.HOME; navigationId.longValue++ }
+            await("Returning from IPTV Movies reaches the Home header") { focused("Home") && vm.state.value.surface == DashboardSurface.HOME }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Home hero Play is restored after provider focus") { focused("Play") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Provider focus cannot replace the Home hero playback identity") { playedIds.toList() == listOf(1, 1) }
         } finally {
             instrumentation.runOnMainSync { if (vmReady) vm.pause(); host.finish() }
         }
@@ -328,6 +336,7 @@ class DiscoveryNavigationDeviceTest {
         fail(label)
     }
     private fun find(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (node == null) return null
             if (predicate(node)) return node
@@ -365,6 +374,12 @@ class DiscoveryNavigationDeviceTest {
             yes
         }
     } != null
+    private fun focusedStateDescriptionContains(value: String): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        val focused = instrumentation.uiAutomation.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        return androidx.core.view.accessibility.AccessibilityNodeInfoCompat.wrap(focused).stateDescription
+            ?.toString()?.contains(value) == true
+    }
     private fun assertHorizontalNavigationKeepsRowStationary() {
         fun top(): Int? {
             val bounds = Rect()
@@ -592,8 +607,8 @@ class DiscoveryNavigationDeviceTest {
             await("Menu dismissal restores its originating tile") { focused("Fixture title 2") && text("Watch trailer") == null }
             holdCenter(); await("Manual refresh menu") { text("Refresh IPTV matches") != null }
             chooseMenuOption("Refresh IPTV matches")
-            await("Manual refresh is explicit and returns to its tile") { refreshes == 1 && focused("Fixture title 2") && focused("3") }
-            assertTrue("Manual match badge belongs to the selected tile", focused("3"))
+            await("Manual refresh is explicit and returns to its tile") { refreshes == 1 && focused("Fixture title 2") && focusedStateDescriptionContains("3 IPTV matches") }
+            assertTrue("Manual match count belongs to the selected tile", focusedStateDescriptionContains("3 IPTV matches"))
             holdCenter(); await("Description menu") { text("View description") != null }
             chooseMenuOption("View description")
             await("Full description opens") { text("Close") != null && text("Fixture synopsis 2") != null }

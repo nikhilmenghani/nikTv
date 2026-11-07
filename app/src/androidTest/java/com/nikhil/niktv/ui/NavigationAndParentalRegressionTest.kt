@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.data.ParentalControls
@@ -41,10 +42,23 @@ class NavigationAndParentalRegressionTest {
         return instrumentation.startActivitySync(Intent(context, type).putExtra("engine", engine).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
     private fun enterPin(value: String) {
+        fun activeRoot(): AccessibilityNodeInfo? {
+            if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+            return instrumentation.uiAutomation.rootInActiveWindow
+        }
         var field: AccessibilityNodeInfo? = null
-        await("PIN field must be editable") { field = find(instrumentation.uiAutomation.rootInActiveWindow) { it.isEditable }; field != null }
+        await("PIN input is present") {
+            field = find(activeRoot()) { it.className?.toString() == "android.widget.EditText" }
+            field != null
+        }
+        if (field?.isEditable != true) {
+            // PIN focus is deliberately read-only; OK is the explicit editing action.
+            if (field?.isFocused != true) assertTrue(checkNotNull(field).performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+        }
+        await("Explicit activation makes PIN editable") { field = find(activeRoot()) { it.isEditable }; field != null }
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }
-        assertTrue(field!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
+        assertTrue(checkNotNull(field).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
     }
     @Test fun previousAndNextActionsNavigateFromPlaybackFailure() = exerciseNavigation("MEDIA3")
     @Test fun flowPreviousAndNextKeepNikTvNavigation() = exerciseNavigation("FLOW")

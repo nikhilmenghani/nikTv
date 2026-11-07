@@ -325,8 +325,11 @@ internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, c
                         if (value.isEmpty()) Text(placeholder, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                         input()
                     }
-                    IconButton(clear ?: close, Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Close, if (clear != null) "Clear episode search" else closeLabel, Modifier.size(18.dp))
+                    if (clear != null) IconButton(clear, Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Backspace, "Clear episode search", Modifier.size(18.dp))
+                    }
+                    IconButton(close, Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, closeLabel, Modifier.size(18.dp))
                     }
                 }
             })

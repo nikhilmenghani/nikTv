@@ -33,7 +33,9 @@ class WatchProvidersDeviceTest {
     }
     private fun await(message: String, ready: () -> Boolean) {
         val end = SystemClock.uptimeMillis() + 8000
-        while (SystemClock.uptimeMillis() < end) { if (ready()) return; Thread.sleep(40) }; fail(message)
+        while (SystemClock.uptimeMillis() < end) { if (ready()) return; Thread.sleep(40) }
+        NavigationAuditEvidence.capture("watch-provider-failure")
+        fail(message)
     }
     private fun action(label: String, action: Int) {
         var n = node(label)
@@ -83,7 +85,14 @@ class WatchProvidersDeviceTest {
             test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             await("OK opens selected details callback") { opened == "Film 1-1-2" }
             test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down reaches second provider") { focused("Film 2-1-2") || focused("Film 2-1-1") }
+            await("Down reaches the next provider heading or posters") {
+                focused("Film 2-1-2") || focused("Film 2-1-1") || focused("View all Provider 2")
+            }
+            NavigationAuditEvidence.capture("watch-provider-next-row-entry")
+            if (focused("View all Provider 2")) {
+                test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down from the provider heading enters its posters") { focused("Film 2-1-2") || focused("Film 2-1-1") }
+            }
             action("Film 2-1-1", AccessibilityNodeInfo.ACTION_CLICK)
             await("Touch opens selected title") { opened == "Film 2-1-1" }
             // Reset viewport without relying on a particular remote scroll timing.
@@ -103,6 +112,57 @@ class WatchProvidersDeviceTest {
             assertEquals(20, model!!.state.value.rows[1]!!.cards.size)
         } finally { test.runOnMainSync { activity.finish() } }
     }
+    @Test fun emptyAndLoadingProviderRowsDoNotTrapVerticalRemoteFocus() {
+        for (loading in listOf(false, true)) {
+            val activity = host()
+            test.setInTouchMode(false)
+            val firstName = if (loading) "Loading provider" else "Empty provider"
+            val opened = java.util.concurrent.CopyOnWriteArrayList<String>()
+            val state = WatchProvidersState(
+                providers = listOf(WatchProvider(1, firstName), WatchProvider(2, "Ready provider")),
+                rows = mapOf(1 to WatchProviderRow(emptyList(), 1, false, loading),
+                    2 to WatchProviderRow(listOf(DiscoveryCard(991, false, "Ready provider film", date = "2020-01-01")), 1, false)),
+                loading = false)
+            fun exactFocus(label: String): Boolean {
+                if (android.os.Build.VERSION.SDK_INT >= 33) test.uiAutomation.clearCache()
+                val root = test.uiAutomation.rootInActiveWindow
+                fun walk(node: AccessibilityNodeInfo?, matches: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+                    node ?: return null
+                    for (index in 0 until node.childCount) walk(node.getChild(index), matches)?.let { return it }
+                    return node.takeIf(matches)
+                }
+                val target = walk(root) { it.text?.toString()?.lineSequence()?.any { text -> text == label } == true || it.contentDescription?.toString() == label }
+                    ?: return false
+                val owner = generateSequence(target) { it.parent }.firstOrNull { it.isClickable } ?: target
+                val input = walk(root) { it.isFocused }
+                val currentOwner = input?.let { generateSequence(it) { parent -> parent.parent }.firstOrNull { it.isClickable } ?: it }
+                return owner == currentOwner
+            }
+            try {
+                test.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                    WatchProviderRows(state, { _, _ -> }, {}, "", false, {}, remember { FocusRequester() },
+                        remember { FocusRequester() }, {}, {}, {}, {}, { card, _ -> opened.add(card.title) },
+                        viewAll = { provider, _ -> opened.add(provider.name) })
+                } } }
+                await("Both provider headings are attached, loading=$loading") {
+                    node("View all $firstName") != null && node("View all Ready provider") != null
+                }
+                action("View all $firstName", AccessibilityNodeInfo.ACTION_FOCUS)
+                await("The empty/loading heading owns focus") { exactFocus("View all $firstName") }
+                test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down skips the noninteractive provider row") { exactFocus("View all Ready provider") }
+                NavigationAuditEvidence.capture("watch-provider-${if (loading) "loading" else "empty"}-row-next")
+                test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down enters the ready provider posters") { exactFocus("Ready provider film") }
+                test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Poster Up returns to its provider heading") { exactFocus("View all Ready provider") }
+                test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Up returns across the noninteractive provider row") { exactFocus("View all $firstName") }
+                assertTrue("Remote browsing never opens details or collections", opened.isEmpty())
+            } finally { test.runOnMainSync { activity.finish() } }
+        }
+    }
+
     @Test fun smallPhoneNavigationAlwaysShowsEveryTitle() {
         val activity = host(); var selected = DiscoveryPhoneDestination.HOME
         try {
@@ -113,7 +173,8 @@ class WatchProvidersDeviceTest {
                     Box(Modifier.width(360.dp)) { DiscoveryPhoneBottomNavigation(active, { active = it; selected = it }) }
                 }
             } } }
-            await("All six destinations are accessible") { DiscoveryPhoneDestination.entries.all { node(it.title) != null } }
+            val primaryDestinations = DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS }
+            await("All five primary destinations are accessible") { primaryDestinations.all { node(it.title) != null } }
             fun hasVisibleText(label: String): Boolean {
                 fun find(n: AccessibilityNodeInfo?): Boolean {
                     if (n == null) return false
@@ -122,10 +183,13 @@ class WatchProvidersDeviceTest {
                 }
                 return find(test.uiAutomation.rootInActiveWindow)
             }
-            assertTrue("Inactive destinations must have visible titles too", DiscoveryPhoneDestination.entries.all { hasVisibleText(it.title) })
-            action("Providers", AccessibilityNodeInfo.ACTION_CLICK)
-            await("Providers selected") { selected == DiscoveryPhoneDestination.PROVIDERS }
-            val rect = Rect(); node("Providers")!!.getBoundsInScreen(rect)
+            assertTrue("Inactive destinations must have visible titles too", primaryDestinations.all { hasVisibleText(it.title) })
+            for (destination in primaryDestinations) {
+                action(destination.title, AccessibilityNodeInfo.ACTION_CLICK)
+                await("${destination.title} selected") { selected == destination }
+            }
+            val rect = Rect(); node("My List")!!.getBoundsInScreen(rect)
+            NavigationAuditEvidence.capture("phone-five-primary-destinations")
             assertTrue(rect.width() > 0 && rect.height() > 0)
         } finally { test.runOnMainSync { activity.finish() } }
     }
