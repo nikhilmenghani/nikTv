@@ -5698,7 +5698,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 }
             }
             // Avoid a provider call for each keystroke; query/scope changes cancel this job.
-            if (local.isEmpty() && normalizedQuery.length >= 2) {
+            if ((local.isEmpty() || requiresCategorySearch(_state.value.session!!.profile.portalType, type, categoryId,
+                    saved?.allCategoriesComplete == true)) && normalizedQuery.length >= 2) {
                 delay(SEARCH_PROVIDER_FALLBACK_DELAY_MS)
                 val current = _state.value
                 if (current.searchOpen && current.session?.profile?.cacheKey() == profileKey &&
@@ -5746,7 +5747,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 }
 
             cacheFirstSearch(
-                forceProvider = forceServer,
+                forceProvider = forceServer || requiresCategorySearch(snapshot.session!!.profile.portalType,
+                    snapshot.searchType, snapshot.searchCategoryId, saved?.allCategoriesComplete == true),
                 cached = {
                     (localSearch(
                         type = snapshot.searchType,
@@ -5930,81 +5932,43 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
 
+        val categorySearch = session.profile.portalType == PortalType.STALKER && categoryId == "*"
+        var categoryFailures = 0
+        var searchedCategories = false
         runCatching {
-            val direct = withAutomaticSessionRetry(session) { activeSession ->
-                searchProviderPage(activeSession, type, query, page, categoryId)
-            }
-            if (session.profile.portalType == PortalType.XTREAM || categoryId != "*" || direct.items.isNotEmpty()) {
-                direct
+            if (!categorySearch) {
+                withAutomaticSessionRetry(session) { active -> searchProviderPage(active, type, query, page, categoryId) }
             } else {
-                // Some Stalker portals accept the wildcard but silently return an
-                // empty page. Search each enabled category and publish matches as
-                // they arrive so All categories remains useful without a long blank wait.
-                var discovered = emptyList<MediaItem>()
-                var anyHasMore = false
-                val cachedCategoryIds = _state.value.browseCachesByType[
-                    catalogTypeForSearch(type)
-                ]?.itemsByCategory?.keys.orEmpty()
-                val categories = _state.value.searchCategories
-                    .filter { it.id != "*" }
-                    .sortedByDescending { it.id in cachedCategoryIds }
-
-                // A small parallel window cuts latency without flooding the
-                // IPTV portal. Stop as soon as an exact title is found; users
-                // can request another page if they need broader matches.
-                val batches = categories.chunked(SEARCH_CATEGORY_CONCURRENCY)
-                for ((batchIndex, batch) in batches.withIndex()) {
-                    _state.update { current ->
-                        current.copy(
-                            searchActivityTitle = "Searching IPTV categories",
-                            searchActivityDetail =
-                                "Categories ${batchIndex * SEARCH_CATEGORY_CONCURRENCY + 1}–" +
-                                    "${minOf((batchIndex + 1) * SEARCH_CATEGORY_CONCURRENCY, categories.size)} of ${categories.size}",
-                            searchActivityProgress =
-                                batchIndex.toFloat() / batches.size.coerceAtLeast(1)
-                        )
+                val catalogType = catalogTypeForSearch(type)
+                val categories = _state.value.searchCategories.ifEmpty {
+                    val raw = store.browseCatalog(catalogType, profileKey).first()?.categories.orEmpty().ifEmpty {
+                        withAutomaticSessionRetry(session) { portal.categories(it, catalogType) }
                     }
-                    val pages = coroutineScope {
-                        batch.map { category ->
-                            async {
-                                runCatching {
-                                    withAutomaticSessionRetry(session) { activeSession ->
-                                        portal.search(activeSession, type, query, page, category.id)
-                                    }
-                                }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
-                            }
-                        }.awaitAll().filterNotNull()
-                    }
-                    pages.forEach { categoryPage ->
-                        anyHasMore = anyHasMore || categoryPage.hasMore
-                        val before = discovered.size
-                        discovered = (discovered + categoryPage.items).distinctBy { it.id }
-                        if (discovered.size > before) {
-                            _state.update { current ->
-                                if (current.searchType == type &&
-                                    current.searchCategoryId == "*" &&
-                                    current.searchQuery.trim().equals(query, true)
-                                ) {
-                                    current.copy(
-                                        searchResults = (existing + discovered).distinctBy { it.id },
-                                        searchUsedServer = true
-                                    )
-                                } else current
-                            }
-                        }
-                    }
-                    if (discovered.any {
-                            it.title.normalizedSearchQuery() == query.normalizedSearchQuery()
-                        } || discovered.size >= SEARCH_ALL_CATEGORY_RESULT_LIMIT
-                    ) break
-                }
-                direct.copy(items = discovered, hasMore = anyHasMore)
+                    filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters)
+                }.filter { it.id != "*" }
+                searchedCategories = categories.isNotEmpty()
+                val result = searchAllCategoryPage(page, categories.map { it.id },
+                    search = { category -> withAutomaticSessionRetry(session) { active ->
+                        portal.search(active, type, query, page, category)
+                    } },
+                    progress = { scanned, total -> _state.update { current -> current.copy(
+                        searchActivityTitle = "Searching IPTV categories",
+                        searchActivityDetail = "Categories ${scanned + 1}–${minOf(scanned + 3, total)} of $total",
+                        searchActivityProgress = scanned.toFloat() / total.coerceAtLeast(1)) } },
+                    publish = { discovered -> _state.update { current ->
+                        if (current.searchOpen && current.session?.profile?.cacheKey() == profileKey &&
+                            current.searchType == type && current.searchCategoryId == categoryId &&
+                            current.searchQuery.trim().equals(query, true)) current.copy(
+                            searchResults = (existing + discovered).rankSearchResults(query, type), searchUsedServer = true)
+                        else current
+                    } })
+                categoryFailures = result.failedCategories
+                result.page
             }
         }.onSuccess { result ->
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             val combined =
-                (existing + result.items)
-                    .distinctBy { it.id }
+                (existing + result.items).rankSearchResults(query, type)
 
             val actuallyAdded = combined.size > existing.size
             val hasMore =
@@ -6019,7 +5983,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     categoryId,
                     result.page,
                     hasMore,
-                    combined
+                    combined,
+                    allCategoriesComplete = categorySearch && searchedCategories && page == 1 && !hasMore && categoryFailures == 0
                 )
 
             store.savePagedSearch(cache)
@@ -6036,6 +6001,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 } else {
                     current.copy(
                         searchResults = combined,
+                        searchProviderMessage = if (categoryFailures > 0)
+                            "Some categories could not be searched. Retry provider to include them." else null,
                         searchServerLoading = false,
                         searchUsedServer = true,
                         searchPage = result.page,
@@ -8883,8 +8850,6 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30
         private const val SEARCH_PREVIEW_DEBOUNCE_MS = 220L
         private const val SEARCH_PROVIDER_FALLBACK_DELAY_MS = 900L
-        private const val SEARCH_CATEGORY_CONCURRENCY = 3
-        private const val SEARCH_ALL_CATEGORY_RESULT_LIMIT = 24
         private const val METADATA_SCAN_REQUEST_DELAY_MS = 500L
     }
 }

@@ -103,7 +103,8 @@ data class SearchResultCache(
     val lastPage: Int,
     val hasMore: Boolean,
     val items: List<MediaItem>,
-    @EncodeDefault val cachedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val cachedAtMillis: Long = System.currentTimeMillis(),
+    val allCategoriesComplete: Boolean = false
 ) { val key: String get() = "${profileKey}|${type.name}|$categoryId|${query.trim().lowercase()}" }
 
 data class PortalSearchPage(
