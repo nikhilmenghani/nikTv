@@ -141,30 +141,58 @@ class SportsUiDeviceTest {
         val upcoming = event.copy(id = "3", slug = "upcoming", title = "Upcoming fixture", start = now.plusSeconds(7200), end = now.plusSeconds(10800))
         try {
             prefs.setStatus("Now & next")
+            prefs.setSport("All sports")
             fun render() {
                 instrumentation.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
                     var status by remember { mutableStateOf(prefs.read().status) }
+                    var sport by remember { mutableStateOf(prefs.read().sport) }
                     SportsBrowseContent(SportsState(events = listOf(event, football, upcoming), loading = false), now,
-                        "All sports", {}, status, { status = it }, "", {}, {}, {}, {}, {},
+                        sport, { sport = it }, status, { status = it }, "", {}, {}, {}, {}, {},
+                        saveDefaultSport = { prefs.setSport(it) },
                         saveDefaultStatus = { prefs.setStatus(it) })
                 } } }
             }
             render()
             await("Category rows render") { find("All sports") != null && find("Cricket") != null }
             assertNavigationPosition(activity)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Remote enters the status filter") { focused("Live events: Now & next") }
+            instrumentation.sendKeyDownUpSync(if (activity.resources.configuration.smallestScreenWidthDp < 600)
+                KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Remote reaches the sport filter") { focused("Sport: All sports") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Remote opens the sport dropdown") { find("Football") != null }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             screenshot("sports-live-events")
             click("Live events: Now & next")
             await("Status dropdown opens") { find("Live") != null }
             click("Live")
             await("Live selection applies") { find("Live events: Live") != null && find("2 events") != null }
             assertEquals("Live", SportsBrowsePreferences(context).read().status)
+            click("Sport: All sports")
+            await("Sport choices open") { find("Cricket") != null && find("Football") != null }
+            click("Cricket")
+            await("Cricket hides other sports and the aggregate rail") {
+                find("Sport: Cricket") != null && find("1 event") != null && find("Cricket fixture") != null &&
+                    find("Football fixture") == null && find("All sports") == null
+            }
+            assertEquals("Cricket", SportsBrowsePreferences(context).read().sport)
+            screenshot("sports-cricket-filter")
             instrumentation.runOnMainSync { activity.setContent {} }
             render()
-            await("Reload restores saved selection") { find("Live events: Live") != null && find("2 events") != null }
+            await("Reload restores both saved filters") {
+                find("Live events: Live") != null && find("Sport: Cricket") != null && find("1 event") != null
+            }
             click("Live events: Live")
             await("Upcoming option available") { find("Upcoming") != null }
             click("Upcoming")
             await("Upcoming selection filters the rows") { find("1 event") != null && find("Upcoming fixture") != null && find("Football fixture") == null }
+            click("Sport: Cricket"); click("Football")
+            await("Empty category keeps both filters available") {
+                find("0 events") != null && find("Sport: Football") != null && find("Live events: Upcoming") != null
+            }
+            click("Sport: Football"); click("All sports")
+            await("All sports recovers from an empty category") { find("1 event") != null && find("Upcoming fixture") != null }
         } finally {
             prefs.setSport(previous.sport); prefs.setStatus(previous.status)
             instrumentation.runOnMainSync { activity.finish() }

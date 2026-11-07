@@ -15,13 +15,21 @@ import kotlinx.coroutines.launch
 
 internal data class SportsEventSection(val title: String, val events: List<SportsEvent>)
 
-internal fun sportsEventSections(events: List<SportsEvent>, filters: List<SportsEventFilter>): List<SportsEventSection> {
+internal fun sportsEventSections(events: List<SportsEvent>, filters: List<SportsEventFilter>, sport: String = "All sports"): List<SportsEventSection> {
+    if (sport !in setOf("All sports", "All")) return listOf(SportsEventSection(sport, events.filter {
+        it.sport.equals(sport, true) || it.eventName.equals(sport, true) || it.teamA.equals(sport, true) || it.teamB.equals(sport, true)
+    })).filter { it.events.isNotEmpty() }
     val titles = (listOf("All sports") + filters.map { it.title } + events.map { it.sport })
         .filter { it.isNotBlank() && !it.equals("All", true) }.distinctBy { it.lowercase() }
     return titles.map { title -> SportsEventSection(title, if (title == "All sports") events else events.filter {
         it.sport.equals(title, true) || it.eventName.equals(title, true) || it.teamA.equals(title, true) || it.teamB.equals(title, true)
     }) }.filter { it.events.isNotEmpty() }
 }
+
+internal fun sportsEventFilterChoices(events: List<SportsEvent>, filters: List<SportsEventFilter>, selected: String): List<String> =
+    (listOf("All sports", selected) + filters.map { it.title } + events.map { it.sport })
+        .map(String::trim).filter { it.isNotEmpty() && !it.equals("All", true) }
+        .distinctBy { it.lowercase(java.util.Locale.ROOT) }
 
 /** Category rails use independent saved scroll positions and explicit remote movement like IPTV collections. */
 @Composable

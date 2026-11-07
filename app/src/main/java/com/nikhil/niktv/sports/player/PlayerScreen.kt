@@ -2383,7 +2383,7 @@ fun PlayerScreen(
                             PlayerChromeIconButton(
                                 icon = Icons.Default.Refresh,
                                 contentDescription = "Refresh stream",
-                                onClick = { onRetry(0L) },
+                                onClick = { (onManualRetry ?: onRetry)(0L) },
                                 modifier = Modifier.playerSecondaryFocus(refreshFocusRequester, secondaryActionRequesters,
                                     extraControlsRequester, lastPlaybackActionRequester, backFocusRequester),
                                 onFocused = { controlsFocused = it }

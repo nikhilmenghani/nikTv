@@ -13,6 +13,7 @@ import com.nikhil.niktv.ui.NikColors
 import com.nikhil.niktv.ui.PlaybackEngineFixtureTest
 import com.nikhil.niktv.ui.SportsFixtureHostActivity
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,6 +59,7 @@ class SportsAuthorizationDeviceTest {
                 val unrelated = replacement.copy(title = "Unrequested source", link = "${server.base}/movie.mp4")
                 val loads = AtomicInteger()
                 val frames = AtomicInteger()
+                val renderedAttempt = AtomicLong()
                 val refreshes = AtomicInteger()
                 val controller = SportsPlaybackController(scope, {
                     loads.incrementAndGet()
@@ -76,6 +78,7 @@ class SportsAuthorizationDeviceTest {
                                 SportsPlayer(stream, "Authorization fixture", {},
                                     sourceAttemptId = attempt, streams = state.sources,
                                     selectedIndex = state.currentIndex ?: -1,
+                                    onVideoFrameRendered = { renderedAttempt.set(attempt) },
                                     onVideoFramesRendered = { frames.set(it) },
                                     onRetryFresh = controller::retry,
                                     onAuthorizationFailure = { refreshes.incrementAndGet(); controller.authorizationFailed(attempt) },
@@ -112,6 +115,37 @@ class SportsAuthorizationDeviceTest {
                 assertTrue("The player really received HTTP 403", server.rejected.get() > 0)
                 assertEquals("One automatic metadata refresh", 1, loads.get())
                 assertEquals("One automatic authorization callback", 1, refreshes.get())
+                if (renewed) {
+                    fun find(label: String): android.view.accessibility.AccessibilityNodeInfo? {
+                        if (android.os.Build.VERSION.SDK_INT >= 33) ins.uiAutomation.clearCache()
+                        fun visit(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+                            node ?: return null
+                            if (node.contentDescription?.toString() == label || node.text?.toString() == label) return node
+                            for (i in 0 until node.childCount) visit(node.getChild(i))?.let { return it }
+                            return null
+                        }
+                        return visit(ins.uiAutomation.rootInActiveWindow)
+                    }
+                    fun click(label: String) {
+                        var node = find(label)
+                        repeat(8) { if (node?.isClickable != true) node = node?.parent }
+                        assertTrue("Clickable $label", node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) == true)
+                    }
+                    val metrics = context.resources.displayMetrics
+                    val touch = SystemClock.uptimeMillis()
+                    for (action in intArrayOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                        val event = android.view.MotionEvent.obtain(touch, touch, action, metrics.widthPixels * .5f, metrics.heightPixels * .4f, 0)
+                        try { ins.sendPointerSync(event) } finally { event.recycle() }
+                    }
+                    await("Player controls expose refresh") { find("Refresh stream") != null || find("More controls") != null }
+                    if (find("Refresh stream") == null) { click("More controls"); await("Refresh action is visible") { find("Refresh stream") != null } }
+                    val previousAttempt = controller.state.value.attemptId
+                    click("Refresh stream")
+                    await("Manual refresh fetches source metadata and renders a new session") {
+                        loads.get() == 2 && controller.state.value.attemptId > previousAttempt &&
+                            renderedAttempt.get() == controller.state.value.attemptId && frames.get() > 30
+                    }
+                }
                 ins.runOnMainSync { controller.stop(); host.setContent {} }
             }
         } finally {

@@ -11,6 +11,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SportsHubCatalogueTest {
+    @Test fun sportSelectionShowsOnlyThatCategoryAndRemainsAvailableWithoutMatchingEvents() {
+        val cricket = SportsEvent("1", "A vs B", "cricket", "Cricket", "ODI", "", "A", "B", null, null, emptyList())
+        val football = cricket.copy(id = "2", slug = "football", sport = "Football")
+        val filters = listOf(SportsEventFilter("cricket", "CRICKET"), SportsEventFilter("tennis", "Tennis"))
+        val sections = sportsEventSections(listOf(cricket, football), filters, "Cricket")
+        assertEquals(listOf("Cricket"), sections.map { it.title })
+        assertEquals(listOf(cricket), sections.single().events)
+        assertTrue(sportsEventSections(listOf(football), filters, "Cricket").isEmpty())
+        assertEquals(listOf("All sports", "Cricket", "Tennis", "Football"),
+            sportsEventFilterChoices(listOf(football), filters, "Cricket"))
+        assertEquals(listOf("All sports", "Cricket"), sportsEventFilterChoices(emptyList(), emptyList(), "Cricket"))
+    }
+
     private val category = SportsCategory("provider", "Provider", link = "https://playlist.example.test/list")
 
     @Test fun categoryRowsKeepAllEventsAndSeparateSportsWithoutEmptyOrDuplicateCategories() {
