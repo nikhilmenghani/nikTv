@@ -21,7 +21,7 @@ internal class Hdhub4uSourceResolver(
 ) {
     private data class Listing(val path: String, val series: Boolean, val seasons: Set<Int>, val year: Int?, val imdb: String?)
     private data class Link(val url: HttpUrl, val referer: String, val label: String = "",
-        val extraHeaders: Map<String, String> = emptyMap())
+        val extraHeaders: Map<String, String> = emptyMap(), val vlcCompatible: Boolean? = null)
 
     suspend fun resolve(target: AlternateSourceTarget): List<AlternateStream> {
         if (target.series && (target.season == null || target.episode == null || target.episode < 1))
@@ -180,8 +180,11 @@ internal class Hdhub4uSourceResolver(
         var playlistFailure: AlternateSourceException? = null
         for (playlist in hdhubPlayerPlaylists(playerText, response.url)) {
             try {
-                val mediaLink = Link(playlist, origin(response.url), link.label)
-                val streams = hls(page(playlist, mediaLink.referer, "HDHub4u playlist"), mediaLink)
+                val mediaLink = Link(playlist.url, origin(response.url), link.label,
+                    vlcCompatible = playlist.vlcCompatible)
+                val manifest = page(playlist.url, mediaLink.referer, "HDHub4u playlist")
+                val streams = hls(manifest, mediaLink)
+                if (playlist.vlcCompatible && !cleanTransportAvailable(manifest, mediaLink)) continue
                 if (streams.isNotEmpty()) return streams
             } catch (cancelled: CancellationException) { throw cancelled }
               catch (failure: AlternateSourceException) { playlistFailure = failure }
@@ -241,14 +244,41 @@ internal class Hdhub4uSourceResolver(
             format = if (type.contains("matroska", true) || link.url.encodedPath.endsWith(".mkv", true)) "MKV" else "MP4", height = height))
     }
 
+    /** A working master alone does not prove that the origin still serves its segments. */
+    private suspend fun cleanTransportAvailable(master: AlternateSourceHttpResponse, link: Link): Boolean {
+        val base = requirePublicHttps(master.url)
+        val lines = master.body.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
+        val video = lines.firstOrNull { !it.startsWith('#') } ?: return false
+        val defaultAudio = lines.firstOrNull { it.startsWith("#EXT-X-MEDIA:") &&
+            it.contains("TYPE=AUDIO") && it.contains("DEFAULT=YES") }
+            ?.let { Regex("URI=\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
+        for (raw in listOfNotNull(video, defaultAudio).distinct()) {
+            val playlist = if (master.body.contains("#EXT-X-STREAM-INF:"))
+                page(requirePublicHttps(base.resolve(raw)?.toString() ?: return false), link.referer, "HDHub4u probe playlist")
+            else master
+            if (!playlist.body.trimStart().startsWith("#EXTM3U")) return false
+            rejectDrm(playlist.body)
+            val segment = playlist.body.lineSequence().map(String::trim).firstOrNull { it.isNotEmpty() && !it.startsWith('#') }
+                ?: return false
+            val url = requirePublicHttps(playlist.url).resolve(segment) ?: return false
+            val reply = read(AlternateSourceHttpRequest(requirePublicHttps(url.toString()).toString(),
+                mapOf("User-Agent" to AlternateSourceResolver.USER_AGENT, "Referer" to link.referer,
+                    "Range" to "bytes=0-1023"), 4096), "HDHub4u segment probe")
+            val type = reply.headers.entries.firstOrNull { it.key.equals("content-type", true) }?.value.orEmpty()
+            if (!type.substringBefore(';').equals("video/mp2t", true) || reply.body.firstOrNull() != 'G') return false
+        }
+        return true
+    }
+
     private fun hls(response: AlternateSourceHttpResponse, link: Link): List<AlternateStream> =
         alternateHlsStreams(requirePublicHttps(response.url), response.body,
             mapOf("User-Agent" to AlternateSourceResolver.USER_AGENT, "Referer" to link.referer) + link.extraHeaders,
             "hdhub4u:${hash(response.url)}", "HDHub4u · ${link.url.host}").map { stream ->
-            // HDStream's current HLS fails LibVLC 3's demuxer on Android, while
-            // Media3 renders it. Use the existing per-stream compatibility route;
-            // retain the user's player preference and other mirrors' behavior.
-            stream.copy(vlcCompatible = !requirePublicHttps(link.referer).host.split('.').contains("hdstream4u"))
+            // HDStream hls2 serves ordinary MPEG-TS segments that LibVLC handles.
+            // Its hls4 mirror prefixes segments with PNG data and image/png MIME;
+            // retain Media3 compatibility for that mirror and unverified embeds.
+            stream.copy(vlcCompatible = link.vlcCompatible
+                ?: !requirePublicHttps(link.referer).host.split('.').contains("hdstream4u"))
         }
 
     private suspend fun page(url: HttpUrl, referer: String, phase: String, extraHeaders: Map<String, String> = emptyMap()) =
@@ -284,15 +314,17 @@ internal class Hdhub4uSourceResolver(
     }
 }
 
-/** The player's literal link table declares its HLS mirror preference, including .txt manifests. */
-internal fun hdhubPlayerPlaylists(script: String, base: String): List<HttpUrl> {
+internal data class HdhubPlayerPlaylist(val url: HttpUrl, val vlcCompatible: Boolean)
+
+/** Prefer the standard transport mirror; retain the player's other public HLS alternatives. */
+internal fun hdhubPlayerPlaylists(script: String, base: String): List<HdhubPlayerPlaylist> {
     val literal = Regex("\\b(?:var|let|const)\\s+links\\s*=\\s*(\\{[^{}]{1,16384}\\})").find(script)?.groupValues?.get(1)
         ?: return emptyList()
     val links = runCatching { JSONObject(literal) }.getOrNull() ?: return emptyList()
-    return listOf("hls4", "hls3", "hls2").mapNotNull { key ->
+    return listOf("hls2", "hls4", "hls3").mapNotNull { key ->
         links.optString(key).takeIf(String::isNotBlank)?.let { base.toHttpUrl().resolve(it) }
-            ?.let { requirePublicHttps(it.toString()) }
-    }.distinct()
+            ?.let { HdhubPlayerPlaylist(requirePublicHttps(it.toString()), vlcCompatible = key == "hls2") }
+    }.distinctBy { it.url }
 }
 
 /** Decode the page's literal public redirect envelope; do not execute its script. */

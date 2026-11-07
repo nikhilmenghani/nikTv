@@ -31,6 +31,7 @@ class Hdhub4uSourceResolverTest {
             "hdstream4u.example/v/abc123" to """<script>const player={file:"https://media.example.test/master.m3u8"};</script>""",
             "media.example.test/master.m3u8" to playlist)
         val contentTypes = mutableMapOf<String, String>()
+        val responseCodes = mutableMapOf<String, Int>()
         val resolver = AlternateSourceResolver(fetch = { request ->
             requests += request
             val url = request.url.toHttpUrl()
@@ -44,7 +45,7 @@ class Hdhub4uSourceResolverTest {
                 url.host == domain.toHttpUrl().host -> detail
                 else -> pages[key] ?: error("Unexpected fixture request: $key")
             }
-            AlternateSourceHttpResponse(request.url, if (request.headers.containsKey("Range")) 206 else 200, body,
+            AlternateSourceHttpResponse(request.url, responseCodes[key] ?: (if (request.headers.containsKey("Range")) 206 else 200), body,
                 contentTypes[key]?.let { mapOf("content-type" to it) }.orEmpty())
         })
     }
@@ -130,15 +131,66 @@ class Hdhub4uSourceResolverTest {
         assertEquals("}('x',99,2,'x|y'.split('|'))", unpackHdhubPlayer("}('x',99,2,'x|y'.split('|'))"))
     }
 
-    @Test fun literalPlayerMirrorsFollowDeclaredPreferenceAndAcceptTextManifests() = runBlocking {
+    @Test fun cleanTransportMirrorIsPreferredAndEveryQualitySupportsVlc() = runBlocking {
+        val f = Fixture().apply {
+            pages["hdstream4u.example/v/abc123"] = """var links={"hls2":"https://media.example.test/master.m3u8","hls4":"/stream/master.m3u8"};"""
+            pages["media.example.test/video.m3u8"] = "#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST"
+            pages["media.example.test/segment.ts"] = "G".repeat(1024)
+            contentTypes["media.example.test/segment.ts"] = "video/MP2T"
+        }
+        val streams = f.resolver.resolve(movie)
+        assertFalse(streams.isEmpty())
+        assertTrue(streams.all { it.vlcCompatible })
+        assertEquals("https://media.example.test/segment.ts", f.requests.last().url)
+        assertEquals("bytes=0-1023", f.requests.last().headers["Range"])
+        assertFalse(f.requests.any { it.url.contains("/stream/") })
+    }
+
+    @Test fun playableMasterWithUnavailableSegmentsFallsBackBeforeOpeningPlayer() = runBlocking {
+        val f = Fixture().apply {
+            pages["hdstream4u.example/v/abc123"] = """var links={"hls2":"https://media.example.test/master.m3u8","hls4":"/stream/master.m3u8"};"""
+            pages["media.example.test/video.m3u8"] = "#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST"
+            pages["media.example.test/segment.ts"] = "unavailable"
+            responseCodes["media.example.test/segment.ts"] = 502
+            pages["hdstream4u.example/stream/master.m3u8"] = playlist
+        }
+        val streams = f.resolver.resolve(movie)
+        assertFalse(streams.isEmpty())
+        assertTrue(streams.all { !it.vlcCompatible })
+        assertTrue(streams.first().url.contains("/stream/master.m3u8"))
+    }
+
+    @Test fun unavailableCleanMirrorFallsBackToPlayerMirrorsWithoutClaimingVlcSupport() = runBlocking {
         val f = Fixture().apply {
             pages["hdstream4u.example/v/abc123"] = """var links={"hls2":"https://media.example.test/master.m3u8","hls3":"https://media.example.test/master.txt","hls4":"/stream/master.m3u8"};"""
+            pages["media.example.test/master.m3u8"] = "not a playlist"
             pages["hdstream4u.example/stream/master.m3u8"] = "not a playlist"
             pages["media.example.test/master.txt"] = playlist
         }
-        assertFalse(f.resolver.resolve(movie).isEmpty())
-        assertEquals(listOf("/stream/master.m3u8", "/master.txt"), f.requests.takeLast(2).map { it.url.toHttpUrl().encodedPath })
+        val streams = f.resolver.resolve(movie)
+        assertFalse(streams.isEmpty())
+        assertTrue(streams.all { !it.vlcCompatible })
+        assertEquals(listOf("/master.m3u8", "/stream/master.m3u8", "/master.txt"),
+            f.requests.takeLast(3).map { it.url.toHttpUrl().encodedPath })
         assertEquals("https://hdstream4u.example/", f.requests.last().headers["Referer"])
+    }
+
+    @Test fun unavailableDefaultAudioAlsoRejectsAnOtherwisePlayableCleanMirror() = runBlocking {
+        val f = Fixture().apply {
+            pages["hdstream4u.example/v/abc123"] = """var links={"hls2":"https://media.example.test/master.m3u8","hls4":"/stream/master.m3u8"};"""
+            pages["media.example.test/master.m3u8"] = "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,DEFAULT=YES,URI=\"audio.m3u8\"\n" + playlist.substringAfter('\n')
+            pages["media.example.test/video.m3u8"] = "#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST"
+            pages["media.example.test/segment.ts"] = "G".repeat(1024)
+            contentTypes["media.example.test/segment.ts"] = "video/mp2t"
+            pages["media.example.test/audio.m3u8"] = "#EXTM3U\n#EXTINF:6,\naudio.ts\n#EXT-X-ENDLIST"
+            pages["media.example.test/audio.ts"] = "unavailable"
+            responseCodes["media.example.test/audio.ts"] = 502
+            pages["hdstream4u.example/stream/master.m3u8"] = playlist
+        }
+        val streams = f.resolver.resolve(movie)
+        assertFalse(streams.isEmpty())
+        assertTrue(streams.all { !it.vlcCompatible })
+        assertTrue(f.requests.any { it.url.endsWith("/audio.ts") })
     }
 
     @Test fun publicRedirectEnvelopeIsDecodedAndMalformedPayloadsAreRejected() {

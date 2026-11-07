@@ -110,6 +110,10 @@ class Hdhub4uDeviceTest {
         val streams = runBlocking { AlternateSourceResolver().resolve(target) }
         assertTrue("HDHub4u provides a native source for the exact requested title/episode", streams.isNotEmpty())
         val stream = streams.first()
+        if (requestedEngine == PlaybackEngine.VLC && !target.series) {
+            assertTrue("The clean mirror must use VLC itself, without the Media3 fallback", stream.vlcCompatible)
+            assertNotNull("VLC can carry every required stream header", vlcHeaderOptions(stream.headers))
+        }
         assertEquals(AlternatePlaybackRoute.NATIVE, stream.route)
         assertTrue(stream.headers["Referer"]?.startsWith("https://") == true)
         val host = host()
@@ -117,6 +121,7 @@ class Hdhub4uDeviceTest {
         val position = AtomicLong()
         val errors = AtomicInteger()
         val preferenceChanges = AtomicInteger()
+        val positionReader = AtomicReference<(() -> Long)?>(null)
         val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
         val volume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
         audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
@@ -132,18 +137,59 @@ class Hdhub4uDeviceTest {
                     onPlaybackAuthorizationFailure = { errors.incrementAndGet() },
                     onPlayPrevious = {}, onPlayNext = {},
                     onProgress = { _, value, _ -> position.set(value) },
-                    playbackEngine = requestedEngine,
+                    playbackEngine = requestedEngine, controlsTimeoutSeconds = PLAYER_CONTROLS_TIMEOUT_INFINITE,
                     onPlaybackEngineChanged = { preferenceChanges.incrementAndGet() },
                     onVideoFrameRendered = { frames.incrementAndGet() },
+                    onChooseAlternateSource = { _, reader -> positionReader.set(reader) },
                     onTerminalPlaybackFailure = { errors.incrementAndGet() })
             } } }
             await("HDHub4u app playback renders with $requestedEngine selected", 30_000L) {
                 assertEquals("No player failure or decoder/auth recovery", 0, errors.get())
                 frames.get() > 0 && position.get() >= 1_000
             }
+            if (requestedEngine == PlaybackEngine.VLC && !target.series) {
+                if (find(root(), "Source and quality") == null) click("More controls")
+                click("Source and quality")
+                await("The native player position reader is available") { positionReader.get() != null }
+                fun nativePosition(): Long {
+                    var value = 0L
+                    instrumentation.runOnMainSync { value = positionReader.get()!!.invoke() }
+                    return value
+                }
+                click("Pause")
+                await("Pause exposes the resume control") { find(root(), "Play") != null }
+                Thread.sleep(250)
+                val paused = nativePosition()
+                Thread.sleep(1_500)
+                assertTrue("VLC remains paused", kotlin.math.abs(nativePosition() - paused) < 500)
+                click("Play")
+                await("VLC resumes advancing", 15_000) { nativePosition() > paused + 1_000 }
+                val beforeSeek = nativePosition()
+                click("Forward 10 seconds")
+                await("VLC seeks and continues playback", 15_000) { nativePosition() > beforeSeek + 7_000 }
+                click("Audio language")
+                fun english(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+                    node ?: return null
+                    if (node.text?.toString()?.contains("English", true) == true) return node
+                    for (i in 0 until node.childCount) english(node.getChild(i))?.let { return it }
+                    return null
+                }
+                await("VLC exposes the English audio track") { english(root()) != null }
+                click(english(root())!!.text.toString())
+                click("Audio language")
+                await("VLC switched to the English audio track") {
+                    var selected = english(root())
+                    while (selected != null && !selected.isClickable) selected = selected.parent
+                    find(selected, "Selected") != null
+                }
+                click("Close")
+                val afterAudio = nativePosition()
+                await("VLC continues after audio selection", 15_000) { nativePosition() > afterAudio + 1_000 }
+                assertEquals(0, errors.get())
+            }
             assertEquals("Stream compatibility does not change the saved player preference", 0, preferenceChanges.get())
             instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream",
-                "HDHUB_APP requested=$requestedEngine series=${target.series} season=${target.season} episode=${target.episode} sources=${streams.size} frames=${frames.get()} position=${position.get()}\n") })
+                "HDHUB_APP requested=$requestedEngine vlcCompatible=${stream.vlcCompatible} series=${target.series} season=${target.season} episode=${target.episode} sources=${streams.size} frames=${frames.get()} position=${position.get()}\n") })
         } finally {
             instrumentation.runOnMainSync { host.finish() }
             audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, volume, 0)
