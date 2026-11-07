@@ -196,7 +196,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                         onDisconnect = { scope.launch { vm.openProfileChooser(); manager.disconnect(); selectedUser = null } }
                     )
                     choosingProfile || selectedUser == null || profiles.none { it.id == selectedUser } -> {
-                        BackHandler(enabled = choosingProfile && selectedUser != null && profiles.any { it.id == selectedUser }) { choosingProfile = false }
+                        AccountGateBackHandler(peopleVisible = true, choosingProfile = choosingProfile,
+                            selectedViewerAvailable = selectedUser != null && profiles.any { it.id == selectedUser }, state = appState,
+                            openPeople = ::openProfiles, resumeContent = { choosingProfile = false })
                         UserProfilesScreen(
                         profiles = profiles,
                         state = if (!account.syncing && pendingCount > 0 && account.error == null)
@@ -236,7 +238,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                         } }
                     ) }
                     else -> {
-                        BackHandler(enabled = appState.session == null && !appState.profileEditorOpen && !appState.offlineDownloadsOpen) { openProfiles() }
+                        AccountGateBackHandler(peopleVisible = false, choosingProfile = choosingProfile,
+                            selectedViewerAvailable = true, state = appState,
+                            openPeople = ::openProfiles, resumeContent = { choosingProfile = false })
                         content()
                     }
                 }
