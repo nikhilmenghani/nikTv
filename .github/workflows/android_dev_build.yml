@@ -25,7 +25,7 @@ jobs:
         with:
           java-version: '17'
           distribution: zulu
-          cache: gradle
+      - uses: gradle/actions/setup-gradle@v4
       - name: Read development version
         shell: bash
         run: |
@@ -39,10 +39,12 @@ jobs:
         run: |
           sed -i "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
           sed -i "s/versionCode = .*/versionCode = ${VERSION_CODE}/" app/build.gradle.kts
-      - name: Validate shipping sources
+      - name: Unit tests
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+          ./gradlew :app:testDebugUnitTest -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+      - name: Debug lint
+        run: ./gradlew :app:lintDebug -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
       - name: Verify release tag ownership
         shell: bash
         run: |
