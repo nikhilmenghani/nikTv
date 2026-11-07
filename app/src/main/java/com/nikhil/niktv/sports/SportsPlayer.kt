@@ -16,6 +16,8 @@ import com.nikhil.niktv.sports.player.PlayerScreen
 import com.nikhil.niktv.ui.findActivity
 import androidx.compose.ui.platform.LocalContext
 import java.util.Base64
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 
 /** Use the same chrome, touch/remote input and playback lifecycle as IPTV live TV. */
@@ -40,6 +42,9 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     var decoderRecoveries by remember(stream, sourceAttemptId) { mutableIntStateOf(0) }
     var authorizationRetries by remember(stream, sourceAttemptId) { mutableIntStateOf(0) }
     var decoderSession by remember(stream, sourceAttemptId) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
+    var restartingDecoder by remember(stream, sourceAttemptId) { mutableStateOf(false) }
+    var decoderResumePosition by remember(stream, sourceAttemptId) { mutableLongStateOf(0L) }
+    val recoveryScope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
     val capturedOwner = remember(stream, sourceAttemptId) { com.nikhil.niktv.data.UserSyncStore.get(context).selectedScope.value }
     val source = remember(stream, title, capturedOwner) { runCatching { stream.asPlayingMedia(title).copy(userScope = capturedOwner) } }
@@ -62,9 +67,10 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         return
     }
     val queue = remember(streams) { sportsStreamQueue(streams) }
-    val committedMedia = remember(original, sourceAttemptId, attempt, decoderRecoveries, authorizationRetries, decoderSession) {
+    val committedMedia = remember(original, sourceAttemptId, attempt, decoderRecoveries, authorizationRetries, decoderSession, decoderResumePosition) {
         original.copy(playbackAttemptId = java.util.UUID.randomUUID().toString(), decoderSessionId = decoderSession,
-            decoderRecoveryCount = decoderRecoveries, authorizationRetryCount = authorizationRetries)
+            decoderRecoveryCount = decoderRecoveries, authorizationRetryCount = authorizationRetries,
+            resumePositionMillis = decoderResumePosition)
     }
     val activeId = remember(original, sourceAttemptId) { "sports-active:$sourceAttemptId:${original.media.id}" }
     val displayQueue = remember(queue, selectedIndex, activeId) {
@@ -93,7 +99,23 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose { if (previousOrientation != null) activity?.requestedOrientation = previousOrientation }
     }
+    if (restartingDecoder) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        return
+    }
     key(sourceAttemptId) { PlayerScreen(media, onBack = onBack, onRetry = { attempt++ }, onRetryAlternateDecoder = { decoderRecoveries++; attempt++ },
+        onRestartDecoderSession = { position ->
+            onCancelPendingFallback?.invoke()
+            recoveryScope.launch {
+                restartingDecoder = true
+                delay(450L)
+                decoderRecoveries = 0
+                decoderSession = java.util.UUID.randomUUID().toString()
+                decoderResumePosition = position.coerceAtLeast(0L)
+                attempt++
+                restartingDecoder = false
+            }
+        },
         playbackDomain = com.nikhil.niktv.ui.PlaybackDomain.SPORTS,
         playbackDataSourceFactory = edgeDataSource,
         onManualRetry = {

@@ -3,7 +3,7 @@ from pathlib import Path
 
 for filename in ("android_build.yml", "android_dev_build.yml"):
     text = (Path(__file__).resolve().parents[1] / ".github/workflows" / filename).read_text()
-    validate = text.index("- name: Validate shipping sources")
+    validate = text.index("- name: Unit tests")
     publish = text.index("- name: Publish ")
     assert text.index("uses: actions/checkout@v4") < validate < text.index("- name: Configure signing") < publish
     validation = text[validate:text.index("- name: Configure signing")]
@@ -13,6 +13,10 @@ for filename in ("android_build.yml", "android_dev_build.yml"):
     assert text.index("- name: Verify release tag ownership") < text.index("- name: Configure signing")
     assert '"$EXISTING" == "$GITHUB_SHA"' in text
     if filename == "android_build.yml": assert ":app:lintRelease" in validation
+    if filename == "android_build.yml":
+        assert text.index("- name: Verify pre-created release tag") < validate
+        assert '"$TARGET" == "$GITHUB_SHA"' in text
+        assert text.index("uses: actions/upload-artifact@v4") < publish
     assert "branches: [main]" in text and "workflow_dispatch:" in text
     assert "contents: write" in text  # Required by action-gh-release.
     print(f"PASS {filename}: validation gates publication and tag uses the shipping SHA")

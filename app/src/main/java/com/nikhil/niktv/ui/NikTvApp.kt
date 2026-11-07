@@ -534,6 +534,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     onTerminalPlaybackFailure = { vm.observeLivePlayback(playback, failed = true) },
                     onBack = vm::closePlayer,
                     onRetry = { vm.retryPlayback(it, playback) },
+                    onRestartDecoderSession = { vm.restartPlaybackDecoderSession(it, playback) },
                     onReauthenticate = if (playback.offlinePlayback || playback.alternateSource != null) null else
                         { position -> vm.reauthenticatePlayback(position, playback) },
                     reauthenticating = state.reauthenticating,

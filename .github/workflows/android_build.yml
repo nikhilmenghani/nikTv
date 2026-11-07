@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check source credentials
-        run: python3 tools/check-source-secrets.py
+        run: |
+          python3 tools/check-source-secrets.py
+          python3 tools/check-release-validation.py
 
       - uses: actions/setup-java@v4
         with:
@@ -39,6 +41,11 @@ jobs:
         run: |
           sed -i "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
           sed -i "s/versionCode = .*/versionCode = ${VERSION_CODE}/" app/build.gradle.kts
+      - name: Verify pre-created release tag
+        shell: bash
+        run: |
+          TARGET=$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{ print $1 }')
+          [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "::error::Push the release commit and its lightweight version tag together before building."; exit 1; }
       - name: Unit tests
         run: |
           chmod +x ./gradlew
@@ -96,6 +103,13 @@ jobs:
               exit 1
             }
           done
+      - name: Preserve signed APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-apks-${{ env.TAG }}
+          path: ${{ runner.temp }}/niktv-apks/*.apk
+          if-no-files-found: error
+          retention-days: 14
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

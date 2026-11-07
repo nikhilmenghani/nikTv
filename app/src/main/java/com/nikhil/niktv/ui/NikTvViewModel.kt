@@ -7690,9 +7690,14 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 }
         }
     }
+    /** Explicit decoder Retry matches leaving/reopening, without resolving the valid URL again. */
+    fun restartPlaybackDecoderSession(positionMillis: Long, failedPlayback: PlayingMedia) =
+        retryPlaybackWithAlternateDecoder(positionMillis, failedPlayback, resetDecoderSession = true)
+
     fun retryPlaybackWithAlternateDecoder(
         positionMillis: Long,
-        failedPlayback: PlayingMedia
+        failedPlayback: PlayingMedia,
+        resetDecoderSession: Boolean = false
     ) {
         val playing =
             _state.value.nowPlaying
@@ -7701,7 +7706,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
             !samePlaybackAttempt(playing, failedPlayback)) return
 
-        if (!allowDecoderRecovery(playing.decoderRecoveryCount)) return
+        if (!resetDecoderSession && !allowDecoderRecovery(playing.decoderRecoveryCount)) return
         val requestId = beginPlaybackRequest()
         launchForViewer launch@ {
             latestPlaybackRequest.run(requestId) {
@@ -7730,7 +7735,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                         nowPlaying =
                             playing.copy(
                                 playbackAttemptId = java.util.UUID.randomUUID().toString(),
-                                decoderRecoveryCount = playing.decoderRecoveryCount + 1,
+                                decoderSessionId = if (resetDecoderSession) java.util.UUID.randomUUID().toString() else playing.decoderSessionId,
+                                decoderRecoveryCount = if (resetDecoderSession) 0 else playing.decoderRecoveryCount + 1,
+                                playWhenReady = if (resetDecoderSession) true else playing.playWhenReady,
                                 resumePositionMillis =
                                     positionMillis
                                         .coerceAtLeast(0L)

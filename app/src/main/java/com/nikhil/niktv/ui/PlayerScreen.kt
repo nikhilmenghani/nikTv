@@ -349,7 +349,8 @@ fun PlayerScreen(
     reauthenticating: Boolean = false,
     onVideoFrameRendered: () -> Unit = {},
     onVideoFramesRendered: ((Int) -> Unit)? = null,
-    onTerminalPlaybackFailure: (() -> Unit)? = null
+    onTerminalPlaybackFailure: (() -> Unit)? = null,
+    onRestartDecoderSession: (Long) -> Unit = onRetry
 ) {
     val context = LocalContext.current
     var playbackSpeed by rememberSaveable(media.progressKey) { mutableFloatStateOf(1f) }
@@ -648,6 +649,7 @@ fun PlayerScreen(
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var videoDetails by remember(media.progressKey) { mutableStateOf("") }
     var playbackError by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<String?>(null) }
+    var decoderFailurePending by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf(false) }
     var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
     var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Media3SubtitleTrack>>(emptyList()) }
     var audioDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
@@ -1092,6 +1094,7 @@ fun PlayerScreen(
                 playbackState = state
                 if (state == Player.STATE_READY) {
                     playbackError = null
+                    decoderFailurePending = false
                     startupTimedOut = false
                     playbackHasBeenReady = true
                 }
@@ -1147,6 +1150,7 @@ fun PlayerScreen(
             }
             override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
             override fun onPlayWhenReadyChanged(value: Boolean, reason: Int) {
+                android.util.Log.i("NikTvPlayback", "playWhenReady=$value reason=$reason decoderRecovery=$decoderRecoveryInProgress")
                 playbackRequested = value
                 onPlaybackIntentChanged(value)
             }
@@ -1232,6 +1236,9 @@ fun PlayerScreen(
                     )
 
                 val authorizationFailure = httpStatus in setOf(401, 403)
+                decoderFailurePending = failedDecoder != null
+                if (failedDecoder != null) android.util.Log.w("NikTvPlayback",
+                    "Decoder failure codec=$failedDecoder recoveryCount=${media.decoderRecoveryCount} requested=$playbackRequested code=${error.errorCode}")
 
                 when {
                     authorizationFailure && !media.externalPlayback &&
@@ -3056,7 +3063,8 @@ PlayerChromeIconButton(
                         onBack = onBack,
                         onRetry = {
                             liveRecovery.reset(); liveEdgeRecovery.reset()
-                            onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
+                            val retry = if (decoderFailurePending) onRestartDecoderSession else onRetry
+                            retry(playbackRestartPosition(media.catalogType, player.currentPosition))
                         },
                         onNext = onPlayNext,
                         showAlternatePlayer = true,
