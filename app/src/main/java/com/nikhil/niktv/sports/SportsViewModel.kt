@@ -231,7 +231,7 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
         else repository.channels(category, refresh)
 
     private suspend fun loadDetail(channel: SportsChannel, fresh: Boolean = false): SportsChannelDetail {
-        val category = channel.playlist ?: return repository.detail(channel.slug)
+        val category = channel.playlist ?: return repository.detail(channel.slug, refresh = fresh)
         val item = if (fresh || mutable.value.collection?.id != category.id) {
             val currentCategory = if (category.custom) category else repository.categories(refresh = fresh).firstOrNull { it.id == category.id } ?: category
             collectionChannels(currentCategory, fresh).firstOrNull { it.key == channel.key }
@@ -261,6 +261,7 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun playbackFailed(attemptId: Long) { playback.failed(attemptId); applyPlayback(playback.state.value) }
+    fun playbackAuthorizationFailed(attemptId: Long) { playback.authorizationFailed(attemptId); applyPlayback(playback.state.value) }
     fun retryPlayback() { playback.retry(); applyPlayback(playback.state.value) }
     fun cancelPendingFallback() { playback.cancelPendingFallback(); applyPlayback(playback.state.value) }
     fun dismissStreamError() {

@@ -27,7 +27,8 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     navigationIndex: Int = selectedIndex, onSelectStream: ((Int) -> Unit)? = null,
     onVideoFramesRendered: ((Int) -> Unit)? = null,
     sourceAttemptId: Long = 0L, onRetryFresh: (() -> Unit)? = null,
-    onTerminalFailure: (() -> Unit)? = null, onCancelPendingFallback: (() -> Unit)? = null) {
+    onTerminalFailure: (() -> Unit)? = null, onCancelPendingFallback: (() -> Unit)? = null,
+    onAuthorizationFailure: (() -> Unit)? = null) {
     val preferences: SportsPlaybackSettingsViewModel = viewModel()
     val settings by preferences.settings.collectAsStateWithLifecycle()
     val currentSettings = settings
@@ -101,7 +102,11 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
             }
         },
         onPlaybackAuthorizationFailure = {
-            if (!stream.isLive && onRetryFresh != null) onRetryFresh() else { authorizationRetries++; attempt++ }
+            when {
+                onAuthorizationFailure != null -> onAuthorizationFailure()
+                !stream.isLive && onRetryFresh != null -> onRetryFresh()
+                else -> { authorizationRetries++; attempt++ }
+            }
         },
         onPlayPrevious = { sportsAdjacentStream(navigationIndex, -1, queue.size)?.let { onSelectStream?.invoke(it) } },
         onPlayNext = { sportsAdjacentStream(navigationIndex, 1, queue.size)?.let { onSelectStream?.invoke(it) } },

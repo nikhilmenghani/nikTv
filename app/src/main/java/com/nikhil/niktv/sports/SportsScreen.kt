@@ -60,13 +60,15 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
             navigationIndex = state.resolving ?: state.playingIndex ?: -1,
             onSelectStream = { lastSource = it; vm.play(it) },
             sourceAttemptId = committedAttemptId, onRetryFresh = vm::retryPlayback,
+            onAuthorizationFailure = { vm.playbackAuthorizationFailed(committedAttemptId) },
             onTerminalFailure = { vm.playbackFailed(committedAttemptId) },
             onCancelPendingFallback = vm::cancelPendingFallback)
         if (state.resolving != null) androidx.compose.foundation.layout.Box(
             androidx.compose.ui.Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.TopCenter
         ) { androidx.compose.material3.LinearProgressIndicator(androidx.compose.ui.Modifier.fillMaxWidth()) }
         state.streamError?.let { error -> SportsPlaybackErrorDialog(error,
-            exhausted = error.startsWith("The available sources could not play."),
+            exhausted = error.startsWith("The available sources could not play.") ||
+                error == SPORTS_EXPIRED_LINK_MESSAGE || error == SPORTS_AUTHORIZATION_MESSAGE,
             retry = vm::retryPlayback, choose = { vm.back() }, close = vm::dismissStreamError) }
         return
     }

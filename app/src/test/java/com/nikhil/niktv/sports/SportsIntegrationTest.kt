@@ -130,6 +130,26 @@ class SportsIntegrationTest {
         assertTrue(requests.last().startsWith(base))
     }
 
+    @Test fun freshDetailReloadsConfigurationBeforeFetchingReplacementLinks() = runBlocking {
+        var base = "https://sports.example.test/"
+        val calls = mutableListOf<String>()
+        val requestHeaders = mutableListOf<Map<String, String>>()
+        val repository = SportsRepository(SportsTransport { url, headers ->
+            calls += url
+            requestHeaders += headers
+            SportsResponse(url, if (url.endsWith("config.txt")) config.replace("https://sports.example.test/", base)
+                else """{"streamUrls":[{"title":"Selected","link":"${base}live.m3u8"}]}""")
+        })
+        repository.detail("match")
+        base = "https://rotated.example.test/"
+        val replacement = repository.detail("match", refresh = true).streams.single()
+        assertEquals(2, calls.count { it.endsWith("config.txt") })
+        assertEquals("${base}channels/match.txt", calls.last())
+        assertEquals("${base}live.m3u8", replacement.link)
+        assertEquals("no-cache", requestHeaders[requestHeaders.lastIndex - 1]["Cache-Control"])
+        assertEquals("no-cache", requestHeaders.last()["Cache-Control"])
+    }
+
     @Test fun resolversHandleApiUrlsWebMediaAndServerLookup() = runBlocking {
         val transport = object : SportsTransport {
             override suspend fun post(url: String, headers: Map<String, String>, form: Map<String, String>): SportsResponse {

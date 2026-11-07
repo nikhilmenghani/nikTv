@@ -48,6 +48,7 @@ internal class SportsStreamResolver(
         val parsed = splitSportsHeaders(resolved)
         val url = parsed.link.toHttpUrlOrNull() ?: throw SportsException("This source did not return a playable URL.")
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) throw SportsException("This source returned an invalid URL.")
+        if (sportsSignedLinkExpired(parsed.link)) throw SportsExpiredLinkException()
         val drmType = parsed.drmType.ifBlank { if (input.type == 7) "clearkey" else "" }
         parsed.copy(drmType = drmType, drmLicense = parsed.drmLicense.ifBlank { if (input.type == 7) input.api else "" })
     }

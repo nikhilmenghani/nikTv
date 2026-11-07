@@ -88,9 +88,9 @@ internal class SportsRepository(
         return detail(slug).streams
     }
 
-    suspend fun detail(slug: String): SportsChannelDetail {
+    suspend fun detail(slug: String, refresh: Boolean = false): SportsChannelDetail {
         require(sportsSlug(slug))
-        val detail = SportsCatalogue.detail(catalogue("channels/${slug.lowercase(java.util.Locale.ROOT)}.txt"))
+        val detail = SportsCatalogue.detail(catalogue("channels/${slug.lowercase(java.util.Locale.ROOT)}.txt", refresh))
         val region = sportsCountry(country())
         if (!sportsGeoAvailable(detail.geo, region)) throw SportsException("This channel is not available in your region.")
         val available = detail.streams.filter { sportsGeoAvailable(it.geo, region) }.map { stream ->
@@ -142,7 +142,9 @@ internal class SportsRepository(
             val current = config
             for (base in listOfNotNull(current.primary, current.secondary).distinct()) {
                 if (!tried.add(base)) continue
-                try { return transport.get(base + path, mapOf("User-Agent" to current.userAgent)).body }
+                val headers = mapOf("User-Agent" to current.userAgent) +
+                    if (refresh) mapOf("Cache-Control" to "no-cache") else emptyMap()
+                try { return transport.get(base + path, headers).body }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: IOException) { failure = error }
             }
@@ -155,7 +157,8 @@ internal class SportsRepository(
         val region = sportsCountry(country())
         if (!force && configuredCountry == region && configuredAt != 0L && now() - configuredAt < 15 * 60_000L) return@withLock
         try {
-            val response = transport.get("https://pub-9610baca6bf84734bf9d40546dc754a6.r2.dev/config.txt", emptyMap())
+            val response = transport.get("https://pub-9610baca6bf84734bf9d40546dc754a6.r2.dev/config.txt",
+                if (force) mapOf("Cache-Control" to "no-cache") else emptyMap())
             config = sportsConfiguration(response.body, region)
             configuredCountry = region
             configuredAt = now()

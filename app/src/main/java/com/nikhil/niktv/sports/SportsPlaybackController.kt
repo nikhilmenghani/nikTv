@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
+internal const val SPORTS_AUTHORIZATION_MESSAGE =
+    "The provider has not supplied a working replacement for this rejected stream. Choose another source or try again later."
+
 internal data class SportsPlaybackSession(
     val active: Boolean = false,
     val slug: String = "",
@@ -49,6 +52,8 @@ internal class SportsPlaybackController(
     private var committed: Occurrence? = null
     private var preferred: Occurrence? = null
     private var handledFailure: Long? = null
+    private var rejectedAuthorization: SportsStream? = null
+    private var expiredLink = false
     private val attempted = mutableSetOf<AttemptKey>()
     private val queue = ArrayDeque<Occurrence>()
 
@@ -81,6 +86,22 @@ internal class SportsPlaybackController(
         fillQueue(session.sources, ((session.currentIndex ?: -1) + 1).coerceAtLeast(0))
         mutable.update { it.copy(resolving = true, error = null) }
         launchResolution(generation, refreshFirst = false)
+    }
+
+    /** Renew the selected occurrence once per campaign, without resetting its retry budget. */
+    fun authorizationFailed(attemptId: Long) {
+        val session = mutable.value
+        if (!session.active || session.resolving || session.current == null ||
+            session.attemptId != attemptId || handledFailure == attemptId) return
+        handledFailure = attemptId
+        cancelWork()
+        fallbackAllowed = false
+        pendingFreshRetry = true
+        preferred = committed ?: return
+        rejectedAuthorization = session.current
+        if (refreshed) { exhausted(); return }
+        mutable.update { it.copy(resolving = true, error = null) }
+        launchResolution(generation, refreshFirst = true)
     }
 
     /** Explicit Retry fetches fresh metadata and retains the same source occurrence and picture. */
@@ -123,6 +144,8 @@ internal class SportsPlaybackController(
         fallbackAllowed = false
         pendingFreshRetry = false
         handledFailure = null
+        rejectedAuthorization = null
+        expiredLink = false
         attempted.clear()
         queue.clear()
     }
@@ -169,7 +192,8 @@ internal class SportsPlaybackController(
         if (fallbackAllowed) fillQueue(fresh, target ?: 0)
         else {
             queue.clear()
-            target?.let { occurrence(fresh, it) }?.takeIf { attemptKey(it) !in attempted }?.let(queue::add)
+            target?.let { occurrence(fresh, it) }
+                ?.takeIf { rejectedAuthorization != null || attemptKey(it) !in attempted }?.let(queue::add)
         }
         return true
     }
@@ -185,29 +209,43 @@ internal class SportsPlaybackController(
                     if (queue.isEmpty()) { exhausted(); return@launch }
                 }
                 val candidate = queue.removeFirst()
-                if (!attempted.add(attemptKey(candidate))) continue
+                if (!attempted.add(attemptKey(candidate)) && rejectedAuthorization == null) continue
                 mutable.update { it.copy(selectedIndex = candidate.index, resolving = true,
                     attempts = it.attempts + 1, error = null) }
                 try {
                     val resolved = withTimeout(30_000) { resolve(candidate.source) }
                     if (owner != generation) return@launch
+                    // Re-resolving an unchanged web/API source can rotate a token; unchanged
+                    // resolved credentials cannot recover a 403 and must not restart forever.
+                    val rejected = rejectedAuthorization
+                    if (rejected != null && resolved.edgeTokenApi.isBlank() &&
+                        resolved.link == rejected.link && resolved.headers == rejected.headers &&
+                        resolved.drmType == rejected.drmType && resolved.drmLicense == rejected.drmLicense) {
+                        exhausted(); return@launch
+                    }
                     committed = candidate
                     preferred = candidate
                     pendingFreshRetry = false
                     handledFailure = null
+                    rejectedAuthorization = null
                     mutable.update { it.copy(current = resolved, currentIndex = candidate.index,
                         selectedIndex = candidate.index, resolving = false, attemptId = ++sequence, error = null) }
                     return@launch
                 } catch (_: TimeoutCancellationException) { if (owner != generation) return@launch }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { if (owner != generation) return@launch }
+                catch (failure: Exception) {
+                    if (owner != generation) return@launch
+                    if (failure is SportsExpiredLinkException) expiredLink = true
+                }
             }
         }
     }
 
     private fun exhausted() {
         mutable.update { it.copy(resolving = false,
-            error = if (fallbackAllowed) "The available sources could not play. Retry to fetch fresh links, or choose another source."
+            error = if (expiredLink) SPORTS_EXPIRED_LINK_MESSAGE
+                else if (rejectedAuthorization != null) SPORTS_AUTHORIZATION_MESSAGE
+                else if (fallbackAllowed) "The available sources could not play. Retry to fetch fresh links, or choose another source."
                 else "This source could not be resolved. Retry to fetch a fresh link, or choose another source.") }
     }
 }
