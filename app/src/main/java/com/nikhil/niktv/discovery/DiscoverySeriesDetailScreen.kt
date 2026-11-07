@@ -64,13 +64,31 @@ internal fun DiscoverySeriesDetailScreen(
     val details = state.details ?: DiscoveryDetails(card)
     val lastWatched = discoveryLastEpisode(card, state.profile, app.recentlyPlayed)
     val primary = lastWatched ?: state.episodes.maxByOrNull { it.number }?.let { it.season to it.number }
+    var automaticSeason by rememberSaveable(state.profile, card.key) { mutableStateOf<Int?>(null) }
+    var emptyInitialSeasons by rememberSaveable(state.profile, card.key) { mutableStateOf(listOf<Int>()) }
     var initialFocusDone by remember(card.key) { mutableStateOf(false) }
     // Metadata/initial-season loading belongs to the route, not a lazy child
     // that can leave composition while its hero or cast panel is visible.
     LaunchedEffect(card.key, state.details?.card?.key) {
-        val initial = lastWatched?.first ?: if (app.seriesStartSeason == SeriesStartSeason.LAST)
-            state.details?.seasons?.lastOrNull() else state.details?.seasons?.firstOrNull()
-        if (state.season == null) initial?.let(loadSeason)
+        val initial = discoveryInitialSeriesSeason(state.details, app.seriesStartSeason, lastWatched?.first)
+        if (state.season == null) initial?.let {
+            automaticSeason = it.takeIf { lastWatched == null }
+            loadSeason(it)
+        }
+    }
+    LaunchedEffect(state.season, state.episodes, state.loading, state.errors["season"], automaticSeason) {
+        val selected = automaticSeason ?: return@LaunchedEffect
+        if (state.season != selected || "season" in state.loading) return@LaunchedEffect
+        if (state.episodes.isNotEmpty() || state.errors["season"] != null) {
+            automaticSeason = null
+        } else {
+            // Older cached details have no counts. An actual empty response is
+            // authoritative; try another season only for automatic selection.
+            emptyInitialSeasons = (emptyInitialSeasons + selected).distinct()
+            val next = discoverySeriesSeasonAfterEmpty(state.details, app.seriesStartSeason, emptyInitialSeasons.toSet())
+            automaticSeason = next
+            next?.let(loadSeason)
+        }
     }
     LaunchedEffect(card.key, primary != null) {
         if (initialFocusDone || primary == null) return@LaunchedEffect
@@ -143,7 +161,8 @@ internal fun DiscoverySeriesDetailScreen(
             })
         }
         item("series-episodes:${card.key}") {
-            DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus, loadSeason, play, download,
+            DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
+                { automaticSeason = null; loadSeason(it) }, play, download,
                 onFocus = {
                     if (page.firstVisibleItemIndex != 1 || page.firstVisibleItemScrollOffset != 0)
                         scope.launch { page.scrollToItem(1) }
@@ -152,6 +171,19 @@ internal fun DiscoverySeriesDetailScreen(
         }
         }
     }
+}
+
+/** Announced empty seasons must not disable Play when earlier episodes exist. */
+internal fun discoveryInitialSeriesSeason(details: DiscoveryDetails?, start: SeriesStartSeason, resume: Int? = null): Int? {
+    if (resume != null) return resume
+    val all = details?.seasons.orEmpty()
+    val available = all.filter { details?.seasonEpisodeCounts?.get(it) != 0 }.ifEmpty { all }
+    return if (start == SeriesStartSeason.LAST) available.lastOrNull() else available.firstOrNull()
+}
+
+internal fun discoverySeriesSeasonAfterEmpty(details: DiscoveryDetails?, start: SeriesStartSeason, empty: Set<Int>): Int? {
+    val available = details?.seasons.orEmpty().filter { it !in empty && details?.seasonEpisodeCounts?.get(it) != 0 }
+    return if (start == SeriesStartSeason.LAST) available.lastOrNull() else available.firstOrNull()
 }
 
 

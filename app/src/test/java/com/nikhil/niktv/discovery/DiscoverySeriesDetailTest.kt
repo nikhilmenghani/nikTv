@@ -23,4 +23,23 @@ class DiscoverySeriesDetailTest {
     @Test fun missingEpisodeIdentityDoesNotGuess() {
         assertNull(discoveryLastEpisode(card, "a", listOf(RecentItem(FavoriteKind.SERIES, card.media, profileKey = "a"))))
     }
+    @Test fun emptyAnnouncedSeasonDoesNotBlockEarlierEpisodes() {
+        val details = DiscoveryDetails(card, seasons = listOf(0, 1, 17, 18),
+            seasonEpisodeCounts = mapOf(0 to 0, 1 to 41, 17 to 13, 18 to 0))
+        assertEquals(17, discoveryInitialSeriesSeason(details, SeriesStartSeason.LAST))
+        assertEquals(1, discoveryInitialSeriesSeason(details, SeriesStartSeason.FIRST))
+        assertEquals(18, discoveryInitialSeriesSeason(details, SeriesStartSeason.LAST, resume = 18))
+    }
+    @Test fun unknownSeasonCountsAndCompletelyEmptySeriesRemainBrowsable() {
+        assertEquals(18, discoveryInitialSeriesSeason(DiscoveryDetails(card, seasons = listOf(1, 18)), SeriesStartSeason.LAST))
+        assertEquals(1, discoveryInitialSeriesSeason(DiscoveryDetails(card, seasons = listOf(1), seasonEpisodeCounts = mapOf(1 to 0)), SeriesStartSeason.LAST))
+        assertNull(discoveryInitialSeriesSeason(null, SeriesStartSeason.LAST))
+    }
+    @Test fun legacyCachedMetadataCanAdvanceAfterAnActualEmptySeasonWithoutLooping() {
+        val details = DiscoveryDetails(card, seasons = listOf(1, 17, 18))
+        assertEquals(18, discoveryInitialSeriesSeason(details, SeriesStartSeason.LAST))
+        assertEquals(17, discoverySeriesSeasonAfterEmpty(details, SeriesStartSeason.LAST, setOf(18)))
+        assertEquals(1, discoverySeriesSeasonAfterEmpty(details, SeriesStartSeason.LAST, setOf(18, 17)))
+        assertNull(discoverySeriesSeasonAfterEmpty(details, SeriesStartSeason.LAST, setOf(1, 17, 18)))
+    }
 }

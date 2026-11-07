@@ -1361,6 +1361,13 @@ private fun SearchResultsContent(
     val phoneLayout = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
         LocalContext.current.isTvLikeDevice(configuration))
     var resultTab by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(SearchContentType.SERIES) }
+    var resultTabChosen by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(false) }
+    LaunchedEffect(all, state.searchResults, resultTabChosen) {
+        if (all && !resultTabChosen && state.searchResults.none { it.searchResultType == resultTab }) {
+            globalSearchTypes.firstOrNull { type -> state.searchResults.any { it.searchResultType == type } }
+                ?.let { resultTab = it }
+        }
+    }
     val tabRequesters = remember { globalSearchTypes.associateWith { FocusRequester() } }
     val resultRequester = if (all) remember { FocusRequester() } else firstItemRequester
     val denseResults = isTv || screenWidthDp >= 600
@@ -1485,14 +1492,14 @@ private fun SearchResultsContent(
                 val count = state.searchResults.count { it.searchResultType == type }
                 val shape = RoundedCornerShape(8.dp)
                 Surface(
-                    onClick = { resultTab = type },
+                    onClick = { resultTabChosen = true; resultTab = type },
                     shape = shape,
                     color = if (selected) SearchAccent.copy(alpha = 0.2f) else SearchSurface,
                     border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) SearchAccent else SearchOutline),
                     modifier = Modifier.weight(1f).height(if (isTv) 36.dp else 48.dp)
                         .then(if (selected) Modifier.focusRequester(firstItemRequester) else Modifier)
                         .focusRequester(tabRequesters.getValue(type))
-                        .onFocusChanged { if (it.isFocused) resultTab = type }
+                        .onFocusChanged { if (it.isFocused) { resultTabChosen = true; resultTab = type } }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                                 Key.DirectionLeft, Key.DirectionRight -> {

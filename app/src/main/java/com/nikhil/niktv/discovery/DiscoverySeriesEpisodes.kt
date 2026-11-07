@@ -37,7 +37,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     val context = LocalContext.current
     val wide = configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration)
     val seasons = state.details?.seasons.orEmpty()
-    val chosen = state.season ?: if (startSeason == SeriesStartSeason.LAST) seasons.lastOrNull() else seasons.firstOrNull()
+    val chosen = state.season ?: discoveryInitialSeriesSeason(state.details, startSeason, lastWatched?.first)
     var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
     var newest by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
     var searchOpen by rememberSaveable(state.profile, card.key) { mutableStateOf(false) }

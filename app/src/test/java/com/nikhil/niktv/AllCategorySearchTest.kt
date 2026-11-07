@@ -85,7 +85,7 @@ class AllCategorySearchTest {
         assertFalse(requiresCategorySearch(PortalType.STALKER, SearchContentType.SERIES, "*", true))
         assertFalse(requiresCategorySearch(PortalType.STALKER, SearchContentType.SERIES, "english", false))
         assertFalse(requiresCategorySearch(PortalType.XTREAM, SearchContentType.SERIES, "*", false))
-        assertFalse(requiresCategorySearch(PortalType.STALKER, SearchContentType.ALL, "*", false))
+        assertTrue(requiresCategorySearch(PortalType.STALKER, SearchContentType.ALL, "*", false))
     }
 
     @Test fun totalProviderFailureIsNotReportedAsAnEmptySuccessfulSearch() = runBlocking {

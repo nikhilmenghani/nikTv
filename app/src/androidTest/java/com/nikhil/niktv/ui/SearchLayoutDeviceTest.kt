@@ -30,6 +30,67 @@ class SearchLayoutDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
 
+    @Test fun allSearchShowsPopulatedTabAndPreservesExplicitEmptyTabSelection() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val profile = PortalProfile("Search fixture", "https://search.invalid", "")
+        val movie = MediaItem("movie-only", "Movie-only fixture", null, null, searchResultType = SearchContentType.MOVIES)
+        val state = mutableStateOf(NikTvState(savedProfile = profile, restoring = false,
+            session = PortalSession(profile, "fixture", "https://search.invalid", "", "", ""),
+            searchOpen = true, searchQuery = "fixture", searchType = SearchContentType.ALL,
+            searchUsedServer = true, searchServerLoading = true))
+        val query = AtomicReference<FocusRequester>()
+        val opened = AtomicReference<MediaItem>()
+        try {
+            instrumentation.setInTouchMode(true)
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme {
+                DiscoverySearchScreen(state.value, {}, {}, {}) {
+                    val queryFocus = LocalDiscoverySearchQueryFocus.current
+                    SideEffect { query.set(queryFocus) }
+                    DiscoverySearchContent(state.value, {}, {}, {}, {}, {}, {}, {}, opened::set, {}, {},
+                        headerFocusRequester = LocalDiscoverySearchHeaderFocus.current, queryFocusRequester = queryFocus)
+                }
+            } } }
+            await("Initial result tabs are visible") { label("Movies · 0") != null }
+            instrumentation.runOnMainSync { state.value = state.value.copy(searchResults = listOf(movie), searchServerLoading = false) }
+            await("A movie-only search displays the matching tile automatically") { label(movie.title) != null }
+            NavigationAuditEvidence.capture("all-search-auto-movie-tab")
+            assertTrue(clickable(label("Series · 0")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            await("User can inspect the empty Series tab") { label(movie.title) == null }
+            instrumentation.runOnMainSync { state.value = state.value.copy(searchResults = listOf(movie, movie.copy(id = "movie-two", title = "Second movie fixture"))) }
+            await("More results do not override an explicit tab choice") { label("Movies · 2") != null && label(movie.title) == null }
+            assertTrue(clickable(label("Movies · 2")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            await("Movies remains selectable") { label(movie.title) != null }
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { query.get().requestFocus() }
+            await("Query accepts D-pad focus") { focused("fixture") }
+            for (target in listOf("Clear search", "Search")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right reaches $target") { focused(target) }
+            }
+            val stackedScopes = bounds(label("All")!!).top > bounds(label("fixture")!!).bottom
+            val stackedCategory = bounds(label("All categories")!!).top > bounds(label("All")!!).bottom
+            val path = if (!stackedScopes) listOf("Movies · 2")
+                else if (!stackedCategory) listOf("All", "Movies · 2")
+                else listOf("All", "All categories", "Search provider again", "Movies · 2")
+            for (target in path) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down follows the visible layout to $target") { focused(target) }
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down enters the matching movie") { focused(movie.title) }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Center opens that exact movie") { opened.get()?.id == movie.id }
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            currentHost = null
+            instrumentation.setInTouchMode(true)
+        }
+    }
+
     @Test fun deletingRecentSearchKeepsFocusOnReplacementOrPreviousRow() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))

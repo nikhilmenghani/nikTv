@@ -7,7 +7,7 @@ import org.junit.Test
 
 class TmdbAvailabilityCacheTest {
     @Test fun `empty results remain fresh until the refresh interval expires`() {
-        val entry = TmdbAvailabilityEntry(10_000L, emptyList(), matchingVersion = 4)
+        val entry = TmdbAvailabilityEntry(10_000L, emptyList(), matchingVersion = TMDB_MATCHING_VERSION)
         assertTrue(entry.isFresh(69_999L, 60_000L))
         assertFalse(entry.isFresh(70_000L, 60_000L))
         assertFalse(entry.isFresh(9_000L, 60_000L))

@@ -42,6 +42,24 @@ class GlobalSearchTest {
         assertEquals(item.id, restored.id)
     }
 
+    @Test fun globalCacheRestoresTypesWithoutDuplicatingSharedProviderIds() {
+        val items = globalSearchTypes.map { media("42", "Friends", it) }
+        val cache = SearchResultCache("profile", SearchContentType.ALL, "Friends", lastPage = 1,
+            hasMore = false, items = items, resultTypes = items.map { it.searchResultType })
+        val restored = Json.decodeFromString<SearchResultCache>(Json.encodeToString(cache))
+        assertTrue(restored.items.all { it.searchResultType == null })
+        assertEquals(items, restored.validItems())
+        assertEquals(3, restored.validItems().rankSearchResults("Friends", SearchContentType.ALL).size)
+    }
+
+    @Test fun legacyUntypedGlobalRowsCannotInflateCountsOrBecomeUnopenableTiles() {
+        val untyped = MediaItem("42", "Friends", null, null)
+        val cache = SearchResultCache("profile", SearchContentType.ALL, "Friends", lastPage = 1,
+            hasMore = false, items = listOf(untyped))
+        assertTrue(cache.validItems().isEmpty())
+        assertEquals(listOf(untyped), cache.copy(type = SearchContentType.SERIES).validItems())
+    }
+
     @Test fun globalRecentsRetainTheirScope() {
         val recent = RecentSearch("Friends", SearchContentType.ALL)
         assertEquals(SearchContentType.ALL, Json.decodeFromString<RecentSearch>(Json.encodeToString(recent)).type)

@@ -5,7 +5,7 @@ import kotlinx.coroutines.*
 internal data class AllCategorySearchResult(val page: PortalSearchPage, val failedCategories: Int)
 
 internal fun requiresCategorySearch(portal: PortalType, type: SearchContentType, category: String,
-    complete: Boolean) = portal == PortalType.STALKER && type != SearchContentType.ALL && category == "*" && !complete
+    complete: Boolean) = portal == PortalType.STALKER && category == "*" && !complete
 
 /** A wildcard is only a hint on Stalker: every enabled category must still be searched. */
 internal suspend fun searchAllCategoryPage(page: Int, categoryIds: List<String>,
@@ -17,6 +17,7 @@ internal suspend fun searchAllCategoryPage(page: Int, categoryIds: List<String>,
         catch (error: Exception) { Result.failure(error) }
     val wildcard = request("*")
     var items = wildcard.getOrNull()?.items.orEmpty()
+    val rawIds = wildcard.getOrNull()?.providerItemIds.orEmpty().toMutableSet()
     var more = wildcard.getOrNull()?.hasMore ?: false
     var failures = 0
     var successes = if (wildcard.isSuccess) 1 else 0
@@ -29,10 +30,11 @@ internal suspend fun searchAllCategoryPage(page: Int, categoryIds: List<String>,
         for (result in pages) result.fold(onSuccess = { found ->
             successes++
             items = (items + found.items).distinctBy { it.id }
+            rawIds += found.providerItemIds
             more = more || found.hasMore
             publish(items)
         }, onFailure = { failures++ })
     }
     if (successes == 0) throw wildcard.exceptionOrNull() ?: IllegalStateException("Provider unavailable")
-    return AllCategorySearchResult(PortalSearchPage(items, page, more), failures)
+    return AllCategorySearchResult(PortalSearchPage(items, page, more, providerItemIds = rawIds.toList()), failures)
 }

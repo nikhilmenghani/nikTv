@@ -4303,7 +4303,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                         continue
                     }
                     tmdbAvailability.save(profileKey, type, id,
-                        TmdbAvailabilityEntry(System.currentTimeMillis(), found, matchingVersion = 4))
+                        TmdbAvailabilityEntry(System.currentTimeMillis(), found, matchingVersion = TMDB_MATCHING_VERSION))
                     _state.update { latest ->
                         if (!accepts(latest)) latest
                         else if (discoveryCard != null) latest.copy(discoveryMatchCounts = latest.discoveryMatchCounts +
@@ -4849,103 +4849,37 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             entry.tmdb
         }
         val persisted = store.searchCatalog(CatalogType.SERIES, session.profile.cacheKey()).first()?.items.orEmpty()
-        val localMatches = rankTmdbSeriesMatches(matchingSeries,
-            (persisted + localSeriesCandidates(_state.value)).distinctBy { it.id })
-        if (localMatches.isNotEmpty()) return localMatches
         if (session.profile.portalType == PortalType.XTREAM) {
-            val profileKey = session.profile.cacheKey()
-            val catalog = portal.fullCatalog(session, CatalogType.SERIES, emptyList()).also { items ->
-                    if (items.isNotEmpty()) {
-                        store.saveSearchCatalog(
-                            SearchCatalogCache(profileKey, CatalogType.SERIES, System.currentTimeMillis(), items)
-                        )
-                    }
-                }
-            return rankTmdbSeriesMatches(matchingSeries, catalog)
+            return resolveTmdbFromXtreamCatalog(session, CatalogType.SERIES) { rankTmdbSeriesMatches(matchingSeries, it) }
         }
 
-        val queries = tmdbSeriesProviderQueries(matchingSeries)
-
-        val candidates = localSeriesCandidates(_state.value).toMutableList()
-        for (query in queries) {
-            val page = portal.search(
-                session = session,
-                type = SearchContentType.SERIES,
-                query = query,
-                page = 1,
-                categoryId = "*"
-            )
-            candidates += page.items
-            rankTmdbSeriesMatches(matchingSeries, candidates.distinctBy { it.id })
-                .takeIf { it.isNotEmpty() }
-                ?.let { return it }
-        }
-
-        for (category in prioritizedProviderCategories(session, CatalogType.SERIES)) {
-            for (query in queries.asReversed()) {
-                val page = portal.search(
-                    session = session,
-                    type = SearchContentType.SERIES,
-                    query = query,
-                    page = 1,
-                    categoryId = category.id
-                )
-                candidates += page.items
-                rankTmdbSeriesMatches(matchingSeries, candidates.distinctBy { it.id })
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { return it }
-            }
-        }
-        return emptyList()
+        return lookupProviderTitle(
+            local = persisted + localSeriesCandidates(_state.value),
+            queries = tmdbSeriesProviderQueries(matchingSeries),
+            categories = { prioritizedProviderCategories(session, CatalogType.SERIES).map { it.id } },
+            rank = { rankTmdbSeriesMatches(matchingSeries, it) },
+            search = { query, category, page -> withAutomaticSessionRetry(session) { active ->
+                portal.search(active, SearchContentType.SERIES, query, page, category)
+            } }
+        )
     }
 
     private suspend fun resolveTmdbSeriesMovieFallback(
         session: PortalSession,
         series: TmdbSeries
     ): MediaItem? {
+        if (session.profile.portalType == PortalType.XTREAM)
+            return resolveTmdbFromXtreamCatalog(session, CatalogType.MOVIES) { rankTmdbSeriesMatches(series, it) }.firstOrNull()
         val profileKey = session.profile.cacheKey()
-        val local = (
-            store.searchCatalog(CatalogType.MOVIES, profileKey).first()?.items.orEmpty() +
-                localMovieCandidates(_state.value)
-            ).distinctBy { it.id }
-        rankTmdbSeriesMatches(series, local).firstOrNull()?.let { return it }
-
-        val queries = tmdbSeriesProviderQueries(series)
-        val providerCandidates = mutableListOf<MediaItem>()
-        for (query in queries) {
-            val page = portal.search(
-                session = session,
-                type = SearchContentType.MOVIES,
-                query = query,
-                page = 1,
-                categoryId = "*"
-            )
-            providerCandidates += page.items
-            rankTmdbSeriesMatches(series, providerCandidates.distinctBy { it.id })
-                .firstOrNull()
-                ?.let { return it }
-        }
-
-        // Several Stalker portals return an empty wildcard VOD search even
-        // though the item is present in a concrete category. Reuse local
-        // category metadata when possible and put likely web-series buckets
-        // first so the fallback normally completes with one additional call.
-        for (category in prioritizedProviderCategories(session, CatalogType.MOVIES)) {
-            for (query in queries.asReversed()) {
-                val page = portal.search(
-                    session = session,
-                    type = SearchContentType.MOVIES,
-                    query = query,
-                    page = 1,
-                    categoryId = category.id
-                )
-                providerCandidates += page.items
-                rankTmdbSeriesMatches(series, providerCandidates.distinctBy { it.id })
-                    .firstOrNull()
-                    ?.let { return it }
-            }
-        }
-        return null
+        return lookupProviderTitle(
+            local = store.searchCatalog(CatalogType.MOVIES, profileKey).first()?.items.orEmpty() + localMovieCandidates(_state.value),
+            queries = tmdbSeriesProviderQueries(series),
+            categories = { prioritizedProviderCategories(session, CatalogType.MOVIES).map { it.id } },
+            rank = { rankTmdbSeriesMatches(series, it) },
+            search = { query, category, page -> withAutomaticSessionRetry(session) { active ->
+                portal.search(active, SearchContentType.MOVIES, query, page, category)
+            } }
+        ).firstOrNull()
     }
 
     private fun tmdbSeriesProviderQueries(series: TmdbSeries): List<String> {
@@ -4996,19 +4930,11 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         type: CatalogType,
         titleMatcher: (List<MediaItem>) -> List<MediaItem>
     ): List<MediaItem> {
-        val profileKey = session.profile.cacheKey()
-        val cached = store.searchCatalog(type, profileKey).first()?.items
-        val candidates = if (!cached.isNullOrEmpty()) {
-            cached
-        } else {
-            portal.fullCatalog(session, type, emptyList()).also { items ->
-                if (items.isNotEmpty()) {
-                    store.saveSearchCatalog(
-                        SearchCatalogCache(profileKey, type, System.currentTimeMillis(), items)
-                    )
-                }
-            }
-        }
+        val cached = store.searchCatalog(type, session.profile.cacheKey()).first()?.items.orEmpty()
+        // Known cached versions remain usable offline. A cache miss must verify full
+        // catalogue coverage/freshness before it can become a negative lookup.
+        withContext(Dispatchers.Default) { titleMatcher(cached) }.takeIf { it.isNotEmpty() }?.let { return it }
+        val candidates = collectionCatalog(session, type, force = false).items
 
         // Provider identity can identify the movie, but cannot choose its language
         // or quality variant. Keep every ranked occurrence for the existing picker.
@@ -5672,7 +5598,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                         categoryId = categoryId,
                         onPartial = { partial -> publishLocalSearchPartial(profileKey, type, normalizedQuery, categoryId, partial) }
                     ) +
-                        saved?.items.orEmpty()
+                        saved?.validItems().orEmpty()
                     )
                     .rankSearchResults(normalizedQuery, type)
 
@@ -5755,7 +5681,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                         query = query,
                         categoryId = snapshot.searchCategoryId,
                         onPartial = { partial -> publishLocalSearchPartial(profileKey, snapshot.searchType, query, snapshot.searchCategoryId, partial) }
-                    ) + saved?.items.orEmpty()).rankSearchResults(query, snapshot.searchType)
+                    ) + saved?.validItems().orEmpty()).rankSearchResults(query, snapshot.searchType)
                 },
                 publish = { available ->
                     val current = _state.value
@@ -5846,8 +5772,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
         val catalog = collectionCatalog(session, catalogTypeForSearch(type), force = page == 1)
         return withContext(Dispatchers.Default) {
+            val matchesTitle = titleKeywordMatcher(query)
             val matches = catalog.items.filter {
-                (categoryId == "*" || it.portalCategoryId == categoryId) && it.title.matchesTitleKeywords(query)
+                (categoryId == "*" || it.portalCategoryId == categoryId) && matchesTitle(it.title)
             }.rankSearchResults(query, type)
             PortalSearchPage(matches, 1, false)
         }
@@ -5859,7 +5786,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val session = _state.value.session ?: return
         val key = "$profileKey|$query"
         if (!append || globalSearchPagerKey != key) {
-            globalSearchPager = GlobalSearchPager()
+            globalSearchPager = GlobalSearchPager(exhaustiveCategories = session.profile.portalType == PortalType.STALKER)
             globalSearchPagerKey = key
         }
         val pager = requireNotNull(globalSearchPager)
@@ -5868,10 +5795,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 it.searchType == SearchContentType.ALL && it.searchQuery.trim() == query
         }
         _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false, searchProviderMessage = null,
-            searchResults = existing,
+            searchResults = existing.filter { it.searchResultType in globalSearchTypes },
             searchUsedServer = true, searchHasMore = pager.hasMore,
             searchActivityTitle = "Loading provider results") }
         try {
+            var failures = 0
+            do {
             val batch = pager.next(
                 search = { type, category, page ->
                     _state.update { it.copy(searchActivityDetail = "${type.title} · page $page",
@@ -5888,12 +5817,16 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     result
                 },
                 categories = { type ->
-                    if (session.profile.portalType == PortalType.XTREAM) emptyList() else store.browseCatalog(catalogTypeForSearch(type), profileKey).first()?.categories
+                    if (session.profile.portalType == PortalType.XTREAM) emptyList() else {
+                    val catalogType = catalogTypeForSearch(type)
+                    val raw = store.browseCatalog(catalogType, profileKey).first()?.categories
                         .orEmpty().ifEmpty {
                             withAutomaticSessionRetry(session) { activeSession ->
-                                portal.categories(activeSession, catalogTypeForSearch(type))
+                                portal.categories(activeSession, catalogType)
                             }
-                        }.map { it.id }
+                        }
+                    filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters).map { it.id }
+                    }
                 },
                 onItems = { items ->
                     if (current()) _state.update { latest -> latest.copy(
@@ -5902,14 +5835,24 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     ) }
                 }
             )
+            failures += batch.failures
+            // Stalker's wildcard can omit whole categories even after returning hits.
+            // Finish initial category coverage automatically; leave later pages/retries pageable.
+            } while (current() && session.profile.portalType == PortalType.STALKER && pager.hasInitialPages && failures == 0)
+            if (current()) store.savePagedSearch(SearchResultCache(profileKey, SearchContentType.ALL, query, "*", 1,
+                pager.hasMore, _state.value.searchResults, allCategoriesComplete = !pager.hasMore && failures == 0,
+                resultTypes = _state.value.searchResults.map { it.searchResultType }))
             if (current()) _state.update { it.copy(
-                searchProviderMessage = if (batch.failures > 0) "Some provider pages failed. Local results remain available; use Search provider to retry." else null
+                searchProviderMessage = if (failures > 0) "Some provider pages failed. Local results remain available; use Search provider to retry." else null
             ) }
         } finally {
             if (current()) _state.update { it.copy(searchServerLoading = false, searchHasMore = pager.hasMore,
                 searchActivityTitle = null, searchActivityDetail = null, searchActivityProgress = null) }
         }
     }
+
+    private var scopedSearchProgressKey: String? = null
+    private var scopedSearchProgress = SearchPageProgress()
 
     private suspend fun fetchSearchPage(
         query: String,
@@ -5931,6 +5874,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
+        val progressKey = "$profileKey|$type|$categoryId|$query"
+        if (page == 1 || scopedSearchProgressKey != progressKey) {
+            scopedSearchProgressKey = progressKey
+            scopedSearchProgress = SearchPageProgress()
+        }
+        val pageProgress = scopedSearchProgress
 
         val categorySearch = session.profile.portalType == PortalType.STALKER && categoryId == "*"
         var categoryFailures = 0
@@ -5970,10 +5919,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             val combined =
                 (existing + result.items).rankSearchResults(query, type)
 
-            val actuallyAdded = combined.size > existing.size
-            val hasMore =
-                result.hasMore &&
-                    (page == 1 || actuallyAdded)
+            val hasMore = pageProgress.hasNext(result)
 
             val cache =
                 SearchResultCache(

@@ -104,6 +104,31 @@ class TmdbMovieLookupViewModelTest {
         awaitPicker(setOf(versions.first().id))
     }
 
+    @Test fun partialXtreamCatalogueCannotTurnAMissingCachedTitleIntoNotFound() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        server.createContext("/player_api.php") { exchange ->
+            requests.incrementAndGet()
+            val body = versions.joinToString(",", "[", "]") {
+                """{"stream_id":"${it.id}","name":"${it.title}","category_id":"classic"}"""
+            }.toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        provider = server
+        server.start()
+        val xtream = profile.copy(portalUrl = "http://127.0.0.1:${server.address.port}")
+        state.value = state.value.copy(savedProfile = xtream,
+            session = PortalSession(xtream, "fixture", xtream.portalUrl, "", "", ""))
+        runBlocking { store.saveSearchCatalog(SearchCatalogCache(xtream.cacheKey(), CatalogType.MOVIES,
+            System.currentTimeMillis(), listOf(MediaItem("other", "Unrelated cached film", null, null))), scheduleMetadataSync = false) }
+        vm.chooseTmdbMovieVersion(TrendingMovie(movie))
+        awaitPicker(versions.map { it.id }.toSet())
+        assertEquals(1, requests.get())
+        assertTrue("*" in runBlocking { store.searchCatalog(CatalogType.MOVIES, xtream.cacheKey()).first() }!!.completedCategoryIds)
+    }
+
     private fun stalkerFixture(categoryHasMovie: Boolean, rowsOverride: String? = null): Pair<PortalProfile, MutableList<String>> {
         val requests = Collections.synchronizedList(mutableListOf<String>())
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

@@ -104,7 +104,9 @@ data class SearchResultCache(
     val hasMore: Boolean,
     val items: List<MediaItem>,
     @EncodeDefault val cachedAtMillis: Long = System.currentTimeMillis(),
-    val allCategoriesComplete: Boolean = false
+    val allCategoriesComplete: Boolean = false,
+    /** Media routing is transient on MediaItem; global search persists its own row types. */
+    val resultTypes: List<SearchContentType?> = emptyList()
 ) { val key: String get() = "${profileKey}|${type.name}|$categoryId|${query.trim().lowercase()}" }
 
 data class PortalSearchPage(

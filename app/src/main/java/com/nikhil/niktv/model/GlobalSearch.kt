@@ -2,6 +2,13 @@ package com.nikhil.niktv.model
 
 val globalSearchTypes = listOf(SearchContentType.SERIES, SearchContentType.MOVIES, SearchContentType.LIVE_TV)
 
+/** Legacy global rows without a visible media type cannot be opened or counted in a result tab. */
+fun SearchResultCache.validItems(): List<MediaItem> =
+    if (type == SearchContentType.ALL) items.mapIndexedNotNull { index, item ->
+        (item.searchResultType ?: resultTypes.getOrNull(index))?.takeIf { it in globalSearchTypes }
+            ?.let { item.copy(searchResultType = it) }
+    } else items
+
 data class SearchIndexCoverage(val items: Int, val scannedCategories: Int, val cachedAtMillis: Long)
 
 fun MediaItem.searchIdentity(fallback: SearchContentType): String = "${searchResultType ?: fallback}:$id"

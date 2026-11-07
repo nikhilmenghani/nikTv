@@ -24,6 +24,8 @@ class TmdbSeriesMatchingTest {
  }
  @Test fun cacheMigration() {
   assertFalse(com.nikhil.niktv.model.TmdbAvailabilityEntry(10L, emptyList(), 2).isFresh(20L, 100L))
+  assertFalse(com.nikhil.niktv.model.TmdbAvailabilityEntry(10L, emptyList(), 4).isFresh(20L, 100L))
+  assertTrue(com.nikhil.niktv.model.TmdbAvailabilityEntry(10L, emptyList(), 5).isFresh(20L, 100L))
   assertTrue(com.nikhil.niktv.model.TmdbAvailabilityEntry(10L, listOf(item("Show"))).isFresh(20L, 100L))
  }
 }

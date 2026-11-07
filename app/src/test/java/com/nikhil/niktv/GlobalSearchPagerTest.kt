@@ -98,4 +98,58 @@ class GlobalSearchPagerTest {
         assertTrue(pager.next(search) { emptyList() }.items.isEmpty())
         assertFalse(pager.hasMore)
     }
+
+    @Test fun stalkerPartialWildcardStillVisitsEveryCategory() = runBlocking {
+        val pager = GlobalSearchPager(exhaustiveCategories = true)
+        val calls = mutableListOf<String>()
+        val search: suspend (SearchContentType, String, Int) -> PortalSearchPage = { type, category, page ->
+            calls += "$type/$category"
+            PortalSearchPage(listOf(media(category)), page, false)
+        }
+        pager.next(search) { listOf("english", "classic") }
+        assertTrue(pager.hasInitialPages)
+        while (pager.hasInitialPages) pager.next(search) { error("Already discovered") }
+        globalSearchTypes.forEach { type ->
+            assertTrue("$type/classic" in calls)
+            assertTrue("$type/english" in calls)
+        }
+        assertFalse(pager.hasMore)
+    }
+
+    @Test fun filteredRawPageDoesNotHideLaterAcceptedResults() = runBlocking {
+        val pager = GlobalSearchPager()
+        val search: suspend (SearchContentType, String, Int) -> PortalSearchPage = { type, _, page ->
+            if (type == SearchContentType.SERIES && page == 1)
+                PortalSearchPage(emptyList(), page, true, providerItemIds = listOf("rejected-movie"))
+            else PortalSearchPage(listOf(media("$type-$page")), page, false)
+        }
+        pager.next(search) { emptyList() }
+        assertTrue(pager.hasMore)
+        assertEquals("SERIES-2", pager.next(search) { emptyList() }.items.single().id)
+        assertFalse(pager.hasMore)
+    }
+
+    @Test fun stalkerWildcardFailureDoesNotPreventCategoryDiscovery() = runBlocking {
+        val pager = GlobalSearchPager(exhaustiveCategories = true)
+        val search: suspend (SearchContentType, String, Int) -> PortalSearchPage = { _, category, page ->
+            if (category == "*") throw java.io.IOException("Wildcard unsupported")
+            PortalSearchPage(listOf(media(category)), page, false)
+        }
+        assertEquals(3, pager.next(search) { listOf("classic") }.failures)
+        val found = mutableListOf<MediaItem>()
+        repeat(3) { found += pager.next(search) { error("Already discovered") }.items }
+        assertEquals(globalSearchTypes.toSet(), found.map { it.searchResultType }.toSet())
+        assertFalse("Failed wildcard retries must not auto-loop", pager.hasInitialPages)
+    }
+
+    @Test fun cancellationPreservesTheUnfinishedTypeForResume() = runBlocking {
+        val pager = GlobalSearchPager()
+        try {
+            pager.next(search = { _, _, _ -> throw kotlinx.coroutines.CancellationException("Scope changed") }, categories = { emptyList() })
+            fail("Cancellation must escape")
+        } catch (_: kotlinx.coroutines.CancellationException) { }
+        val resumed = pager.next(search = { type, _, page -> PortalSearchPage(listOf(media(type.name)), page, false) }, categories = { emptyList() })
+        assertEquals(globalSearchTypes, resumed.items.map { it.searchResultType })
+        assertFalse(pager.hasMore)
+    }
 }
