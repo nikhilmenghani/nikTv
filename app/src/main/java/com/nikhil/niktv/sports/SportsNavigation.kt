@@ -130,10 +130,13 @@ internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
 
 @Composable
 internal fun SportsDropdown(label: String, value: String, options: List<Pair<String, String>>,
-    select: (String) -> Unit, modifier: Modifier = Modifier) {
+    select: (String) -> Unit, modifier: Modifier = Modifier, valueOnly: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
-        DiscoveryAction("$label: $value", Icons.Default.ExpandMore, modifier = Modifier.fillMaxWidth(), onClick = { expanded = true })
+        DiscoveryAction("$label: $value", Icons.Default.ExpandMore,
+            visualLabel = if (valueOnly) value else "$label: $value", horizontalPadding = if (valueOnly) 8.dp else 14.dp,
+            modifier = Modifier.fillMaxWidth().then(if (valueOnly) Modifier.semantics { contentDescription = "$label: $value" } else Modifier),
+            onClick = { expanded = true })
         DropdownMenu(expanded, { expanded = false }, containerColor = SportsSurface) {
             options.forEach { (key, title) ->
                 val active = key == value || title == value

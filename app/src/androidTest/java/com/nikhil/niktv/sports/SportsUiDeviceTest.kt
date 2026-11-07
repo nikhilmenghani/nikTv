@@ -155,10 +155,13 @@ class SportsUiDeviceTest {
             render()
             await("Category rows render") { find("All sports") != null && find("Cricket") != null }
             assertNavigationPosition(activity)
+            val statusBounds = Rect().also(requireNotNull(find("Live events: Now & next"))::getBoundsInScreen)
+            val sportBounds = Rect().also(requireNotNull(find("Sport: All sports"))::getBoundsInScreen)
+            assertEquals("Status and sport share one filter row", statusBounds.centerY(), sportBounds.centerY())
+            assertTrue("Sport is beside status", sportBounds.left >= statusBounds.right)
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Remote enters the status filter") { focused("Live events: Now & next") }
-            instrumentation.sendKeyDownUpSync(if (activity.resources.configuration.smallestScreenWidthDp < 600)
-                KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_RIGHT)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Remote reaches the sport filter") { focused("Sport: All sports") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Remote opens the sport dropdown") { find("Football") != null }

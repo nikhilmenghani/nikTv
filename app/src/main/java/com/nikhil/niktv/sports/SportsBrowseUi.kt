@@ -211,24 +211,23 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 val sports = remember(state.events, state.filters, sport) { sportsEventFilterChoices(state.events, state.filters, sport) }
                 val sportDropdown: @Composable (Modifier) -> Unit = { modifier ->
                     SportsDropdown("Sport", sport, sports.map { it to it },
-                        select = { setSport(it); saveDefaultSport(it) }, modifier = modifier.focusRequester(sportFilter))
+                        select = { setSport(it); saveDefaultSport(it) }, modifier = modifier.focusRequester(sportFilter), valueOnly = compact)
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SportsDropdown("Live events", status, SPORTS_STATUS_FILTERS.map { it to it },
-                        select = { setStatus(it); saveDefaultStatus(it) }, modifier = Modifier.weight(1f).focusRequester(firstFilter))
-                    if (!compact) sportDropdown(Modifier.weight(1f))
+                        select = { setStatus(it); saveDefaultStatus(it) }, modifier = Modifier.weight(1f).focusRequester(firstFilter), valueOnly = compact)
+                    sportDropdown(Modifier.weight(1f))
                     DiscoveryAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag, iconOnly = compact,
                         selected = state.availabilityFilter != SportsAvailabilityFilter.ALL,
                         modifier = Modifier.focusRequester(availabilityAction)) { availabilityOpen = true }
                 }
-                if (compact) sportDropdown(Modifier.fillMaxWidth())
                 val visible = remember(state.events, sport, status, activeQuery, now.epochSecond, state.channelFlags, state.availabilityFilter) {
                     state.events.filter { sportsEventMatches(it, sport, status, activeQuery, now) && state.availabilityFilter.includes(state.channelFlags[it.slug]) }
                         .sortedWith(compareByDescending<SportsEvent> { it.isHot }.thenBy { if (it.status(now) == SportsStatus.LIVE) 0 else 1 }.thenBy { it.start })
                 }
                 val sections = remember(visible, state.filters, sport) { sportsEventSections(visible, state.filters, sport) }
                 SportsBrowseStatus(state, visible.size, "event", refresh)
-                SportsEventRows(sections, Modifier.weight(1f), compact, if (compact) sportFilter else firstFilter,
+                SportsEventRows(sections, Modifier.weight(1f), compact, firstFilter,
                     entry = gridEntry, requester = { tileRequester(it) }) { event, rowKey, modifier ->
                     SportsEventTile(event, now, state.favourites.any { it.key == event.slug }, modifier,
                         click = { lastTile = rowKey; open(event) }, menu = { contextItem = event.asChannel(); restoreTile = tileRequester(rowKey) }, flag = state.channelFlags[event.slug])
