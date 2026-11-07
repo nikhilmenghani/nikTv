@@ -244,7 +244,12 @@ internal class Hdhub4uSourceResolver(
     private fun hls(response: AlternateSourceHttpResponse, link: Link): List<AlternateStream> =
         alternateHlsStreams(requirePublicHttps(response.url), response.body,
             mapOf("User-Agent" to AlternateSourceResolver.USER_AGENT, "Referer" to link.referer) + link.extraHeaders,
-            "hdhub4u:${hash(response.url)}", "HDHub4u · ${link.url.host}")
+            "hdhub4u:${hash(response.url)}", "HDHub4u · ${link.url.host}").map { stream ->
+            // HDStream's current HLS fails LibVLC 3's demuxer on Android, while
+            // Media3 renders it. Use the existing per-stream compatibility route;
+            // retain the user's player preference and other mirrors' behavior.
+            stream.copy(vlcCompatible = !requirePublicHttps(link.referer).host.split('.').contains("hdstream4u"))
+        }
 
     private suspend fun page(url: HttpUrl, referer: String, phase: String, extraHeaders: Map<String, String> = emptyMap()) =
         read(AlternateSourceHttpRequest(requirePublicHttps(url.toString()).toString(),

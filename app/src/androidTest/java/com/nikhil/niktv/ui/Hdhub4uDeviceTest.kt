@@ -4,22 +4,17 @@ import android.content.Intent
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.Modifier
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.PlayerView
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.data.*
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.PlayingMedia
+import com.nikhil.niktv.model.PlaybackEngine
+import com.nikhil.niktv.model.AlternatePlaybackSource
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.runBlocking
@@ -99,7 +94,19 @@ class Hdhub4uDeviceTest {
             provider = AlternateSourceProvider.HDHUB4U))
     }
 
-    private fun live(target: AlternateSourceTarget) {
+    @Test fun liveMovieWithVlcPreferenceRendersInAppPlayer() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("hdhubLive") == "true")
+        live(AlternateSourceTarget("Heart of the Beast", false, year = 2026,
+            provider = AlternateSourceProvider.HDHUB4U), PlaybackEngine.VLC)
+    }
+
+    @Test fun liveEpisodeWithVlcPreferenceRendersInAppPlayer() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("hdhubLive") == "true")
+        live(AlternateSourceTarget("Wednesday", true, year = 2022, season = 2, episode = 1,
+            provider = AlternateSourceProvider.HDHUB4U), PlaybackEngine.VLC)
+    }
+
+    private fun live(target: AlternateSourceTarget, requestedEngine: PlaybackEngine = PlaybackEngine.MEDIA3) {
         val streams = runBlocking { AlternateSourceResolver().resolve(target) }
         assertTrue("HDHub4u provides a native source for the exact requested title/episode", streams.isNotEmpty())
         val stream = streams.first()
@@ -107,35 +114,39 @@ class Hdhub4uDeviceTest {
         assertTrue(stream.headers["Referer"]?.startsWith("https://") == true)
         val host = host()
         val frames = AtomicInteger()
-        val error = AtomicReference<String>()
-        var player: ExoPlayer? = null
+        val position = AtomicLong()
+        val errors = AtomicInteger()
+        val preferenceChanges = AtomicInteger()
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val volume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        val media = PlayingMedia(MediaItem("hdhub-device-fixture", target.title, null, null), stream.url,
+            if (target.series) CatalogType.SERIES else CatalogType.MOVIES,
+            progressKey = "hdhub-device-fixture", playbackFormat = stream.format,
+            streamRequestHeaders = stream.headers,
+            alternateSource = AlternatePlaybackSource(target, streams, stream.id, "fixture"))
         try {
-            instrumentation.runOnMainSync {
-                val source = DefaultHttpDataSource.Factory().setDefaultRequestProperties(stream.headers)
-                    .setConnectTimeoutMs(8_000).setReadTimeoutMs(8_000)
-                player = ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(source)).build().also { engine ->
-                    engine.volume = 0f
-                    engine.addListener(object : Player.Listener {
-                        override fun onRenderedFirstFrame() { frames.incrementAndGet() }
-                        override fun onPlayerError(failure: PlaybackException) { error.set(failure.errorCodeName) }
-                    })
-                    host.setContent { AndroidView(modifier = Modifier.fillMaxSize(),
-                        factory = { PlayerView(it).apply { useController = false; this.player = engine } }) }
-                    engine.setMediaItem(androidx.media3.common.MediaItem.fromUri(stream.url))
-                    engine.prepare()
-                    engine.playWhenReady = true
-                }
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme(colorScheme = darkColorScheme()) {
+                PlayerScreen(media = media, onBack = {}, onRetry = { errors.incrementAndGet() },
+                    onRetryAlternateDecoder = { errors.incrementAndGet() },
+                    onPlaybackAuthorizationFailure = { errors.incrementAndGet() },
+                    onPlayPrevious = {}, onPlayNext = {},
+                    onProgress = { _, value, _ -> position.set(value) },
+                    playbackEngine = requestedEngine,
+                    onPlaybackEngineChanged = { preferenceChanges.incrementAndGet() },
+                    onVideoFrameRendered = { frames.incrementAndGet() },
+                    onTerminalPlaybackFailure = { errors.incrementAndGet() })
+            } } }
+            await("HDHub4u app playback renders with $requestedEngine selected", 30_000L) {
+                assertEquals("No player failure or decoder/auth recovery", 0, errors.get())
+                frames.get() > 0 && position.get() >= 1_000
             }
-            await("HDHub4u native playback produces video frames", 30_000L) {
-                assertNull("Native playback error", error.get())
-                var progressed = false
-                instrumentation.runOnMainSync { progressed = player!!.currentPosition >= 1_000 && player!!.videoSize.width > 0 }
-                frames.get() > 0 && progressed
-            }
+            assertEquals("Stream compatibility does not change the saved player preference", 0, preferenceChanges.get())
             instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream",
-                "HDHUB_NATIVE series=${target.series} season=${target.season} episode=${target.episode} sources=${streams.size} frames=${frames.get()}\n") })
+                "HDHUB_APP requested=$requestedEngine series=${target.series} season=${target.season} episode=${target.episode} sources=${streams.size} frames=${frames.get()} position=${position.get()}\n") })
         } finally {
-            instrumentation.runOnMainSync { player?.release(); host.finish() }
+            instrumentation.runOnMainSync { host.finish() }
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, volume, 0)
         }
     }
 }

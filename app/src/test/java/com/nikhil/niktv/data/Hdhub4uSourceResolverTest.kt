@@ -54,10 +54,20 @@ class Hdhub4uSourceResolverTest {
         val streams = f.resolver.resolve(movie)
         assertEquals(listOf(null, 1080), streams.map { it.height })
         assertTrue(streams.all { it.route == AlternatePlaybackRoute.NATIVE && it.url.startsWith("https://media.example.test/") })
+        assertTrue("Every HDStream HLS quality uses the compatible player path", streams.all { !it.vlcCompatible })
         assertEquals("https://hdstream4u.example/", streams.first().headers["Referer"])
         assertTrue(f.requests.any { it.url == "${f.domain}/title-0/" })
         assertFalse(f.requests.any { it.url.contains("retired.hdhub4u") || it.url.contains("/file/abc123") })
         assertTrue(f.requests.all { it.method == "GET" && it.headers.keys.none { name -> name.equals("Cookie", true) || name.equals("Authorization", true) } })
+    }
+
+    @Test fun directHlsFromOtherMirrorsKeepsVlcCompatibility() = runBlocking {
+        val f = Fixture().apply {
+            detail = detail.replace("https://hdstream4u.example/file/abc123", "https://media.example.test/master.m3u8")
+        }
+        val streams = f.resolver.resolve(movie)
+        assertFalse(streams.isEmpty())
+        assertTrue(streams.all { it.vlcCompatible })
     }
 
     @Test fun fuzzyTitlesRemakesAndWrongMediaTypesAreNeverOpened() = runBlocking {
@@ -177,6 +187,7 @@ class Hdhub4uSourceResolverTest {
         val streams = f.resolver.resolve(movie)
         assertEquals(1, streams.size)
         assertEquals("MP4", streams.single().format)
+        assertTrue("Direct video downloads keep their existing player support", streams.single().vlcCompatible)
         assertEquals("bytes=0-1023", f.requests.last().headers["Range"])
         f.resolver.invalidate(movie)
         f.pages["files.example.test/video.mp4"] = "<html>download landing page</html>"
