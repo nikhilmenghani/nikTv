@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -132,11 +133,22 @@ internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
 internal fun SportsDropdown(label: String, value: String, options: List<Pair<String, String>>,
     select: (String) -> Unit, modifier: Modifier = Modifier, valueOnly: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     Box(modifier) {
-        DiscoveryAction("$label: $value", Icons.Default.ExpandMore,
-            visualLabel = if (valueOnly) value else "$label: $value", horizontalPadding = if (valueOnly) 8.dp else 14.dp,
-            modifier = Modifier.fillMaxWidth().then(if (valueOnly) Modifier.semantics { contentDescription = "$label: $value" } else Modifier),
-            onClick = { expanded = true })
+        Surface(onClick = { expanded = true }, shape = SportsShape,
+            color = if (focused) Color.White else Color(0xFF242831).copy(alpha = .85f),
+            contentColor = if (focused) Color.Black else Color.White,
+            border = androidx.compose.foundation.BorderStroke(if (focused) 2.dp else 1.dp,
+                if (focused) Color.White else Color(0xFF454B58)),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).onFocusChanged { focused = it.isFocused }
+                .semantics { contentDescription = "$label: $value" }) {
+            Row(Modifier.padding(horizontal = if (valueOnly) 8.dp else 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (valueOnly) value else "$label: $value", Modifier.weight(1f), fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold)
+                Icon(Icons.Default.ExpandMore, null, Modifier.size(20.dp))
+            }
+        }
         DropdownMenu(expanded, { expanded = false }, containerColor = SportsSurface) {
             options.forEach { (key, title) ->
                 val active = key == value || title == value

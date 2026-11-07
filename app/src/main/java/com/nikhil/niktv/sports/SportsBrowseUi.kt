@@ -215,8 +215,8 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SportsDropdown("Live events", status, SPORTS_STATUS_FILTERS.map { it to it },
-                        select = { setStatus(it); saveDefaultStatus(it) }, modifier = Modifier.weight(1f).focusRequester(firstFilter), valueOnly = compact)
-                    sportDropdown(Modifier.weight(1f))
+                        select = { setStatus(it); saveDefaultStatus(it) }, modifier = Modifier.weight(if (compact) .9f else 1f).focusRequester(firstFilter), valueOnly = compact)
+                    sportDropdown(Modifier.weight(if (compact) 1.1f else 1f))
                     DiscoveryAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag, iconOnly = compact,
                         selected = state.availabilityFilter != SportsAvailabilityFilter.ALL,
                         modifier = Modifier.focusRequester(availabilityAction)) { availabilityOpen = true }

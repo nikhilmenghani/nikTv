@@ -146,7 +146,8 @@ class SportsUiDeviceTest {
                 instrumentation.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
                     var status by remember { mutableStateOf(prefs.read().status) }
                     var sport by remember { mutableStateOf(prefs.read().sport) }
-                    SportsBrowseContent(SportsState(events = listOf(event, football, upcoming), loading = false), now,
+                    SportsBrowseContent(SportsState(events = listOf(event, football, upcoming),
+                        filters = listOf(SportsEventFilter("american-football", "American Football")), loading = false), now,
                         sport, { sport = it }, status, { status = it }, "", {}, {}, {}, {}, {},
                         saveDefaultSport = { prefs.setSport(it) },
                         saveDefaultStatus = { prefs.setStatus(it) })
@@ -196,6 +197,12 @@ class SportsUiDeviceTest {
             }
             click("Sport: Football"); click("All sports")
             await("All sports recovers from an empty category") { find("1 event") != null && find("Upcoming fixture") != null }
+            click("Live events: Upcoming"); click("Now & next")
+            click("Sport: All sports"); click("American Football")
+            await("Longest sport and status values remain available") {
+                find("Sport: American Football") != null && find("Live events: Now & next") != null
+            }
+            screenshot("sports-longest-filter")
         } finally {
             prefs.setSport(previous.sport); prefs.setStatus(previous.status)
             instrumentation.runOnMainSync { activity.finish() }
