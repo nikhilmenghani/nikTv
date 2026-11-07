@@ -25,9 +25,10 @@ internal fun librarySavedRows(state: NikTvState, profile: String, kind: Favorite
     }
 }
 /** My List's landing page is a collection, not a second activity feed. */
-internal fun libraryCollectionRows(state: NikTvState, profile: String): List<LibraryRow> =
+internal fun libraryCollectionRows(state: NikTvState, profile: String, includeEpisodes: Boolean = false): List<LibraryRow> =
     librarySavedRows(state, profile, null, "", LibrarySort.RECENT).filter { row ->
-        row.entries.firstOrNull()?.kind in setOf(FavoriteKind.CHANNEL, FavoriteKind.MOVIE, FavoriteKind.SERIES)
+        row.entries.firstOrNull()?.kind in setOf(FavoriteKind.CHANNEL, FavoriteKind.MOVIE, FavoriteKind.SERIES) ||
+            (includeEpisodes && row.entries.firstOrNull()?.kind == FavoriteKind.EPISODE)
     }
 
 internal fun libraryLiveRows(state: NikTvState, profile: String, pins: Map<String, List<String>>): List<LibraryRow> {

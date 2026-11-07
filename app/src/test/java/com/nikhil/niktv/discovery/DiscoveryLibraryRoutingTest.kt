@@ -9,7 +9,7 @@ class DiscoveryLibraryRoutingTest {
         assertTrue(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.LIVE_TV, false))
         assertTrue(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.LIVE_TV, true))
         assertFalse(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.MY_LIST, false))
-        assertTrue(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.MY_LIST, true))
+        assertFalse(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.MY_LIST, true))
         assertFalse(useEstablishedLibraryBrowser(null, false))
         assertFalse(useEstablishedLibraryBrowser(null, true))
     }

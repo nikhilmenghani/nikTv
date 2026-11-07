@@ -17,6 +17,8 @@ import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.*
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
@@ -80,7 +82,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val loadedRows by produceState(feedIdentity to emptyList<LibraryRow>(), state.playbackProgress, progress,
         state.favorites, state.recentlyPlayed, state.browseCachesByType, state.categories, profile, live, pins) {
         value = feedIdentity to withContext(Dispatchers.Default) {
-        if (live) libraryLiveRows(state, profile, pins) else libraryCollectionRows(state, profile)
+        if (live) libraryLiveRows(state, profile, pins) else libraryCollectionRows(state, profile, includeEpisodes = phone)
         }
     }
     val rows = loadedRows.takeIf { it.first == feedIdentity }?.second.orEmpty()
@@ -128,7 +130,8 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val title = if (locked) "Sensitive content" else if (live) livePresentation?.title ?: "Live TV" else card?.title ?: selected?.let { com.nikhil.niktv.data.providerDisplayTitle(it.media.title, it.type) } ?: "My List"
     val overview = if (locked) "Unlock to view this content." else if (live) programme?.let(::liveProgrammeSummary)
         ?: "Choose a channel or browse your categories." else card?.overview ?: selected?.media?.description.orEmpty()
-    val width = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp
+    val width = if (phone) nativePosterGeometry(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat(),
+        configuration.fontScale, phone = true).width.dp else discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp
     fun saved(entry: LibraryEntry) = entry.favorite ?: FavoriteItem(entry.kind, entry.media, profileKey = profile, categoryTitle = entry.category?.title)
     fun open(entry: LibraryEntry, hero: Boolean = false) {
         returnToHero = hero; returnToInfo = false
@@ -229,6 +232,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                 }
             }
             itemsIndexed(rows, key = { _, row -> row.key }) { index, row ->
+                val phonePosterRow = phone && !live && row.entries.firstOrNull()?.live == false
                 val rowState = rememberLazyListState()
                 var last by rememberSaveable(row.key) { mutableStateOf<String?>(null) }
                 val visibleEntries = remember(row) { if (row.category != null) row.entries.take(12) else row.entries }
@@ -244,16 +248,20 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                     onDispose { rowRequesters.remove(row.key) }
                 }
                 Column {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(row.title, Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        if (!live || row.category != null) DiscoveryAction("View all", Icons.Default.ChevronRight) { row.category?.let(openCategory) ?: browseSaved(row.entries.firstOrNull()?.kind) }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = if (phone) 21.dp else 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(row.title, Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.titleMedium,
+                            fontSize = if (phone) 17.sp else MaterialTheme.typography.titleMedium.fontSize,
+                            lineHeight = if (phone) 22.sp else MaterialTheme.typography.titleMedium.lineHeight,
+                            fontWeight = if (phone) FontWeight.Bold else MaterialTheme.typography.titleMedium.fontWeight)
+                        if (!phonePosterRow && (!live || row.category != null)) DiscoveryAction("View all", Icons.Default.ChevronRight) { row.category?.let(openCategory) ?: browseSaved(row.entries.firstOrNull()?.kind) }
                     }
                     DiscoveryHorizontalFocusViewport(16.dp) {
                         LazyRow(Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown) when (event.key) {
                                 Key.DirectionUp -> move(index - 1); Key.DirectionDown -> move(index + 1); else -> false
                             } else false
-                        }, state = rowState, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        }, state = rowState, contentPadding = PaddingValues(start = if (phone) 22.dp else 16.dp,
+                            end = if (phone) 22.dp else 16.dp, top = 10.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             itemsIndexed(visibleEntries, key = { ordinal, entry -> "${entry.key}:$ordinal" }) { ordinal, entry ->
                                 val key = "${row.key}:${entry.key}:$ordinal"
                                 val requester = remember(key) { FocusRequester() }
@@ -281,6 +289,14 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                                             onFocusChange = { focused = it })
                                     } else LibrarySavedPoster(entry, state, if (entry.live) (if (phone) 240.dp else 220.dp) else width, sensitive, progress?.provider(entry.type, entry.media.id),
                                         { open(entry) }, { remove = saved(entry) }, { focused = true })
+                                }
+                            }
+                            if (phonePosterRow) item("view-all") {
+                                Box(Modifier.width(width).height(width * 1.5f), contentAlignment = Alignment.Center) {
+                                    DiscoveryAction("View all ${row.title}", visualLabel = "View all",
+                                        modifier = Modifier.semantics { contentDescription = "View all ${row.title}" }) {
+                                        browseSaved(row.entries.firstOrNull()?.kind)
+                                    }
                                 }
                             }
                         }
@@ -329,9 +345,9 @@ internal fun LibrarySavedPoster(entry: LibraryEntry, state: NikTvState, width: D
     val reduceMotion = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val configuration = LocalConfiguration.current
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
-    if (phone && !entry.live) DiscoveryPhoneMediaCard(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type),
+    if (phone && !entry.live) DiscoveryHomeStyleMediaCard(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type),
         if (sensitive) null else entry.media.logo, entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
-        wide = false, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus,
+        progress = progress, open = open, hold = { menu = true }, focus = focus,
         source = entry.recent?.discoveryPlaybackSource() ?: entry.media.discoveryCatalogSource())
     else DiscoveryPosterTile(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type), if (sensitive) null else entry.media.logo,
         entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,

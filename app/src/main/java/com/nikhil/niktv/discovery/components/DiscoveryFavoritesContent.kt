@@ -138,9 +138,7 @@ internal fun DiscoveryFavoritesContent(
     val entryFocusRequester = remember(profileKey) { FocusRequester() }
     val heroFocusRequester = remember(profileKey) { FocusRequester() }
     val gridState = rememberLazyGridState()
-    val posterColumns = modernPosterColumns(configuration, isTv)
     val phoneLibrary = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
-    val discoveryCards = !phoneLibrary
     val groups = FavoriteKind.entries.mapNotNull { kind ->
         state.favorites.filter { it.kind == kind && (kind != FavoriteKind.CHANNEL ||
             availability.filter.includes(availability.flags[it.media.id])) }.takeIf { it.isNotEmpty() }?.let { kind to it }
@@ -155,17 +153,16 @@ internal fun DiscoveryFavoritesContent(
         repeat(8) { withFrameNanos { }; if (runCatching { heroFocusRequester.requestFocus() }.getOrDefault(false)) return@launch }
     } }
     LazyVerticalGrid(
-        // Match the dashboard's Continue Watching geometry. The old adaptive
-        // 180dp rule collapsed compact phones to one nearly full-width poster.
-        columns = if (!discoveryCards) GridCells.Fixed(posterColumns)
-            else if (configuration.smallestScreenWidthDp < 600 && !isTv)
-                GridCells.Adaptive(com.nikhil.niktv.discovery.phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp)
+        // The full collection keeps Home's media cards as well as the library rails.
+        columns = if (phoneLibrary)
+                GridCells.FixedSize(com.nikhil.niktv.discovery.nativePosterGeometry(configuration.screenWidthDp.toFloat(),
+                    configuration.screenHeightDp.toFloat(), configuration.fontScale, phone = true).width.dp)
             else GridCells.FixedSize(com.nikhil.niktv.discovery.discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp),
         state = gridState,
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
-        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(start = if (phoneLibrary) 16.dp else 18.dp, end = if (phoneLibrary) 16.dp else 18.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(if (phoneLibrary) 10.dp else 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (phoneLibrary) 10.dp else 12.dp)
     ) {
         if (phoneLibrary) item("favorites-hero", span = { GridItemSpan(maxLineSpan) }) {
             com.nikhil.niktv.discovery.DiscoveryFavoritesHero(state, gridState.isScrollInProgress || gridState.firstVisibleItemIndex > 0,
@@ -200,7 +197,7 @@ internal fun DiscoveryFavoritesContent(
                 items(
                     items = favorites,
                     key = { it.key },
-                    span = { if (discoveryCards && it.kind in setOf(FavoriteKind.CHANNEL, FavoriteKind.EPISODE)) GridItemSpan(minOf(2, maxLineSpan)) else GridItemSpan(1) }
+                    span = { if (it.kind == FavoriteKind.CHANNEL || (!phoneLibrary && it.kind == FavoriteKind.EPISODE)) GridItemSpan(minOf(2, maxLineSpan)) else GridItemSpan(1) }
                 ) { favorite ->
                     ModernFavoriteCard(
                         favorite = favorite,
@@ -214,7 +211,7 @@ internal fun DiscoveryFavoritesContent(
                                     returnToHero(); true
                                 } else false
                             } else Modifier,
-                        discoveryState = state.takeIf { discoveryCards || kind == FavoriteKind.CHANNEL }, refreshLiveProgramme = refreshLiveProgramme,
+                        discoveryState = state, refreshLiveProgramme = refreshLiveProgramme,
                         onChannelAvailabilityChanged = { if (availability.filter != IptvAvailabilityFilter.ALL) availabilityScope.launch {
                             gridState.scrollToItem(0); withFrameNanos { }; runCatching { availabilityFocus.requestFocus() }
                         } }
@@ -240,6 +237,9 @@ internal fun ModernFavoriteCard(
         mutableStateOf(false)
     }
     val cancelRemovalRequester = remember(favorite.key) { FocusRequester() }
+    val configuration = LocalConfiguration.current
+    val phone = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
+        LocalContext.current.isModernTileTv(configuration))
 
     LaunchedEffect(removalConfirmationOpen) {
         if (removalConfirmationOpen) {
@@ -248,13 +248,14 @@ internal fun ModernFavoriteCard(
         }
     }
 
-    if (discoveryState != null && favorite.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES)) {
+    if (discoveryState != null && (favorite.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) ||
+        (phone && favorite.kind == FavoriteKind.EPISODE))) {
         BoxWithConstraints(modifier.fillMaxWidth()) {
             val context = LocalContext.current
             val locked = (favorite.media.isAdult || com.nikhil.niktv.data.adultContentLabel(favorite.media.title)) &&
                 com.nikhil.niktv.data.ParentalControls.enabled(context) && !com.nikhil.niktv.data.ParentalControls.unlocked(context)
             val progress = com.nikhil.niktv.discovery.rememberDiscoveryProgressLookup(favorite.profileKey, discoveryState.recentlyPlayed, discoveryState.playbackProgress)
-            val type = if (favorite.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+            val type = if (favorite.kind == FavoriteKind.MOVIE) CatalogType.MOVIES else CatalogType.SERIES
             com.nikhil.niktv.discovery.LibrarySavedPoster(com.nikhil.niktv.discovery.LibraryEntry(favorite.media, favorite.kind, favorite = favorite),
                 discoveryState, maxWidth, locked, progress?.provider(type, favorite.media.id), open,
                 { removalConfirmationOpen = true }, {}, com.nikhil.niktv.discovery.discoveryPosterFocusInset(maxWidth.value).dp)

@@ -123,13 +123,12 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
                 onFocus = {}, onDown = onDown, onUp = onUp,
                 previous = { move(-1) }, next = { move(1) }, carousel = favorites.size > 1,
                 index = index, count = favorites.size, playLabel = "Open")
-        } else DiscoveryPhoneHero(card?.let { if (!it.poster.isNullOrBlank()) it.copy(backdrop = null) else it }, null, phoneDiscoveryHeroHeight(), false, false, true, play, info,
+        } else DiscoveryPhoneHero(card, null, phoneDiscoveryHeroHeight(), false, false, true, play, info,
             play = { open(favorite) }, add = { removal = favorite }, info = openInfo,
             previous = { move(-1) }, next = { move(1) }, carousel = favorites.size > 1,
             index = index, count = favorites.size, playLabel = "Open", playEnabled = true,
             reduceMotion = reduced, onFocus = {}, onDown = onDown,
-            header = null,
-            artworkAlignment = Alignment.TopCenter, shadeArtworkBounds = false, supportingTitle = true, fitArtwork = true)
+            header = null)
     }
     removal?.let { pending -> LibraryRemoveDialog(pending, { removal = null }, {
         removal = null

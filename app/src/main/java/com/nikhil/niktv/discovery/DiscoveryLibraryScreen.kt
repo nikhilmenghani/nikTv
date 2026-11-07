@@ -78,6 +78,6 @@ internal fun discoveryLibraryDestination(home: Boolean, type: CatalogType,
     else -> null
 }
 
-/** Established Live TV categories/collections stay inside the modern navigation shell. */
+/** Live TV keeps its category browser; My List shares Home's hero and media rails. */
 internal fun useEstablishedLibraryBrowser(destination: DiscoveryLibraryDestination?, phone: Boolean): Boolean =
-    destination == DiscoveryLibraryDestination.LIVE_TV || (phone && destination != null)
+    destination == DiscoveryLibraryDestination.LIVE_TV

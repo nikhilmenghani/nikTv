@@ -32,6 +32,9 @@ class DiscoveryLibraryFeedTest {
         assertTrue(rows.flatMap { it.entries }.all { it.favorite?.profileKey == "a" })
         assertTrue(libraryCollectionRows(state, "missing").isEmpty())
         assertEquals(saved, state.favorites.filter { it.profileKey == "a" })
+        val phoneRows = libraryCollectionRows(state, "a", includeEpisodes = true)
+        assertEquals(FavoriteKind.entries.toSet(), phoneRows.flatMap { it.entries }.map { it.kind }.toSet())
+        assertTrue(phoneRows.flatMap { it.entries }.all { it.favorite?.profileKey == "a" })
     }
     @Test fun savedFiltersSortAndSearchAreLocalAndProfileScoped() {
         val state = NikTvState(favorites = listOf(
