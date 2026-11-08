@@ -1,0 +1,30 @@
+name: Cancel stalled release validation
+
+on:
+  push:
+    branches: [ci/release-recovery-20261107]
+    paths: [.github/workflows/cancel-stalled-release.yml]
+
+permissions:
+  actions: write
+
+jobs:
+  cancel-known-stalled-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const run_id = 42437165849;
+            const expected = 'a70c297f011b275e242508c3ec366b0920029ea8';
+            const repo = context.repo;
+            const {data: run} = await github.rest.actions.getWorkflowRun({...repo, run_id});
+            if (run.head_sha !== expected) throw new Error('Unexpected source; refusing cancellation');
+            if (run.status !== 'in_progress') { core.info('Run already finished'); return; }
+            if (Date.now() - Date.parse(run.run_started_at) < 10 * 60 * 1000) throw new Error('Run is not stale');
+            const {data} = await github.rest.actions.listJobsForWorkflowRun({...repo, run_id, filter: 'latest'});
+            const active = data.jobs.flatMap(job => job.steps || []).filter(step => step.status === 'in_progress');
+            if (active.length !== 1 || active[0].name !== 'Unit tests') throw new Error('Run advanced; refusing cancellation');
+            await github.rest.actions.cancelWorkflowRun({...repo, run_id});
+            core.info('Cancelled only the known stalled unit-validation run; no release was published.');
