@@ -1,0 +1,38 @@
+name: Android unit diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/android-test-diagnostics.yml, tools/ci-unit-diagnostics.sh]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: niktv-unit-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: zulu
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Bounded unit tests with suite progress and thread dumps
+        run: bash tools/ci-unit-diagnostics.sh
+      - name: Preserve diagnostics
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-diagnostics
+          path: |
+            build/ci-diagnostics/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: error
+          retention-days: 7
