@@ -54,13 +54,19 @@ class ExternalVideoActivity : ComponentActivity(), PlayerPictureInPictureHost {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        model.open(intent, restore = savedInstanceState != null)
+        if (!intent.getBooleanExtra("remote_controls", false)) model.open(intent, restore = savedInstanceState != null)
         setContent {
             val state by model.state.collectAsState()
+            val remote by model.lanPlayback.state.collectAsState()
             MaterialTheme(colorScheme = NikColors) {
+              LanPlaybackHost(model.lanPlayback, allowReceiving = false) {
                 Surface(Modifier.fillMaxSize(), color = NikColors.background) {
                     val media = state.media
                     when {
+                        media == null && remote.remoteVideo != null -> RemotePlaybackStandby(::finish)
+                        media == null && intent.getBooleanExtra("remote_controls", false) -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("No remote video is playing"); Spacer(Modifier.height(16.dp)); NikTvActionButton("Close", onClick = ::finish)
+                        }
                         media != null -> PlayerScreen(media, ::finish,
                             { model.retry(it, media.playbackAttemptId) }, { model.retryDecoder(it, media.playbackAttemptId) },
                             { model.retry(it, media.playbackAttemptId) },
@@ -74,11 +80,12 @@ class ExternalVideoActivity : ComponentActivity(), PlayerPictureInPictureHost {
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     }
                 }
+              }
             }
         }
     }
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent); setIntent(intent); model.open(intent)
+        super.onNewIntent(intent); setIntent(intent); if (!intent.getBooleanExtra("remote_controls", false)) model.open(intent)
     }
     override fun onStart() {
         super.onStart()
@@ -94,6 +101,7 @@ internal data class ExternalVideoState(val media: PlayingMedia? = null, val erro
     val engine: PlaybackEngine = PlaybackEngine.AUTO, val controlsTimeout: Int = 3)
 
 internal class ExternalVideoViewModel(app: android.app.Application, private val saved: SavedStateHandle) : AndroidViewModel(app) {
+    val lanPlayback by lazy { com.nikhil.niktv.data.LanPlaybackSessions.get(app) }
     private val store = ProfileStore(app)
     private val mutable = MutableStateFlow(ExternalVideoState())
     val state = mutable.asStateFlow()

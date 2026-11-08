@@ -138,8 +138,10 @@ internal class VlcResumeSeekPolicy(
             Phase.READY_WAIT -> {
                 // Playing/length can precede HLS demuxer seekability. Paused,
                 // already-started media may be positioned without resuming it.
-                if (started && seekable && duration > 0L) {
-                    target = target.coerceAtMost((duration - 1_000L).coerceAtLeast(0L))
+                if (started && seekable) {
+                    // Progressive files can become seekable before their duration is known.
+                    // Native seekability is authoritative; only clamp when a duration exists.
+                    if (duration > 0L) target = target.coerceAtMost((duration - 1_000L).coerceAtLeast(0L))
                     if (target == 0L) {
                         phase = Phase.ACKNOWLEDGED
                         return Decision(Kind.ACKNOWLEDGED, target)

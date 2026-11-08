@@ -167,7 +167,7 @@ android {
             }
             applicationIdSuffix = if (providers.gradleProperty("regressionBuild").orNull == "true") ".regression" else ".debug"
             versionNameSuffix = "-dev"
-            manifestPlaceholders["appLabel"] = "NikTV Dev"
+            manifestPlaceholders["appLabel"] = if (providers.gradleProperty("regressionBuild").orNull == "true") "NikTV Test" else "NikTV Dev"
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_debug"
             manifestPlaceholders["appBanner"] = "@drawable/tv_banner_debug"
             if (providers.environmentVariable("DEV_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")

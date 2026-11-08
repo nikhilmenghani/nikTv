@@ -30,6 +30,45 @@ Device & display. The choice is remembered; enabling the setting restores the ne
 - Responsive phone, tablet, Android TV, Google TV, and Fire TV layouts
 - Touch, keyboard, and D-pad focus behavior
 
+## Play on another NikTV device
+
+Install the updated app on both devices and connect them to the same Wi-Fi.
+On the receiving Fire TV/tablet, open an IPTV portal, then **Options → Play on
+NikTV → Receive on this device**. On the phone, use the NikTV cast icon (or the
+same Options entry), choose the receiver, and enter its six-digit code.
+
+For IPTV browsing, select the same portal on both devices. Normal IPTV movie
+Play buttons, including movies found from TMDB, resolve the selected item's link
+once on the sender and play it on the receiver. The receiver verifies that the
+matching portal is open; it does not repeat the movie catalogue search.
+
+For a video from file explorer or another app, open/share it with **NikTV**, then
+tap **Play on NikTV** next to Back in the player. This path sends the selected
+video and its position (where the format/player supports seeking) without requiring the same IPTV portal. The paired
+receiver uses its own player. Direct network links include their playback
+headers; local files and app-owned loopback streams use a temporary phone relay.
+Only the selected file and its necessary stream resources are shared.
+
+You can use other apps or close the sender's player activity while the receiver
+continues playing. For phone-hosted media, keep the phone connected to Wi-Fi.
+The foreground sharing notification has **Stop sharing** and reopens remote
+controls. Pause, Resume, Stop, and actual playback status are also available in
+the device dialog. **Disconnect** leaves receiver playback running. If discovery
+is unavailable, use **Connect by address** with the receiver's IP and port.
+
+The receiver must stay open in NikTV. The six-digit code refreshes automatically
+every five minutes without disconnecting paired devices. The receiver lists paired
+devices and identifies which one controls playback; another sender cannot replace
+or control its movie. Disconnect a device there to revoke its access (and stop its
+movie if it owns playback). Stopping Receive or leaving the app revokes its session, so pair again
+after returning. Switching apps on the sender does not revoke the receiver
+session. DRM and separate-audio sources still need local playback. The receiver
+must support the selected video's format; this feature does not transcode it or
+wake a background Fire TV. Stream URLs and required playback headers travel over
+the encrypted paired connection; some provider URLs carry playback credentials or
+session tokens. Only pair with a trusted receiving device. Provider restrictions on
+session-bound links or simultaneous streams still apply.
+
 ## Build
 
 Open this directory in Android Studio, or run `gradlew.bat assembleDebug` on Windows.

@@ -13,15 +13,15 @@ import java.io.FileNotFoundException;
 /** Unexported provider in a different UID; only an explicit read grant opens it. */
 public class ExternalVideoTestProvider extends ContentProvider {
     @Override public boolean onCreate() { return true; }
-    @Override public String getType(Uri uri) { return "video/mp2t"; }
+    @Override public String getType(Uri uri) { return uri.getPath().startsWith("/video/mp4/") ? "video/mp4" : "video/mp2t"; }
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) {
         MatrixCursor cursor = new MatrixCursor(new String[] { OpenableColumns.DISPLAY_NAME });
-        cursor.addRow(new String[] { "File-manager fixture.ts" });
+        cursor.addRow(new String[] { uri.getPath().startsWith("/video/mp4/") ? "File-manager fixture.mp4" : "File-manager fixture.ts" });
         return cursor;
     }
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         if (!mode.equals("r") || !uri.getPath().startsWith("/video/")) throw new FileNotFoundException();
-        return ParcelFileDescriptor.open(new File(getContext().getCacheDir(), "external-video-fixture.ts"), ParcelFileDescriptor.MODE_READ_ONLY);
+        return ParcelFileDescriptor.open(new File(getContext().getCacheDir(), uri.getPath().startsWith("/video/mp4/") ? "external-video-fixture.mp4" : "external-video-fixture.ts"), ParcelFileDescriptor.MODE_READ_ONLY);
     }
     @Override public Uri insert(Uri uri, ContentValues values) { return null; }
     @Override public int update(Uri uri, ContentValues values, String selection, String[] args) { return 0; }

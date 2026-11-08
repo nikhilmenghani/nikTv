@@ -506,6 +506,9 @@ internal fun VlcPlayerScreen(
             refreshLiveStream(manual = true)
         } else preparedSession.command { if (focus.shouldPlay) it.play() else it.pause() }
     }
+    LaunchedEffect(player, media.playbackAttemptId, media.playWhenReady) {
+        if (playbackRequested != media.playWhenReady) requestPlayback(media.playWhenReady)
+    }
     LaunchedEffect(player, refreshPending) {
         if (refreshPending) {
             delay(10_000L)
@@ -1583,6 +1586,8 @@ internal fun VlcPlayerScreen(
                 downloadRequester
             }
 
+            val requestLan = LocalRequestLanPlayback.current
+            val lanRequester = remember(media.progressKey) { FocusRequester() }
             val secondaryActionRequesters = buildList {
                 if (media.catalogType != CatalogType.LIVE_TV) {
                     if (introAvailable) add(skipIntroRequester)
@@ -1649,16 +1654,21 @@ internal fun VlcPlayerScreen(
                         modifier = Modifier
                             .focusRequester(backRequester)
                             .focusProperties {
-                                right = firstQuickActionRequester
+                                right = if (requestLan != null) lanRequester else firstQuickActionRequester
                                 down = topDownRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = firstQuickActionRequester,
+                                right = if (requestLan != null) lanRequester else firstQuickActionRequester,
                                 down = topDownRequester
                             ),
                         onFocused = { controlsFocused = it }
                     )
                     Spacer(Modifier.width(if (compactMobileControls) 8.dp else 12.dp))
+                    if (requestLan != null) PlayerChromeIconButton(
+                        icon = Icons.Default.Cast, contentDescription = "Play on NikTV",
+                        onClick = { requestLan(media, position.coerceAtLeast(0)) { requestPlayback(false) } },
+                        modifier = Modifier.focusRequester(lanRequester).playerDpadFocusRoutes(left = backRequester,
+                            right = FocusRequester.Cancel, down = topDownRequester), onFocused = { controlsFocused = it })
                     Column(
                         Modifier.weight(1f).padding(
                             top = 2.dp,

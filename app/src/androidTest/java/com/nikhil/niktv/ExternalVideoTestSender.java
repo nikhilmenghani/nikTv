@@ -15,8 +15,9 @@ public class ExternalVideoTestSender extends Activity {
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         final String target = getIntent().getStringExtra("target");
+        final boolean mp4 = getIntent().getBooleanExtra("mp4", false);
         if (target == null || !target.endsWith(".regression")) { finish(); return; }
-        final Uri uri = Uri.parse("content://" + getPackageName() + ".externalfixture/video/" + getIntent().getStringExtra("nonce"));
+        final Uri uri = Uri.parse("content://" + getPackageName() + ".externalfixture/video/" + (mp4 ? "mp4/" : "") + getIntent().getStringExtra("nonce"));
         new Thread(() -> {
             try (ZipInputStream zip = new ZipInputStream(getAssets().open("playback-fixtures.zip"));
                  FileOutputStream output = new FileOutputStream(new File(getCacheDir(), "external-video-fixture.ts"))) {
@@ -32,8 +33,37 @@ public class ExternalVideoTestSender extends Activity {
                 }
                 if (segments != 60) throw new IllegalStateException("Missing silent video fixture");
             } catch (Exception failure) { throw new RuntimeException(failure); }
+            if (mp4) {
+                android.media.MediaExtractor extractor = new android.media.MediaExtractor();
+                android.media.MediaMuxer muxer = null;
+                try {
+                    extractor.setDataSource(new File(getCacheDir(), "external-video-fixture.ts").getAbsolutePath());
+                    int video = -1;
+                    for (int index = 0; index < extractor.getTrackCount(); index++) {
+                        if (extractor.getTrackFormat(index).getString(android.media.MediaFormat.KEY_MIME).startsWith("video/")) { video = index; break; }
+                    }
+                    if (video < 0) throw new IllegalStateException("Missing fixture video track");
+                    extractor.selectTrack(video);
+                    muxer = new android.media.MediaMuxer(new File(getCacheDir(), "external-video-fixture.mp4").getAbsolutePath(), android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                    int outputTrack = muxer.addTrack(extractor.getTrackFormat(video));
+                    muxer.start();
+                    java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocateDirect(2 * 1024 * 1024);
+                    android.media.MediaCodec.BufferInfo info = new android.media.MediaCodec.BufferInfo();
+                    long firstTime = extractor.getSampleTime();
+                    while (true) {
+                        buffer.clear();
+                        int size = extractor.readSampleData(buffer, 0);
+                        if (size < 0) break;
+                        info.set(0, size, Math.max(0, extractor.getSampleTime() - firstTime), extractor.getSampleFlags());
+                        muxer.writeSampleData(outputTrack, buffer, info);
+                        extractor.advance();
+                    }
+                    muxer.stop();
+                } catch (Exception failure) { throw new RuntimeException(failure); }
+                finally { extractor.release(); if (muxer != null) muxer.release(); }
+            }
             runOnUiThread(() -> {
-                Intent open = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp2t").setPackage(target)
+                Intent open = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, mp4 ? "video/mp4" : "video/mp2t").setPackage(target)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 open.setClipData(ClipData.newRawUri("Silent video fixture", uri));
                 startActivity(open);

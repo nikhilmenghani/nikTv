@@ -5,6 +5,10 @@
     <uses-sdk tools:overrideLibrary="dev.jdtech.mpv" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -73,6 +77,7 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/niktv_share_paths" />
         </provider>
+        <service android:name=".data.LanMediaShareService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <service android:name=".data.NikTvDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".data.LiveTvRecordingService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service

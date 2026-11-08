@@ -353,6 +353,9 @@ fun PlayerScreen(
     onRestartDecoderSession: (Long) -> Unit = onRetry
 ) {
     val context = LocalContext.current
+    if (RemotePlaybackStandby(onBack, media.media.id)) return
+    val requestLan = LocalRequestLanPlayback.current
+    val lanRequester = remember(media.progressKey) { FocusRequester() }
     var playbackSpeed by rememberSaveable(media.progressKey) { mutableFloatStateOf(1f) }
     val cricketScores = rememberCricketScoreController()
     val introSettings = rememberIntroSkipSettings(media)
@@ -1026,6 +1029,11 @@ fun PlayerScreen(
             castPlayer = castPlayer,
             localPlayer = localPlayer
         )
+    LaunchedEffect(player, media.playbackAttemptId, media.playWhenReady) {
+        playbackRequested = media.playWhenReady
+        player.playWhenReady = media.playWhenReady && (!isTvDevice ||
+            playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+    }
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isCurrentMediaItemSeekable }
     val introAvailable = introSecondsRemaining != null
@@ -2287,16 +2295,21 @@ fun PlayerScreen(
                         modifier = Modifier
                             .focusRequester(backFocusRequester)
                             .focusProperties {
-                                right = firstQuickActionRequester
+                                right = if (requestLan != null) lanRequester else firstQuickActionRequester
                                 down = topDownRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = firstQuickActionRequester,
+                                right = if (requestLan != null) lanRequester else firstQuickActionRequester,
                                 down = topDownRequester
                             ),
                         onFocused = { controlsFocused = it }
                     )
                     Spacer(Modifier.width(if (compactMobileControls) 8.dp else 12.dp))
+                    if (requestLan != null) PlayerChromeIconButton(
+                        icon = Icons.Default.Cast, contentDescription = "Play on NikTV",
+                        onClick = { requestLan(media, player.currentPosition.coerceAtLeast(0)) { player.pause(); onPlaybackIntentChanged(false) } },
+                        modifier = Modifier.focusRequester(lanRequester).playerDpadFocusRoutes(left = backFocusRequester,
+                            right = FocusRequester.Cancel, down = topDownRequester), onFocused = { controlsFocused = it })
                     Column(
                         Modifier.weight(1f).padding(
                             top = 2.dp,

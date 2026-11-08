@@ -16,6 +16,16 @@ class VlcResumeSeekPolicyTest {
         assertEquals(VlcResumeSeekPolicy.Kind.ISSUE_SEEK, ready.kind)
         assertEquals(6_000L, ready.target)
     }
+    @Test fun seekableFileWithUnknownDurationGetsOneNativeSeekAndRequiresClockAcknowledgement() {
+        val policy = VlcResumeSeekPolicy(50_000)
+        val ready = policy.tick(0, duration = 0, sequence = 1)
+        assertEquals(VlcResumeSeekPolicy.Kind.ISSUE_SEEK, ready.kind)
+        assertEquals(50_000, ready.target)
+        policy.commandCompleted(100, 0, 1)
+        assertEquals(VlcResumeSeekPolicy.Kind.PENDING, policy.tick(500, actual = 50_000, duration = 0, sequence = 1).kind)
+        assertEquals(VlcResumeSeekPolicy.Kind.PENDING, policy.tick(1000, actual = 50_100, duration = 0, sequence = 2).kind)
+        assertEquals(VlcResumeSeekPolicy.Kind.ACKNOWLEDGED, policy.tick(1500, actual = 50_500, duration = 0, sequence = 3).kind)
+    }
 
     @Test fun aQueuedCommandDoesNotClearThePendingTargetOrIssueAnotherSeek() {
         val policy = VlcResumeSeekPolicy(6_000L)

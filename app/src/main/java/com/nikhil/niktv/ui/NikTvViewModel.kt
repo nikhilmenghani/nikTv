@@ -235,8 +235,18 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private val _state = MutableStateFlow(NikTvState(parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(application), parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(application)))
     val state: StateFlow<NikTvState> = _state.asStateFlow()
     private val channelAvailability = IptvAvailabilityStore(application)
+    private var remoteFrameAttempt: String? = null
+    private var remoteFailedAttempt: String? = null
+    private var remotePositionMillis = 0L
     internal fun observeLivePlayback(playback: PlayingMedia, failed: Boolean) {
         val current = _state.value
+        if (playback.externalPlayback) {
+            if (current.nowPlaying?.playbackAttemptId == playback.playbackAttemptId) {
+                if (failed) remoteFailedAttempt = playback.playbackAttemptId
+                else { remoteFrameAttempt = playback.playbackAttemptId; remoteFailedAttempt = null }
+            }
+            return
+        }
         if (playback.userScope != store.captureScope()) return
         val profile = current.session?.profile?.cacheKey() ?: current.savedProfile?.cacheKey().orEmpty()
         channelAvailability.observe(profile, current.nowPlaying, playback, failed)
@@ -6508,6 +6518,77 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         } }
     }
 
+    private val lanPlaybackDelegate = lazy {
+        com.nikhil.niktv.data.LanPlaybackSessions.get(getApplication()).also {
+            com.nikhil.niktv.data.LanPlaybackSessions.attach(this, ::receiveLanCommand)
+        }
+    }
+    val lanPlayback get() = lanPlaybackDelegate.value
+
+    internal suspend fun receiveLanCommand(command: com.nikhil.niktv.data.LanCommand): com.nikhil.niktv.data.LanReply {
+        val playing = _state.value.nowPlaying
+        when (command.action) {
+            "status" -> {
+                val ready = playing != null && remoteFrameAttempt == playing.playbackAttemptId
+                val label = when {
+                    playing == null -> "Ready to play"
+                    remoteFailedAttempt == playing.playbackAttemptId -> "Playback failed: ${playing.media.title}"
+                    !playing.playWhenReady -> "Paused: ${playing.media.title}"
+                    playing.externalPlayback && !ready -> "Starting: ${playing.media.title}"
+                    else -> "Playing: ${playing.media.title}"
+                }
+                return com.nikhil.niktv.data.LanReply(true, label, videoReady = ready, positionMillis = remotePositionMillis, hasPlayback = playing != null)
+            }
+            "pause", "resume" -> {
+                if (playing == null) return com.nikhil.niktv.data.LanReply(false, "Nothing is playing.")
+                setPlaybackIntent(playing.playbackAttemptId, command.action == "resume")
+                return com.nikhil.niktv.data.LanReply(true, if (command.action == "resume") "Resumed" else "Paused")
+            }
+            "stop" -> { closePlayer(); return com.nikhil.niktv.data.LanReply(true, "Stopped") }
+        }
+        command.video?.let { video ->
+            video.validate()
+            video.portal?.let { expected ->
+                val session = _state.value.session
+                    ?: return com.nikhil.niktv.data.LanReply(false, "Open an IPTV portal on the receiving device first.")
+                if (expected != com.nikhil.niktv.data.remotePortalIdentity(session.profile.portalType.name, session.profile.portalUrl))
+                    return com.nikhil.niktv.data.LanReply(false, "Select the same IPTV portal on both devices, then try again.")
+            }
+            closePlayer()
+            remoteFrameAttempt = null; remoteFailedAttempt = null; remotePositionMillis = 0
+            val id = "remote:${java.util.UUID.randomUUID()}"
+            _state.update { it.copy(nowPlaying = PlayingMedia(
+                MediaItem(id, video.title, null, null), video.url, CatalogType.MOVIES, progressKey = id,
+                resumePositionMillis = video.positionMillis, directFullscreen = true, playbackFormat = video.format,
+                streamRequestHeaders = video.headers, externalPlayback = true)) }
+            return com.nikhil.niktv.data.LanReply(true, "Playing ${video.title} on the receiving device")
+        }
+        val movie = requireNotNull(command.movie)
+        val session = _state.value.session ?: return com.nikhil.niktv.data.LanReply(false, "Open an IPTV portal on the receiving device first.")
+        val owner = store.captureScope()
+        if (movie.portal != com.nikhil.niktv.data.remotePortalIdentity(session.profile.portalType.name, session.profile.portalUrl))
+            return com.nikhil.niktv.data.LanReply(false, "Select the same IPTV portal on both devices, then try again.")
+        val request = beginPlaybackRequest()
+        val snapshot = _state.value
+        val local = localMovieCandidates(snapshot) +
+            store.searchCatalog(CatalogType.MOVIES, session.profile.cacheKey()).first()?.items.orEmpty()
+        val resolved = (if (session.profile.portalType == PortalType.XTREAM) {
+            // Xtream returns a complete catalogue; title filtering can only hide an exact ID.
+            resolveTmdbFromXtreamCatalog(session, CatalogType.MOVIES) { rows -> rows.filter { it.id == movie.id } }.firstOrNull()
+        } else lookupRemoteMovie(movie, local,
+            categories = { prioritizedProviderCategories(session, CatalogType.MOVIES).map { it.id } },
+            search = { query, category, page -> withAutomaticSessionRetry(session) {
+                portal.search(it, SearchContentType.MOVIES, query, page, category, movieLookup = true)
+            } }))
+            ?: return com.nikhil.niktv.data.LanReply(false, "This movie was not found in the receiving device's IPTV portal.")
+        if (!latestPlaybackRequest.isCurrent(request) || store.captureScope() != owner || _state.value.session?.profile?.cacheKey() != session.profile.cacheKey())
+            return com.nikhil.niktv.data.LanReply(false, "The receiving profile changed. Try again.")
+        playInternal(resolved, CatalogType.MOVIES, null, listOf(resolved), directFullscreen = true, requestId = request)
+        if (_state.value.nowPlaying?.media?.id != resolved.id)
+            return com.nikhil.niktv.data.LanReply(false, "Playback did not start. Check the receiving screen for a PIN prompt or episode selection.")
+        return com.nikhil.niktv.data.LanReply(true, "Playing ${resolved.title} on the receiving device")
+    }
+
     private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) {
         val requestId = beginPlaybackRequest()
         playbackNavigationIndex = null
@@ -6711,6 +6792,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             playbackNavigationIndex)
         try {
             if ((isAdultMedia(item, type) || series?.let { isAdultMedia(it, CatalogType.SERIES) } == true) && !authorizeParental()) return@run
+            if (lanPlaybackDelegate.isInitialized() && lanPlayback.state.value.target != null) {
+                require(type == CatalogType.MOVIES && series == null) { "Remote playback currently supports movies. Choose Play locally for episodes or live TV." }
+            }
             if (type == CatalogType.LIVE_TV) _state.update { it.copy(liveGuidePriorityId = item.id) }
             if (_state.value.categoryFindSearching) cancelCategoryFind()
             liveGuideScheduler.pause()
@@ -6770,6 +6854,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         userScope: UserScope?
     ) {
         val ownsPortal = sessionOwner(session.profile)
+        val remoteTarget = if (lanPlaybackDelegate.isInitialized()) lanPlayback.state.value.target else null
         val playbackStartedAt = SystemClock.elapsedRealtime()
         val logicalPortalId = userScope?.let { userSyncStore.registerPortal(it.accountId, session.profile) }.orEmpty()
         val offlineEntry = _state.value.offlineDownloads
@@ -6801,6 +6886,24 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             "NikTvPlayback",
             "Resolved ${type.name} item=${item.id} in ${SystemClock.elapsedRealtime() - playbackStartedAt}ms"
         )
+        if (remoteTarget != null) {
+            // The picker already selected the provider record. Resolve its link once here;
+            // the receiver consumes that source without searching its catalogue again.
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (!ownsPortal() || !latestPlaybackRequest.isCurrent(requestId) || userScope != store.captureScope() ||
+                _state.value.session != session || lanPlayback.state.value.target != remoteTarget) return
+            val progressKey = progressKeyFor(session.profile, item, type, series)
+            val saved = _state.value.playbackProgress.firstOrNull { it.key == progressKey }
+            val at = resumePositionOverride ?: saved?.positionMillis?.takeIf {
+                saved.action !in setOf(ViewingAction.COMPLETED, ViewingAction.MARK_UNWATCHED) &&
+                    (saved.durationMillis <= 0 || saved.durationMillis - it > 5_000)
+            } ?: 0L
+            lanPlayback.playVideo(PlayingMedia(item, url, type, profileKey = session.profile.cacheKey(),
+                offlinePlayback = offlineUrl != null,
+                playbackFormat = offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) }), at,
+                com.nikhil.niktv.data.remotePortalIdentity(session.profile.portalType.name, session.profile.portalUrl))
+            return
+        }
         val activeQueueOwner = _state.value.nowPlaying?.takeIf { active ->
             active.catalogType == type && active.series?.id == series?.id &&
                 active.media.seasonNumber == item.seasonNumber &&
@@ -7188,6 +7291,10 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     }
 
     fun savePlaybackProgress(playing: PlayingMedia, key: String, positionMillis: Long, durationMillis: Long) {
+        if (playing.externalPlayback) {
+            if (_state.value.nowPlaying?.playbackAttemptId == playing.playbackAttemptId) remotePositionMillis = positionMillis.coerceAtLeast(0)
+            return
+        }
         if (key.isBlank() || key != playing.progressKey || playing.externalPlayback) return
         val replacement = _state.value.nowPlaying
         if (replacement != null && replacement.userScope == playing.userScope && replacement.progressKey == key &&
@@ -7577,6 +7684,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun retryPlayback(positionMillis: Long, failedPlayback: PlayingMedia, reauthenticate: Boolean = false) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning || !samePlaybackAttempt(playing, failedPlayback)) return
+        if (playing.externalPlayback) {
+            _state.update { it.copy(error = null, nowPlaying = playing.copy(
+                playbackAttemptId = java.util.UUID.randomUUID().toString(), decoderSessionId = java.util.UUID.randomUUID().toString(),
+                resumePositionMillis = positionMillis.coerceAtLeast(0), playWhenReady = true)) }
+            return
+        }
         // An explicit Retry can start playback; a later pause while resolving is retained at commit.
         _state.update { it.copy(nowPlaying = playing.copy(playWhenReady = true)) }
         if (playing.alternateSource != null) { retryAlternatePlayback(positionMillis.coerceAtLeast(0), playing); return }
@@ -7979,6 +8092,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     }
 
     override fun onCleared() {
+        if (lanPlaybackDelegate.isInitialized()) com.nikhil.niktv.data.LanPlaybackSessions.detach(this)
         releaseAlternatePlaybackLease()
         portal.close()
         com.nikhil.niktv.data.CatalogPlaybackActivity.playing = false

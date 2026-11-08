@@ -360,7 +360,7 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
-    AccountProfileGate(vm) { NikTvAuthenticatedApp(vm) }
+    AccountProfileGate(vm) { LanPlaybackHost(vm) { NikTvAuthenticatedApp(vm) } }
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -535,7 +535,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     onBack = vm::closePlayer,
                     onRetry = { vm.retryPlayback(it, playback) },
                     onRestartDecoderSession = { vm.restartPlaybackDecoderSession(it, playback) },
-                    onReauthenticate = if (playback.offlinePlayback || playback.alternateSource != null) null else
+                    onReauthenticate = if (playback.offlinePlayback || playback.externalPlayback || playback.alternateSource != null) null else
                         { position -> vm.reauthenticatePlayback(position, playback) },
                     reauthenticating = state.reauthenticating,
                     onRetryAlternateDecoder = { position -> vm.retryPlaybackWithAlternateDecoder(position, playback) },
