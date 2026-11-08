@@ -6,6 +6,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Collections
 import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -23,6 +25,7 @@ class AbibliPlaybackLeaseTest {
         val renewals = AtomicInteger()
         val closes = AtomicInteger()
         val responseCloses = AtomicInteger()
+        val responseClosed = Semaphore(0)
         var text = "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"English\",URI=\"audio.txt\"\n#EXT-X-STREAM-INF:BANDWIDTH=200000,AUDIO=\"a\"\nvideo.txt\n"
         override fun guest(video: String, client: String): AbibliGuest {
             assertEquals("ABC123", video); assertEquals("client-fixture", client)
@@ -38,7 +41,9 @@ class AbibliPlaybackLeaseTest {
                 else -> "fragment-fixture".toByteArray()
             }
             return AbibliResponse(if (range == null) 200 else 206, url, bytes.size.toLong(),
-                if (range == null) emptyMap() else mapOf("Content-Range" to "bytes 0-15/16"), ByteArrayInputStream(bytes)) { responseCloses.incrementAndGet() }
+                if (range == null) emptyMap() else mapOf("Content-Range" to "bytes 0-15/16"), ByteArrayInputStream(bytes)) {
+                responseCloses.incrementAndGet(); responseClosed.release()
+            }
         }
         override fun close() { closes.incrementAndGet() }
     }
@@ -74,6 +79,9 @@ class AbibliPlaybackLeaseTest {
             assertTrue(init.endsWith(".mp4")); assertTrue(mediaUri(child.text).endsWith(".m4s"))
             assertEquals("fragment-fixture", request(init).text)
             assertEquals("fragment-fixture", request(mediaUri(child.text)).text)
+            // Reading Content-Length bytes does not join NanoHTTPD's worker. Observe
+            // its actual close callbacks before asserting that all responses retired.
+            assertTrue("Every consumed upstream response closes", upstream.responseClosed.tryAcquire(5, 2, TimeUnit.SECONDS))
             assertEquals(5, upstream.responseCloses.get())
             assertTrue(upstream.requests.take(3).all { it.first.queryParameter("session") == "old" })
             assertNull(upstream.requests.last().first.queryParameter("session"))
