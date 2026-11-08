@@ -16,6 +16,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Check source credentials
@@ -47,9 +48,18 @@ jobs:
           TARGET=$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{ print $1 }')
           [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "::error::Push the release commit and its lightweight version tag together before building."; exit 1; }
       - name: Unit tests
+        timeout-minutes: 10
         run: |
-          chmod +x ./gradlew
-          ./gradlew :app:testDebugUnitTest -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+          bash tools/ci-unit-diagnostics.sh
+      - name: Preserve failed unit diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-unit-diagnostics-${{ env.TAG }}
+          path: |
+            build/ci-diagnostics/
+            app/build/test-results/testDebugUnitTest/
+          retention-days: 7
       - name: Debug lint
         run: ./gradlew :app:lintDebug -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
       - name: Release lint

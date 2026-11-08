@@ -193,14 +193,12 @@ class LanPlaybackController(context: Context, private val scope: CoroutineScope,
         catch (failure: Exception) { mutable.update { it.copy(message = failure.message ?: "Cannot connect. Check Wi-Fi and the receiver code.") } }
         finally { mutable.update { it.copy(busy = false) } }
     }
-    suspend fun send(action: String, movie: RemoteMovie? = null, video: RemoteVideo? = null): LanReply {
-        movie?.validate()
+    suspend fun send(action: String, video: RemoteVideo? = null): LanReply {
         video?.validate()
         val target = requireNotNull(mutable.value.target) { "Choose a receiving device first." }
-        val reply = withContext(Dispatchers.IO) { sendLanCommand(target.host, target.port, LanCommand(action, target.credential, movie, video)) }
+        val reply = withContext(Dispatchers.IO) { sendLanCommand(target.host, target.port, LanCommand(action, target.credential, video = video)) }
         mutable.update { it.copy(message = reply.message) }
         check(reply.ok) { reply.message }
-        if (action == "play" && movie != null) { LanMediaSharing.stop(appContext); sharingStopped() }
         return reply
     }
     suspend fun playVideo(media: com.nikhil.niktv.model.PlayingMedia, at: Long, portal: String? = null) {

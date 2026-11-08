@@ -21,7 +21,7 @@ import javax.crypto.KeyAgreement
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-/** No URL, command, account credential, artwork URL or profile cache key crosses the LAN. */
+/** Decode pre-release identity requests only, so older senders receive an explicit update message. */
 @Serializable
 data class RemoteMovie(val portal: String, val id: String, val title: String, val categoryId: String? = null) {
     fun validate() {
@@ -135,9 +135,10 @@ class LanPlaybackServer(address: InetAddress, preferredPort: Int = 0, private va
         if (command.action == "pair") return sessions.pair(command.credential, command.sender, command.senderId)
         if (!sessions.authenticated(command.credential)) return LanReply(false, "Pair again on the receiving device.")
         if (command.action !in setOf("play", "pause", "resume", "stop", "status")) return LanReply(false, "Unsupported command")
+        if (command.action == "play" && command.movie != null)
+            return LanReply(false, "Update both devices. The sender must send the selected movie's playback link.")
         if (command.action == "play") runCatching {
-            require((command.movie == null) != (command.video == null))
-            command.movie?.validate(); command.video?.validate()
+            requireNotNull(command.video).validate()
         }
             .onFailure { return LanReply(false, "Invalid movie request") }
         if (command.action == "status") return execute(command)

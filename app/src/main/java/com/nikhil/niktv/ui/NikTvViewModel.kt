@@ -6546,6 +6546,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             }
             "stop" -> { closePlayer(); return com.nikhil.niktv.data.LanReply(true, "Stopped") }
         }
+        if (command.movie != null) return com.nikhil.niktv.data.LanReply(false,
+            "Update both devices. The sender must send the selected movie's playback link.")
         command.video?.let { video ->
             video.validate()
             video.portal?.let { expected ->
@@ -6563,30 +6565,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 streamRequestHeaders = video.headers, externalPlayback = true)) }
             return com.nikhil.niktv.data.LanReply(true, "Playing ${video.title} on the receiving device")
         }
-        val movie = requireNotNull(command.movie)
-        val session = _state.value.session ?: return com.nikhil.niktv.data.LanReply(false, "Open an IPTV portal on the receiving device first.")
-        val owner = store.captureScope()
-        if (movie.portal != com.nikhil.niktv.data.remotePortalIdentity(session.profile.portalType.name, session.profile.portalUrl))
-            return com.nikhil.niktv.data.LanReply(false, "Select the same IPTV portal on both devices, then try again.")
-        val request = beginPlaybackRequest()
-        val snapshot = _state.value
-        val local = localMovieCandidates(snapshot) +
-            store.searchCatalog(CatalogType.MOVIES, session.profile.cacheKey()).first()?.items.orEmpty()
-        val resolved = (if (session.profile.portalType == PortalType.XTREAM) {
-            // Xtream returns a complete catalogue; title filtering can only hide an exact ID.
-            resolveTmdbFromXtreamCatalog(session, CatalogType.MOVIES) { rows -> rows.filter { it.id == movie.id } }.firstOrNull()
-        } else lookupRemoteMovie(movie, local,
-            categories = { prioritizedProviderCategories(session, CatalogType.MOVIES).map { it.id } },
-            search = { query, category, page -> withAutomaticSessionRetry(session) {
-                portal.search(it, SearchContentType.MOVIES, query, page, category, movieLookup = true)
-            } }))
-            ?: return com.nikhil.niktv.data.LanReply(false, "This movie was not found in the receiving device's IPTV portal.")
-        if (!latestPlaybackRequest.isCurrent(request) || store.captureScope() != owner || _state.value.session?.profile?.cacheKey() != session.profile.cacheKey())
-            return com.nikhil.niktv.data.LanReply(false, "The receiving profile changed. Try again.")
-        playInternal(resolved, CatalogType.MOVIES, null, listOf(resolved), directFullscreen = true, requestId = request)
-        if (_state.value.nowPlaying?.media?.id != resolved.id)
-            return com.nikhil.niktv.data.LanReply(false, "Playback did not start. Check the receiving screen for a PIN prompt or episode selection.")
-        return com.nikhil.niktv.data.LanReply(true, "Playing ${resolved.title} on the receiving device")
+        return com.nikhil.niktv.data.LanReply(false, "No playback link was provided.")
     }
 
     private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) {

@@ -7,7 +7,13 @@ for filename in ("android_build.yml", "android_dev_build.yml"):
     publish = text.index("- name: Publish ")
     assert text.index("uses: actions/checkout@v4") < validate < text.index("- name: Configure signing") < publish
     validation = text[validate:text.index("- name: Configure signing")]
-    assert ":app:testDebugUnitTest" in validation and ":app:lintDebug" in validation
+    unit_command = ":app:testDebugUnitTest" in validation
+    bounded_units = "bash tools/ci-unit-diagnostics.sh" in validation
+    if bounded_units:
+        runner = (Path(__file__).resolve().parent / "ci-unit-diagnostics.sh").read_text()
+        assert ":app:testDebugUnitTest" in runner and "exit \"$result\"" in runner
+        assert "timeout --signal=TERM" in runner and "timeout-minutes: 10" in validation
+    assert (unit_command or bounded_units) and ":app:lintDebug" in validation
     assert "continue-on-error" not in text and "always()" not in text
     assert "target_commitish: ${{ github.sha }}" in text[publish:]
     assert text.index("- name: Verify release tag ownership") < text.index("- name: Configure signing")

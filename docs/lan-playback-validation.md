@@ -1,6 +1,6 @@
 # LAN playback validation — 2026-11-07
 
-Release 0.6.1 adds paired playback between NikTV devices on the same Wi-Fi.
+Release 0.6.2 adds paired playback between NikTV devices on the same Wi-Fi.
 Both sender and receiver need the updated app.
 
 ## Behaviour
@@ -19,12 +19,17 @@ Both sender and receiver need the updated app.
 
 ## Automated checks
 
-- Full unit suite: 1,465 tests, zero failures/errors, one existing skip.
+- Full unit suite: 1,461 tests, zero failures/errors, one existing skip.
 - Debug and release lint: passed.
 - Source credential scan and release workflow validation guards: passed.
 - The first CI run exposed an asynchronous cleanup assertion in the existing
   Abibli lease test. It now waits for the five real close callbacks before
   checking the counter; runtime behaviour and cleanup assertions are preserved.
+- Removed the obsolete identity-only receiver lookup and its tests. Such requests
+  receive an update message without searching, touching the cache or replacing
+  playback. Current IPTV handoffs always carry the resolved source.
+- Release unit validation now reports suite progress, captures worker thread
+  dumps and has bounded execution with preserved failure diagnostics.
 - Unit coverage includes code expiry/rotation without token loss, pairing attempt
   limits, duplicate installation pairing, ownership during pending playback,
   failed playback/stop, revocation, source validation and matching-portal checks.

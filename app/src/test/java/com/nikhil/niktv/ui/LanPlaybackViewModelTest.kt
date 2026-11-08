@@ -43,8 +43,8 @@ class LanPlaybackViewModelTest {
         state.value = NikTvState(restoring = false)
     }
     @After fun cleanup() { vm.viewModelScope.cancel(); scheduler.runCurrent(); resetAccountFixture(); Dispatchers.resetMain() }
-    @Test fun receiverRequiresOpenPortalBeforeDoingLookup() = runTest(scheduler) {
-        val reply = vm.receiveLanCommand(LanCommand("play", "fixture", RemoteMovie("a".repeat(64), "42", "Movie")))
+    @Test fun iptvStreamRequiresOpenPortalWithoutDoingLookup() = runTest(scheduler) {
+        val reply = vm.receiveLanCommand(LanCommand("play", "fixture", video = RemoteVideo("https://stream.invalid/movie.mp4", "Movie", portal = "a".repeat(64))))
         assertFalse(reply.ok); assertTrue(reply.message.contains("Open an IPTV portal"))
         assertNull(state.value.nowPlaying)
     }
@@ -72,7 +72,7 @@ class LanPlaybackViewModelTest {
     @Test fun differentPortalCannotAccidentallyPlaySameProviderId() = runTest(scheduler) {
         val profile = PortalProfile("Fixture", "https://receiver.invalid", "", portalType = PortalType.XTREAM)
         state.value = state.value.copy(session = PortalSession(profile, "", profile.portalUrl, "", "", ""))
-        val reply = vm.receiveLanCommand(LanCommand("play", "fixture", RemoteMovie(remotePortalIdentity("XTREAM", "https://sender.invalid"), "42", "Movie")))
+        val reply = vm.receiveLanCommand(LanCommand("play", "fixture", video = RemoteVideo("https://stream.invalid/movie.mp4", "Movie", portal = remotePortalIdentity("XTREAM", "https://sender.invalid"))))
         assertFalse(reply.ok); assertTrue(reply.message.contains("same IPTV portal"))
         assertNull(state.value.nowPlaying)
     }
@@ -112,21 +112,14 @@ class LanPlaybackViewModelTest {
         assertFalse(vm.receiveLanCommand(LanCommand("pause", "fixture")).ok)
         assertTrue(vm.receiveLanCommand(LanCommand("status", "fixture")).message.contains("Ready"))
     }
-    @Test fun movieUsesReceiverCatalogAndReceiverCredentials() = runTest(scheduler) {
-        val profile = PortalProfile("Receiver", "https://receiver.invalid", "", portalType = PortalType.XTREAM,
-            username = "receiver-user", password = "receiver-password")
-        val stored = item.copy(command = "fixture-command", streamType = "mp4")
-        val store = NikTvViewModel::class.java.getDeclaredField("store").apply { isAccessible = true }.get(vm) as ProfileStore
-        store.saveSearchCatalog(SearchCatalogCache(profile.cacheKey(), CatalogType.MOVIES, 1, listOf(stored)), scheduleMetadataSync = false)
+    @Test fun obsoleteIdentityRequestCannotSearchOrReplacePlayback() = runTest(scheduler) {
+        val profile = PortalProfile("Receiver", "https://no-lookup.invalid", "", portalType = PortalType.XTREAM)
+        val original = PlayingMedia(item, "https://stream.invalid/original.mp4", CatalogType.MOVIES)
         state.value = state.value.copy(savedProfile = profile, session = PortalSession(profile, "", profile.portalUrl, "", "", ""))
+        state.value = state.value.copy(nowPlaying = original)
         val reply = vm.receiveLanCommand(LanCommand("play", "fixture", RemoteMovie(remotePortalIdentity("XTREAM", profile.portalUrl), item.id, item.title)))
-        assertTrue(reply.message, reply.ok)
-        val playing = requireNotNull(state.value.nowPlaying)
-        assertEquals(stored.id, playing.media.id)
-        assertTrue(playing.url.contains("/receiver-user/receiver-password/"))
-        assertTrue(playing.directFullscreen)
-        vm.closePlayer()
-        vm.viewModelScope.cancel()
-        scheduler.runCurrent()
+        assertFalse(reply.ok)
+        assertTrue(reply.message.contains("playback link"))
+        assertEquals(original, state.value.nowPlaying)
     }
 }

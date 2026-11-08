@@ -13,18 +13,27 @@ class LanPlaybackProtocolTest {
     private fun send(server: LanPlaybackServer, action: String, credential: String, item: RemoteMovie? = null) =
         sendLanCommand("127.0.0.1", server.port, LanCommand(action, credential, item))
 
-    @Test fun pairingTokenControlsPlaybackWithoutSendingProviderSecrets() {
+    @Test fun pairingTokenControlsSelectedStreamPlayback() {
         val commands = mutableListOf<LanCommand>()
         LanPlaybackServer(host) { commands += it; LanReply(true, "Played") }.use { server ->
             val paired = send(server, "pair", server.pin)
             assertTrue(paired.ok)
             val token = requireNotNull(paired.credential)
             assertEquals(64, token.length)
-            assertTrue(send(server, "play", token, movie).ok)
-            assertEquals(movie, commands.single().movie)
+            val selected = RemoteVideo("https://stream.test/selected.mp4", "Selected movie")
+            assertTrue(sendLanCommand("127.0.0.1", server.port, LanCommand("play", token, video = selected)).ok)
+            assertEquals(selected, commands.single().video)
             assertTrue(send(server, "pause", token).ok)
             assertTrue(send(server, "resume", token).ok)
             assertTrue(send(server, "stop", token).ok)
+        }
+    }
+    @Test fun preReleaseIdentityRequestsAreRejectedWithoutSearchingOrStartingPlayer() {
+        LanPlaybackServer(host) { fail("Identity-only request reached receiver player"); LanReply(true, "") }.use { server ->
+            val token = requireNotNull(send(server, "pair", server.pin).credential)
+            val reply = send(server, "play", token, movie)
+            assertFalse(reply.ok)
+            assertTrue(reply.message.contains("Update both devices"))
         }
     }
     @Test fun unpairedCommandsNeverReachPlayer() {
