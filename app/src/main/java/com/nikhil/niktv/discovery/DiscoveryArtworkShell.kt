@@ -20,13 +20,13 @@ internal val LocalDiscoverySceneBounds = staticCompositionLocalOf { Rect.Zero }
 
 @Composable
 internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
-    backdropBehindRows: Boolean = false, reduceMotion: Boolean = false,
+    backdropBehindRows: Boolean = false, reduceMotion: Boolean = false, initialSceneArtwork: String? = null,
     header: @Composable () -> Unit, content: @Composable () -> Unit) {
     val density = LocalDensity.current
     var inset by remember(phone) { mutableStateOf(if (phone) 64.dp else 80.dp) }
     var viewportTop by remember { mutableFloatStateOf(0f) }
     var viewportBounds by remember { mutableStateOf(Rect.Zero) }
-    var artwork by remember { mutableStateOf<MobileGlassSource?>(null) }
+    var artwork by remember { mutableStateOf(initialSceneArtwork?.let { MobileGlassSource(it, Rect.Zero) }) }
     val publish = remember { { value: MobileGlassSource? -> artwork = value } }
     Box(Modifier.fillMaxSize().background(if (overlay) Color(0xFF090B10) else Color.Transparent).safeDrawingPadding().onGloballyPositioned {
         viewportTop = it.positionInWindow().y

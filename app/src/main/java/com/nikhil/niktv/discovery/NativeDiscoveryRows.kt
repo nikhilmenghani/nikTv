@@ -227,7 +227,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         currentRows.forEachIndexed { rowIndex, row ->
             content.addView(TextView(context).apply {
-                text = row.title; textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+                text = row.title; textSize = 17f; setTextColor(Color.WHITE); typeface = discoveryCaptionTypeface
                 setPadding(dp(2), dp(5), 0, dp(6)); isFocusable = false
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 ViewCompat.setAccessibilityHeading(this, true)
@@ -324,7 +324,7 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
                 }
                 card.addView(image, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(147)))
                 card.addView(TextView(context).apply {
-                    text = item.title; textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+                    text = item.title; textSize = 12f; setTextColor(Color.WHITE); typeface = discoveryCaptionTypeface
                     maxLines = 2; minLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                     setPadding(dp(3), dp(5), dp(3), 0); isFocusable = false
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO

@@ -858,6 +858,12 @@ private fun DiscoveryPreviewContent(
         }
         CompositionLocalProvider(LocalDiscoveryExperimentSettings provides { restore -> experimentSettingsReturn = restore; experimentSettings = true }) {
             DiscoveryArtworkShell(nativeHero != null, phone,
+                // The hero can be off-screen when saved row focus is restored. Seed the
+                // shell from the retained hero instead of waiting for its view to publish.
+                initialSceneArtwork = if (providerCatalog == null && nativeHero != null && scrollVariant.heroArtwork) vm.state.value
+                    .takeIf { it.profile == profile && it.surface == surface }?.hero?.let {
+                    thumbnailArtworkUrl(it.backdrop ?: it.poster, 1280)
+                } else null,
                 backdropBehindRows = nativeHero != null && landscape && !phone, reduceMotion = reduceMotion, header = {
                 if (phone) DiscoveryPhoneHeader(surface, false, tabRequester, playRequester,
                     back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute,

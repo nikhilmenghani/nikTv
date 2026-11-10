@@ -637,7 +637,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         private var horizontalLayoutPending = false
         private var awaitingSkeletonCards = false
         private val title = TextView(context).apply {
-            textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+            textSize = 17f; setTextColor(Color.WHITE); typeface = discoveryCaptionTypeface
             setPadding(dp(3), dp(5), 0, dp(6)); ViewCompat.setAccessibilityHeading(this, true)
         }
         private val horizontal = object : RecyclerView(context) {
@@ -919,7 +919,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         private val progress = NativeDiscoveryProgress(context)
         private val title = TextView(context).apply {
             textSize = if (polishedCaptions) 10f * posterGeometry.textScale else if (homeTileProportions) 8.7f else 12f
-            setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE); typeface = discoveryCaptionTypeface
             minLines = if (polishedCaptions) 1 else 2; maxLines = if (polishedCaptions) 6 else 2
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
