@@ -205,7 +205,14 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     if (compactInfoOpen) FullDescriptionDialog(metadata.card.title,
         metadata.card.overview.orEmpty().ifBlank { "No description is available for this series." }) {
         compactInfoOpen = false
-        scope.launch { withFrameNanos { }; runCatching { compactInfoRequester.requestFocus() } }
+        scope.launch {
+            repeat(30) {
+                withFrameNanos { }
+                if (host.hasWindowFocus() && runCatching {
+                    (if (wideSeries) synopsisRequester else compactInfoRequester).requestFocus()
+                }.getOrDefault(false)) return@launch
+            }
+        }
     }
     val toolbar: @Composable () -> Unit = {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onPreviewKeyEvent { event ->
@@ -294,7 +301,18 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 onDown = { if (type == CatalogType.SERIES) down() else if (related.isNotEmpty()) focus(relatedEntry) else if (people.isNotEmpty()) focus(castEntry) else down() },
                 onUp = { if (wideSeries) { if (heroUp != null) { heroUp(); true } else runCatching { backRequester.requestFocus() }.getOrDefault(false) } else false },
                 previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
-                portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = type == CatalogType.MOVIES, compactDetail = true)
+                portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = true, compactDetail = true,
+                categoryActions = if (wideSeries) ({
+                    if (!metadata.card.overview.isNullOrBlank()) DiscoveryAction("More info", Icons.Default.Info, iconOnly = true,
+                        modifier = Modifier.focusRequester(synopsisRequester).onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                Key.DirectionUp -> { synopsisUp?.invoke(); synopsisUp != null }
+                                Key.DirectionDown -> { synopsisDown?.invoke(); synopsisDown != null }
+                                else -> false
+                            }
+                        }) { compactInfoOpen = true }
+                    LocalProviderSynopsisActions.current?.invoke()
+                }) else null)
             progressLabel?.let {
                 Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 20.dp else 32.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
@@ -303,7 +321,6 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         color = Color(0xFFE50925), trackColor = Color(0xFF343842), drawStopIndicator = {}) }
                 }
             }
-            if (type != CatalogType.MOVIES) ProviderDetailSynopsis(metadata.card.overview, metadata.card.title, wideSeries, synopsisRequester, synopsisUp, synopsisDown, reduceMotion, actionsInHero = phone)
             }
             }
             // Expanded panels must not change the artwork bounds or its fade positions.

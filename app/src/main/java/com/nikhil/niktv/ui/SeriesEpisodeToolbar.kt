@@ -40,6 +40,8 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /** One toolbar for both provider and TMDB episodes. Search stays local to the loaded season. */
 @Composable
@@ -235,24 +237,53 @@ private fun EpisodeToolbarIcon(icon: ImageVector, label: String, active: Boolean
 internal fun SeriesSeasonSidebar(seasons: List<Int>, selected: Int?, counts: Map<Int, String>,
     requester: FocusRequester, select: (Int) -> Unit, right: () -> Unit, up: () -> Unit,
     modifier: Modifier = Modifier, horizontal: Boolean = false) {
-    val ordered = remember(seasons, selected) { (seasons + listOfNotNull(selected)).distinct().sorted() }
-    val list = rememberLazyListState()
+    val ordered = remember(seasons, selected) { (seasons + listOfNotNull(selected)).filter { it >= 0 }.distinct().sorted() }
+    // The external entry requester belongs to the selected season. Mount that
+    // item immediately, even when a saved season is far below the first page.
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = ordered.indexOf(selected).coerceAtLeast(0))
+    val scope = rememberCoroutineScope()
+    val choices = remember { mutableMapOf<Int, FocusRequester>() }
+    var move by remember { mutableStateOf<Job?>(null) }
+    var requestedSeason by remember { mutableStateOf<Int?>(null) }
+    DisposableEffect(ordered, horizontal) { onDispose { move?.cancel() } }
+    fun focusChoice(index: Int): Boolean {
+        if (index !in ordered.indices) return true
+        val season = ordered[index]
+        requestedSeason = season
+        move?.cancel()
+        val viewport = list.layoutInfo
+        val visible = viewport.visibleItemsInfo.firstOrNull { it.index == index }
+        if (visible != null && visible.offset >= viewport.viewportStartOffset && visible.offset + visible.size <= viewport.viewportEndOffset &&
+            runCatching { choices[season]?.requestFocus() == true }.getOrDefault(false)) return true
+        move = scope.launch {
+            list.scrollToItem(index)
+            repeat(20) { withFrameNanos { }; if (runCatching { choices[season]?.requestFocus() == true }.getOrDefault(false)) return@launch }
+        }
+        return true
+    }
+    fun leave(action: () -> Unit): Boolean { move?.cancel(); requestedSeason = null; action(); return true }
     val density = LocalDensity.current
     var rowHeight by remember(density.fontScale) { mutableIntStateOf(0) }
     val tile: @Composable (Int, Int) -> Unit = { index, season ->
-            NikTvSecondaryActionButton({ select(season) },
+            NikTvSecondaryActionButton({ move?.cancel(); select(season) },
                 (if (horizontal) Modifier.width(156.dp) else Modifier.fillMaxWidth())
                     .onSizeChanged { rowHeight = maxOf(rowHeight, it.height) }
                     .then(if (season == selected || selected == null && index == 0) Modifier.focusRequester(requester) else Modifier)
+                    .focusRequester(remember(season) { choices.getOrPut(season) { FocusRequester() } })
+                    .onFocusChanged { if (it.isFocused) requestedSeason = season }
                     .semantics { this.selected = season == selected }
                     .onPreviewKeyEvent { event ->
+                        val cursor = ordered.indexOf(requestedSeason).takeIf { it >= 0 } ?: index
                         if (event.type != KeyEventType.KeyDown) false else if (horizontal) when (event.key) {
-                            Key.DirectionUp -> { up(); true }
-                            Key.DirectionDown -> { right(); true }
+                            Key.DirectionUp -> leave(up)
+                            Key.DirectionDown -> leave(right)
+                            Key.DirectionLeft -> focusChoice(cursor - 1)
+                            Key.DirectionRight -> focusChoice(cursor + 1)
                             else -> false
                         } else when (event.key) {
-                            Key.DirectionRight -> { right(); true }
-                            Key.DirectionUp -> if (index == 0) { up(); true } else false
+                            Key.DirectionRight -> leave(right)
+                            Key.DirectionUp -> if (cursor == 0) leave(up) else focusChoice(cursor - 1)
+                            Key.DirectionDown -> focusChoice(cursor + 1)
                             Key.DirectionLeft -> true
                             else -> false
                         }
@@ -266,12 +297,15 @@ internal fun SeriesSeasonSidebar(seasons: List<Int>, selected: Int?, counts: Map
             }
     }
     if (horizontal) {
-        LaunchedEffect(selected, ordered) {
+        BoxWithConstraints(modifier) {
+        val slots = ((maxWidth + 8.dp) / (156.dp + 8.dp)).toInt().coerceAtLeast(1)
+        LaunchedEffect(selected, ordered, slots) {
             val index = ordered.indexOf(selected)
-            if (index >= 0) list.scrollToItem(index)
+            if (index >= 0) list.scrollToItem((index - slots + 1).coerceAtLeast(0))
         }
-        LazyRow(modifier, state = list, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(Modifier.fillMaxWidth(), state = list, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         itemsIndexed(ordered, key = { _, season -> season }) { index, season -> tile(index, season) }
+        }
         }
     } else {
         var visibleHeight by remember { mutableIntStateOf(0) }

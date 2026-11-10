@@ -47,6 +47,25 @@ class ActorControlsDeviceTest {
         val context = test.targetContext; check(context.packageName.endsWith(".regression"))
         return test.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
     }
+    @Test fun shortActorInformationFitsItsContentAndStartsOnClose() {
+        val activity = host(); test.setInTouchMode(false)
+        try {
+            test.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                ActorInformationDialog(DiscoveryPerson("Short fixture actor", role = "Lead", id = 124),
+                    load = { DiscoveryActorInfo("Short fixture actor", biography = "Short fixture biography",
+                        birthday = "1980-01-01", department = "Acting") }, close = {})
+            } } }
+            await("Short actor information loads with Close focused") { node("Short fixture biography") != null && focused("Close") }
+            val popup = Rect().also { requireNotNull(node("Actor details popup")).getBoundsInScreen(it) }
+            val display = Rect().also { requireNotNull(test.uiAutomation.rootInActiveWindow).getBoundsInScreen(it) }
+            assertTrue("Short biography does not leave a nearly full-screen empty panel", popup.height() < display.height() * .8f)
+            NavigationAuditEvidence.capture("actor-information-short-content-fit")
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches actor information") { focused("Actor information") }
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("A short panel returns to Close without trapping focus") { focused("Close") }
+        } finally { test.runOnMainSync { activity.finish() }; test.setInTouchMode(true) }
+    }
     @Test fun quickSortsStaySynchronizedAndActorInfoLoadsOnlyOnDemand() {
         val activity=host(); test.setInTouchMode(false)
         var infoCalls=0
@@ -58,11 +77,26 @@ class ActorControlsDeviceTest {
                     loadInfo={ infoCalls++; DiscoveryActorInfo("Fixture actor",biography="Public biography\n" + (1..100).joinToString("\n") { "Biography line $it" },birthday="1980-01-01",birthplace="Fixture city",department="Acting") },open={})
             } } }
             await("Credits start newest first") { focused("Newer") && node("Sort: Year: newest")!=null }
+            val creditsBounds = Rect().also { requireNotNull(node("Actor credits")).getBoundsInScreen(it) }
+            val display = Rect().also { requireNotNull(test.uiAutomation.rootInActiveWindow).getBoundsInScreen(it) }
+            assertEquals("Credits use the whole screen width", display.width(), creditsBounds.width())
+            assertEquals("Credits use the whole screen height", display.height(), creditsBounds.height())
+            var yearControl = node("Year")
+            while (yearControl != null && !yearControl.isClickable) yearControl = yearControl.parent
+            val yearBounds = Rect().also { requireNotNull(yearControl).getBoundsInScreen(it) }
+            val density = test.targetContext.resources.displayMetrics.density
+            val fontScale = test.targetContext.resources.configuration.fontScale.coerceAtLeast(1f)
+            // Material accessibility bounds preserve the 48dp touch target around
+            // the compact 44dp surface; use that target and the caption's width.
+            assertTrue("Quick sort touch height stays compact: $yearBounds density=$density", yearBounds.height() <= 50 * density)
+            assertTrue("Year control uses a compact caption: $yearBounds density=$density", yearBounds.width() <= 88 * density * fontScale)
             assertEquals(0,infoCalls)
+            action("TMDB order",AccessibilityNodeInfo.ACTION_CLICK)
+            await("TMDB quick action restores the source order") { node("Sort: TMDB order")!=null && focused("Older") }
+            action("Year",AccessibilityNodeInfo.ACTION_CLICK)
+            await("Year after source order starts newest first") { node("Sort: Year: newest")!=null && focused("Newer") }
             action("Year",AccessibilityNodeInfo.ACTION_CLICK)
             await("Ascending year and menu agree") { node("Sort: Year: oldest")!=null && focused("Older") }
-            action("Year",AccessibilityNodeInfo.ACTION_CLICK)
-            await("Descending year and menu agree") { node("Sort: Year: newest")!=null && focused("Newer") }
             action("Rating",AccessibilityNodeInfo.ACTION_CLICK)
             await("Descending rating") { node("Sort: Rating: highest")!=null && focused("Older") }
             action("Rating",AccessibilityNodeInfo.ACTION_CLICK)
@@ -73,12 +107,21 @@ class ActorControlsDeviceTest {
             await("Menu changes shared sorting") { node("Sort: Year: newest")!=null && focused("Newer") }
             action("About Fixture actor",AccessibilityNodeInfo.ACTION_CLICK)
             await("Information loaded") { node("Public biography")!=null && focused("Close") }
+            NavigationAuditEvidence.capture("actor-information-organized-close-focused")
             assertEquals(1,infoCalls)
             assertNotNull(node("Birthplace: Fixture city"))
-            test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Long biography is reachable") { focused("Actor information") }
-            repeat(30) { test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(15) }
+            var returnedToClose = false
+            repeat(40) {
+                if (!returnedToClose) {
+                    test.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                    Thread.sleep(25)
+                    returnedToClose = focused("Close")
+                }
+            }
             await("End of biography returns to Close") { focused("Close") }
+            NavigationAuditEvidence.capture("actor-information-dpad-end-close-focused")
             action("Close",AccessibilityNodeInfo.ACTION_CLICK)
             await("Focus returns to info action") { focused("About Fixture actor") }
         } finally { test.runOnMainSync { activity.finish() } }

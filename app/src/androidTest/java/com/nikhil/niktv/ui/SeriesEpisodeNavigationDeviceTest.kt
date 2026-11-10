@@ -100,9 +100,7 @@ class SeriesEpisodeNavigationDeviceTest {
             } } }
             await("Fixture starts on Play latest") { activity.hasWindowFocus() && focused("Play latest") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Header action is focused") { focused("Related") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Sort is focused") { focused("Sort episodes") }
+            await("Hero Down directly reaches Sort") { focused("Sort episodes") }
             chooseSort("Latest first", "Earliest first")
             await("Earliest sort shows progress and a focused cancel action") { requests.size == 1 &&
                 label("Finding the earliest episode") != null && label("40 episodes loaded · page 1") != null && focused("Cancel") }
@@ -436,13 +434,14 @@ class SeriesEpisodeNavigationDeviceTest {
                 "provider-presentation-v1:SERIES:null:${providerSeriesTmdbTitle(series.title)}", "[]")
         }
         val state = NikTvState(selectedSeries = series, selectedType = CatalogType.SERIES,
-            items = episodes, availableSeriesSeasons = listOf(1, 2), selectedSeriesSeason = 2,
+            items = episodes.reversed(), availableSeriesSeasons = listOf(1, 2), selectedSeriesSeason = 2,
             useTmdbEpisodeMetadata = false, restoring = false, homeOpen = false)
         val actions = CopyOnWriteArrayList<String>()
+        val plays = CopyOnWriteArrayList<String>()
         val activity = startHost()
         try {
             instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
-                DiscoverySeriesContent(state, play = { actions.add("play") }, closeSeries = {},
+                DiscoverySeriesContent(state, play = { plays.add(it.id) }, closeSeries = {},
                     toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = { actions.add("season") },
                     setUseTmdbEpisodeMetadata = {}, refreshTmdbEpisodeCache = {},
                     downloadForOffline = { _, _, _ -> actions.add("download") }, removeOfflineDownload = { _, _ -> },
@@ -451,9 +450,7 @@ class SeriesEpisodeNavigationDeviceTest {
             } } }
             await("Provider sort fixture begins on Play latest") { activity.hasWindowFocus() && focused("Play latest") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider hero Down reaches header Related action") { focused("Related") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Header Related Down reaches Sort") { focused("Sort episodes") }
+            await("Provider hero Down directly reaches Sort") { focused("Sort episodes") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Initial provider episode 500 receives focus") { focused("Provider sort episode 500") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
@@ -465,6 +462,16 @@ class SeriesEpisodeNavigationDeviceTest {
             chooseSort("Latest first", "Earliest first")
             await("Provider earliest sort focuses episode 1") { focused("Provider sort episode 1") }
             await("Provider sort resets its nested viewport") { label("Provider sort episode 500")?.isVisibleToUser != true }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Earliest episode Up returns to Sort") { focused("Sort episodes") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Earliest order exposes Start series in the hero") { focused("Start series") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Start series plays true episode 1 despite descending provider order") { plays.toList() == listOf("provider-sort-1") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Primary action returns directly to Sort") { focused("Sort episodes") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Sort re-enters the earliest episode") { focused("Provider sort episode 1") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Sorted provider episode Left reaches Season 2") { focused("Season 2") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -488,7 +495,11 @@ class SeriesEpisodeNavigationDeviceTest {
             await("Provider sort popup focuses current order") { focused("Latest first") }
             key(KeyEvent.KEYCODE_BACK)
             await("Provider sort dismissal returns to Sort") { focused("Sort episodes") && label("Earliest first") == null }
-            assertTrue("Sorting performs no provider loads, downloads or playback", actions.isEmpty())
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Latest order restores Play latest in the hero") { focused("Play latest") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Play latest targets episode 500 in the same season") { plays.toList() == listOf("provider-sort-1", "provider-sort-500") }
+            assertTrue("Sorting performs no provider loads or downloads", actions.isEmpty())
         } finally { finishHost(activity) }
     }
 
@@ -542,16 +553,20 @@ class SeriesEpisodeNavigationDeviceTest {
             await("Provider fixture owns input and starts on Resume") {
                 activity.hasWindowFocus() && focused("Resume") && label("More info") != null
             }
-            // Await every destination before sending another key. A timed burst
-            // can queue an extra Down behind a stale accessibility snapshot.
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider hero Down reaches description actions") { focused("More info") }
+            // Hero actions share one row. Vertical navigation must not bounce
+            // through controls that are beside the primary action.
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches My List beside Resume") { focused("My List") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Watch trailer beside My List") { focused("Watch trailer") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches More info beside Watch trailer") { focused("More info") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Right reaches Related beside More info") { focused("Related") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Left returns to More info") { focused("More info") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Description actions Down reaches Sort") { focused("Sort episodes") }
+            await("Info Down directly reaches Sort") { focused("Sort episodes") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Provider Down reaches first episode") { focused("Provider episode 12") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
@@ -587,13 +602,11 @@ class SeriesEpisodeNavigationDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("First episode Up reaches Sort") { focused("Sort episodes") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Sort Up reaches the description row") { focused("More info") }
+            await("Sort Up restores the last focused hero action") { focused("More info") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Related remains reachable in the description row") { focused("Related") }
+            await("Related remains beside More info in the hero row") { focused("Related") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Related Up reaches Resume without a same-row loop") { focused("Resume") }
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Repeated Up reaches the top Back button") { focused("Back") }
+            await("Related Up directly reaches Back without a same-row loop") { focused("Back") }
             assertTrue("Changing focus never selects a different provider season", seasons.isEmpty())
             assertTrue("Changing focus never starts playback", plays.isEmpty())
         } finally { finishHost(activity) }
@@ -646,9 +659,7 @@ class SeriesEpisodeNavigationDeviceTest {
             await("Provider header owns Play latest") { focused("Play latest") }
             NavigationAuditEvidence.capture("provider-series-traversal-header")
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider Play Down reaches Related") { focused("Related") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider Related Down reaches Sort") { focused("Sort episodes") }
+            await("Provider Play Down directly reaches Sort") { focused("Sort episodes") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Provider Sort Down reaches episode 45") { focused("Provider traversal episode 45") }
             NavigationAuditEvidence.capture("provider-episode-list-start")
@@ -789,7 +800,7 @@ class SeriesEpisodeNavigationDeviceTest {
             }
             NavigationAuditEvidence.capture("tmdb-phone-empty-season-selected")
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Empty phone episode pane Up skips disabled Play and returns to Back") { focused("Back") }
+            await("Empty phone episode pane Up restores its enabled Related origin") { focused("Related") }
         } finally { finishHost(activity) }
     }
 
@@ -880,11 +891,7 @@ class SeriesEpisodeNavigationDeviceTest {
             await("Play latest receives initial focus") { focused("Play latest") }
             NavigationAuditEvidence.capture("tmdb-short-viewport-series-header")
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Play Down reaches More info") { focused("More info") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Info Down reaches Related when there is no cast") { focused("Related") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Related Down enters the episode toolbar") { focused("Search episodes") }
+            await("Play Down directly enters the episode toolbar") { focused("Search episodes") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Episode toolbar Down reaches episode 45") { focused("Viewport episode 45") }
             NavigationAuditEvidence.capture("tmdb-short-viewport-series-episode-pane")
@@ -902,11 +909,39 @@ class SeriesEpisodeNavigationDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("First episode Up restores toolbar") { focused("Search episodes") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Toolbar Up restores the header tools") { focused("Related") }
+            await("Toolbar Up directly restores the hero action") { focused("Play latest") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("My List is reachable beside Play") { focused("My List") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Watch trailer is reachable beside My List") { focused("Watch trailer") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("More info is reachable beside Watch trailer") { focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Synopsis opens with Close focused") { focused("Close") }
+            key(KeyEvent.KEYCODE_BACK)
+            await("Closing synopsis restores its Info action") { label("Close") == null && focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Info Down directly reaches the episode toolbar") { focused("Search episodes") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Tools Up restores More info") { focused("More info") }
+            await("Episode toolbar restores Info as its origin") { focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Related is reachable beside Info") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Related expands from its hero action") { focused("Hide related") }
+            key(KeyEvent.KEYCODE_BACK)
+            await("Back collapses Related and retains its action") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Collapsed Related Down reaches the episode toolbar") { focused("Search episodes") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("More info Up restores Play") { focused("Play latest") }
+            await("Episode toolbar restores Related as its origin") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Related Left restores Info") { focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Info Left restores Watch trailer") { focused("Watch trailer") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Trailer Down reaches the episode toolbar") { focused("Search episodes") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Trailer entry returns to Play instead of a stale Related action") { focused("Play latest") }
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Play Up restores Back") { focused("Back") }
         } finally { finishHost(activity) }

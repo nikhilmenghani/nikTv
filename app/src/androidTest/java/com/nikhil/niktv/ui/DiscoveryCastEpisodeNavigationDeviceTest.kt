@@ -87,7 +87,7 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
             await("Parent detail owns the window and focuses Play latest") {
                 focused("Play latest") && vm.state.value.episodes.isNotEmpty()
             }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            repeat(3) { key(KeyEvent.KEYCODE_DPAD_RIGHT) }
             await("Parent Down reaches visible Cast action") { focused("Cast") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Cast panel expands") { focused("Hide cast") }
@@ -102,7 +102,7 @@ class DiscoveryCastEpisodeNavigationDeviceTest {
                 vm.state.value.detail?.key == target.key && vm.state.value.season == 1 &&
                     vm.state.value.episodes.size == 7 && focused("Play latest") && label("Featuring ${actor.name}") == null
             }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            repeat(3) { key(KeyEvent.KEYCODE_DPAD_RIGHT) }
             await("Cast detail Down reaches visible Related action") { focused("Related") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Cast detail Related Down reaches Search toolbar") { focused("Search episodes") }

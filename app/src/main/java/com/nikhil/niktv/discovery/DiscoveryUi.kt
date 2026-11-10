@@ -1528,23 +1528,22 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             .then(if (!detail) Modifier.height((if (compact) 44.dp else 52.dp) * fontScale) else Modifier)) {
             card?.overview?.takeIf(String::isNotBlank)?.let { Text(it, Modifier.padding(top = if (compact) 6.dp else 8.dp),
                 color = Color(0xFFD6D8DC), fontSize = if (compact) 12.sp else 13.sp, lineHeight = if (compact) 16.sp else 18.sp,
-                maxLines = if (detail) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis) }
+                maxLines = if (detail && card.series != true) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis) }
             if (loading && card == null) Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.width(300.dp).height(10.dp).background(Color.White.copy(alpha = .07f), RoundedCornerShape(4.dp)))
                 Box(Modifier.width(240.dp).height(10.dp).background(Color.White.copy(alpha = .05f), RoundedCornerShape(4.dp)))
             }
         }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
-        val compactActions = !detail || card?.series != true
         val actions: @Composable () -> Unit = {
             CompositionLocalProvider(LocalCollapsingDiscoveryActions provides false) {
             DiscoveryAction(if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true,
                 horizontalPadding = 16.dp, trailingPadding = 22.dp,
-                modifier = Modifier.then(if (compactActions) Modifier else Modifier.width(160.dp)).heightIn(min = 48.dp).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
+                modifier = Modifier.heightIn(min = 48.dp).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
             }
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
-                iconOnly = compactActions, modifier = Modifier.then(if (compactActions) Modifier.widthIn(min = 48.dp) else Modifier.width(160.dp)).heightIn(min = 48.dp), enabled = card != null, onFocus = onFocus, onClick = add)
-            DiscoveryTrailerAction(card, iconOnly = compactActions, onFocus = onFocus, modifier = Modifier.then(if (compactActions) Modifier.widthIn(min = 48.dp) else Modifier.width(160.dp)).heightIn(min = 48.dp), mediaOverride = trailerMedia)
+                iconOnly = true, modifier = Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp), enabled = card != null, onFocus = onFocus, onClick = add)
+            DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, modifier = Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp), mediaOverride = trailerMedia)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()
@@ -1553,7 +1552,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                 DiscoveryCarouselControls(index, count, onFocus, previous, next, enabled = carousel, compact = !detail)
             }
         }
-        val actionNavigation = Modifier.onPreviewKeyEvent {
+        val actionNavigation = Modifier.onKeyEvent {
             if (it.type != KeyEventType.KeyDown) false
             else when (it.key) {
                 Key.DirectionDown -> { onDown(); true }
@@ -1561,7 +1560,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                 else -> false
             }
         }
-        if (landscape && compactActions) CompositionLocalProvider(LocalCollapsingDiscoveryActions provides true, LocalHeroActionSizing provides true) {
+        if (landscape) CompositionLocalProvider(LocalCollapsingDiscoveryActions provides true, LocalHeroActionSizing provides true) {
             // A single, fixed-height action row cannot reflow the page when a label expands.
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).then(actionNavigation),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { actions() }

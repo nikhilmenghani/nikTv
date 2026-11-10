@@ -23,6 +23,8 @@ import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.ui.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collect
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -30,7 +32,8 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     seasonEntry: FocusRequester, loadSeason: (Int) -> Unit,
     play: (DiscoveryCard, Int, Int) -> Unit, download: (DiscoveryCard, Int, Int) -> Unit,
     onFocus: () -> Unit, up: () -> Boolean, down: () -> Boolean,
-    modifier: Modifier = Modifier, lastWatched: Pair<Int, Int>? = null, loadInitialSeason: Boolean = true) {
+    modifier: Modifier = Modifier, lastWatched: Pair<Int, Int>? = null, loadInitialSeason: Boolean = true,
+    onNewestFirstChanged: (Boolean) -> Unit = {}) {
     val card = state.detail ?: return
     val alternateSource = LocalPlayAlternateSource.current
     val configuration = LocalConfiguration.current
@@ -40,10 +43,20 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     val chosen = state.season ?: discoveryInitialSeriesSeason(state.details, startSeason, lastWatched?.first)
     var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
     var newest by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
+    LaunchedEffect(newest) { onNewestFirstChanged(newest) }
     var searchOpen by rememberSaveable(state.profile, card.key) { mutableStateOf(false) }
     var query by rememberSaveable(state.profile, card.key) { mutableStateOf("") }
     var seasonOpen by remember { mutableStateOf(false) }
-    var focused by rememberSaveable(state.profile, card.key) { mutableStateOf<String?>(null) }
+    // A season change must not reuse another season's episode key or viewport.
+    var focusedBySeason by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, String>()) }
+    var viewportsBySeason by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, List<Int>>()) }
+    var positionedResumes by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, String>()) }
+    var pendingEpisodeEntry by rememberSaveable(state.profile, card.key) { mutableStateOf<String?>(null) }
+    var interacted by remember(card.key) { mutableStateOf(false) }
+    fun focusedEpisode() = chosen?.let(focusedBySeason::get)
+    fun rememberEpisode(identity: String?, season: Int? = chosen) {
+        if (season != null) focusedBySeason = if (identity == null) focusedBySeason - season else focusedBySeason + (season to identity)
+    }
     val search = remember { FocusRequester() }
     val searchInput = remember { FocusRequester() }
     var searchInputFocused by remember { mutableStateOf(false) }
@@ -54,10 +67,24 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     val retrySeason = remember { FocusRequester() }
     val selectedSeason = remember { FocusRequester() }
     val requesters = remember(card.key) { mutableMapOf<String, FocusRequester>() }
-    val episodeState = key(card.key, chosen) { rememberLazyListState() }
-    LaunchedEffect(listView, chosen) {
-        withFrameNanos { }
-        episodeState.scrollToItem(episodeState.firstVisibleItemIndex, 0)
+    val episodeState = key(card.key, chosen) {
+        val viewport = chosen?.let(viewportsBySeason::get)
+        rememberLazyListState(viewport?.getOrNull(0) ?: 0, viewport?.getOrNull(1) ?: 0)
+    }
+    var previousListView by remember { mutableStateOf(listView) }
+    LaunchedEffect(listView) {
+        if (previousListView != listView) {
+            previousListView = listView
+            withFrameNanos { }
+            episodeState.scrollToItem(episodeState.firstVisibleItemIndex, 0)
+        }
+    }
+    LaunchedEffect(chosen, episodeState) {
+        val season = chosen ?: return@LaunchedEffect
+        snapshotFlow { Triple(episodeState.isScrollInProgress, episodeState.firstVisibleItemIndex, episodeState.firstVisibleItemScrollOffset) }
+            .distinctUntilChanged().collect { (moving, index, offset) ->
+                if (!moving) viewportsBySeason = viewportsBySeason + (season to listOf(index, offset))
+            }
     }
     var scrollReset by remember { mutableIntStateOf(0) }
     LaunchedEffect(scrollReset) {
@@ -66,8 +93,9 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     val scope = rememberCoroutineScope()
     var entryJob by remember { mutableStateOf<Job?>(null) }
     val keyboard = LocalSoftwareKeyboardController.current
-    val episodes = remember(state.episodes, query, searchOpen, newest) {
-        val filtered = state.episodes.filter { episodeMatchesSearch(it.title, it.overview, it.number, if (searchOpen) query else "") }
+    val episodes = remember(state.episodes, chosen, query, searchOpen, newest) {
+        val filtered = state.episodes.filter { (chosen == null || it.season == chosen) &&
+            episodeMatchesSearch(it.title, it.overview, it.number, if (searchOpen) query else "") }
         if (newest) filtered.sortedByDescending { it.number } else filtered.sortedBy { it.number }
     }
     DisposableEffect(card.key, chosen, episodes, listView) {
@@ -89,7 +117,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         keyboard?.hide()
         val target = episodes[index]
         val targetKey = "${target.season}:${target.number}"
-        focused = targetKey
+        rememberEpisode(targetKey)
         entryJob?.cancel()
         val viewport = episodeState.layoutInfo
         val visible = viewport.visibleItemsInfo.firstOrNull { it.index == index }
@@ -108,23 +136,29 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     fun focusSeasonChoice(): Boolean = if (seasons.isNotEmpty())
         runCatching { (if (wide) sidebar else seasonEntry).requestFocus() }.getOrDefault(false) else false
     fun enterEpisodes(fromStart: Boolean = false) {
-        val index = if (fromStart) 0 else episodes.indexOfFirst { "${it.season}:${it.number}" == focused }.coerceAtLeast(0)
+        val index = if (fromStart) 0 else episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.coerceAtLeast(0)
         focusEpisode(index)
     }
-    var positioned by rememberSaveable(state.profile, card.key, chosen) { mutableStateOf(false) }
-    LaunchedEffect(episodes, lastWatched, chosen) {
-        if (!positioned && episodes.isNotEmpty() && lastWatched != null && lastWatched.first == chosen) {
+    LaunchedEffect(episodes, lastWatched, chosen, pendingEpisodeEntry) {
+        if (episodes.isNotEmpty() && lastWatched != null && lastWatched.first == chosen) {
+            val identity = "${lastWatched.first}:${lastWatched.second}"
             val index = episodes.indexOfFirst { it.number == lastWatched.second }
-            if (index >= 0) {
-                episodeState.scrollToItem((index - 1).coerceAtLeast(0))
-                focused = "${lastWatched.first}:${lastWatched.second}"
-                positioned = true
+            if (index >= 0 && positionedResumes[lastWatched.first] != identity) {
+                if (!interacted) episodeState.scrollToItem((index - 1).coerceAtLeast(0))
+                if (!interacted || focusedEpisode() == null) rememberEpisode(identity)
+                positionedResumes = positionedResumes + (lastWatched.first to identity)
             }
+        }
+        val pending = pendingEpisodeEntry
+        val index = episodes.indexOfFirst { "${it.season}:${it.number}" == pending }
+        if (pending != null && index >= 0) {
+            pendingEpisodeEntry = null
+            focusEpisode(index)
         }
     }
     var initialSeasonRequested by rememberSaveable(state.profile, card.key) { mutableStateOf(false) }
     LaunchedEffect(state.details?.card?.key, loadInitialSeason) {
-        if (loadInitialSeason && !initialSeasonRequested) (lastWatched?.first ?: chosen)?.let {
+        if (loadInitialSeason && !initialSeasonRequested) chosen?.let {
             initialSeasonRequested = true
             loadSeason(it)
         }
@@ -137,7 +171,10 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     }
     Column(modifier.onPreviewKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key in listOf(
-                Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) entryJob?.cancel()
+                Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
+            interacted = true
+            entryJob?.cancel()
+        }
         false
     }) {
         SeriesEpisodeToolbar(
@@ -155,18 +192,21 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             } },
             count = seriesEpisodeCountLabel(episodes.size, false, searchOpen && query.isNotBlank()),
             compact = !wide, newestFirst = newest, onNewestFirst = {
-                newest = it; focused = null
+                newest = it; rememberEpisode(null)
             },
             listView = listView, onListView = { listView = it }, searchOpen = searchOpen,
             onSearch = { if (searchOpen) closeSearch() else searchOpen = true },
             searchRequester = toolbarSearch, sortRequester = sort, layoutRequester = layout,
             onSortApplied = { enterEpisodes(fromStart = true) },
             onGoToEpisode = { number ->
-                episodes.firstOrNull { it.number == number }?.let { focused = "${it.season}:${it.number}"; enterEpisodes() }
+                episodes.firstOrNull { it.number == number }?.let { rememberEpisode("${it.season}:${it.number}"); enterEpisodes() }
             },
             onLastWatched = lastWatched?.let { watched -> {
-                focused = "${watched.first}:${watched.second}"
-                if (chosen != watched.first) loadSeason(watched.first) else enterEpisodes()
+                rememberEpisode("${watched.first}:${watched.second}", watched.first)
+                if (chosen != watched.first) {
+                    pendingEpisodeEntry = "${watched.first}:${watched.second}"
+                    loadSeason(watched.first)
+                } else enterEpisodes()
             } },
             beforeAction = { keyboard?.hide() },
             searchField = {
@@ -228,7 +268,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 modifier = (if (listView) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else {
-                        val cursor = episodes.indexOfFirst { "${it.season}:${it.number}" == focused }.takeIf { it >= 0 } ?: index
+                        val cursor = episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.takeIf { it >= 0 } ?: index
                         when (event.key) {
                             Key.DirectionLeft -> if (listView && wide && seasons.isNotEmpty()) runCatching { sidebar.requestFocus() }.getOrDefault(false)
                                 else if (!listView) { focusEpisode(cursor - 1); true } else false
@@ -242,7 +282,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                         }
                         }
                     },
-                onFocus = { focused = identity; onFocus() }, onClick = { play(card, episode.season, episode.number) }, onLongClick = { options = true })
+                onFocus = { rememberEpisode(identity); onFocus() }, onClick = { play(card, episode.season, episode.number) }, onLongClick = { options = true })
             if (options) AlertDialog(onDismissRequest = { options = false }, title = { Text(episode.title) },
                 text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     alternateSource?.let { playAlternate ->

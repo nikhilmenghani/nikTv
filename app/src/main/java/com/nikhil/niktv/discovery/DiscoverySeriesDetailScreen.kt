@@ -1,7 +1,9 @@
 package com.nikhil.niktv.discovery
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -14,11 +16,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.data.TrendingMovie
@@ -36,7 +40,10 @@ internal fun DiscoverySeriesDetailScreen(
 ) {
     val card = state.detail ?: return
     val configuration = LocalConfiguration.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
+    val context = LocalContext.current
+    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val reduceMotion = android.provider.Settings.Global.getFloat(context.contentResolver,
+        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val playFocus = remember(card.key) { FocusRequester() }
     val episodesFocus = remember(card.key) { FocusRequester() }
     val castFocus = remember(card.key) { FocusRequester() }
@@ -45,25 +52,47 @@ internal fun DiscoverySeriesDetailScreen(
     val backFocus = remember(card.key) { FocusRequester() }
     val page = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val coordinator = remember(card.key) { DiscoveryScrollCoordinator(scope) }
     var hasSynopsis by remember(card.key) { mutableStateOf(false) }
     var hasCast by remember(card.key) { mutableStateOf(false) }
+    var lastHeroControl by remember(card.key) { mutableStateOf<FocusRequester?>(null) }
+    var navigationMove by remember(card.key) { mutableStateOf<Job?>(null) }
+    DisposableEffect(card.key) { onDispose { navigationMove?.cancel(); coordinator.cancel() } }
     fun focusHeader(requester: FocusRequester) {
-        scope.launch {
-            page.scrollToItem(0)
-            repeat(20) { withFrameNanos { }; if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch }
+        navigationMove?.cancel()
+        navigationMove = coordinator.move(page, 0, reduceMotion) {
+            runCatching { requester.requestFocus() }.getOrDefault(false)
         }
     }
     fun focusEpisodes() {
-        scope.launch {
-            page.scrollToItem(1)
-            repeat(20) { withFrameNanos { }; if (runCatching { episodesFocus.requestFocus() }.getOrDefault(false)) return@launch }
+        navigationMove?.cancel()
+        navigationMove = coordinator.move(page, 1, reduceMotion) {
+            runCatching { episodesFocus.requestFocus() }.getOrDefault(false)
+        }
+    }
+    fun focusPanel(entry: () -> Boolean) {
+        navigationMove?.cancel()
+        coordinator.cancel()
+        navigationMove = scope.launch {
+            repeat(20) { withFrameNanos { }; if (entry()) return@launch }
         }
     }
     fun headerTools() = focusHeader(if (hasCast) castFocus else relatedFocus)
     var panel by rememberSaveable(state.profile, card.key) { mutableStateOf<String?>(null) }
+    BackHandler(panel != null) {
+        val origin = if (panel == "cast") castFocus else relatedFocus
+        panel = null
+        focusHeader(origin)
+    }
     val details = state.details ?: DiscoveryDetails(card)
-    val lastWatched = discoveryLastEpisode(card, state.profile, app.recentlyPlayed)
-    val primary = lastWatched ?: state.episodes.maxByOrNull { it.number }?.let { it.season to it.number }
+    val lastWatched = discoveryLastEpisode(card, state.profile, app.recentlyPlayed)?.takeIf {
+        state.details == null || it.first in details.seasons
+    }
+    var newestFirst by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
+    val primary = lastWatched ?: state.episodes.filter { it.season == state.season }.let { episodes ->
+        (if (newestFirst) episodes.maxByOrNull { it.number } else episodes.minByOrNull { it.number })
+            ?.let { it.season to it.number }
+    }
     var automaticSeason by rememberSaveable(state.profile, card.key) { mutableStateOf<Int?>(null) }
     var emptyInitialSeasons by rememberSaveable(state.profile, card.key) { mutableStateOf(listOf<Int>()) }
     var initialFocusDone by remember(card.key) { mutableStateOf(false) }
@@ -102,6 +131,7 @@ internal fun DiscoverySeriesDetailScreen(
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF090B10)).statusBarsPadding().navigationBarsPadding().imePadding()) {
         val episodeHeight = maxHeight
+        DiscoveryVerticalFocusViewport(coordinator) {
         LazyColumn(Modifier.fillMaxSize(), state = page) {
         item("series-header:${card.key}") {
         ProviderDetailHeader(card.media, CatalogType.SERIES, app,
@@ -115,25 +145,25 @@ internal fun DiscoverySeriesDetailScreen(
                 else openMovie(TrendingMovie(selected.movie()))
             },
             playRequester = playFocus, backRequester = backFocus, compactSeries = phone, discoveryDetails = details,
-            playLabel = if (lastWatched != null) "Resume" else "Play latest", playEnabled = primary != null,
-            down = { if (phone) focusEpisodes() else if (hasSynopsis) focusHeader(infoFocus) else headerTools() },
+            playLabel = if (lastWatched != null) "Resume" else if (newestFirst) "Play latest" else "Start series", playEnabled = primary != null,
+            down = { lastHeroControl = null; focusEpisodes() },
             topDown = {
                 if (primary != null) focusHeader(playFocus)
                 else if (hasSynopsis) focusHeader(infoFocus) else headerTools()
             }, heroUp = { focusHeader(backFocus) },
             synopsisRequester = infoFocus, synopsisAvailable = { hasSynopsis = it },
-            synopsisUp = { focusHeader(if (primary != null) playFocus else backFocus) }, synopsisDown = ::headerTools,
+            synopsisUp = { focusHeader(backFocus) }, synopsisDown = { lastHeroControl = infoFocus; focusEpisodes() },
             castUp = { focusHeader(castFocus) }, relatedUp = { focusHeader(relatedFocus) },
             episodeDown = ::focusEpisodes,
             layout = { hero, cast, related, castEntry, relatedEntry ->
                 SideEffect { hasCast = castEntry != null }
-                fun Modifier.panelRoutes(kind: String, entry: (() -> Boolean)?) = onPreviewKeyEvent { event ->
+                fun Modifier.panelRoutes(kind: String, requester: FocusRequester, entry: (() -> Boolean)?) =
+                    onFocusChanged { if (it.isFocused) lastHeroControl = requester }.onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                        Key.DirectionUp -> { focusHeader(if (!phone && hasSynopsis) infoFocus else if (primary != null) playFocus else backFocus); true }
+                    Key.DirectionUp -> { focusHeader(backFocus); true }
                         Key.DirectionDown -> {
-                            if (panel == kind && entry != null) scope.launch {
-                                repeat(20) { withFrameNanos { }; if (entry()) return@launch }
-                            } else focusEpisodes()
+                            lastHeroControl = requester
+                            if (panel == kind && entry != null) focusPanel(entry) else focusEpisodes()
                             true
                         }
                         else -> false
@@ -143,11 +173,11 @@ internal fun DiscoverySeriesDetailScreen(
                     DiscoveryAction(if (panel == "cast") "Hide cast" else "Cast",
                         if (panel == "cast") Icons.Default.ExpandLess else Icons.Default.People,
                         selected = panel == "cast", iconOnly = true, enabled = castEntry != null,
-                        modifier = Modifier.focusRequester(castFocus).panelRoutes("cast", castEntry)) { panel = if (panel == "cast") null else "cast" }
+                        modifier = Modifier.focusRequester(castFocus).panelRoutes("cast", castFocus, castEntry)) { panel = if (panel == "cast") null else "cast" }
                     DiscoveryAction(if (panel == "related") "Hide related" else "Related",
                         if (panel == "related") Icons.Default.ExpandLess else Icons.Default.Movie,
                         selected = panel == "related", iconOnly = true,
-                        modifier = Modifier.focusRequester(relatedFocus).panelRoutes("related", relatedEntry)) { panel = if (panel == "related") null else "related" }
+                        modifier = Modifier.focusRequester(relatedFocus).panelRoutes("related", relatedFocus, relatedEntry)) { panel = if (panel == "related") null else "related" }
                 }
                 val expanded: @Composable () -> Unit = {
                     Column(Modifier.fillMaxWidth().animateContentSize().heightIn(max = 220.dp)
@@ -161,13 +191,22 @@ internal fun DiscoverySeriesDetailScreen(
             })
         }
         item("series-episodes:${card.key}") {
+            var paneFocused by remember { mutableStateOf(false) }
             DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
                 { automaticSeason = null; loadSeason(it) }, play, download,
-                onFocus = {
-                    if (page.firstVisibleItemIndex != 1 || page.firstVisibleItemScrollOffset != 0)
-                        scope.launch { page.scrollToItem(1) }
-                }, up = { if (phone) focusHeader(if (primary != null) playFocus else backFocus) else headerTools(); true }, down = { false },
-                modifier = Modifier.height(episodeHeight), lastWatched = lastWatched, loadInitialSeason = false)
+                onFocus = {}, up = {
+                    val origin = lastHeroControl?.takeUnless {
+                        it == infoFocus && !hasSynopsis || it == castFocus && !hasCast
+                    } ?: if (primary != null) playFocus else backFocus
+                    focusHeader(origin)
+                    true
+                }, down = { false },
+                modifier = Modifier.height(episodeHeight).onFocusChanged {
+                    if (it.hasFocus && !paneFocused) coordinator.align(page, 1, reduceMotion)
+                    paneFocused = it.hasFocus
+                }.focusGroup(), lastWatched = lastWatched, loadInitialSeason = false,
+                onNewestFirstChanged = { newestFirst = it })
+        }
         }
         }
     }
@@ -175,14 +214,16 @@ internal fun DiscoverySeriesDetailScreen(
 
 /** Announced empty seasons must not disable Play when earlier episodes exist. */
 internal fun discoveryInitialSeriesSeason(details: DiscoveryDetails?, start: SeriesStartSeason, resume: Int? = null): Int? {
-    if (resume != null) return resume
-    val all = details?.seasons.orEmpty()
-    val available = all.filter { details?.seasonEpisodeCounts?.get(it) != 0 }.ifEmpty { all }
+    val all = details?.seasons.orEmpty().filter { it >= 0 }.distinct().sorted()
+    if (resume != null && resume in all) return resume
+    val regular = all.filter { it > 0 }.ifEmpty { all }
+    val available = regular.filter { details?.seasonEpisodeCounts?.get(it) != 0 }.ifEmpty { regular }
     return if (start == SeriesStartSeason.LAST) available.lastOrNull() else available.firstOrNull()
 }
 
 internal fun discoverySeriesSeasonAfterEmpty(details: DiscoveryDetails?, start: SeriesStartSeason, empty: Set<Int>): Int? {
-    val available = details?.seasons.orEmpty().filter { it !in empty && details?.seasonEpisodeCounts?.get(it) != 0 }
+    val available = details?.seasons.orEmpty().filter { it >= 0 && it !in empty && details?.seasonEpisodeCounts?.get(it) != 0 }
+        .distinct().sorted().let { seasons -> seasons.filter { it > 0 }.ifEmpty { seasons } }
     return if (start == SeriesStartSeason.LAST) available.lastOrNull() else available.firstOrNull()
 }
 
