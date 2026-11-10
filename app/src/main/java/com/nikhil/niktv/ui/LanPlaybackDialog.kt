@@ -16,9 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -120,6 +122,14 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
     val connectFocus = remember { FocusRequester() }
     val receiveFocus = remember { FocusRequester() }
     val doneFocus = remember { FocusRequester() }
+    val inputMode = LocalInputModeManager.current
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    // Touch must enter editors directly. Keep the opening policy stable so a
+    // later hardware-key event cannot redirect an active editor back to Done.
+    val focusActionsOnOpen = remember {
+        context.isTvLikeDevice(configuration) || inputMode.inputMode == InputMode.Keyboard
+    }
     val currentDevice = com.nikhil.niktv.data.currentLanDevice(state.devices, selected)
     val canConnect = !state.busy && pin.length == 6 &&
         (if (manual) host.isNotBlank() && port.toIntOrNull() in 1..65535 else currentDevice != null)
@@ -229,7 +239,7 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp), contentAlignment = Alignment.Center) {
             val wide = maxWidth >= 720.dp
-            Surface(Modifier.widthIn(max = 920.dp).fillMaxWidth().heightIn(max = maxHeight).initialFocusEntry(doneFocus),
+            Surface(Modifier.widthIn(max = 920.dp).fillMaxWidth().heightIn(max = maxHeight).initialFocusEntry(doneFocus, enabled = focusActionsOnOpen),
                 shape = RoundedCornerShape(18.dp), color = Color(0xF510131A), contentColor = Color.White, border = BorderStroke(1.dp, Color(0xFF2B303A))) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

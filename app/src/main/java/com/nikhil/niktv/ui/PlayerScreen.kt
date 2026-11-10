@@ -653,6 +653,7 @@ fun PlayerScreen(
     var videoDetails by remember(media.progressKey) { mutableStateOf("") }
     var playbackError by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<String?>(null) }
     var decoderFailurePending by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf(false) }
+    var playbackFailureCode by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<Int?>(null) }
     var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
     var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Media3SubtitleTrack>>(emptyList()) }
     var audioDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
@@ -1103,6 +1104,7 @@ fun PlayerScreen(
                 if (state == Player.STATE_READY) {
                     playbackError = null
                     decoderFailurePending = false
+                    playbackFailureCode = null
                     startupTimedOut = false
                     playbackHasBeenReady = true
                 }
@@ -1245,6 +1247,7 @@ fun PlayerScreen(
 
                 val authorizationFailure = httpStatus in setOf(401, 403)
                 decoderFailurePending = failedDecoder != null
+                playbackFailureCode = error.errorCode
                 if (failedDecoder != null) android.util.Log.w("NikTvPlayback",
                     "Decoder failure codec=$failedDecoder recoveryCount=${media.decoderRecoveryCount} requested=$playbackRequested code=${error.errorCode}")
 
@@ -3060,6 +3063,7 @@ PlayerChromeIconButton(
         }
         val failure = playbackError ?: if (startupTimedOut) "The stream did not start within 25 seconds." else null
         if (failure != null) {
+            val restartSession = restartSessionForPlaybackFailure(playbackFailureCode, decoderFailurePending, startupTimedOut)
             Surface(
                 Modifier.align(Alignment.Center).padding(24.dp).widthIn(max = 560.dp),
                 shape = RoundedCornerShape(20.dp),
@@ -3076,10 +3080,11 @@ PlayerChromeIconButton(
                         onBack = onBack,
                         onRetry = {
                             liveRecovery.reset(); liveEdgeRecovery.reset()
-                            val retry = if (decoderFailurePending) onRestartDecoderSession else onRetry
+                            val retry = if (restartSession) onRestartDecoderSession else onRetry
                             retry(playbackRestartPosition(media.catalogType, player.currentPosition))
                         },
                         onNext = onPlayNext,
+                        retryLabel = if (restartSession) "Restart playback" else null,
                         showAlternatePlayer = true,
                         onSwitchPlayer = {
                             playerPickerFromError = true

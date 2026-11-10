@@ -35,13 +35,21 @@ internal fun PlayerErrorActions(
     showAlternatePlayer: Boolean = true,
     onReauthenticate: (() -> Unit)? = null,
     reauthenticating: Boolean = false,
-    onChooseSource: (() -> Unit)? = null
+    onChooseSource: (() -> Unit)? = null,
+    retryLabel: String? = null
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp)
     ) {
-        Row(
+        val retryAction: @Composable (Modifier) -> Unit = { actionModifier ->
+            NikTvPrimaryActionButton(onClick = onRetry, modifier = actionModifier.then(retryModifier),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = if (compact) 12.dp else 14.dp)) {
+                Icon(Icons.Default.Refresh, retryLabel ?: "Retry with fresh link")
+                if (!compact || retryLabel != null) { Spacer(Modifier.width(5.dp)); Text(retryLabel ?: "Retry") }
+            }
+        }
+        val navigationRow: @Composable (Boolean) -> Unit = { includeRetry -> Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
@@ -62,14 +70,7 @@ internal fun PlayerErrorActions(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Go back")
                 if (!compact) { Spacer(Modifier.width(5.dp)); Text("Back") }
             }
-            NikTvPrimaryActionButton(
-                onClick = onRetry,
-                modifier = retryModifier,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = if (compact) 12.dp else 14.dp)
-            ) {
-                Icon(Icons.Default.Refresh, "Retry with fresh link")
-                if (!compact) { Spacer(Modifier.width(5.dp)); Text("Retry") }
-            }
+            if (includeRetry) retryAction(Modifier)
             if (canNavigate) {
                 NikTvSecondaryActionButton(
                     onClick = onNext,
@@ -79,7 +80,13 @@ internal fun PlayerErrorActions(
                     if (!compact) { Spacer(Modifier.width(5.dp)); Text("Next") }
                 }
             }
-        }
+        } }
+        if (retryLabel != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                retryAction(Modifier.fillMaxWidth())
+                navigationRow(false)
+            }
+        } else navigationRow(true)
         val recoveryActions: @Composable (Modifier) -> Unit = { actionModifier ->
             if (onReauthenticate != null) NikTvSecondaryActionButton(
                 onClick = onReauthenticate,

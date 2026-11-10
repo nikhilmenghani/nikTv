@@ -17,6 +17,13 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DecoderRestartViewModelTest {
+    @Test fun connectionFailuresAndStartupTimeoutOfferFullSessionRestart() {
+        assertTrue(restartSessionForPlaybackFailure(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, false, false))
+        assertTrue(restartSessionForPlaybackFailure(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT, false, false))
+        assertTrue(restartSessionForPlaybackFailure(null, false, true))
+        assertTrue(restartSessionForPlaybackFailure(null, true, false))
+        assertFalse(restartSessionForPlaybackFailure(androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, false, false))
+    }
     private val scheduler = TestCoroutineScheduler()
     private lateinit var vm: NikTvViewModel
     private lateinit var state: MutableStateFlow<NikTvState>

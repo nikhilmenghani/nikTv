@@ -38,7 +38,15 @@ class LanPlaybackDesignDeviceTest {
     }
     private fun click(label: String) { await("Missing $label") { button(label) != null }; assertTrue(button(label)!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)) }
     private fun bounds(n: AccessibilityNodeInfo) = Rect().also(n::getBoundsInScreen)
-    private fun sameRow(a: String, b: String) { assertTrue("$a sits beside $b", kotlin.math.abs(bounds(find(a)!!).centerY() - bounds(find(b)!!).centerY()) < 12) }
+    private fun sameRow(a: String, b: String) {
+        // A preceding touch test can still be completing its IME resize animation.
+        await("$a sits beside $b") {
+            val nodes = all()
+            val first = nodes.firstOrNull { it.text?.toString() == a }
+            val second = nodes.firstOrNull { it.text?.toString() == b }
+            first != null && second != null && kotlin.math.abs(bounds(first).centerY() - bounds(second).centerY()) < 12
+        }
+    }
     private fun focused(label: String): Boolean {
         var n = find(label)
         repeat(10) { if (n?.isFocused == true) return true; n = n?.parent }
@@ -51,12 +59,97 @@ class LanPlaybackDesignDeviceTest {
         try { target.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
         finally { bitmap.recycle() }
     }
-    private fun fixture(test: (PlaybackFixtureHostActivity) -> Unit) {
+    private fun fixture(touchMode: Boolean = false, test: (PlaybackFixtureHostActivity) -> Unit) {
         check(instrument.targetContext.packageName.endsWith(".regression"))
-        instrument.setInTouchMode(false)
+        instrument.setInTouchMode(touchMode)
+        val oldFlags = instrument.uiAutomation.serviceInfo.flags
+        instrument.uiAutomation.serviceInfo = instrument.uiAutomation.serviceInfo.apply {
+            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
         val activity = instrument.startActivitySync(Intent(instrument.targetContext, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
-        try { test(activity) } finally { instrument.runOnMainSync { activity.finish() }; instrument.setInTouchMode(true) }
+        try { test(activity) } finally {
+            instrument.runOnMainSync { activity.finish() }; instrument.setInTouchMode(true)
+            instrument.uiAutomation.serviceInfo = instrument.uiAutomation.serviceInfo.apply { flags = oldFlags }
+        }
+    }
+    private fun tap(target: AccessibilityNodeInfo) {
+        val rect = bounds(target)
+        val downAt = SystemClock.uptimeMillis()
+        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+            val event = android.view.MotionEvent.obtain(downAt, SystemClock.uptimeMillis(), action,
+                rect.centerX().toFloat(), rect.centerY().toFloat(), 0)
+            event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            try { assertTrue(instrument.uiAutomation.injectInputEvent(event, true)) } finally { event.recycle() }
+            Thread.sleep(60)
+        }
+    }
+    private fun softDigits(digits: String) {
+        var typed = ""
+        for (digit in digits) {
+            val ime = instrument.uiAutomation.windows.first { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            val keys = mutableListOf<AccessibilityNodeInfo>()
+            fun walk(node: AccessibilityNodeInfo?) { node ?: return; keys += node; for (i in 0 until node.childCount) walk(node.getChild(i)) }
+            walk(ime.root)
+            val target = keys.firstOrNull { it.text?.toString() == digit.toString() || it.contentDescription?.toString() == digit.toString() }
+            assertNotNull("Keyboard key $digit is accessible: ${keys.mapNotNull { it.text ?: it.contentDescription }}", target)
+            tap(requireNotNull(target))
+            typed += digit
+            await("Soft keyboard enters $typed") { find(typed) != null }
+        }
+    }
+    @Test fun nearbyDevicePairingCodeAcceptsTouchAndKeyboardInput() = fixture(touchMode = true) { activity ->
+        var pairedCode: String? = null
+        instrument.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+            LanPlaybackDialog(LanPlaybackState(devices = listOf(LanDevice("Nearby tablet", "192.168.1.2", 1234))),
+                {}, {}, {}, { _, code -> pairedCode = code }, {})
+        } } }
+        await("Nearby receiver appears") { find("Nearby tablet") != null }
+        tap(button("Nearby tablet")!!)
+        await("Code field appears") { all().any { it.className == "android.widget.EditText" } }
+        tap(all().single { it.className == "android.widget.EditText" })
+        // An immediate focus assertion misses a subsequent loss during IME resize.
+        Thread.sleep(700)
+        assertTrue("Touch keeps the code field focused after keyboard animation",
+            all().single { it.className == "android.widget.EditText" }.isFocused)
+        await("Touch opens the on-screen keyboard") {
+            instrument.uiAutomation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        }
+        softDigits("123456")
+        assertTrue("Code field retains focus while typing", all().single { it.className == "android.widget.EditText" }.isFocused)
+        await("All six digits reach the code field") { find("123456") != null }
+        tap(button("Connect")!!)
+        await("Connect receives the touch-entered code") { pairedCode == "123456" }
+    }
+    @Test fun manualAddressPortAndCodeAcceptTouchFromFreshDialog() = fixture(touchMode = true) { activity ->
+        var paired: Pair<LanDevice, String>? = null
+        instrument.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+            LanPlaybackDialog(LanPlaybackState(), {}, {}, {}, { device, code -> paired = device to code }, {})
+        } } }
+        await("Manual connection action appears") { find("Connect by address") != null }
+        tap(button("Connect by address")!!)
+        await("All manual fields appear") { all().count { it.className == "android.widget.EditText" } == 3 }
+        tap(all().filter { it.className == "android.widget.EditText" }[0])
+        Thread.sleep(700)
+        assertTrue("Touch focuses IP address", all().filter { it.className == "android.widget.EditText" }[0].isFocused)
+        // Hardware typing after touch must not enable a new redirect to Done.
+        instrument.sendStringSync("192.168.1.2")
+        await("IP address retains typed text") { find("192.168.1.2") != null }
+        assertTrue("IP retains focus through input-mode changes", all().filter { it.className == "android.widget.EditText" }[0].isFocused)
+        instrument.setInTouchMode(true)
+        tap(all().filter { it.className == "android.widget.EditText" }[1])
+        Thread.sleep(500)
+        assertTrue("Touch focuses Port", all().filter { it.className == "android.widget.EditText" }[1].isFocused)
+        softDigits("1234")
+        tap(all().filter { it.className == "android.widget.EditText" }[2])
+        Thread.sleep(500)
+        assertTrue("Touch focuses pairing code", all().filter { it.className == "android.widget.EditText" }[2].isFocused)
+        softDigits("654321")
+        tap(button("Connect")!!)
+        await("Complete manual connection uses every entered field") { paired != null }
+        assertEquals("192.168.1.2", paired!!.first.host)
+        assertEquals(1234, paired!!.first.port)
+        assertEquals("654321", paired!!.second)
     }
     @Test fun mobileAndTabletPairingFormsFitWithFooterAndDpadPaths() = fixture { activity ->
         instrument.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
