@@ -1292,25 +1292,14 @@ private fun DiscoveryPreviewContent(
                                 items(people, key = { personKey(it) }) { person ->
                                     val key = personKey(person)
                                     val requester = remember(key) { returnRequesters.getOrPut(key) { FocusRequester() } }
-                                    var focused by remember { mutableStateOf(false) }
-                                    Surface(onClick = { if (person.id != null) { actorOrigin = detailKey; actorFocusOrigin = key; actor = person } },
-                                        enabled = (person.id ?: 0) > 0,
+                                    DiscoveryCastTile(person, onClick = { if (person.id != null) { actorOrigin = detailKey; actorFocusOrigin = key; actor = person } },
                                         modifier = Modifier.width(102.dp).focusRequester(requester).onFocusChanged {
-                                            focused = it.isFocused
                                             if (it.isFocused && ownsFocusRoute() && focusRestoration.accepts(key)) {
                                                 selected = key; focusOrigins.returningTo = key
                                                 focusOrigins.routes = focusOrigins.routes + (routeIdentity to key)
                                                 contentFocused = true; alignFocusedRow("cast", castIndex)
                                             }
-                                        }, shape = RoundedCornerShape(12.dp),
-                                        color = if (focused) Color(0xFF303641) else Color.Transparent,
-                                        border = if (focused) BorderStroke(2.dp, Color.White) else null) {
-                                    Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                        AsyncImage(person.portrait, null, Modifier.size(80.dp).clip(CircleShape).background(Color(0xFF20232A)), contentScale = ContentScale.Crop)
-                                        Text(person.name, color = Color.White, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        Text(person.role, color = Color.Gray, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    }
-                                    }
+                                        })
                                 }
                             }
                         }
@@ -1546,14 +1535,16 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             }
         }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
+        val compactActions = !detail || card?.series != true
         val actions: @Composable () -> Unit = {
             CompositionLocalProvider(LocalCollapsingDiscoveryActions provides false) {
             DiscoveryAction(if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true,
-                modifier = Modifier.then(if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier.heightIn(min = 48.dp)).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
+                horizontalPadding = 16.dp, trailingPadding = 22.dp,
+                modifier = Modifier.then(if (compactActions) Modifier else Modifier.width(160.dp)).heightIn(min = 48.dp).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
             }
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
-                iconOnly = !detail, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp), enabled = card != null, onFocus = onFocus, onClick = add)
-            DiscoveryTrailerAction(card, onFocus = onFocus, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp), mediaOverride = trailerMedia)
+                iconOnly = compactActions, modifier = Modifier.then(if (compactActions) Modifier.widthIn(min = 48.dp) else Modifier.width(160.dp)).heightIn(min = 48.dp), enabled = card != null, onFocus = onFocus, onClick = add)
+            DiscoveryTrailerAction(card, iconOnly = compactActions, onFocus = onFocus, modifier = Modifier.then(if (compactActions) Modifier.widthIn(min = 48.dp) else Modifier.width(160.dp)).heightIn(min = 48.dp), mediaOverride = trailerMedia)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()
@@ -1570,7 +1561,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                 else -> false
             }
         }
-        if (landscape && !detail) CompositionLocalProvider(LocalCollapsingDiscoveryActions provides true, LocalHeroActionSizing provides true) {
+        if (landscape && compactActions) CompositionLocalProvider(LocalCollapsingDiscoveryActions provides true, LocalHeroActionSizing provides true) {
             // A single, fixed-height action row cannot reflow the page when a label expands.
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).then(actionNavigation),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { actions() }
@@ -1814,20 +1805,22 @@ internal val LocalHeroActionSizing = staticCompositionLocalOf { false }
 @Composable
 internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     selected: Boolean = false, iconOnly: Boolean = false, modifier: Modifier = Modifier, enabled: Boolean = true,
-    visualLabel: String = label, horizontalPadding: Dp = 14.dp,
+    visualLabel: String = label, horizontalPadding: Dp = 14.dp, trailingPadding: Dp = horizontalPadding,
     onFocus: () -> Unit = {}, containerColor: Color? = null, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val collapsible = LocalCollapsingDiscoveryActions.current && icon != null
+    val headerSizing = LocalDiscoveryHeaderActionSizing.current
+    val contentInset = if (headerSizing) 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
     DiscoveryMobileGlassContainer(focused = focused) {
-    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 40.dp)
-        .widthIn(min = if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 0.dp)
+    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 40.dp)
+        .widthIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 0.dp)
         .then(if (collapsible) Modifier.semantics { contentDescription = label } else Modifier)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() },
         shape = RoundedCornerShape(10.dp), color = containerColor ?: if (selected) Accent else if (focused) Color.White
             else if (LocalMobileGlassEnabled.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
         border = if (LocalMobileGlassEnabled.current) null else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
         contentColor = if (focused && !selected && containerColor == null) Color.Black else Color.White) {
-        Row(Modifier.padding(horizontal = if (iconOnly || collapsible) 10.dp else horizontalPadding, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.padding(start = contentInset, end = if (headerSizing || iconOnly || collapsible) contentInset else trailingPadding, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(if (collapsible) 0.dp else 6.dp, Alignment.CenterHorizontally)) {
             icon?.let { Icon(it, if (iconOnly && !collapsible) label else null, Modifier.size(20.dp)) }
             if (collapsible) AnimatedVisibility(focused,

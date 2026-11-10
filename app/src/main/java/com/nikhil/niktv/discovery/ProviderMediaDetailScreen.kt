@@ -27,6 +27,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -116,7 +118,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     tools: @Composable RowScope.() -> Unit = {},
     layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
         cast: (() -> Boolean)?, related: (() -> Boolean)?) -> Unit = { hero, castRow, supplementary, _, _ ->
-        Column { hero(); castRow(); supplementary() }
+        Column { hero(); if (type == CatalogType.MOVIES) { supplementary(); castRow() } else { castRow(); supplementary() } }
     }) {
     val context = LocalContext.current
     val navigation = LocalProviderDetailNavigation.current
@@ -274,6 +276,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 // This screen owns the readability gradients. Applying the feed's
                 // pre-shaded bitmap as well would hide the artwork under actions.
                 DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false)
+                if (type == CatalogType.MOVIES) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
+                    0f to Color(0x99090B10), .55f to Color(0x66090B10), 1f to Color.Transparent)))
                 Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
                     0f to Color(0x99090B10), .16f to Color(0x33090B10), .36f to Color.Transparent,
                     .64f to Color.Transparent, .84f to Color(0x33090B10), 1f to Color(0x99090B10))))
@@ -287,10 +291,10 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 compact = configuration.screenHeightDp < 480, detail = true, loading = false,
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},
-                onDown = { if (type == CatalogType.SERIES) down() else if (people.isNotEmpty()) focus(castEntry) else if (related.isNotEmpty()) focus(relatedEntry) else down() },
+                onDown = { if (type == CatalogType.SERIES) down() else if (related.isNotEmpty()) focus(relatedEntry) else if (people.isNotEmpty()) focus(castEntry) else down() },
                 onUp = { if (wideSeries) { if (heroUp != null) { heroUp(); true } else runCatching { backRequester.requestFocus() }.getOrDefault(false) } else false },
                 previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
-                portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = false, compactDetail = true)
+                portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = type == CatalogType.MOVIES, compactDetail = true)
             progressLabel?.let {
                 Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 20.dp else 32.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
@@ -299,7 +303,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         color = Color(0xFFE50925), trackColor = Color(0xFF343842), drawStopIndicator = {}) }
                 }
             }
-            ProviderDetailSynopsis(metadata.card.overview, metadata.card.title, wideSeries, synopsisRequester, synopsisUp, synopsisDown, reduceMotion, actionsInHero = phone)
+            if (type != CatalogType.MOVIES) ProviderDetailSynopsis(metadata.card.overview, metadata.card.title, wideSeries, synopsisRequester, synopsisUp, synopsisDown, reduceMotion, actionsInHero = phone)
             }
             }
             // Expanded panels must not change the artwork bounds or its fade positions.
@@ -318,16 +322,19 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val castRow: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
             if (people.isNotEmpty()) {
-                if (type != CatalogType.SERIES) Text("Cast", Modifier.padding(start = 24.dp, top = 12.dp), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                if (type != CatalogType.SERIES) Text("Cast", Modifier.padding(start = 24.dp, top = 18.dp), color = Color.White, fontWeight = FontWeight.Bold)
                 LazyRow(Modifier.onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { if (castUp != null) castUp() else if (type == CatalogType.SERIES) down() else focus(playRequester); true }
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { if (castUp != null) castUp() else if (type == CatalogType.SERIES) down() else focus(if (related.isNotEmpty()) relatedEntry else playRequester); true }
                     else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                        if (type == CatalogType.SERIES) (episodeDown ?: down)() else if (related.isNotEmpty()) focus(relatedEntry); true
+                        if (type == CatalogType.SERIES) { (episodeDown ?: down)(); true } else false
                     } else false
-                }, contentPadding = PaddingValues(start = if (phone) 14.dp else 24.dp, end = if (phone) 14.dp else 24.dp,
-                    top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                }, contentPadding = if (type == CatalogType.MOVIES) PaddingValues(24.dp) else PaddingValues(start = if (phone) 14.dp else 24.dp, end = if (phone) 14.dp else 24.dp,
+                    top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(if (type == CatalogType.MOVIES) 16.dp else 12.dp)) {
                     itemsIndexed(people, key = { _, person -> person.id!! }) { index, person ->
                         val requester = if (index == 0) castEntry else remember(person.id) { FocusRequester() }
+                        if (type == CatalogType.MOVIES) DiscoveryCastTile(person, Modifier.focusRequester(requester)) {
+                            actorOrigin = requester; actor = person
+                        } else {
                         var focused by remember { mutableStateOf(false) }
                         Surface(onClick = { actorOrigin = requester; actor = person },
                             modifier = Modifier.width(if (phone) 92.dp else 104.dp).focusRequester(requester).onFocusChanged { focused = it.isFocused },
@@ -342,6 +349,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                                     style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
+                        }
                     }
                 }
             }
@@ -350,22 +358,30 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val supplementary: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
             if (related.isNotEmpty()) {
-                if (type != CatalogType.SERIES) Text("Related", Modifier.padding(start = 24.dp, top = 8.dp), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                if (type != CatalogType.SERIES) Text("Related", Modifier.padding(start = if (phone) 16.dp else 24.dp, top = 4.dp), color = Color.White,
+                    fontSize = if (phone) 19.sp else 16.sp, lineHeight = if (phone) 24.sp else 20.sp, fontWeight = FontWeight.SemiBold)
                 LazyRow(Modifier.onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { if (relatedUp != null) relatedUp() else if (type == CatalogType.SERIES) down() else focus(if (people.isNotEmpty()) castEntry else playRequester); true }
-                    else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { if (type == CatalogType.SERIES) (episodeDown ?: down)(); true } else false
-                }, contentPadding = PaddingValues(start = if (phone) 14.dp else 24.dp, end = if (phone) 14.dp else 24.dp, top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { if (relatedUp != null) relatedUp() else if (type == CatalogType.SERIES) down() else focus(playRequester); true }
+                    else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { if (type == CatalogType.SERIES) (episodeDown ?: down)() else if (people.isNotEmpty()) focus(castEntry); true } else false
+                }, contentPadding = PaddingValues(start = if (phone) 16.dp else 24.dp, end = if (phone) 16.dp else 24.dp, top = 10.dp, bottom = if (phone) 12.dp else 4.dp), horizontalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 12.dp)) {
                     itemsIndexed(related, key = { _, card -> card.key }) { index, card ->
                         val requester = remember(card.key, index == 0) { if (index == 0) relatedEntry else FocusRequester() }
                         var alternateOpen by remember(card.key) { mutableStateOf(false) }
                         Box {
-                        DiscoveryPhoneMediaCard(card.title, card.poster, card.date?.take(4).orEmpty(), if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else 112.dp,
+                        val posterWidth = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp
+                            else if (type == CatalogType.MOVIES) discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp else 112.dp
+                        val subtitle = listOfNotNull(card.date?.take(4), card.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) }).joinToString(" · ")
+                        val openRelated: () -> Unit = {
+                            if (openDiscoveryDetail != null) openDiscoveryDetail(card)
+                            else { relatedOrigin = requester; relatedDetail = card }
+                        }
+                        if (type == CatalogType.MOVIES && !phone) DiscoveryPosterTile(card.title, card.poster, subtitle, posterWidth,
+                            source = DiscoveryTileSource.TMDB, reduceMotion = reduceMotion, modifier = Modifier.focusRequester(requester),
+                            onClick = openRelated, onLongClick = { alternateOpen = true })
+                        else DiscoveryPhoneMediaCard(card.title, card.poster, subtitle, posterWidth,
                             source = DiscoveryTileSource.TMDB,
                             wide = false, modifier = Modifier.focusRequester(requester),
-                            onClick = {
-                                if (openDiscoveryDetail != null) openDiscoveryDetail(card)
-                                else { relatedOrigin = requester; relatedDetail = card }
-                            }, onLongClick = { alternateOpen = true }, onFocus = {})
+                            onClick = openRelated, onLongClick = { alternateOpen = true }, onFocus = {})
                         AlternateSourceOnlyMenu(alternateOpen, card.media,
                             if (card.series) CatalogType.SERIES else CatalogType.MOVIES, dismiss = { alternateOpen = false })
                         }

@@ -7,6 +7,11 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.KeyEvent
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.window.Dialog
@@ -19,6 +24,49 @@ import org.junit.Test
 
 /** Provider actor/related destinations use the same retained VM and route host as production. */
 class ProviderRelatedNavigationDeviceTest {
+    @Test fun movieActionsAreCompactAndDpadFollowsRelatedThenCast() {
+        check(context.packageName.endsWith(".regression"))
+        val movie = DiscoveryCard(810101, false, "IPTV movie fixture", date = "2020-01-01", overview = "Movie synopsis fixture")
+        val related = movie.copy(id = 810102, title = "Related movie fixture")
+        val actor = DiscoveryPerson("Movie actor fixture", "Role fixture", id = 810103)
+        val profile = PortalProfile("Fixture", "https://fixture.invalid", "")
+        val source = object : DiscoveryDataSource {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) = emptyList<DiscoveryCard>()
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) = DiscoveryDetails(card)
+            override suspend fun related(card: DiscoveryCard) = listOf(related)
+            override suspend fun collection(id: Int) = emptyList<DiscoveryCard>()
+            override suspend fun reviews(card: DiscoveryCard) = emptyList<DiscoveryReview>()
+            override suspend fun episodes(card: DiscoveryCard, season: Int) = emptyList<DiscoveryEpisode>()
+        }
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val play = FocusRequester()
+        try {
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
+                LazyColumn(Modifier.fillMaxSize()) { item {
+                    ProviderDetailHeader(MediaItem("fixture", movie.title, null, null), CatalogType.MOVIES,
+                        NikTvState(savedProfile = profile, restoring = false), {}, {}, {}, false, {}, {},
+                        playRequester = play, discoveryDetails = DiscoveryDetails(movie, cast = listOf(actor)), metadataSource = source)
+                } }
+                LaunchedEffect(Unit) { withFrameNanos { }; play.requestFocus() }
+            } } }
+            await("Movie play action focused") { focused("Play") }
+            var playNode = label("Play")
+            while (playNode != null && !playNode.isClickable) playNode = playNode.parent
+            val bounds = android.graphics.Rect().also { requireNotNull(playNode).getBoundsInScreen(it) }
+            assertTrue("Play is content-sized instead of 160dp", bounds.width() < context.resources.displayMetrics.density * 150)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches Related before Cast") { focused(related.title) }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches circular cast tile") { focused(actor.name) }
+            NavigationAuditEvidence.capture("movie-compact-actions-related-circular-cast")
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            await("Cast Up returns to Related") { focused(related.title) }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            await("Related Up returns to Play") { focused("Play") }
+        } finally { instrumentation.runOnMainSync { host.finish() }; instrumentation.setInTouchMode(true) }
+    }
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
 

@@ -60,6 +60,7 @@ internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focuse
 }
 
 internal val LocalDiscoveryGlassButtons = staticCompositionLocalOf { false }
+internal val LocalDiscoveryHeaderActionSizing = staticCompositionLocalOf { false }
 
 internal data class DiscoveryHeaderWidths(val menu: Float, val profile: Float)
 internal fun discoveryHeaderWidths(available: Float, desiredMenu: Float, desiredProfile: Float): DiscoveryHeaderWidths {

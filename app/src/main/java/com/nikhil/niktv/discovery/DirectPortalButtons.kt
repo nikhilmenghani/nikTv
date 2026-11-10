@@ -39,7 +39,7 @@ internal fun DirectPortalButtons(modifier: Modifier = Modifier, labels: Boolean 
         LocalDirectPortalActions.current.forEach { action ->
             DiscoveryAction(action.name, action.icon, iconOnly = !labels, selected = action.selected,
                 horizontalPadding = 6.dp,
-                modifier = (if (labels) Modifier.weight(1f).heightIn(min = 48.dp) else Modifier.size(48.dp))
+                modifier = (if (labels) Modifier.weight(1f).heightIn(min = 48.dp) else Modifier.size(44.dp))
                     .focusRequester(focusReturn.requester(action.id)), onClick = {
                         if (!action.selected) focusReturn.clicked(action.id) else focusReturn.cancel()
                         action.open()

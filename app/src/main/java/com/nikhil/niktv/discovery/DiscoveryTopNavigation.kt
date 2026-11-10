@@ -104,7 +104,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     val measurer = rememberTextMeasurer()
     val style = LocalTextStyle.current.merge(TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
     fun textWidth(text: String) = with(density) { measurer.measure(text, style, maxLines = 1).size.width.toDp() }
-    val naturalProfile = textWidth("00:00 p.m.") + 270.dp
+    val naturalProfile = 160.dp + (124f * density.fontScale.coerceAtLeast(1f)).dp
     val height = maxOf(56.dp, (24f * density.fontScale + 24f).dp)
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
         .discoveryHeaderFocusEntry(tabRequester)) {
@@ -116,7 +116,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
             if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds,
             fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
             fillWidth = LocalMobileGlassFillWidth.current) {
-            CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
+            CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
             Row(Modifier.fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
@@ -172,8 +172,8 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
     }
     val portalFocusReturn = LocalPortalFocusReturn.current
     BoxWithConstraints(modifier) {
-        val showClock = maxWidth >= 320.dp
-        val portalWidth = if (showClock) 162.dp else maxWidth - 64.dp
+        val showClock = maxWidth >= 158.dp + (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
+        val portalWidth = 150.dp
         val personWidth = if (showClock) (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp else 56.dp
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically) {
@@ -181,7 +181,7 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
                 fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
                 fillWidth = LocalMobileGlassFillWidth.current) {
                 Box(Modifier.fillMaxSize().padding(5.dp), contentAlignment = Alignment.Center) {
-                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
+                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
                         DirectPortalButtons()
                     }
                 }
@@ -193,10 +193,10 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,
                         modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
+                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
                         DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
                             containerColor = viewer?.let { Color(it.color) } ?: Color(0xFFE50925), horizontalPadding = 0.dp,
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier.size(44.dp)
                                 .semantics { contentDescription = "Switch profile: $viewerName" },
                             onClick = { portalFocusReturn.cancel(); openUserProfiles() })
                     }
