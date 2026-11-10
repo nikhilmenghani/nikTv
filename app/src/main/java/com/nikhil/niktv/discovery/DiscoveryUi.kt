@@ -138,6 +138,7 @@ private fun DiscoveryPreviewContent(
     var experimentSettingsReturn by remember { mutableStateOf<(() -> Boolean)?>(null) }
     var nativeNavigationId by rememberSaveable(app.savedProfile?.cacheKey(), surface, experiment) { mutableLongStateOf(-1L) }
     val context = LocalContext.current
+    val portalFocusReturn = LocalPortalFocusReturn.current
     val hostView = LocalView.current
     val navigationTrace = LocalDiscoveryNavigationTrace.current
     val downloadEpisode = LocalDownloadDiscoveryEpisode.current
@@ -880,6 +881,13 @@ private fun DiscoveryPreviewContent(
                     LaunchedEffect(app.discoveryNavigationId) {
                         val menuEntry = nativeNavigationId != app.discoveryNavigationId
                         nativeNavigationId = app.discoveryNavigationId
+                        if (portalFocusReturn.waiting) {
+                            repeat(20) {
+                                withFrameNanos { }
+                                if (portalFocusReturn.restore()) return@LaunchedEffect
+                            }
+                            portalFocusReturn.cancel()
+                        }
                         repeat(12) {
                             withFrameNanos { }
                             // The phone bottom bar also participates in Android focus search.
@@ -1006,7 +1014,8 @@ private fun DiscoveryPreviewContent(
                         }
                         repeat(20) { attempt ->
                             if (focusRestoration.canceled || !ownsFocusRoute()) return
-                            val focused = runCatching { if (state.detail == null) tabRequester.requestFocus() else playRequester.requestFocus() }.getOrDefault(false)
+                            val focused = if (state.detail == null && portalFocusReturn.waiting) portalFocusReturn.restore()
+                                else runCatching { if (state.detail == null) tabRequester.requestFocus() else playRequester.requestFocus() }.getOrDefault(false)
                             if (attempt == 0 || attempt == 19 || focused) navigationTrace?.invoke("entry-focus surface=$surface nav=${app.discoveryNavigationId} handled=$handledNavigationId menuEntry=$menuEntry attempt=$attempt target=${if (state.detail == null) "tab" else "play"} focused=$focused first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset}")
                             if (focused) {
                                 // A restored row can briefly take focus while the lazy header

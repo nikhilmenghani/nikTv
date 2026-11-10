@@ -490,10 +490,11 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     val directPortalOwner = LocalViewingOwner.current
     val directPortalScope = rememberCoroutineScope()
+    val portalFocusReturn = remember(directPortalOwner) { com.nikhil.niktv.discovery.PortalFocusReturn() }
     val directPortals = state.profiles.map { portal ->
         com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
             if (portal.portalType == PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
-            selected = portal.cacheKey() == state.savedProfile?.cacheKey(), open = {
+            selected = portal.cacheKey() == state.savedProfile?.cacheKey(), id = portal.cacheKey(), open = {
                 if (portal.cacheKey() != state.savedProfile?.cacheKey()) vm.switchProfile(portal)
             })
     } + com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, open = {
@@ -505,7 +506,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
             appContext.startActivity(android.content.Intent(appContext, com.nikhil.niktv.sports.SportsActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     })
-    CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals) {
+    CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
+        com.nikhil.niktv.discovery.LocalPortalFocusReturn provides portalFocusReturn) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
         if (state.profileSwitcherOpen) ModernProfileSwitchDialog(state.profiles, state.savedProfile,

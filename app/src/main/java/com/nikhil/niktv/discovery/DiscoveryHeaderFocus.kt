@@ -22,9 +22,10 @@ internal class DiscoveryHeaderEntry {
 @Composable
 internal fun Modifier.discoveryHeaderFocusEntry(selected: FocusRequester): Modifier {
     val entry = remember { DiscoveryHeaderEntry() }
+    val portalReturn = LocalPortalFocusReturn.current
     return focusProperties {
         onEnter = {
-            if (entry.redirect(requestedFocusDirection) && !runCatching { selected.requestFocus() }.getOrDefault(false))
+            if (entry.redirect(requestedFocusDirection) && !runCatching { (portalReturn.preferred ?: selected).requestFocus() }.getOrDefault(false))
                 cancelFocusChange()
         }
     }.focusGroup()

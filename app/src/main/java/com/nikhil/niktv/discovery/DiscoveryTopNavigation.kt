@@ -170,34 +170,35 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
             value = DateFormat.getTimeFormat(context).format(Date())
         }
     }
-    var portalsFocused by remember { mutableStateOf(false) }
-    var personFocused by remember { mutableStateOf(false) }
+    val portalFocusReturn = LocalPortalFocusReturn.current
     BoxWithConstraints(modifier) {
         val showClock = maxWidth >= 320.dp
         val portalWidth = if (showClock) 162.dp else maxWidth - 64.dp
+        val personWidth = if (showClock) (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp else 56.dp
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically) {
-            if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,
-                modifier = Modifier.weight(1f))
-            DiscoveryGlassPanel(Modifier.width(portalWidth).fillMaxHeight(), backdrop, backdropBounds, portalsFocused,
+            DiscoveryGlassPanel(Modifier.width(portalWidth).fillMaxHeight(), backdrop, backdropBounds,
                 fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
                 fillWidth = LocalMobileGlassFillWidth.current) {
                 Box(Modifier.fillMaxSize().padding(5.dp), contentAlignment = Alignment.Center) {
                     CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
-                        DirectPortalButtons(Modifier.onFocusChanged { portalsFocused = it.hasFocus })
+                        DirectPortalButtons()
                     }
                 }
             }
-            DiscoveryGlassPanel(Modifier.width(56.dp).fillMaxHeight(), backdrop, backdropBounds, personFocused,
+            DiscoveryGlassPanel(Modifier.width(personWidth).fillMaxHeight(), backdrop, backdropBounds,
                 fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
                 fillWidth = LocalMobileGlassFillWidth.current) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Row(Modifier.fillMaxSize().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,
+                        modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
                         DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
                             containerColor = viewer?.let { Color(it.color) } ?: Color(0xFFE50925), horizontalPadding = 0.dp,
-                            modifier = Modifier.size(40.dp).onFocusChanged { personFocused = it.isFocused }
+                            modifier = Modifier.size(40.dp)
                                 .semantics { contentDescription = "Switch profile: $viewerName" },
-                            onClick = openUserProfiles)
+                            onClick = { portalFocusReturn.cancel(); openUserProfiles() })
                     }
                 }
             }
