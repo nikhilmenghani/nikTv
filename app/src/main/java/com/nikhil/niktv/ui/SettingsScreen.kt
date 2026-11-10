@@ -656,6 +656,7 @@ internal fun ModernSettingsScreen(
         Text(activePage.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
 
         if (activePage == SettingsPage.PROFILES) {
+            DeviceProfileSettings()
             SettingsSection("Portals & access", page = SettingsPage.PROFILES) {
                 SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "${state.profiles.size} saved")
                 if (profile != null) SettingsLinkRow(SettingsPage.CONNECTION, profile.name)
@@ -1825,6 +1826,32 @@ internal fun ModernSettingsScreen(
             }
         }
     }
+    }
+}
+
+@Composable
+internal fun DeviceProfileSettings() {
+    val context = LocalContext.current
+    val store = remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context) }
+    val profiles by store.profiles.collectAsStateWithLifecycle(emptyList())
+    val enabled by store.enabledProfiles.collectAsStateWithLifecycle(emptySet())
+    val scope = rememberCoroutineScope()
+    var error by remember { mutableStateOf<String?>(null) }
+    SettingsSection("Profiles on this device", page = SettingsPage.PROFILES) {
+        Text("Enable only the profiles you want to show and sync here. New profiles start disabled.", style = MaterialTheme.typography.bodySmall)
+        profiles.forEach { profile ->
+            SettingsControlRow(profile.name, checked = profile.id in enabled, onToggle = { checked ->
+                scope.launch {
+                    try {
+                        store.setProfileEnabled(profile.id, checked)
+                        error = null
+                        if (checked) com.nikhil.niktv.data.AccountSyncManager.get(context).requestManualSync()
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { error = "Could not update this profile. Please try again." }
+                }
+            })
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 

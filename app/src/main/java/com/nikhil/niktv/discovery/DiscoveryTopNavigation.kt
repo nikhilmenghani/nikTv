@@ -104,11 +104,12 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     val measurer = rememberTextMeasurer()
     val style = LocalTextStyle.current.merge(TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
     fun textWidth(text: String) = with(density) { measurer.measure(text, style, maxLines = 1).size.width.toDp() }
-    val naturalProfile = textWidth("00:00 p.m.") + 182.dp // Clock, two separate tiles, and 8dp gaps.
+    val naturalProfile = textWidth("00:00 p.m.") + 270.dp
     val height = maxOf(56.dp, (24f * density.fontScale + 24f).dp)
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
         .discoveryHeaderFocusEntry(tabRequester)) {
-    val widths = discoveryHeaderWidths(maxWidth.value, maxWidth.value, naturalProfile.value)
+    val profileSpace = naturalProfile.value.coerceAtMost((maxWidth.value * .4f).coerceAtLeast(234f))
+    val widths = DiscoveryHeaderWidths((maxWidth.value - profileSpace - 12f).coerceAtLeast(0f), profileSpace)
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
         DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), backdrop ?: LocalMobileGlassArtwork.current,
@@ -172,8 +173,8 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
     var portalsFocused by remember { mutableStateOf(false) }
     var personFocused by remember { mutableStateOf(false) }
     BoxWithConstraints(modifier) {
-        val portalWidth = (maxWidth - 64.dp).coerceIn(80.dp, 110.dp)
-        val showClock = maxWidth >= portalWidth + 122.dp
+        val showClock = maxWidth >= 320.dp
+        val portalWidth = if (showClock) 162.dp else maxWidth - 64.dp
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically) {
             if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,
@@ -183,9 +184,7 @@ private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop:
                 fillWidth = LocalMobileGlassFillWidth.current) {
                 Box(Modifier.fillMaxSize().padding(5.dp), contentAlignment = Alignment.Center) {
                     CompositionLocalProvider(LocalDiscoveryGlassButtons provides true) {
-                        DiscoveryAction("Portals", Icons.Default.Dns, horizontalPadding = 8.dp,
-                            modifier = Modifier.fillMaxSize().onFocusChanged { portalsFocused = it.isFocused }
-                                .semantics { contentDescription = "Portals" }, onClick = openPortals)
+                        DirectPortalButtons(Modifier.onFocusChanged { portalsFocused = it.hasFocus })
                     }
                 }
             }

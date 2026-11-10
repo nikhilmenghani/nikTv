@@ -8,6 +8,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,6 +21,57 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** Token-free UI fixtures exercise the same phone, tablet and TV composables. */
 class AccountProfilesDeviceTest {
+    @Test fun portalMenuOpensSelectedPortalDirectly() {
+        val current = com.nikhil.niktv.model.PortalProfile("Fixture Stalker", "http://fixture.invalid", "fixture")
+        val other = current.copy(name = "Fixture Xtream", portalType = com.nikhil.niktv.model.PortalType.XTREAM)
+        val action = AtomicReference("")
+        fixture({ CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides listOf(
+            com.nikhil.niktv.discovery.DirectPortalAction(current.name, androidx.compose.material.icons.Icons.Default.Tv, true) { action.set(current.name) },
+            com.nikhil.niktv.discovery.DirectPortalAction(other.name, androidx.compose.material.icons.Icons.Default.Tv) { action.set(other.name) },
+            com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.Tv) { action.set("Sports") }
+        )) { com.nikhil.niktv.discovery.DirectPortalButtons(labels = true) } }) {
+            await("Direct portal menu appears") { find(other.name) != null }
+            screenshot("direct-portal-menu.png")
+            click(other.name)
+            await("Portal button switches directly") { action.get() == other.name }
+        }
+    }
+    @Test fun deviceProfilesStartDisabledAndNewProfilesBecomeSettingsOptions() = kotlinx.coroutines.runBlocking {
+        val store = com.nikhil.niktv.data.UserSyncStore.get(instrumentation.targetContext)
+        check(instrumentation.targetContext.packageName.endsWith(".regression"))
+        val oldAccount = store.selectedAccount.value
+        store.selectAccount("999910011")
+        val first = store.createProfile("Opt-in fixture")
+        val settingsVisible = mutableStateOf(true)
+        try {
+            assertFalse(store.enabledProfileIds("999910011").contains(first.id))
+            fixture({
+                if (settingsVisible.value) CompositionLocalProvider(LocalSettingsPage provides SettingsPage.PROFILES) { DeviceProfileSettings() }
+                else UserProfilesScreen(emptyList(), AccountSyncState(initialized = true), null,
+                    {}, { _, _, _, _, _ -> }, {}, {}, {}, onSettings = {})
+            }) {
+                await("Disabled profile is offered in Settings") { find(first.name) != null }
+                screenshot("profile-opt-in-settings.png")
+                kotlinx.coroutines.runBlocking { store.setProfileEnabled(first.id, true) }
+                assertTrue(store.enabledProfileIds("999910011").contains(first.id))
+                val second = kotlinx.coroutines.runBlocking { store.createProfile("New profile fixture") }
+                try {
+                    await("New profile becomes an option dynamically") { find(second.name) != null }
+                    assertFalse(store.enabledProfileIds("999910011").contains(second.id))
+                } finally { kotlinx.coroutines.runBlocking { store.deleteProfile(second.id) } }
+                instrumentation.runOnMainSync { settingsVisible.value = false }
+                await("Empty picker keeps Add profile") { find("Who's watching?") != null }
+                assertNull(find(first.name))
+                assertNotNull(reveal("Settings"))
+                screenshot("profile-opt-in-empty-picker.png")
+            }
+            store.setProfileEnabled(first.id, false)
+            assertFalse(store.enabledProfileIds("999910011").contains(first.id))
+        } finally {
+            store.deleteProfile(first.id)
+            oldAccount?.let { store.selectAccount(it) }
+        }
+    }
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private fun find(text: String): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -36,6 +88,7 @@ class AccountProfilesDeviceTest {
     private fun await(label: String, check: () -> Boolean) {
         val until = SystemClock.uptimeMillis() + 6_000
         while (!check() && SystemClock.uptimeMillis() < until) Thread.sleep(30)
+        if (!check()) screenshot("profile-fixture-failure.png")
         assertTrue(label, check())
     }
     private fun click(label: String) {
@@ -69,6 +122,9 @@ class AccountProfilesDeviceTest {
     private fun screenshot(name: String) {
         instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
             instrumentation.targetContext.filesDir.resolve(name).outputStream().use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            java.io.File(instrumentation.targetContext.getExternalFilesDir(null), name).outputStream().use {
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
             }
             bitmap.recycle()

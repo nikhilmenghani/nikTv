@@ -136,8 +136,6 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
                     onClick = com.nikhil.niktv.ui.LocalOpenLanPlayback.current)
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
                     modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
-                DiscoveryAction("Portals", Icons.Default.Dns, iconOnly = true,
-                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Portals" }) { navigate("Profile") }
                 DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
                     containerColor = viewer?.let { Color(it.color) },
                     horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $viewerName" }
@@ -146,7 +144,7 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
                 DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
             }
         }
-
+        if (!detail) DirectPortalButtons(Modifier.fillMaxWidth(), labels = true)
     }
     }
 }

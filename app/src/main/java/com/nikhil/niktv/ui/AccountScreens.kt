@@ -76,6 +76,8 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
     val store = remember(context) { UserSyncStore.get(context) }
     val account by manager.state.collectAsStateWithLifecycle()
     val profiles by store.profiles.collectAsStateWithLifecycle(emptyList())
+    val enabledIds by store.enabledProfiles.collectAsStateWithLifecycle(emptySet())
+    val enabledProfiles = profiles.filter { it.id in enabledIds }
     val selectedScope by store.selectedScope.collectAsStateWithLifecycle()
     val pendingCount by store.pendingChanges.collectAsStateWithLifecycle(0)
     val appState by vm.state.collectAsStateWithLifecycle()
@@ -110,6 +112,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
         showSettings = false
     }
     suspend fun openViewer(profileId: String, offlineOnly: Boolean = false) {
+        require(profileId in store.enabledProfileIds(requireNotNull(store.selectedAccount.value))) { "Enable this profile in Settings first." }
         val owner = UserScope(requireNotNull(store.selectedAccount.value), profileId)
         com.nikhil.niktv.data.UserProfilePreferences.warm(context, owner)
         store.selectProfile(profileId)
@@ -155,7 +158,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                 restoringViewer = true
                 restoredAccount = id
                 store.rememberedProfileId(id)?.let { profileId ->
-                    profileAction("Could not restore this profile. Select a profile to continue.") { openViewer(profileId) }
+                    if (profileId in store.enabledProfileIds(id)) {
+                        profileAction("Could not restore this profile. Select a profile to continue.") { openViewer(profileId) }
+                    }
                 }
             }
         } finally { restoringViewer = false }
@@ -195,12 +200,12 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                         },
                         onDisconnect = { scope.launch { vm.openProfileChooser(); manager.disconnect(); selectedUser = null } }
                     )
-                    choosingProfile || selectedUser == null || profiles.none { it.id == selectedUser } -> {
+                    choosingProfile || selectedUser == null || enabledProfiles.none { it.id == selectedUser } -> {
                         AccountGateBackHandler(peopleVisible = true, choosingProfile = choosingProfile,
                             selectedViewerAvailable = selectedUser != null && profiles.any { it.id == selectedUser }, state = appState,
                             openPeople = ::openProfiles, resumeContent = { choosingProfile = false })
                         UserProfilesScreen(
-                        profiles = profiles,
+                        profiles = enabledProfiles,
                         state = if (!account.syncing && pendingCount > 0 && account.error == null)
                             account.copy(message = "Changes saved on this device") else account,
                         error = profileError,
@@ -229,6 +234,12 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                             }
                         } } else null,
                         onAccount = ::openAccount,
+                        onSettings = {
+                            settingsEntered = false
+                            vm.openProfileChooser()
+                            vm.openSettingsFromProfileChooser()
+                            showSettings = true
+                        },
                         onSync = manager::requestManualSync,
                         selectedProfileId = selectedUser,
                         onOfflineDownloads = { profile -> scope.launch {
@@ -313,7 +324,8 @@ internal fun UserProfilesScreen(
     onImportLegacy: ((UserProfile) -> Unit)? = null,
     onManagePortals: ((UserProfile) -> Unit)? = null,
     selectedProfileId: String? = null,
-    onOfflineDownloads: ((UserProfile) -> Unit)? = null
+    onOfflineDownloads: ((UserProfile) -> Unit)? = null,
+    onSettings: (() -> Unit)? = null
 ) {
     var editing by remember { mutableStateOf<UserProfile?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
@@ -345,6 +357,8 @@ internal fun UserProfilesScreen(
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Text("NIKTV", color = Color(0xFFE50914), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(14.dp))
+            if (profiles.isEmpty()) Text("Enable profiles in Settings to show and sync them on this device.",
+                style = MaterialTheme.typography.bodySmall, color = Color(0xFF9699A2), textAlign = TextAlign.Center)
             Text("Who's watching?", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(20.dp))
             Column(verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -387,6 +401,7 @@ internal fun UserProfilesScreen(
                 NikTvTextActionButton(onClick = onSync, enabled = !state.syncing) { Text("Sync now", style = MaterialTheme.typography.labelMedium) }
             }
             NikTvTextActionButton(onClick = onAccount) { Text("GitHub account & Settings", color = Color(0xFFB5B7BE), style = MaterialTheme.typography.labelMedium) }
+            onSettings?.let { NikTvSecondaryActionButton(onClick = it) { Text("Settings") } }
         }
     }
     if (managementPicker) AlertDialog(onDismissRequest = { managementPicker = false },

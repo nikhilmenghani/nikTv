@@ -7,6 +7,9 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.SportsCricket
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -29,7 +32,7 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
     val selected = profiles.indexOfFirst { it.cacheKey() == current?.cacheKey() }.coerceAtLeast(0)
     val closeFocus = remember { FocusRequester() }
     AlertDialog(modifier = Modifier.initialFocusEntry(if (profiles.isEmpty()) closeFocus else entry), onDismissRequest = close, containerColor = Color(0xFF181B22),
-        title = { Text("Switch portal") }, text = {
+        title = { Text("Portals") }, text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 profiles.forEachIndexed { index, profile ->
@@ -37,9 +40,9 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                         close()
                         if (profile.cacheKey() != current?.cacheKey()) select(profile)
                     }, modifier = Modifier.fillMaxWidth().then(if (index == selected) Modifier.focusRequester(entry) else Modifier)) {
-                        Text(if (profile.portalType == com.nikhil.niktv.model.PortalType.STALKER) "S" else "X")
+                        Icon(if (profile.portalType == com.nikhil.niktv.model.PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null)
                         Spacer(Modifier.width(12.dp))
-                        Text(if (profile.portalType == com.nikhil.niktv.model.PortalType.STALKER) "Stalker" else "Xtream", Modifier.weight(1f))
+                        Text(profile.name, Modifier.weight(1f))
                         if (profile.cacheKey() == current?.cacheKey()) Text("Current")
                     }
                 }
@@ -51,7 +54,11 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                         close()
                         context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
                     }
-                }, modifier = Modifier.fillMaxWidth()) { Text("Sports") }
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.SportsCricket, null)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Sports")
+                }
             }
         }, confirmButton = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

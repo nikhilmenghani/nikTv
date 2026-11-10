@@ -5,6 +5,34 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AccountSyncEngineTest {
+    @Test fun disabledProfilesStayOnServerWithoutImportingOrUploadingTheirViewingData() = runBlocking {
+        val cloud = record("cloud-disabled").copy(profileId = "disabled")
+        val queued = record("local-disabled").copy(profileId = "disabled")
+        val enabled = record("local-enabled")
+        val profile = record("new-profile").copy(collection = "profile", profileId = "new")
+        val local = Local(queued, enabled)
+        val server = Remote(cloud, profile)
+        synchronizeAccount("10", EnabledProfileReplica(local, setOf("person")), server)
+        assertFalse(local.records.containsKey(cloud.recordId))
+        assertTrue(local.records.containsKey(profile.recordId))
+        assertEquals(setOf(cloud, enabled, profile), server.document.records.toSet())
+        assertEquals(listOf(queued), local.queue)
+        synchronizeAccount("10", EnabledProfileReplica(local, setOf("person", "disabled")), server)
+        assertTrue(local.records.containsKey(cloud.recordId))
+        assertTrue(server.document.records.contains(queued))
+        assertTrue(local.queue.isEmpty())
+    }
+
+    @Test fun noEnabledProfilesStillDiscoversNewProfilesAndPreservesCloudData() = runBlocking {
+        val cloud = record("history")
+        val profile = record("profile").copy(collection = "profile")
+        val local = Local()
+        val server = Remote(cloud, profile)
+        synchronizeAccount("10", EnabledProfileReplica(local, emptySet()), server)
+        assertEquals(listOf(profile), local.records.values.toList())
+        assertEquals(setOf(cloud, profile), server.document.records.toSet())
+        assertEquals(0, server.writes)
+    }
     @Test fun episodeTransitionPublishesNextEpisodeBeforeItsFirstProgressTick() = runBlocking {
         val previous = record("series-history").copy(payload = "{\"episode\":10}")
         val server = Remote(previous)

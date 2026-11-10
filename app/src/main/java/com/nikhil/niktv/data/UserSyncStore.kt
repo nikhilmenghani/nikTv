@@ -123,6 +123,20 @@ class UserSyncStore private constructor(private val context: Context) {
     private val scope = MutableStateFlow<UserScope?>(null)
     val selectedScope: StateFlow<UserScope?> = scope.asStateFlow()
     val selectedAccount: StateFlow<String?> = account.asStateFlow()
+    private val enabledRevision = MutableStateFlow(0)
+    fun enabledProfileIds(accountId: String): Set<String> = local.getStringSet("enabled_profiles_$accountId", emptySet()).orEmpty().toSet()
+    val enabledProfiles: Flow<Set<String>> = combine(account, enabledRevision) { id, _ ->
+        id?.let(::enabledProfileIds).orEmpty()
+    }
+    suspend fun setProfileEnabled(profileId: String, enabled: Boolean) = withEditLock {
+        val accountId = requireNotNull(account.value)
+        require(isLiveProfile(UserScope(accountId, profileId)))
+        val ids = enabledProfileIds(accountId).toMutableSet()
+        if (enabled) ids.add(profileId) else ids.remove(profileId)
+        check(local.edit().putStringSet("enabled_profiles_$accountId", ids).commit())
+        enabledRevision.value += 1
+        if (!enabled && scope.value?.profileId == profileId) clearSelection()
+    }
     val pendingChanges: Flow<Int> = account.flatMapLatest { id -> if (id == null) flowOf(0) else dao.observePendingCount(id) }.distinctUntilChanged()
     val profiles: Flow<List<UserProfile>> = account.flatMapLatest { id ->
         if (id == null) flowOf(emptyList()) else dao.observeRecords(id).map { records ->

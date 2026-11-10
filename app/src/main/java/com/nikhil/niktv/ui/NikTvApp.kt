@@ -488,6 +488,24 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     }
     val requiredUpdate = discoveredUpdate ?: pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
+    val directPortalOwner = LocalViewingOwner.current
+    val directPortalScope = rememberCoroutineScope()
+    val directPortals = state.profiles.map { portal ->
+        com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
+            if (portal.portalType == PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
+            selected = portal.cacheKey() == state.savedProfile?.cacheKey(), open = {
+                if (portal.cacheKey() != state.savedProfile?.cacheKey()) vm.switchProfile(portal)
+            })
+    } + com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, open = {
+        directPortalScope.launch {
+            directPortalOwner?.let { owner ->
+                com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
+                    com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS))
+            }
+            appContext.startActivity(android.content.Intent(appContext, com.nikhil.niktv.sports.SportsActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    })
+    CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
         if (state.profileSwitcherOpen) ModernProfileSwitchDialog(state.profiles, state.savedProfile,
@@ -719,7 +737,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,exportBackup = vm::exportBackup
                     ,importBackup = vm::importBackup
                     ,importBackupContent = vm::importBackupContent
-                    ,openProfileSwitcher = vm::openProfileChooser
+                    ,openProfileSwitcher = openUserProfiles
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
                     ,setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled
@@ -895,5 +913,6 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
            }
           }
         }
+    }
     }
 }

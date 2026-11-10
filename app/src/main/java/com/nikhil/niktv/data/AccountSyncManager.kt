@@ -196,7 +196,7 @@ class AccountSyncManager private constructor(context: Context) {
 
     private suspend fun syncCaptured(transport: GitHubSyncTransport, repository: SyncRepository, accountId: String) {
         if (store.selectedAccount.value != accountId) store.selectAccount(accountId)
-        synchronizeAccount(accountId, object : SyncLocalReplica {
+        synchronizeAccount(accountId, EnabledProfileReplica(object : SyncLocalReplica {
             override suspend fun merge(records: List<SyncRecord>) = store.merge(accountId, records)
             override suspend fun prepare(emptyRemoteAccount: Boolean) {
                 if (emptyRemoteAccount) store.initializeDefaults(accountId)
@@ -207,7 +207,7 @@ class AccountSyncManager private constructor(context: Context) {
             override suspend fun snapshot() = store.snapshot(accountId)
             override suspend fun pending() = store.pending(accountId)
             override suspend fun acknowledge(ids: Collection<String>) = store.acknowledge(accountId, ids)
-        }, object : SyncRemoteReplica {
+        }, store.enabledProfileIds(accountId)), object : SyncRemoteReplica {
             override suspend fun fetch() = transport.fetch(repository, accountId)
             override suspend fun upload(document: AccountDocument, sha: String?) = transport.upload(repository, document, sha)
         }) { message -> mutableState.value = mutableState.value.copy(message = message) }
@@ -304,7 +304,10 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     internal fun authenticatedAccount(): String? = prefs.getString("accountId", null)
-    internal suspend fun hasPending(accountId: String): Boolean = store.pending(accountId).isNotEmpty()
+    internal suspend fun hasPending(accountId: String): Boolean {
+        val enabled = store.enabledProfileIds(accountId)
+        return store.pending(accountId).any { it.profileId.isBlank() || it.collection == "profile" || it.profileId in enabled }
+    }
     internal fun retryNeeded(accountId: String): Boolean = prefs.getBoolean("retryNeeded:$accountId", false)
     private fun isInitialized(accountId: String) = prefs.getBoolean("initialized:$accountId", false)
     private fun cancelWork(accountId: String) {
