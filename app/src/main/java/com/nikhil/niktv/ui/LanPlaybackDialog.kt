@@ -35,6 +35,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
@@ -205,9 +206,19 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                 Column(Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     state.devices.forEach { device ->
                         NikTvSecondaryActionButton({ selected = device; manual = false }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Default.Tv, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
-                            Text(device.name, Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            if (currentDevice?.name == device.name) Icon(Icons.Default.Check, "Selected", Modifier.size(20.dp), tint = NikColors.primary)
+                            Box(Modifier.fillMaxWidth()) {
+                                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.Tv, null, Modifier.size(20.dp))
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(device.name, Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${device.host}:${device.port}", Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.bodySmall, color = muted,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (currentDevice == device) Icon(Icons.Default.Check, "Selected",
+                                    Modifier.size(20.dp).align(Alignment.TopEnd), tint = NikColors.primary)
+                            }
                         }
                     }
                 }
