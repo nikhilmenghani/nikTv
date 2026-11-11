@@ -128,6 +128,8 @@ class AlternateSourceViewModelTest {
 
     @Before fun setUp() {
         val app = RuntimeEnvironment.getApplication()
+        // This fixture models playback without a signed-in account or portal.
+        com.nikhil.niktv.data.UserSyncStore.get(app).disconnect()
         app.getSharedPreferences("parental_controls", Context.MODE_PRIVATE).edit().clear().commit()
         Settings.Global.putInt(app.contentResolver, Settings.Global.BOOT_COUNT, 7)
         Dispatchers.setMain(StandardTestDispatcher(scheduler))
@@ -152,6 +154,7 @@ class AlternateSourceViewModelTest {
         vm.viewModelScope.cancel()
         scheduler.runCurrent()
         storageScope.cancel()
+        scheduler.runCurrent()
         Dispatchers.resetMain()
     }
 
@@ -163,6 +166,7 @@ class AlternateSourceViewModelTest {
             confirmedByUser = true, playbackVerified = true)
         val store = NikTvViewModel::class.java.getDeclaredField("store").apply { isAccessible = true }.get(vm) as ProfileStore
         store.saveTmdbMapping(mapping)
+        assertEquals(listOf(mapping), store.tmdbMappings.first())
         mutableState.value = mutableState.value.copy(items = listOf(movie), selectedCategory = category,
             browseCachesByType = mapOf(CatalogType.MOVIES to cache))
         val calls = mutableListOf<AlternateSourceTarget>()
