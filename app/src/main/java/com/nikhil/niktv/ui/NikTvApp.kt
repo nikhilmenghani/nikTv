@@ -493,6 +493,11 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val requestedPortal by com.nikhil.niktv.discovery.PortalNavigationRequests.pending.collectAsStateWithLifecycle()
     LaunchedEffect(requestedPortal, state.profiles) {
         val identity = requestedPortal ?: return@LaunchedEffect
+        if (identity == com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER) {
+            com.nikhil.niktv.discovery.PortalNavigationRequests.pending.value = null
+            openUserProfiles()
+            return@LaunchedEffect
+        }
         val portal = state.profiles.firstOrNull { it.cacheKey() == identity } ?: return@LaunchedEffect
         com.nikhil.niktv.discovery.PortalNavigationRequests.pending.value = null
         vm.switchProfile(portal)

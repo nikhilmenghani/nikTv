@@ -45,6 +45,8 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
     backFocus: FocusRequester, menuFocus: FocusRequester,
     navigation: @Composable (Modifier) -> Unit) {
     val phone = sportsPhoneLayout()
+    val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
+    val openProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
     val scope = rememberCoroutineScope()
     val firstAction = remember { FocusRequester() }
     var expanded by remember { mutableStateOf(false) }
@@ -60,13 +62,19 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
         color = if (phone) Color.Transparent else SportsSurface, contentColor = Color.White) {
         Row(Modifier.fillMaxWidth().padding(if (phone) 0.dp else 6.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV",
+            if (!phone) Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV",
                 Modifier.size(42.dp).graphicsLayer { scaleX = if (phone) 2.4f else 1.6f; scaleY = if (phone) 2.4f else 1.6f })
             DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
                 modifier = Modifier.size(48.dp).focusRequester(backFocus), onClick = back)
             if (phone) Text(title, Modifier.weight(1f).semantics { contentDescription = "Sports page title" },
                 fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             else navigation(Modifier.weight(1f))
+            viewer?.let { profile ->
+                DiscoveryAction("Switch profile: ${profile.name}", visualLabel = profile.avatar.ifBlank { profile.name.take(1).uppercase() },
+                    containerColor = Color(profile.color), horizontalPadding = 0.dp,
+                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: ${profile.name}" },
+                    onClick = openProfiles)
+            }
             Box {
                 DiscoveryAction("Sports options", Icons.Default.MoreVert, iconOnly = true,
                     modifier = Modifier.size(48.dp).focusRequester(menuFocus), onClick = { expanded = true })
