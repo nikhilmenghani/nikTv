@@ -402,7 +402,11 @@ fun PlayerScreen(
     val liveRecording by LiveTvRecorder.state.collectAsState()
     val recordingThisChannel = liveRecording.active && liveRecording.owner == media.userScope && liveRecording.sourceUrl == media.url
     val playerConfiguration = LocalConfiguration.current
-    val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
+    val playerTelevision = rememberPlayerTvDevice()
+    val compactMobileControls = playerConfiguration.usesPhoneLayout(playerTelevision)
+    val shortWideControls = playerConfiguration.usesShortWideLayout(playerTelevision)
+    val compactPlayerSpacing = compactMobileControls || shortWideControls
+    val smallTouchDevice = !playerTelevision && playerConfiguration.smallestScreenWidthDp < 600
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
     LaunchedEffect(downloadRequested, offlineDownloadInProgress) {
         if (offlineDownloadInProgress) {
@@ -2027,7 +2031,7 @@ fun PlayerScreen(
                                         !playerOptionsOpen &&
                                         ((event.x >= playerView.width * 0.25f &&
                                             event.x <= playerView.width * 0.75f) ||
-                                            (!compactMobileControls && event.y >= playerView.height * 0.72f))
+                                            (!smallTouchDevice && event.y >= playerView.height * 0.72f))
                                 gestureStartValue = when {
                                     !levelGestureEligible -> 0f
                                     brightnessGesture -> {
@@ -2176,8 +2180,8 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(if (!focusMode && !inPictureInPicture && !embeddedMode) Modifier.padding(
-                        top = if (compactMobileControls) 58.dp else 76.dp,
-                        bottom = if (compactMobileControls) 112.dp else 148.dp
+                        top = if (compactPlayerSpacing) 58.dp else 76.dp,
+                        bottom = if (compactPlayerSpacing) 112.dp else 148.dp
                     ) else Modifier)
             )
         }
@@ -2312,8 +2316,8 @@ fun PlayerScreen(
                         .zIndex(2f)
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
-                            horizontal = if (compactMobileControls) 10.dp else 20.dp,
-                            vertical = if (compactMobileControls) 4.dp else 14.dp
+                            horizontal = if (compactPlayerSpacing) 10.dp else 20.dp,
+                            vertical = if (compactPlayerSpacing) 4.dp else 14.dp
                         ),
                     verticalAlignment = Alignment.Top
                 ) {
@@ -2345,7 +2349,7 @@ fun PlayerScreen(
                         Text(
                             media.media.title,
                             color = Color.White,
-                            style = if (compactMobileControls) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                            style = if (compactPlayerSpacing) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                             maxLines = 1,
                             textAlign = androidx.compose.ui.text.style.TextAlign.End
@@ -2360,7 +2364,7 @@ fun PlayerScreen(
                             )
                         }
                         PlayerDateTime(
-                            compact = compactMobileControls,
+                            compact = compactPlayerSpacing,
                             modifier = Modifier.align(Alignment.End)
                         )
                         PlayerDownloadStatusPill(
@@ -2591,20 +2595,20 @@ PlayerChromeIconButton(
                         .fillMaxWidth()
                         .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
                         .padding(
-                            horizontal = if (compactMobileControls) 10.dp else 24.dp,
-                            vertical = if (compactMobileControls) 8.dp else 14.dp
+                            horizontal = if (compactPlayerSpacing) 10.dp else 24.dp,
+                            vertical = if (compactPlayerSpacing) 8.dp else 14.dp
                         ),
-                    shape = RoundedCornerShape(if (compactMobileControls) 18.dp else 22.dp),
+                    shape = RoundedCornerShape(if (compactPlayerSpacing) 18.dp else 22.dp),
                     color = Color.Black.copy(alpha = 0.58f),
                     contentColor = Color.White,
                     shadowElevation = if (focusMode) 8.dp else 2.dp
                 ) {
                     Column(
                         Modifier.padding(
-                            horizontal = if (compactMobileControls) 10.dp else 16.dp,
-                            vertical = if (compactMobileControls) 4.dp else 11.dp
+                            horizontal = if (compactPlayerSpacing) 10.dp else 16.dp,
+                            vertical = if (compactPlayerSpacing) 4.dp else 11.dp
                         ),
-                        verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
+                        verticalArrangement = Arrangement.spacedBy(if (compactPlayerSpacing) 3.dp else 8.dp)
                     ) {
                         if (seekable) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2620,7 +2624,7 @@ PlayerChromeIconButton(
                                 onSeek = {
                                     player.seekTo(it)
                                 },
-                                compact = compactMobileControls,
+                                compact = compactPlayerSpacing,
                                 modifier = Modifier
                                     .weight(1f)
                                     .focusRequester(progressFocusRequester)
@@ -2768,8 +2772,8 @@ PlayerChromeIconButton(
                                                 up = if (seekable) progressFocusRequester else backFocusRequester
                                             ),
                                         primaryAction = true,
-                                        size = if (compactMobileControls) 50.dp else 58.dp,
-                                        iconSize = if (compactMobileControls) 27.dp else 30.dp,
+                                        size = if (compactMobileControls) 50.dp else if (shortWideControls) 56.dp else 58.dp,
+                                        iconSize = if (compactMobileControls || shortWideControls) 27.dp else 30.dp,
                                         onFocused = { controlsFocused = it }
                                     )
                                     if (seekable) {
@@ -3105,7 +3109,7 @@ PlayerChromeIconButton(
                     Text("This title can’t be played right now", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     Text(failure, color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
                     PlayerErrorActions(
-                        compact = compactMobileControls,
+                        compact = compactPlayerSpacing,
                         canNavigate = hasPlaybackQueue,
                         onPrevious = onPlayPrevious,
                         onBack = onBack,
@@ -3135,9 +3139,9 @@ PlayerChromeIconButton(
             }
         }
         gestureFeedback?.let { (isBrightness, level) ->
-            PlayerLevelFeedback(isBrightness, level, compactMobileControls,
+            PlayerLevelFeedback(isBrightness, level, compactPlayerSpacing,
                 Modifier.align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
-                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp))
+                    .padding(horizontal = if (compactPlayerSpacing) 12.dp else 20.dp))
         }
         val countdown = remainingSeconds
         modeFeedback?.let { PlayerModeFeedback(it) }
@@ -3440,7 +3444,7 @@ internal fun PlayerChromeIconButton(
     val context = LocalContext.current
     val minimumFocusSize = when {
         rememberPlayerTvDevice() -> 56.dp
-        configuration.smallestScreenWidthDp < 600 -> 44.dp
+        configuration.usesPhoneLayout() -> 44.dp
         else -> 48.dp
     }
     val requestedSize = if (minimumFocusSize == 44.dp && size == 48.dp) 44.dp else size
@@ -3748,7 +3752,7 @@ internal fun PictureModeQuickOverlay(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isTvLikeDevice(configuration)
-    val compactPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val compactPhone = configuration.usesPhoneLayout(isTv)
     val columns = if (compactPhone) 2 else 4
     val secondaryActionWidth = if (compactPhone) 76.dp else 96.dp
     val settingsActionWidth = if (compactPhone) 108.dp else 112.dp
@@ -3848,9 +3852,7 @@ internal fun PlayerMoreOptionsDialog(
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
-    val compactLandscape =
-        configuration.smallestScreenWidthDp < 600 &&
-            configuration.screenWidthDp > configuration.screenHeightDp
+    val compactLandscape = configuration.usesShortWideLayout(rememberPlayerTvDevice())
     val optionsBodyMaxHeight =
         (configuration.screenHeightDp * if (compactLandscape) .55f else .68f).dp
     val closeRequester = remember { FocusRequester() }
@@ -4095,7 +4097,7 @@ internal fun Modifier.playerControlFocus(
     LaunchedEffect(showFocus) { onFocused(showFocus) }
     val minimumSize = when {
         isTv -> 56.dp
-        configuration.smallestScreenWidthDp < 600 -> 44.dp
+        configuration.usesPhoneLayout() -> 44.dp
         else -> 48.dp
     }
     return this

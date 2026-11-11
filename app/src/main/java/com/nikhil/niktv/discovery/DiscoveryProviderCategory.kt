@@ -63,20 +63,20 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
     }
     StableTileFocusViewport {
         Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).safeDrawingPadding()) {
-            val phone = configuration.smallestScreenWidthDp < 600 && !context.isTvLikeDevice(configuration)
+            val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
             if (phone) DiscoveryPhoneNavigation(surface, tab, heroPlay, close, selectSurface, navigate, menu, { menu = it })
             else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tab, heroPlay,
                 back = close, select = selectSurface, navigate = navigate, headerFocus = {},
                 menu = menu, changeMenu = { menu = it }, customize = null)
             LazyVerticalGrid(if (phone) GridCells.Adaptive(phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp)
-                else GridCells.Adaptive(if (configuration.smallestScreenWidthDp >= 600) 112.dp else 92.dp),
+                else GridCells.Adaptive(112.dp),
                 Modifier.fillMaxSize(), state = grid, contentPadding = PaddingValues(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item("hero", span = { GridItemSpan(maxLineSpan) }) {
                     val card = selection?.let { providerDetailFallback(it, category.type) }
                     Box {
                         Box(Modifier.matchParentSize()) { DiscoveryBackdrop(card, false) }
-                        DiscoveryHero(card, null, 250.dp, landscape = configuration.smallestScreenWidthDp >= 600,
+                        DiscoveryHero(card, null, 250.dp, landscape = !phone,
                             compact = configuration.screenHeightDp < 480, detail = false, loading = false,
                             inList = selection != null && app.favorites.any { it.profileKey == profile && it.media.id == selection.id },
                             playRequester = heroPlay, infoRequester = heroInfo,

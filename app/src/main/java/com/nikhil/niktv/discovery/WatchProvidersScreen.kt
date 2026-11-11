@@ -133,7 +133,7 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
     selectType: (Boolean) -> Unit, retry: () -> Unit, open: (DiscoveryCard, FocusRequester) -> Unit, metadataActive: Boolean = true, viewAll: (WatchProvider, FocusRequester) -> Unit = { _, _ -> }, viewAllRequesters: MutableMap<Int, FocusRequester>? = null) {
     val config = LocalConfiguration.current
     val reducedMotion = android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-    val phone = usesDiscoveryPhoneLayout(config.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(config))
+    val phone = usesDiscoveryPhoneLayout(config, LocalContext.current.isTvLikeDevice(config))
     val list = rememberLazyListState()
     val rowStates = rememberSaveableStateHolder()
     val filtered = remember(state.providers, query) { state.providers.filter { it.name.contains(query, true) } }

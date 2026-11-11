@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.res.painterResource
@@ -36,6 +37,7 @@ import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.NikTvSecondaryActionButton
 import com.nikhil.niktv.ui.NikDropdownMenuItem
 import com.nikhil.niktv.ui.StableTileFocusViewport
+import com.nikhil.niktv.ui.usesShortWideLayout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.nikhil.niktv.sports.openSports
@@ -53,7 +55,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     val trialOptionsFocus = remember { FocusRequester() }
     val options = LocalDiscoveryLibraryOptions.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
     val suggestedArtwork by rememberSuggestedArtwork()
     var categoryTrigger by remember { mutableIntStateOf(0) }
     if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
@@ -101,14 +103,23 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     val experiment = LocalDiscoveryExperiment.current
     val tabs = rememberScrollState()
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
     val measurer = rememberTextMeasurer()
     val style = LocalTextStyle.current.merge(TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
     fun textWidth(text: String) = with(density) { measurer.measure(text, style, maxLines = 1).size.width.toDp() }
     val naturalProfile = 160.dp + (124f * density.fontScale.coerceAtLeast(1f)).dp
-    val height = maxOf(56.dp, (24f * density.fontScale + 24f).dp)
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
+    val height = maxOf(if (shortWide) 54.dp else 56.dp, (24f * density.fontScale + 24f).dp)
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = if (shortWide) 12.dp else 24.dp,
+        vertical = if (shortWide) 6.dp else 12.dp)
         .discoveryHeaderFocusEntry(tabRequester)) {
-    val profileSpace = naturalProfile.value.coerceAtMost((maxWidth.value * .4f).coerceAtLeast(234f))
+    // Keep all ordinary tabs visible before spending a short phone window on
+    // the optional clock. Portals and the person remain separate full targets.
+    val naturalMenu = 202f + (trialSurfaces.map { it.trialTitle().removeSuffix(" 2") } + listOf("Live TV", "My List"))
+        .sumOf { textWidth(it).value.toDouble() + 28.0 }.toFloat()
+    val profileSpace = if (shortWide) {
+        if (maxWidth.value - naturalMenu - 12f >= naturalProfile.value) naturalProfile.value else 214f
+    } else naturalProfile.value.coerceAtMost((maxWidth.value * .4f).coerceAtLeast(234f))
     val widths = DiscoveryHeaderWidths((maxWidth.value - profileSpace - 12f).coerceAtLeast(0f), profileSpace)
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {

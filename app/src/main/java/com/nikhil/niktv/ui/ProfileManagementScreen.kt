@@ -165,7 +165,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
         val viewingOwner = LocalViewingOwner.current
         val isTv = chooserContext.isTvLikeDevice(configuration)
 
-        val compactChooser = isTv || configuration.smallestScreenWidthDp < 600
+        val compactChooser = isTv || configuration.usesPhoneLayout(isTv) || configuration.usesShortWideLayout(isTv)
         val scrollState = rememberScrollState()
 
         val preferredProfileKey =

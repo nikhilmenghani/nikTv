@@ -42,7 +42,7 @@ internal fun PlaybackSpeedOverlay(speed: Float, onSpeed: (Float) -> Unit, onDism
     val active = PLAYBACK_SPEED_PRESETS.indexOf(speed).takeIf { it >= 0 } ?: 4
     Popup(alignment = Alignment.BottomEnd, onDismissRequest = onDismiss,
         properties = PopupProperties(focusable = true)) {
-        val panelWidth = minOf(configuration.screenWidthDp - 24, if (configuration.smallestScreenWidthDp < 600) 308 else 348)
+        val panelWidth = minOf(configuration.screenWidthDp - 24, if (configuration.usesPhoneLayout(rememberPlayerTvDevice())) 308 else 348)
         Surface(Modifier.padding(12.dp).width(panelWidth.coerceAtLeast(180).dp)
             .heightIn(max = (configuration.screenHeightDp - 24).coerceAtLeast(180).dp),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),

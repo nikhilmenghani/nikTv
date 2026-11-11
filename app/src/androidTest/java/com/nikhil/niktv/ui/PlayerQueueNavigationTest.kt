@@ -29,7 +29,7 @@ class PlayerQueueNavigationTest {
         check(context.packageName.endsWith(".regression"))
         instrumentation.setInTouchMode(false)
         val activity = instrumentation.startActivitySync(Intent(context, PlayerQueueRegressionActivity::class.java)
-            .putExtra("touchRail", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            .putExtra("touchRail", true).putExtra("phone", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         fun capture(name: String) {
             val screenshot = instrumentation.uiAutomation.takeScreenshot()
             java.io.File(context.externalCacheDir, name).outputStream().use {

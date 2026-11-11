@@ -203,7 +203,11 @@ internal fun VlcPlayerScreen(
     }
     val displayedDownloadInProgress = offlineDownloadInProgress || downloadRequested
     val playerConfiguration = LocalConfiguration.current
-    val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
+    val playerTelevision = rememberPlayerTvDevice()
+    val compactMobileControls = playerConfiguration.usesPhoneLayout(playerTelevision)
+    val shortWideControls = playerConfiguration.usesShortWideLayout(playerTelevision)
+    val compactPlayerSpacing = compactMobileControls || shortWideControls
+    val smallTouchDevice = !playerTelevision && playerConfiguration.smallestScreenWidthDp < 600
     val livePlaybackClock = remember(media.progressKey) { LivePlaybackClock() }
     var livePlaybackElapsedMillis by remember(media.progressKey) { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
@@ -1285,7 +1289,7 @@ internal fun VlcPlayerScreen(
                                         currentHasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         !playerOptionsOpen &&
-                                        if (compactMobileControls) {
+                                        if (smallTouchDevice) {
                                             event.x >= layout.width * 0.25f &&
                                                 event.x <= layout.width * 0.75f
                                         } else {
@@ -1504,8 +1508,8 @@ internal fun VlcPlayerScreen(
                 },
                 modifier = Modifier.fillMaxSize().then(
                     if (!focusMode && !embeddedMode) Modifier.padding(
-                        top = if (compactMobileControls) 58.dp else 76.dp,
-                        bottom = if (compactMobileControls) 112.dp else 148.dp
+                        top = if (compactPlayerSpacing) 58.dp else 76.dp,
+                        bottom = if (compactPlayerSpacing) 112.dp else 148.dp
                     ) else Modifier
                 )
             )
@@ -1644,8 +1648,8 @@ internal fun VlcPlayerScreen(
                         .zIndex(2f)
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
-                            horizontal = if (compactMobileControls) 10.dp else 20.dp,
-                            vertical = if (compactMobileControls) 4.dp else 14.dp
+                            horizontal = if (compactPlayerSpacing) 10.dp else 20.dp,
+                            vertical = if (compactPlayerSpacing) 4.dp else 14.dp
                         ),
                     verticalAlignment = Alignment.Top
                 ) {
@@ -1677,7 +1681,7 @@ internal fun VlcPlayerScreen(
                         Text(
                             media.media.title,
                             color = Color.White,
-                            style = if (compactMobileControls) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                            style = if (compactPlayerSpacing) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                             maxLines = 1,
                             textAlign = androidx.compose.ui.text.style.TextAlign.End
@@ -1692,7 +1696,7 @@ internal fun VlcPlayerScreen(
                             )
                         }
                         PlayerDateTime(
-                            compact = compactMobileControls,
+                            compact = compactPlayerSpacing,
                             modifier = Modifier.align(Alignment.End)
                         )
                         PlayerDownloadStatusPill(
@@ -1912,20 +1916,20 @@ PlayerChromeIconButton(
                         .fillMaxWidth()
                         .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
                         .padding(
-                            horizontal = if (compactMobileControls) 10.dp else 24.dp,
-                            vertical = if (compactMobileControls) 8.dp else 14.dp
+                            horizontal = if (compactPlayerSpacing) 10.dp else 24.dp,
+                            vertical = if (compactPlayerSpacing) 8.dp else 14.dp
                         ),
-                    shape = RoundedCornerShape(if (compactMobileControls) 18.dp else 22.dp),
+                    shape = RoundedCornerShape(if (compactPlayerSpacing) 18.dp else 22.dp),
                     color = Color.Black.copy(alpha = 0.58f),
                     contentColor = Color.White,
                     shadowElevation = if (focusMode) 8.dp else 2.dp
                 ) {
                     Column(
                         Modifier.padding(
-                            horizontal = if (compactMobileControls) 10.dp else 16.dp,
-                            vertical = if (compactMobileControls) 4.dp else 11.dp
+                            horizontal = if (compactPlayerSpacing) 10.dp else 16.dp,
+                            vertical = if (compactPlayerSpacing) 4.dp else 11.dp
                         ),
-                        verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
+                        verticalArrangement = Arrangement.spacedBy(if (compactPlayerSpacing) 3.dp else 8.dp)
                     ) {
                         if (seekable) {
                             PlaybackProgressBar(
@@ -1936,7 +1940,7 @@ PlayerChromeIconButton(
                                 onSeek = {
                                     seekMovieTo(it)
                                 },
-                                compact = compactMobileControls,
+                                compact = compactPlayerSpacing,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .focusRequester(progressRequester)
@@ -2076,8 +2080,8 @@ PlayerChromeIconButton(
                                             up = if (seekable) progressRequester else backRequester
                                         ),
                                     primaryAction = true,
-                                    size = if (compactMobileControls) 50.dp else 58.dp,
-                                    iconSize = if (compactMobileControls) 27.dp else 30.dp,
+                                    size = if (compactMobileControls) 50.dp else if (shortWideControls) 56.dp else 58.dp,
+                                    iconSize = if (compactMobileControls || shortWideControls) 27.dp else 30.dp,
                                     onFocused = { controlsFocused = it }
                                 )
                                 if (seekable) {
@@ -2364,7 +2368,7 @@ PlayerChromeIconButton(
                     Text(it, color = Color.LightGray)
                     Spacer(Modifier.height(12.dp))
                     PlayerErrorActions(
-                        compact = compactMobileControls,
+                        compact = compactPlayerSpacing,
                         canNavigate = hasPlaybackQueue,
                         onPrevious = onPlayPrevious,
                         onBack = onBack,
@@ -2390,9 +2394,9 @@ PlayerChromeIconButton(
             }
         }
         gestureFeedback?.let { (isBrightness, level) ->
-            PlayerLevelFeedback(isBrightness, level, compactMobileControls,
+            PlayerLevelFeedback(isBrightness, level, compactPlayerSpacing,
                 Modifier.align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
-                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp))
+                    .padding(horizontal = if (compactPlayerSpacing) 12.dp else 20.dp))
         }
         modeFeedback?.let { PlayerModeFeedback(it) }
         val countdown = remainingSeconds

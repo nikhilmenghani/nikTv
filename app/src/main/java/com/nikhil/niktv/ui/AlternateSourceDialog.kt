@@ -129,8 +129,8 @@ internal fun alternateRetryStream(source: com.nikhil.niktv.model.AlternatePlayba
 internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () -> Unit,
     search: (AlternateSourceTarget) -> Unit, play: (String) -> Unit) {
     val configuration = LocalConfiguration.current
-    val phone = configuration.smallestScreenWidthDp < 600 &&
-        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK != Configuration.UI_MODE_TYPE_TELEVISION
+    val television = configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val phone = configuration.usesPhoneLayout(television)
     var title by remember(state.request) { mutableStateOf(state.target.title) }
     var season by remember(state.request) { mutableStateOf((state.target.season ?: 1).toString()) }
     var episode by remember(state.request) { mutableStateOf((state.target.episode ?: 1).toString()) }

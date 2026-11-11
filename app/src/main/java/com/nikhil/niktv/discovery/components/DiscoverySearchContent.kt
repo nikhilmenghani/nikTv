@@ -158,7 +158,8 @@ internal fun DiscoverySearchContent(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isSearchTvLikeDevice(configuration)
-    val wideControls = configuration.screenWidthDp >= 600 * configuration.fontScale.coerceAtLeast(1f)
+    val wideControls = !configuration.usesPhoneLayout(isTv) && configuration.screenWidthDp >=
+        (if (configuration.usesShortWideLayout(isTv)) 480 else 600) * configuration.fontScale.coerceAtLeast(1f)
     val inlineFilters = configuration.screenWidthDp >= 900 * configuration.fontScale.coerceAtLeast(1f)
     val controlHeight = if (isTv) 36.dp else 48.dp
     val queryActionSize = if (isTv) 36.dp else 44.dp
@@ -1358,7 +1359,7 @@ private fun SearchResultsContent(
 ) {
     val all = state.searchType == SearchContentType.ALL
     val configuration = LocalConfiguration.current
-    val phoneLayout = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
+    val phoneLayout = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration,
         LocalContext.current.isTvLikeDevice(configuration))
     var resultTab by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(SearchContentType.SERIES) }
     var resultTabChosen by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(false) }
@@ -1370,7 +1371,7 @@ private fun SearchResultsContent(
     }
     val tabRequesters = remember { globalSearchTypes.associateWith { FocusRequester() } }
     val resultRequester = if (all) remember { FocusRequester() } else firstItemRequester
-    val denseResults = isTv || screenWidthDp >= 600
+    val denseResults = !phoneLayout
     val posterGrid = !denseResults &&
         (if (all) resultTab else state.searchType) in setOf(SearchContentType.MOVIES, SearchContentType.SERIES)
     val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
@@ -1652,8 +1653,8 @@ private fun ModernSearchLiveResultRow(
     val artworkModel = remember(item.id, item.title, item.logo) {
         artworkRequest(context, item)
     }
-    val dense = isTv || LocalConfiguration.current.screenWidthDp >= 600
-    val compact = LocalConfiguration.current.screenWidthDp < 600
+    val dense = !LocalConfiguration.current.usesPhoneLayout(isTv)
+    val compact = LocalConfiguration.current.usesPhoneLayout(isTv)
     val shape = RoundedCornerShape(14.dp)
     val programme = rememberCurrentLiveProgramme(item).value?.title
 
@@ -1732,8 +1733,8 @@ private fun ModernSearchLiveResultRow(
                         item.title,
                         color = Color.White,
                         style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 12.sp else 11.sp,
-                            lineHeight = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 14.sp else 13.sp
+                            fontSize = if (!LocalConfiguration.current.usesPhoneLayout(isTv)) 12.sp else 11.sp,
+                            lineHeight = if (!LocalConfiguration.current.usesPhoneLayout(isTv)) 14.sp else 13.sp
                         ),
                         fontWeight = FontWeight.SemiBold,
                         maxLines = if (dense) 2 else 3,
@@ -1809,7 +1810,7 @@ private fun ModernSearchMediaResultRow(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val dense = isTv || LocalConfiguration.current.screenWidthDp >= 600
+    val dense = !LocalConfiguration.current.usesPhoneLayout(isTv)
     val artworkModel = remember(item.id, item.title, item.logo) {
         artworkRequest(context, item)
     }
@@ -1887,8 +1888,8 @@ private fun ModernSearchMediaResultRow(
                         item.title,
                         color = Color.White,
                         style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 12.sp else 11.sp,
-                            lineHeight = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 14.sp else 13.sp
+                            fontSize = if (!LocalConfiguration.current.usesPhoneLayout(isTv)) 12.sp else 11.sp,
+                            lineHeight = if (!LocalConfiguration.current.usesPhoneLayout(isTv)) 14.sp else 13.sp
                         ),
                         fontWeight = FontWeight.SemiBold,
                         maxLines = if (dense) 2 else 3,

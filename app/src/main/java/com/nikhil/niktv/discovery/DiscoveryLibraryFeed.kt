@@ -68,7 +68,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val tv = context.isTvLikeDevice(configuration)
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, tv)
+    val phone = usesDiscoveryPhoneLayout(configuration, tv)
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val live = destination == DiscoveryLibraryDestination.LIVE_TV
     val favoritesHero = !live && libraryFavoriteHeroes(state.favorites, profile).isNotEmpty()
@@ -344,7 +344,7 @@ internal fun LibrarySavedPoster(entry: LibraryEntry, state: NikTvState, width: D
     var menu by remember { mutableStateOf(false) }
     val reduceMotion = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val configuration = LocalConfiguration.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
     if (phone && !entry.live) DiscoveryHomeStyleMediaCard(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type),
         if (sensitive) null else entry.media.logo, entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
         progress = progress, open = open, hold = { menu = true }, focus = focus,

@@ -70,7 +70,7 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
     load: (Boolean) -> Unit, close: () -> Unit, favorite: (FavoriteItem) -> Unit,
     title: String = "Your IPTV ${type.title}", focusObserved: ((String) -> Unit)? = null) {
     val configuration = LocalConfiguration.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
     val remote = LocalContext.current.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val open = LocalOpenProviderDiscovery.current
     val play = LocalPlayProviderDiscovery.current

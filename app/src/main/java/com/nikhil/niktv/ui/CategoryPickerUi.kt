@@ -56,7 +56,7 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val television = LocalContext.current.isTvLikeDevice(configuration)
-    val compact = !television && configuration.screenWidthDp < 600
+    val compact = configuration.usesPhoneLayout(television)
     val panelWidth = if (compact) configuration.screenWidthDp else minOf((configuration.screenWidthDp * .97f).toInt(), 1280)
     val columns = categoryPickerColumns(panelWidth - 24, density.fontScale)
     val inlineTools = (panelWidth - 24) / density.fontScale.coerceAtLeast(1f) >= 720

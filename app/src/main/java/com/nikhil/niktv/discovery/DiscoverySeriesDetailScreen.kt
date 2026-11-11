@@ -41,7 +41,7 @@ internal fun DiscoverySeriesDetailScreen(
     val card = state.detail ?: return
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
     val reduceMotion = android.provider.Settings.Global.getFloat(context.contentResolver,
         android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val playFocus = remember(card.key) { FocusRequester() }

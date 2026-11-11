@@ -45,6 +45,7 @@ import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.ui.tileFocusOutline
+import com.nikhil.niktv.ui.usesShortWideLayout
 
 internal enum class DiscoveryPhoneDestination(val title: String) {
     HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), PROVIDERS("Providers"), LIBRARY("My List")
@@ -63,10 +64,12 @@ internal fun phoneDiscoveryHeroHeight(): Dp {
 @Composable
 internal fun detailDiscoveryHeroHeight(portraitPhone: Boolean, television: Boolean = false): Dp {
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
     val safeHeight = LocalWindowInfo.current.containerSize.height -
         WindowInsets.safeDrawing.getTop(density) - WindowInsets.safeDrawing.getBottom(density)
-    val screenHeight = minOf(LocalConfiguration.current.screenHeightDp.toFloat(), with(density) { safeHeight.toDp().value })
+    val screenHeight = minOf(configuration.screenHeightDp.toFloat(), with(density) { safeHeight.toDp().value })
     return if (portraitPhone) (screenHeight * .55f).coerceIn(360f, 500f).dp
+    else if (configuration.usesShortWideLayout(television)) (screenHeight * .55f).coerceIn(160f, 230f).dp
     else trialHeroFrameHeight(trialHeroBaseHeight(screenHeight, true, television) + 48f, density.fontScale).dp
 }
 

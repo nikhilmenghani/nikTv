@@ -129,8 +129,7 @@ internal fun CategoryBrowseControls(
 @Composable
 private fun BrowseModeDialog(mode: CategoryBrowseMode, dismiss: () -> Unit, select: (CategoryBrowseMode) -> Unit) {
     val configuration = LocalConfiguration.current
-    val largeDevice = LocalContext.current.isModernTileTv(configuration) ||
-        configuration.smallestScreenWidthDp >= 600
+    val largeDevice = !configuration.usesPhoneLayout(LocalContext.current.isModernTileTv(configuration))
     val dialogWidth = minOf(680, configuration.screenWidthDp - if (largeDevice) 48 else 32)
     // Phones need a full row for readable, single-line option labels.
     val columns = if (largeDevice) 2 else 1

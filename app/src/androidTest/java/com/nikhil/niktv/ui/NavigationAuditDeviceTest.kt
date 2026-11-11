@@ -162,7 +162,7 @@ class NavigationAuditDeviceTest {
         lateinit var state: MutableStateFlow<NikTvState>
         val landingReady = java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE)
         fun landingIsReady() = landingReady.get() == app.state.value.discoveryNavigationId
-        val phone = usesDiscoveryPhoneLayout(context.resources.configuration.smallestScreenWidthDp,
+        val phone = usesDiscoveryPhoneLayout(context.resources.configuration,
             context.isTvLikeDevice(context.resources.configuration))
         try {
             main {
@@ -178,7 +178,7 @@ class NavigationAuditDeviceTest {
                     val surface = current.discoverySurface ?: DashboardSurface.HOME
                     val details by discovery.state.collectAsState()
                     val configuration = LocalConfiguration.current
-                    val phoneLayout = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+                    val phoneLayout = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
                     val navigate: (String) -> Unit = { label -> when (label) {
                         "Home" -> app.openHome()
                         "Movies" -> app.openDiscovery(DashboardSurface.MOVIES)

@@ -138,7 +138,7 @@ internal fun DiscoveryFavoritesContent(
     val entryFocusRequester = remember(profileKey) { FocusRequester() }
     val heroFocusRequester = remember(profileKey) { FocusRequester() }
     val gridState = rememberLazyGridState()
-    val phoneLibrary = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    val phoneLibrary = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration, isTv)
     val groups = FavoriteKind.entries.mapNotNull { kind ->
         state.favorites.filter { it.kind == kind && (kind != FavoriteKind.CHANNEL ||
             availability.filter.includes(availability.flags[it.media.id])) }.takeIf { it.isNotEmpty() }?.let { kind to it }
@@ -238,7 +238,7 @@ internal fun ModernFavoriteCard(
     }
     val cancelRemovalRequester = remember(favorite.key) { FocusRequester() }
     val configuration = LocalConfiguration.current
-    val phone = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
+    val phone = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration,
         LocalContext.current.isModernTileTv(configuration))
 
     LaunchedEffect(removalConfirmationOpen) {

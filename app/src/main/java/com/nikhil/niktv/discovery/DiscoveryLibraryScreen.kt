@@ -30,7 +30,7 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
     presentation: DiscoveryCard? = null, content: @Composable () -> Unit) {
     val configuration = LocalConfiguration.current
     val tv = LocalContext.current.isTvLikeDevice(configuration)
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, tv)
+    val phone = usesDiscoveryPhoneLayout(configuration, tv)
     val trialCollection = state.discoveryExperiment && state.discoverySurface != null && state.modernTmdbSection != null
     val navigationSurface = if (trialCollection) requireNotNull(state.discoverySurface) else DashboardSurface.HOME
     val navigationLibrary = destination.takeUnless { trialCollection }

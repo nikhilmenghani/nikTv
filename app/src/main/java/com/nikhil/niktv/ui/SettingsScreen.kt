@@ -504,11 +504,11 @@ internal fun ModernSettingsScreen(
     } ?: state.savedProfile ?: state.profiles.firstOrNull()
     val settingsConfiguration = LocalConfiguration.current
     val settingsIsTv = context.isTvLikeDevice(settingsConfiguration)
-    val compactSettingsHeader = !settingsIsTv && (settingsConfiguration.screenWidthDp < 600 || settingsConfiguration.smallestScreenWidthDp < 600)
+    val compactSettingsHeader = settingsConfiguration.usesPhoneLayout(settingsIsTv)
+    val shortWideSettings = settingsConfiguration.usesShortWideLayout(settingsIsTv)
     // One category rail on wide screens, with larger rows and text for TV.
     val tabletSettingsLayout =
-        !settingsIsTv &&
-            settingsConfiguration.smallestScreenWidthDp >= 600
+        !settingsIsTv && !compactSettingsHeader
     var selectedSettingsPage by rememberSaveable {
         mutableStateOf(if (PairingInvites.pending != null) SettingsPage.PAIRING else SettingsPage.PLAYBACK)
     }
@@ -626,12 +626,14 @@ internal fun ModernSettingsScreen(
             .padding(
                 horizontal =
                     when {
+                        shortWideSettings -> 14.dp
                         compactSettingsHeader -> 16.dp
                         tabletSettingsLayout -> 24.dp
                         else -> 18.dp
                     },
                 vertical =
                     when {
+                        shortWideSettings -> 10.dp
                         compactSettingsHeader -> 20.dp
                         tabletSettingsLayout -> 20.dp
                         else -> 18.dp
@@ -639,6 +641,7 @@ internal fun ModernSettingsScreen(
             ),
         verticalArrangement = Arrangement.spacedBy(
             when {
+                shortWideSettings -> 12.dp
                 compactSettingsHeader -> 20.dp
                 tabletSettingsLayout -> 18.dp
                 else -> 20.dp
@@ -653,7 +656,8 @@ internal fun ModernSettingsScreen(
                 Text(parentPage.title)
             }
         }
-        Text(activePage.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text(activePage.title, style = if (shortWideSettings) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold)
 
         if (activePage == SettingsPage.PROFILES) {
             DeviceProfileSettings()
@@ -1728,6 +1732,7 @@ internal fun ModernSettingsScreen(
                         .width(
                             when {
                                 settingsIsTv -> 164.dp
+                                shortWideSettings -> 148.dp
                                 tabletSettingsLayout -> 176.dp
                                 else -> 176.dp
                             }

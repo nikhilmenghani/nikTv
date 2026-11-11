@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.ui.remoteCombinedClickable
+import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.discovery.components.EpisodeMetadataBadge
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
@@ -33,7 +34,8 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
     resume: Boolean = false, listView: Boolean = false, overview: String? = null,
     onFocus: () -> Unit = {}, onClick: () -> Unit, onLongClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val compact = LocalConfiguration.current.screenWidthDp < 600
+    val configuration = LocalConfiguration.current
+    val compact = usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
     val shape = RoundedCornerShape(10.dp)
     Surface(modifier.onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
         .remoteCombinedClickable(onClick = onClick, onLongClick = onLongClick,

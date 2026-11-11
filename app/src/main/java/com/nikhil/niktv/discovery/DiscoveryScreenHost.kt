@@ -225,7 +225,7 @@ internal fun DiscoveryScreenHost(
     val context = LocalContext.current
     val activity = context.findHostActivity()
     val isTv = context.isTvLikeDevice(configuration)
-    val phoneExperience = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    val phoneExperience = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration, isTv)
     var phoneDetailOpen by remember(state.savedProfile?.cacheKey()) { mutableStateOf(false) }
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
     var libraryPane by rememberSaveable { mutableStateOf(LibraryPane.MY_LIST) }

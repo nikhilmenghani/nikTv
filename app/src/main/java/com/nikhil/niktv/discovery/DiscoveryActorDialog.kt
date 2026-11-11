@@ -73,7 +73,7 @@ internal fun DiscoveryActorDialog(person: DiscoveryPerson,
     val grid = rememberLazyGridState()
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
     val posterWidth = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else 132.dp
     LaunchedEffect(person.id, retry) {
         loading = true; failed = false

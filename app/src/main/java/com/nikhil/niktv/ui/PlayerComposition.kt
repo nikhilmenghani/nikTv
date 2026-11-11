@@ -110,7 +110,7 @@ internal fun BoxScope.PlayerControlsLayer(
     }
 }
 
-internal class PlayerOverflowNavigation(val columns: Int, val close: FocusRequester, val buttonWidth: Dp) {
+internal class PlayerOverflowNavigation(val columns: Int, val close: FocusRequester, val buttonWidth: Dp, val compact: Boolean = false) {
     private var destination: FocusRequester? = null
     private var correction: Job? = null
     private var retainUntil = 0L
@@ -141,8 +141,9 @@ internal val LocalPlayerOverflowNavigation = staticCompositionLocalOf<PlayerOver
 internal fun PlayerExtraControls(visible: Boolean, entry: FocusRequester, onDismiss: () -> Unit, content: @Composable () -> Unit) {
     if (!visible) return
     val configuration = LocalConfiguration.current
-    val panelWidth = (configuration.screenWidthDp - 24).coerceAtMost(if (configuration.screenWidthDp >= 720) 552 else 360).coerceAtLeast(240).dp
-    val columns = if (panelWidth >= 480.dp) 4 else 3
+    val shortWide = configuration.usesShortWideLayout(rememberPlayerTvDevice())
+    val panelWidth = (configuration.screenWidthDp - 24).coerceAtMost(if (shortWide) 640 else if (configuration.screenWidthDp >= 720) 552 else 360).coerceAtLeast(240).dp
+    val columns = when { shortWide && panelWidth >= 540.dp -> 5; panelWidth >= 480.dp -> 4; else -> 3 }
     val close = remember { FocusRequester() }
     Popup(alignment = Alignment.BottomEnd, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
         Surface(Modifier.padding(12.dp).width(panelWidth).heightIn(max = (configuration.screenHeightDp - 24).coerceAtLeast(180).dp),
@@ -154,7 +155,7 @@ internal fun PlayerExtraControls(visible: Boolean, entry: FocusRequester, onDism
                 // Floor each cell in pixels so rounding cannot wrap a four-column
                 // grid into three columns while D-pad routes still assume four.
                 val cellWidth = with(density) { ((constraints.maxWidth - spacing * (columns - 1)) / columns).toDp() }
-                val navigation = remember(columns, close, cellWidth) { PlayerOverflowNavigation(columns, close, cellWidth) }
+                val navigation = remember(columns, close, cellWidth, shortWide) { PlayerOverflowNavigation(columns, close, cellWidth, shortWide) }
                 DisposableEffect(navigation) { onDispose { navigation.clear() } }
                 Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).playerChoiceFocusEntry(entry)
                     .onPreviewKeyEvent { event ->
@@ -198,13 +199,13 @@ internal fun PlayerOverflowAction(icon: ImageVector, label: String, onClick: () 
     val navigation = LocalPlayerOverflowNavigation.current ?: return
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
-    Surface(onClick = { navigation.clear(); onClick() }, modifier = modifier.width(navigation.buttonWidth).height(76.dp)
+    Surface(onClick = { navigation.clear(); onClick() }, modifier = modifier.width(navigation.buttonWidth).height(if (navigation.compact) 64.dp else 76.dp)
         .playerControlFocus(shape, scaleOnFocus = false) { focused = it; onFocused(it) }, shape = shape,
         color = if (focused) Color(0xFF3B4D68) else if (selected) Color(0xFF303A49) else Color(0xFF242831),
         contentColor = Color.White) {
-        Column(Modifier.padding(horizontal = 5.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically)) {
-            Box(Modifier.height(27.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Column(Modifier.padding(horizontal = 5.dp, vertical = if (navigation.compact) 4.dp else 7.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(if (navigation.compact) 3.dp else 5.dp, Alignment.CenterVertically)) {
+            Box(Modifier.height(if (navigation.compact) 24.dp else 27.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 if (indeterminate) CircularProgressIndicator(Modifier.size(27.dp), strokeWidth = 2.dp)
                 else if (progress != null) CircularProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.size(27.dp), strokeWidth = 2.dp)
                 Icon(icon, label, Modifier.size(21.dp))
@@ -218,7 +219,7 @@ internal fun PlayerOverflowAction(icon: ImageVector, label: String, onClick: () 
                 label.contains("offline download") -> "Download"
                 label == "Live cricket scores" -> "Cricket scores"
                 else -> label
-            }, style = MaterialTheme.typography.labelSmall, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            }, style = MaterialTheme.typography.labelSmall, fontSize = 11.sp, lineHeight = if (navigation.compact) 12.sp else 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }

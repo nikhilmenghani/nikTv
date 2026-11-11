@@ -117,7 +117,7 @@ internal fun SubtitleSelectionDialog(
         (configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
         !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
-    val compact = !isTv && (configuration.smallestScreenWidthDp < 600 || configuration.screenHeightDp < 600)
+    val compact = configuration.usesPhoneLayout(isTv) || configuration.usesShortWideLayout(isTv)
     val landscape = configuration.screenWidthDp > configuration.screenHeightDp
     val panelWidthFraction = when {
         isTv -> .36f

@@ -139,7 +139,10 @@ class ProviderSeriesPhoneViewportDeviceTest {
             focus("Season 1")
             await("Season toolbar accepts focus while preserving the nested cursor") { focused("Season 1") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Toolbar Up restores Play in the artwork") { focused("Play latest") && find("Back")?.isVisibleToUser == true }
+            await("Toolbar Up restores Play in the artwork") {
+                focused("Play latest") && find("Back")?.isVisibleToUser == true &&
+                    owner("Play latest")?.let { frame.get().contains(bounds(it)) } == true
+            }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Header re-enters the toolbar") { focused("Season 1") && alignedToolbar() }
             key(KeyEvent.KEYCODE_DPAD_DOWN)

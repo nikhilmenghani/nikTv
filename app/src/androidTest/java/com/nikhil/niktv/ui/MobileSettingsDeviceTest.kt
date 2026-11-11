@@ -63,27 +63,24 @@ class MobileSettingsDeviceTest {
         return instrumentation.uiAutomation.rootInActiveWindow
     }
 
-    private fun find(text: String): AccessibilityNodeInfo? {
+    private fun button(text: String): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (node == null) return null
-            if (node.text?.toString()?.lineSequence()?.any { it == text } == true || node.contentDescription?.toString() == text) return node
+            if (node.text?.toString()?.lineSequence()?.any { it == text } == true || node.contentDescription?.toString() == text) {
+                var owner: AccessibilityNodeInfo? = node
+                repeat(8) {
+                    if (owner?.isClickable == true || owner?.isFocusable == true) return owner
+                    owner = owner?.parent
+                }
+            }
             for (index in 0 until node.childCount) walk(node.getChild(index))?.let { return it }
             return null
         }
         return walk(activeRoot())
     }
 
-    private fun button(text: String): AccessibilityNodeInfo? {
-        var node = find(text)
-        repeat(8) {
-            if (node?.isClickable == true) return node
-            node = node?.parent
-        }
-        return null
-    }
-
     private fun focused(text: String): Boolean {
-        var node = find(text)
+        var node = button(text)
         repeat(8) {
             if (node?.isFocused == true) return true
             node = node?.parent
@@ -201,10 +198,14 @@ class MobileSettingsDeviceTest {
                     }
                 }
             } }
-            await("Mobile category index is rendered") { paneBounds.get() != null && button("Playback") != null && button("Playback engine") == null }
+            await("Settings entry matches the current window") {
+                paneBounds.get() != null && button("Playback") != null &&
+                    (if (widthDp > heightDp) button("Playback engine") != null else button("Playback engine") == null)
+            }
             await("Mobile fixture owns window focus") { host.hasWindowFocus() }
             verify(closed, mutations)
         } catch (error: Throwable) {
+            NavigationAuditEvidence.capture("settings-$widthDp-failure")
             screenshot("settings-mobile-$widthDp-failure.png", cropToPhone = false)
             throw error
         } finally {
@@ -231,6 +232,32 @@ class MobileSettingsDeviceTest {
         key(KeyEvent.KEYCODE_BACK)
         await("Back from the menu closes Settings") { closed.get() }
         assertEquals(0, mutations.get())
+    }
+
+    @Test fun phoneLandscapeUsesTabletRailAndKeepsContentReachable() = fixture(800, heightDp = 360) { closed, mutations ->
+        assertFitsPane("Playback")
+        assertFitsPane("Display & controls")
+        assertFitsPane("Playback engine")
+        val rail = Rect().also { requireNotNull(button("Playback")).getBoundsInScreen(it) }
+        val content = Rect().also { requireNotNull(button("Playback engine")).getBoundsInScreen(it) }
+        assertTrue("Landscape keeps the tablet category rail beside its content", rail.right <= content.left)
+        instrumentation.setInTouchMode(false)
+        assertTrue(requireNotNull(button("Playback")).performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+        key(KeyEvent.KEYCODE_DPAD_RIGHT)
+        await("Right enters the selected settings content") { focused("Playback engine") }
+        key(KeyEvent.KEYCODE_DPAD_LEFT)
+        await("Left returns to the selected category rail") { focused("Playback") }
+        tap("Display & controls")
+        val displayControl = if (instrumentation.targetContext.resources.configuration.smallestScreenWidthDp < 600)
+            "On-screen D-pad" else "Brightness"
+        await("Landscape category switch keeps the rail and exposes display controls") {
+            button("Playback") != null && button(displayControl) != null
+        }
+        assertFitsPane(displayControl)
+        screenshot("settings-phone-landscape-tablet-rail.png")
+        key(KeyEvent.KEYCODE_BACK)
+        await("Back from a landscape root category closes settings") { closed.get() }
+        assertEquals("Navigating landscape settings changes no preferences", 0, mutations.get())
     }
 
     @Test fun phone360BackupNavigationAndExplicitEditingPreserveSetup() = fixture(360) { closed, mutations ->
@@ -288,8 +315,8 @@ class MobileSettingsDeviceTest {
         assertEquals(0, mutations.get())
     }
 
-    @Test fun phoneLandscapeKeepsCategoryMenuAndPickerWithinShortViewport() = fixture(640, heightDp = 360) { closed, mutations ->
-        assertNull("Landscape phone starts at the category menu instead of a rail/detail split", button("Playback engine"))
+    @Test fun phoneLandscapeKeepsTabletRailAndPickerWithinShortViewport() = fixture(640, heightDp = 360) { closed, mutations ->
+        assertNotNull("Landscape phone opens the tablet rail and content together", button("Playback engine"))
         assertFitsPane("Playback")
         tap("Playback")
         await("Landscape phone Playback opens") { button("Playback engine") != null }
@@ -301,8 +328,7 @@ class MobileSettingsDeviceTest {
         tap("Cancel")
         await("Landscape picker closes") { button("Playback engine") != null && button("Cancel") == null }
         key(KeyEvent.KEYCODE_BACK)
-        await("Landscape Back returns to category menu") { button("Playback") != null && button("Playback engine") == null }
-        assertFalse(closed.get())
+        await("Landscape Back closes the root settings page") { closed.get() }
         assertEquals(0, mutations.get())
     }
 }

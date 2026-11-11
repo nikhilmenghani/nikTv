@@ -52,7 +52,7 @@ internal fun VideoResizeQuickOverlay(
     onSkip: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
-    val compactPhone = !LocalContext.current.isTvLikeDevice(configuration) && configuration.smallestScreenWidthDp < 600
+    val compactPhone = configuration.usesPhoneLayout(LocalContext.current.isTvLikeDevice(configuration))
     val columns = if (compactPhone) 2 else 4
     val requesters = remember { VideoResizeMode.entries.map { FocusRequester() } }
     val skipRequester = remember { FocusRequester() }

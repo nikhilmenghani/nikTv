@@ -89,7 +89,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
 @Composable
 internal fun sportsPhoneLayout(): Boolean {
     val configuration = LocalConfiguration.current
-    return usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
+    return usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
 }
 
 /** Matches the IPTV phone dock; tablets and televisions keep navigation in the header. */

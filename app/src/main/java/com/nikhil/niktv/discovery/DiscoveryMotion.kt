@@ -131,7 +131,23 @@ internal class DiscoveryScrollCoordinator(private val scope: CoroutineScope) {
     }
 
     fun move(state: LazyListState, index: Int, reduceMotion: Boolean, revealOnly: Boolean = false,
+        focusAfterScroll: Boolean = false,
         focus: suspend () -> Boolean): Job = start(index) {
+        if (focusAfterScroll) {
+            // A sticky control can still own focus while its offscreen artwork
+            // remounts. Finish that explicit reveal before transferring focus;
+            // an early request can otherwise target a partially composed hero.
+            withAutomaticRevealSuppressed {
+                scroll(state, index, reduceMotion, revealOnly)
+                withTimeoutOrNull(2_000L) {
+                    while (isActive) {
+                        withFrameNanos { }
+                        if (focus()) break
+                    }
+                }
+            }
+            return@start
+        }
         val layout = state.layoutInfo
         val item = layout.visibleItemsInfo.firstOrNull { it.index == index }
         // The vertical viewport suppresses implicit relocation while we own the move.

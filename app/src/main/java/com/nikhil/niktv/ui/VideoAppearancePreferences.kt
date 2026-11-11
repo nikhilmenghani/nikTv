@@ -701,20 +701,21 @@ internal fun PlayerQueueOverlay(
             )
     val queueLayout = rememberPlayerQueueLayout()
     val listQueue = queueLayout == PlayerQueueLayout.LIST
-    val phoneQueue = !tvQueueGrid && configuration.smallestScreenWidthDp < 600
+    val phoneQueue = configuration.usesPhoneLayout(tvQueueGrid)
+    val shortWideQueue = configuration.usesShortWideLayout(tvQueueGrid)
     val listPanelWidth = if (phoneQueue) {
         configuration.screenWidthDp.dp * if (configuration.screenWidthDp < 600) .86f else .38f
     } else {
         (configuration.screenWidthDp.dp * .30f).coerceIn(260.dp, 330.dp)
     }
-    val touchQueueRail = !tvQueueGrid && !listQueue
+    val touchQueueRail = phoneQueue && !listQueue
     val liveChannelQueue = catalogType?.let { it == com.nikhil.niktv.model.CatalogType.LIVE_TV } ?: (onTogglePin != null)
-    val compactQueueGrid =
-        touchQueueRail && configuration.smallestScreenWidthDp < 600
+    val compactQueueGrid = touchQueueRail
     val queueColumnCount = when {
         listQueue -> 1
         tvQueueGrid -> 3
         compactQueueGrid -> 3
+        shortWideQueue -> 3
         configuration.screenWidthDp < 900 -> 4
         else -> 5
     }
@@ -734,6 +735,7 @@ internal fun PlayerQueueOverlay(
         listQueue -> 200.dp
         tvQueueGrid -> 200.dp
         touchQueueRail -> touchQueueSheetHeight
+        shortWideQueue -> 160.dp
         else -> 260.dp
     }
     val desiredQueueSheetMaxHeight =
@@ -751,6 +753,7 @@ internal fun PlayerQueueOverlay(
         listQueue -> (configuration.screenHeightDp.dp - 32.dp).coerceAtLeast(200.dp)
         tvQueueGrid -> 232.dp
         touchQueueRail -> touchQueueSheetHeight
+        shortWideQueue -> (configuration.screenHeightDp * .62f).dp.coerceIn(160.dp, 260.dp)
         desiredQueueSheetMaxHeight > queueSheetMinHeight ->
             desiredQueueSheetMaxHeight
         else -> queueSheetMinHeight
@@ -759,12 +762,14 @@ internal fun PlayerQueueOverlay(
         listQueue -> 10.dp
         tvQueueGrid -> 18.dp
         touchQueueRail -> 8.dp
+        shortWideQueue -> 12.dp
         else -> 28.dp
     }
     val queueOuterVerticalPadding = when {
         listQueue -> 8.dp
         tvQueueGrid -> 8.dp
         touchQueueRail -> 6.dp
+        shortWideQueue -> 8.dp
         else -> 22.dp
     }
     val queueDismissBoundary =
@@ -774,6 +779,7 @@ internal fun PlayerQueueOverlay(
         tvQueueGrid -> 10.dp
         compactQueueGrid -> 10.dp
         touchQueueRail -> 10.dp
+        shortWideQueue -> 10.dp
         else -> 20.dp
     }
     val queueSheetCornerRadius =
@@ -782,22 +788,26 @@ internal fun PlayerQueueOverlay(
         listQueue -> 6.dp
         tvQueueGrid -> 4.dp
         touchQueueRail -> 3.dp
+        shortWideQueue -> 4.dp
         else -> 14.dp
     }
     val queueGridHorizontalSpacing = when {
         tvQueueGrid -> 8.dp
         touchQueueRail -> 10.dp
+        shortWideQueue -> 8.dp
         else -> 12.dp
     }
     val queueGridVerticalSpacing = when {
         listQueue -> 6.dp
         tvQueueGrid -> 7.dp
         touchQueueRail -> 8.dp
+        shortWideQueue -> 7.dp
         else -> 12.dp
     }
     val queueCardHeight = when {
         listQueue -> 54.dp
         tvQueueGrid -> 72.dp
+        shortWideQueue -> 76.dp
         else -> (touchQueueSheetHeight - 72.dp).coerceAtLeast(96.dp)
     }
     // Touch queues are a single horizontal rail. Size cards from the usable
@@ -843,6 +853,8 @@ internal fun PlayerQueueOverlay(
     val layoutToggleRequester = remember { FocusRequester() }
     var layoutToggleFocused by remember { mutableStateOf(false) }
     var previousQueueLayout by remember { mutableStateOf(queueLayout) }
+    val queuePresentation = "$queueLayout:$phoneQueue:$queueColumnCount"
+    var previousQueuePresentation by remember { mutableStateOf(queuePresentation) }
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
     val initialVisibleItem =
@@ -997,7 +1009,7 @@ internal fun PlayerQueueOverlay(
         }
 
         focusMoveJob = scope.launch {
-            val scrollIndex = if (tvQueueGrid) (layoutIndex / queueColumnCount) * queueColumnCount else layoutIndex
+            val scrollIndex = if (!touchQueueRail && !listQueue) (layoutIndex / queueColumnCount) * queueColumnCount else layoutIndex
             if (tvQueueGrid) gridState.animateScrollToItem(scrollIndex)
             else gridState.scrollToItem(scrollIndex)
             repeat(4) {
@@ -1013,15 +1025,25 @@ internal fun PlayerQueueOverlay(
         }
     }
 
-    LaunchedEffect(queueLayout) {
-        if (queueLayout == previousQueueLayout) return@LaunchedEffect
+    LaunchedEffect(queuePresentation) {
+        if (queuePresentation == previousQueuePresentation) return@LaunchedEffect
+        val layoutChanged = queueLayout != previousQueueLayout
+        val restoreToggle = layoutChanged || layoutToggleFocused
         previousQueueLayout = queueLayout
+        previousQueuePresentation = queuePresentation
         focusMoveJob?.cancel()
         val target = focusedIndex.coerceIn(0, uniqueItems.lastIndex.coerceAtLeast(0))
-        if (uniqueItems.isNotEmpty()) gridState.scrollToItem(target + if (leadingLoadPrevious) 1 else 0)
-        repeat(4) {
-            withFrameNanos { }
-            if (runCatching { layoutToggleRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        focusMoveJob = scope.launch {
+            if (uniqueItems.isNotEmpty()) {
+                val index = target + if (leadingLoadPrevious) 1 else 0
+                gridState.scrollToItem(if (!touchQueueRail && !listQueue) index / queueColumnCount * queueColumnCount else index)
+            }
+            val requester = if (restoreToggle || uniqueItems.isEmpty()) layoutToggleRequester
+                else requesters.getOrPut(entryKey(target)) { FocusRequester() }
+            repeat(20) {
+                withFrameNanos { }
+                if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
+            }
         }
     }
 
@@ -1357,7 +1379,7 @@ internal fun PlayerQueueOverlay(
             }
             .focusRequester(queueFocusParking)
             .focusable()
-            .pointerInput(onDismiss, gridState) {
+            .pointerInput(onDismiss, gridState, queuePresentation, listPanelWidth, queueDismissBoundary, queueOuterHorizontalPadding) {
                 awaitPointerEventScope {
                     var start = Offset.Zero
                     var tracking = false
@@ -1368,6 +1390,7 @@ internal fun PlayerQueueOverlay(
                         val change =
                             event.changes.firstOrNull() ?: continue
                         if (change.pressed && !change.previousPressed) {
+                            focusMoveJob?.cancel()
                             start = change.position
                             tracking = true
                             startedAtGridTop =
@@ -1445,7 +1468,7 @@ internal fun PlayerQueueOverlay(
                 ) {
                     Text(
                         "Choose what to play",
-                        style = if (tvQueueGrid || listQueue) {
+                        style = if (tvQueueGrid || listQueue || shortWideQueue) {
                             MaterialTheme.typography.titleSmall
                         } else {
                             MaterialTheme.typography.titleMedium
@@ -1453,7 +1476,7 @@ internal fun PlayerQueueOverlay(
                         color = Color.White,
                         maxLines = 1
                     )
-                    if (listQueue || phoneQueue) Spacer(Modifier.weight(1f)) else Text(
+                    if (listQueue || phoneQueue || shortWideQueue) Spacer(Modifier.weight(1f)) else Text(
                         when {
                             listQueue -> if (tvQueueGrid) "↑↓ browse · ← closes" else "Tap to play · Hold for options"
                             tvQueueGrid -> "D-pad browse  •  → View at row end  •  Back closes"
@@ -1743,9 +1766,7 @@ internal fun PlayerPictureModeEditor(
             !context.packageManager.hasSystemFeature(
                 android.content.pm.PackageManager.FEATURE_TOUCHSCREEN
             )
-    val compactMobileEditor =
-        !pictureEditorIsTv &&
-            pictureEditorConfiguration.smallestScreenWidthDp < 600
+    val compactMobileEditor = pictureEditorConfiguration.usesPhoneLayout(pictureEditorIsTv)
 
     var selected by remember(selectedId) { mutableStateOf(profiles.firstOrNull { it.id == selectedId } ?: profiles.first()) }
     var brightness by remember(selected.id) { mutableFloatStateOf(selected.brightness) }

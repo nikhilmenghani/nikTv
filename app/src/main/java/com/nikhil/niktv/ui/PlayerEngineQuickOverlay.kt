@@ -43,7 +43,7 @@ internal fun PlayerEngineQuickOverlay(
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val compactPhone = !context.isTvLikeDevice(configuration) && configuration.smallestScreenWidthDp < 600
+    val compactPhone = configuration.usesPhoneLayout(context.isTvLikeDevice(configuration))
     val columns = if (compactPhone) 2 else 3
     val options = remember { playerPickerOptions(Build.VERSION.SDK_INT) }
     val selected = selectedEngine.pickerChoice()

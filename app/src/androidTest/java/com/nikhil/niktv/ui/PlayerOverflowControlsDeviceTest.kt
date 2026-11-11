@@ -59,7 +59,9 @@ class PlayerOverflowControlsDeviceTest {
         for (phone in listOf(false, true)) exercise(phone)
     }
 
-    private fun exercise(phone: Boolean) {
+    @Test fun shortLandscapePhoneOverflowKeepsLabeledSettingsAndFocus() = exercise(false, shortWide = true)
+
+    private fun exercise(phone: Boolean, shortWide: Boolean = false) {
         check(ins.targetContext.packageName.endsWith(".regression"))
         ins.setInTouchMode(false)
         val host = ins.startActivitySync(Intent(ins.targetContext, PlaybackFixtureHostActivity::class.java)
@@ -68,9 +70,9 @@ class PlayerOverflowControlsDeviceTest {
         try {
             ins.runOnMainSync { host.setContent {
                 val configuration = Configuration(LocalConfiguration.current).apply {
-                    smallestScreenWidthDp = if (phone) 400 else 800
-                    screenWidthDp = if (phone) 400 else 960
-                    screenHeightDp = if (phone) 800 else 600
+                    smallestScreenWidthDp = if (phone || shortWide) 400 else 800
+                    screenWidthDp = if (phone) 400 else if (shortWide) 800 else 960
+                    screenHeightDp = if (phone) 800 else if (shortWide) 400 else 600
                 }
                 CompositionLocalProvider(LocalConfiguration provides configuration) { MaterialTheme(colorScheme = NikColors) {
                     val toggle = remember { FocusRequester() }
@@ -109,7 +111,7 @@ class PlayerOverflowControlsDeviceTest {
             await("More controls owns initial focus") { focused("More controls") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Overflow opens on its first setting") { focused("Setting 0") && find("Playback settings") != null }
-            val columns = if (phone) 3 else 4
+            val columns = if (phone) 3 else if (shortWide) 5 else 4
             for (index in 0..11) assertTrue("Setting $index fits inside the panel", find("Setting $index")?.isVisibleToUser == true)
             assertEquals("The visible row matches the D-pad column count", bounds("Setting 0").top, bounds("Setting ${columns - 1}").top)
             assertTrue("The next setting begins the next visual row", bounds("Setting $columns").top > bounds("Setting 0").top)
@@ -136,7 +138,7 @@ class PlayerOverflowControlsDeviceTest {
             await("Top row Up reaches Close") { focused("Close playback settings") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Close Down returns to settings") { focused("Setting 0") }
-            NavigationAuditEvidence.capture("player-overflow-${if (phone) "phone" else "tablet"}")
+            NavigationAuditEvidence.capture("player-overflow-${if (phone) "phone" else if (shortWide) "landscape-phone" else "tablet"}")
             key(KeyEvent.KEYCODE_BACK)
             await("Back closes overflow and restores More") { find("Playback settings") == null && focused("More controls") }
             assertEquals("Moving focus and closing do not activate other settings", listOf(1 + columns), activations)

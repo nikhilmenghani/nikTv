@@ -197,10 +197,10 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val people = metadata.cast.filter { (it.id ?: 0) > 0 }.distinctBy { it.id }
     LaunchedEffect(profile, item.id, metadata.seasonEpisodeCounts) { seasonCounts(metadata.seasonEpisodeCounts) }
     LaunchedEffect(profile, item.id, metadata.card.overview) { synopsisAvailable(!metadata.card.overview.isNullOrBlank()) }
-    val landscape = configuration.screenWidthDp >= 600 || context.isTvLikeDevice(configuration)
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
-        configuration.screenHeightDp >= configuration.screenWidthDp
-    val wideSeries = type == CatalogType.SERIES && (configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
+    val landscape = !phone
+    val shortWide = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
+    val wideSeries = type == CatalogType.SERIES && !phone
     val heroHeight = detailDiscoveryHeroHeight(phone, context.isTvLikeDevice(configuration))
     var compactInfoOpen by remember(item.id) { mutableStateOf(false) }
     val compactInfoRequester = remember(item.id) { FocusRequester() }
@@ -323,7 +323,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             Column {
             if (!phone) toolbar()
             DiscoveryHero(metadata.card, null, heroHeight, landscape,
-                compact = configuration.screenHeightDp < 480, detail = true, loading = false,
+                compact = shortWide || (context.isTvLikeDevice(configuration) && configuration.screenHeightDp < 480), detail = true, loading = false,
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},
                 onDown = { if (type == CatalogType.SERIES) down() else if (related.isNotEmpty()) focus(relatedEntry) else if (people.isNotEmpty()) focus(castEntry) else down() },
@@ -399,7 +399,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         var alternateOpen by remember(card.key) { mutableStateOf(false) }
                         Box {
                         val posterWidth = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp
-                            else if (type == CatalogType.MOVIES) discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp else 112.dp
+                            else if (type == CatalogType.MOVIES || shortWide) discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp else 112.dp
                         val subtitle = listOfNotNull(card.date?.take(4), card.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) }).joinToString(" · ")
                         val openRelated: () -> Unit = {
                             if (openDiscoveryDetail != null) openDiscoveryDetail(card)

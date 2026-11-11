@@ -499,12 +499,12 @@ private fun ModernDestinationHub(
      * Tablet and phone share the same visual language, but touch uses a
      * restrained press lift instead of the persistent TV focus treatment.
      */
-    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val isTablet = !isTv && !configuration.usesPhoneLayout(isTv)
     val destinationColumns = when {
         dashboardSurface == DashboardSurface.LIVE_TV &&
-            (isTv || (configuration.smallestScreenWidthDp >= 600 && configuration.screenWidthDp >= 720)) -> 4
+            (isTv || (!configuration.usesPhoneLayout(isTv) && configuration.screenWidthDp >= 720)) -> 4
         isTv -> 3
-        configuration.smallestScreenWidthDp < 600 -> 1
+        configuration.usesPhoneLayout(isTv) -> 1
         configuration.screenWidthDp >= 1200 -> 4
         configuration.screenWidthDp >= 720 -> 3
         else -> 2
@@ -797,7 +797,7 @@ private fun ModernDestinationHub(
                     watchedSeries = state.watchedSeries,
                     profileKey = profileKey,
                     favorites = state.favorites,
-                    horizontal = isTv || configuration.smallestScreenWidthDp >= 600,
+                    horizontal = !configuration.usesPhoneLayout(isTv),
                     open = openWatchedEpisode,
                     clear = dismissWatchedEpisode,
                     markWatched = markEpisodeWatched,
@@ -1082,7 +1082,7 @@ internal fun ModernRecentChannelsCollection(
         }
     }
     val columns = when {
-        !isTv && configuration.smallestScreenWidthDp < 600 -> 1
+        configuration.usesPhoneLayout(isTv) -> 1
         isTv -> 2
         configuration.screenWidthDp >= 800 -> 3
         else -> 2
@@ -1499,8 +1499,8 @@ private fun ModernQuickActionTile(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val remoteNavigationActive = context.usesRemoteNavigation(configuration)
-    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
-    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val isPhone = configuration.usesPhoneLayout(isTv)
+    val isTablet = !isTv && !configuration.usesPhoneLayout(isTv)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     var focused by remember { mutableStateOf(false) }
@@ -1632,8 +1632,8 @@ private fun ModernDestinationTile(
     var focused by remember { mutableStateOf(false) }
     var pinMenuOpen by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
-    val isTablet = !isTv && configuration.screenWidthDp >= 600
-    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val isTablet = !isTv && !configuration.usesPhoneLayout(isTv)
+    val isPhone = configuration.usesPhoneLayout(isTv)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress = animateFloatAsState(
@@ -1889,7 +1889,7 @@ private fun ModernProviderCategoryLabel(
     isTv: Boolean
 ) {
     val parts = remember(title) { liveCategoryLabelParts(title) }
-    val compactPhone = !isTv && LocalConfiguration.current.smallestScreenWidthDp < 600
+    val compactPhone = LocalConfiguration.current.usesPhoneLayout(isTv)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(if (compactPhone) 7.dp else 10.dp)) {
         Icon(icon, null, Modifier.size(if (compactPhone) 18.dp else 22.dp), tint = Color(0xFFB9BDD0))
@@ -2082,7 +2082,7 @@ internal fun ModernCompactMediaCard(
     val isTv = context.isModernTileTv(configuration)
     val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
         LocalInputModeManager.current.inputMode == InputMode.Keyboard
-    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val isTablet = !isTv && !configuration.usesPhoneLayout(isTv)
     val collectionPosterColumns = modernPosterColumns(configuration, isTv)
     val collectionPosterHorizontalPaddingDp = if (isTv) 24f else 18f
     val collectionPosterHorizontalSpacingDp = if (isTv) 20f else 12f
@@ -3146,7 +3146,7 @@ internal fun ModernIptvCollection(
     val loadMoreVisible: () -> Unit = {
         if (hasLocalMore) localVisibleCount += 120 else loadMore()
     }
-    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val isPhone = configuration.usesPhoneLayout(isTv)
     val showQualityBadge = remember(state.items, category) {
         if (!isLiveTv) false else if (category.sourceCategoryIds.isNotEmpty()) true else state.items.map { item ->
             Regex("\\((4K|8K|UHD|FHD|HD)\\)\\s*$", RegexOption.IGNORE_CASE)
@@ -3820,7 +3820,7 @@ internal fun modernCollectionPosterColumns(
     configuration: Configuration,
     isTv: Boolean
 ): Int = when {
-    !isTv && configuration.smallestScreenWidthDp < 600 -> com.nikhil.niktv.discovery.discoveryCollectionColumns(
+    configuration.usesPhoneLayout(isTv) -> com.nikhil.niktv.discovery.discoveryCollectionColumns(
         configuration.screenWidthDp.toFloat(), com.nikhil.niktv.discovery.phoneDiscoveryPosterWidth(configuration.screenWidthDp))
     !isTv -> modernPosterColumns(configuration, false)
     configuration.screenWidthDp >= 1400 -> 7
@@ -4000,7 +4000,7 @@ internal fun ModernLiveChannelTile(
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
-    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val isPhone = configuration.usesPhoneLayout(isTv)
     val compactTv = isTv && compact
     val shape = RoundedCornerShape(if (isPhone || compactTv) 14.dp else 16.dp)
     val interactionSource = remember { MutableInteractionSource() }
@@ -4301,7 +4301,7 @@ private fun ModernCollectionPoster(
         OfflineDownloadStatus.PAUSED
     )
     val configuration = LocalConfiguration.current
-    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val isTablet = !isTv && !configuration.usesPhoneLayout(isTv)
     val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
         LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val interactionSource = remember { MutableInteractionSource() }

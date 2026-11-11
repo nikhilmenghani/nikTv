@@ -383,7 +383,7 @@ internal fun ModernPosterCard(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isTvLikeDevice(configuration)
-    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val isTablet = !isTv && !configuration.usesPhoneLayout(isTv)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val touchPressed = !isTv && pressed
@@ -579,7 +579,7 @@ internal fun ModernMediaListCard(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isTvLikeDevice(configuration)
-    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val isTablet = !isTv && !configuration.usesPhoneLayout(isTv)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(

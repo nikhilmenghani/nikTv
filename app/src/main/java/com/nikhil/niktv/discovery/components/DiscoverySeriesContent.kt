@@ -205,11 +205,10 @@ internal fun DiscoverySeriesContent(
     val episodeIsTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     val remoteNavigationActive = episodeContext.usesRemoteNavigation(episodeConfiguration) ||
         LocalInputModeManager.current.inputMode == InputMode.Keyboard
-    val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
-        episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
-    val mobileEpisodeLayout =
-        !episodeIsTv &&
-            episodeConfiguration.smallestScreenWidthDp < 600
+    val compactPortrait = episodeConfiguration.usesPhoneLayout(episodeIsTv)
+    val mobileEpisodeLayout = compactPortrait
+    val seasonSidebarWidth = if (episodeConfiguration.usesShortWideLayout(episodeIsTv))
+        (episodeConfiguration.screenWidthDp * .20f).coerceIn(112f, 156f).dp else 156.dp
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
     // The nested episode cursor survives revealing or collapsing the artwork.
     val verticalEpisodeLayout = false
@@ -519,7 +518,8 @@ internal fun DiscoverySeriesContent(
             SeriesDetailFocus.SORT -> if (mobileEpisodeLayout) seasonButtonRequester else sortRequester
             else -> toolbarRequester
         }
-        wideFocusCoordinator.move(episodeListState, seriesDetailFocusSlot(target), reducedMotion) {
+        wideFocusCoordinator.move(episodeListState, seriesDetailFocusSlot(target), reducedMotion,
+            focusAfterScroll = mobileEpisodeLayout && seriesDetailFocusSlot(target) == 0) {
             if (target == SeriesDetailFocus.TOOLS && preferred == null) {
                 runCatching { castButtonRequester.requestFocus() }.getOrDefault(false) ||
                     runCatching { relatedButtonRequester.requestFocus() }.getOrDefault(false) ||
@@ -894,7 +894,7 @@ internal fun DiscoverySeriesContent(
                                         focusManager.clearFocus()
                                     })) },
                         modifier = Modifier.onPreviewKeyEvent { event ->
-                            if (!mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
+                            if ((!mobileEpisodeLayout || expandedPanel != SeriesDetailPanel.SEARCH) && event.type == KeyEventType.KeyDown) when (event.key) {
                                 Key.DirectionUp -> {
                                     episodeTextEditing = false; keyboardController?.hide()
                                     moveWideFocus(SeriesDetailFocus.SORT, -1); true
@@ -1021,7 +1021,7 @@ internal fun DiscoverySeriesContent(
                         if (!mobileEpisodeLayout && availableSeasons.isNotEmpty()) SeriesSeasonSidebar(availableSeasons, selectedSeason,
                             seasonCounts,
                             seasonSidebarRequester, loadSeriesSeason, { requestEpisodeFocus(revealParent = false) },
-                            { requestWideFocus(SeriesDetailFocus.SORT) }, Modifier.width(156.dp).fillMaxHeight())
+                            { requestWideFocus(SeriesDetailFocus.SORT) }, Modifier.width(seasonSidebarWidth).fillMaxHeight())
                         Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { episodeViewportHeightPx = it.height }) {
                         LazyColumn(Modifier.fillMaxSize().padding(end = 6.dp), state = episodeRowState,
                             contentPadding = PaddingValues(bottom = if (!state.episodeHasMore &&
@@ -1209,9 +1209,7 @@ internal fun ModernEpisodeCard(
     val displayedOfflineStatus =
         if (downloadRequested && offlineDownload == null) OfflineDownloadStatus.QUEUED else offlineStatus
 
-    val mobileLayout =
-        !isTv &&
-            episodeConfiguration.smallestScreenWidthDp < 600
+    val mobileLayout = episodeConfiguration.usesPhoneLayout(isTv)
     val imageUrl = episode.logo?.takeIf(String::isNotBlank) ?: series.logo
     val episodeDescription = episode.description?.takeUnless { description ->
         description.trim().equals(series.description?.trim(), ignoreCase = true)

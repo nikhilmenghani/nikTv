@@ -30,7 +30,7 @@ internal fun WatchProviderCollection(provider: WatchProvider, region: String, se
     focusRegistry: MutableMap<String, FocusRequester>? = null, cancel: () -> Unit = {}, controls: (@Composable () -> Unit)? = null) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
     val remote = context.isTvLikeDevice(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     var query by rememberSaveable { mutableStateOf("") }

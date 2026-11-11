@@ -376,7 +376,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private val polishedCaptions = containedCaptions && !homeTileProportions
     private val posterGeometry = resources.configuration.let {
         nativePosterGeometry(it.screenWidthDp.toFloat(), it.screenHeightDp.toFloat(), it.fontScale,
-            phone = usesDiscoveryPhoneLayout(it.smallestScreenWidthDp, context.isTvLikeDevice(it)))
+            phone = usesDiscoveryPhoneLayout(it, context.isTvLikeDevice(it)))
     }
     init {
         layoutManager = vertical; adapter = rowAdapter; itemAnimator = null

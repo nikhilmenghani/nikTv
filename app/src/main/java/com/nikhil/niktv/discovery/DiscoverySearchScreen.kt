@@ -28,7 +28,7 @@ internal fun DiscoverySearchScreen(
     content: @Composable () -> Unit
 ) {
     val configuration = LocalConfiguration.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
+    val phone = usesDiscoveryPhoneLayout(configuration,
         LocalContext.current.isTvLikeDevice(configuration))
     val header = remember(state.savedProfile?.cacheKey()) { FocusRequester() }
     val body = remember(state.savedProfile?.cacheKey()) { FocusRequester() }

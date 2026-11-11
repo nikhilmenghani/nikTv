@@ -47,7 +47,7 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
     showInfo: ((FavoriteItem) -> Unit)? = null, onDown: () -> Unit = {}, onUp: () -> Boolean = { false }) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
     val profile = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()
     val favorites = remember(state.favorites, profile) { libraryFavoriteHeroes(state.favorites, profile) }
     var removal by remember(profile) { mutableStateOf<FavoriteItem?>(null) }

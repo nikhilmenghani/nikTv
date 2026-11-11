@@ -152,7 +152,7 @@ private fun DiscoveryPreviewContent(
     val providerNavigation = LocalProviderDetailNavigation.current
     val configuration = LocalConfiguration.current
     val television = remember(context, configuration.uiMode) { context.isTvLikeDevice(configuration) }
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, television)
+    val phone = usesDiscoveryPhoneLayout(configuration, television)
     val heroPreferences = remember(context) { com.nikhil.niktv.data.UserProfilePreferences.get(context, "home2_presentation") }
     val profile = app.savedProfile?.cacheKey().orEmpty()
     val metadataKey = discoveryPresentationOptionKey("title_metadata", profile, surface, television)
@@ -176,7 +176,8 @@ private fun DiscoveryPreviewContent(
     val phonePortrait = phone && configuration.screenHeightDp >= configuration.screenWidthDp
     val remoteNavigation = context.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val landscape = !phone
-    val compactLandscape = configuration.screenWidthDp > configuration.screenHeightDp && configuration.screenHeightDp < 480
+    val compactLandscape = if (television) configuration.screenWidthDp > configuration.screenHeightDp && configuration.screenHeightDp < 480
+        else configuration.usesShortWideLayout()
     val hiddenRowsKey = "hidden:$profile:${surface.name}"
     var hiddenTrialRows by remember(profile, surface) { mutableStateOf(heroPreferences.getStringSet(hiddenRowsKey, emptySet()).orEmpty().toSet()) }
     fun setHiddenTrialRows(rows: Set<String>) {
@@ -1132,7 +1133,8 @@ private fun DiscoveryPreviewContent(
                                         profile = app.savedProfile?.name.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
                                         categoryPopupChanged = { categoryPopup = it })
                                 }
-                                if (!phonePortrait) Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp).onPreviewKeyEvent {
+                                if (!phonePortrait) Row(Modifier.padding(horizontal = if (compactLandscape) 16.dp else 24.dp,
+                                    vertical = if (compactLandscape) 6.dp else 8.dp).onPreviewKeyEvent {
                                     if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) moveRow(positions.hero, 1) else false
                                 }) {
                                     DiscoveryCategoryAccess(surface, app.categoryManagerOpen,
@@ -1497,7 +1499,9 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     }
     var drag by remember { mutableFloatStateOf(0f) }
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
-    Column(Modifier.fillMaxWidth().heightIn(min = height).padding(horizontal = (if (landscape) 32.dp else 18.dp) + contentInset, vertical = if (compact) 8.dp else 16.dp)
+    val configuration = LocalConfiguration.current
+    val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
+    Column(Modifier.fillMaxWidth().heightIn(min = height).padding(horizontal = (if (shortWide) 16.dp else if (landscape) 32.dp else 18.dp) + contentInset, vertical = if (compact) 8.dp else 16.dp)
         .pointerInput(carousel) { if (carousel) detectHorizontalDragGestures(onDragStart = { drag = 0f }, onDragEnd = { if (drag < -70f) next() else if (drag > 70f) previous() }) { change, amount -> change.consume(); drag += amount } },
         verticalArrangement = Arrangement.Bottom) {
         // Landing heroes keep the same geometry before feeds, artwork and metadata arrive.
@@ -1509,12 +1513,15 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             LinearProgressIndicator(Modifier.width(160.dp)); Spacer(Modifier.height(16.dp))
         }
         var logoReady by remember(card?.titleLogo) { mutableStateOf(false) }
-        Box(Modifier.widthIn(max = if (landscape) 560.dp else 400.dp).height((if (landscape && !compact) 76.dp else 64.dp) * fontScale), contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.widthIn(max = if (shortWide) 440.dp else if (landscape) 560.dp else 400.dp)
+            .height((if (shortWide) 56.dp else if (landscape && !compact) 76.dp else 64.dp) * fontScale), contentAlignment = Alignment.CenterStart) {
             if (loading && card == null) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.width(280.dp).height(20.dp).background(Color.White.copy(alpha = .10f), RoundedCornerShape(4.dp)))
                 Box(Modifier.width(180.dp).height(16.dp).background(Color.White.copy(alpha = .07f), RoundedCornerShape(4.dp)))
             } else if (!logoReady) Text(card?.title ?: emptyTitle, color = Color.White,
-                fontSize = if (landscape && !compact) 32.sp else 26.sp, lineHeight = if (landscape && !compact) 36.sp else 30.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                fontSize = if (shortWide) 24.sp else if (landscape && !compact) 32.sp else 26.sp,
+                lineHeight = if (shortWide) 28.sp else if (landscape && !compact) 36.sp else 30.sp,
+                fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (!card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
                 Modifier.widthIn(max = 400.dp).fillMaxHeight().graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
                 onSuccess = { logoReady = true }, onError = { logoReady = false })
@@ -1522,7 +1529,9 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         val metadata = card?.let { listOfNotNull(if (detail) discoveryReleaseLabel(it) else it.date?.take(4), it.runtime?.let { n -> "${n} min" }, it.genres.take(3).joinToString(" · ").takeIf(String::isNotBlank),
             it.rating?.takeIf { n -> n > 0 }?.let { n -> "★ %.1f".format(n) }, it.certification).joinToString(" · ") }.orEmpty()
         if (detail && card != null) Column(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp).padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            discoveryDetailMetadata(card).forEach { line -> Text(line, color = Color.LightGray, fontSize = 12.sp, lineHeight = 16.sp) }
+            if (shortWide) Text(discoveryDetailMetadata(card).joinToString(" · "), color = Color.LightGray,
+                fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            else discoveryDetailMetadata(card).forEach { line -> Text(line, color = Color.LightGray, fontSize = 12.sp, lineHeight = 16.sp) }
         } else Box(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp)
             .then(if (!detail) Modifier.height(36.dp * fontScale) else Modifier), contentAlignment = Alignment.TopStart) {
             if (metadata.isNotBlank()) Text(metadata, Modifier.padding(top = if (compact) 4.dp else 6.dp),
@@ -1847,7 +1856,7 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
 private fun DiscoveryActivityCollection(row: Rail, reduceMotion: Boolean, close: () -> Unit) {
     val configuration = LocalConfiguration.current
     val tv = LocalContext.current.isTvLikeDevice(configuration)
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, tv)
+    val phone = usesDiscoveryPhoneLayout(configuration, tv)
     val remote = tv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val width = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp)
         else discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat())

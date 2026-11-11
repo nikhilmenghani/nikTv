@@ -33,7 +33,7 @@ internal fun DiscoveryMatchScreen(app: NikTvState, close: () -> Unit,
     chooseMovie: (MediaItem) -> Unit, chooseSeries: (MediaItem) -> Unit) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
     val series = app.movieMatchSelection == null
     val title = app.movieMatchSelection?.title ?: app.seriesMatchSelection?.name.orEmpty()
     val year = app.movieMatchSelection?.releaseYear ?: app.seriesMatchSelection?.firstAirYear
