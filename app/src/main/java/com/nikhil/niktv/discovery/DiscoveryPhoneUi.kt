@@ -146,10 +146,19 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
     val viewerName = viewer?.name ?: profile
     val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
         ?: profile.trim().firstOrNull()?.uppercase() ?: "N"
+    val leadingProfile = surface == DashboardSurface.HOME && !detail && !searchActive
+    val profileAction: @Composable () -> Unit = {
+        DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
+            containerColor = viewer?.let { Color(it.color) },
+            horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $viewerName" }
+                .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play },
+            onClick = openUserProfiles)
+    }
     CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (detail) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
+            else if (leadingProfile) profileAction()
             else Box(Modifier.size(42.dp).drawWithCache {
                 // Keep the transparent logo readable over bright artwork without changing its size.
                 val radius = size.maxDimension * .85f
@@ -167,11 +176,7 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
                     modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
-                DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
-                    containerColor = viewer?.let { Color(it.color) },
-                    horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $viewerName" }
-                        .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play },
-                    onClick = openUserProfiles)
+                if (!leadingProfile) profileAction()
                 DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
             }
         }
