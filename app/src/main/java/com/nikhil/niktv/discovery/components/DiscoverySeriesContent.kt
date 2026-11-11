@@ -204,7 +204,8 @@ internal fun DiscoverySeriesContent(
         episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
     val mobileEpisodeLayout =
         !episodeIsTv &&
-            episodeConfiguration.smallestScreenWidthDp < 600
+            episodeConfiguration.smallestScreenWidthDp < 600 &&
+            episodeConfiguration.screenHeightDp >= episodeConfiguration.screenWidthDp
     val tabletEpisodeOverlay = !mobileEpisodeLayout
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
     // Episodes always own their scroll state; phones keep the compact header in view.
@@ -526,9 +527,9 @@ internal fun DiscoverySeriesContent(
         val target = when (from) {
             SeriesDetailFocus.TOP -> if (delta > 0) SeriesDetailFocus.PLAY else null
             SeriesDetailFocus.PLAY, SeriesDetailFocus.INFO, SeriesDetailFocus.TOOLS ->
-                if (delta > 0) SeriesDetailFocus.SORT else SeriesDetailFocus.TOP
-            SeriesDetailFocus.SORT -> if (delta < 0) SeriesDetailFocus.PLAY else SeriesDetailFocus.EPISODES
-            SeriesDetailFocus.SEASONS -> if (delta < 0) SeriesDetailFocus.SORT else SeriesDetailFocus.EPISODES
+                if (delta > 0) SeriesDetailFocus.EPISODES else SeriesDetailFocus.TOP
+            SeriesDetailFocus.SORT -> if (delta < 0) SeriesDetailFocus.TOP else SeriesDetailFocus.EPISODES
+            SeriesDetailFocus.SEASONS -> if (delta < 0) SeriesDetailFocus.TOP else SeriesDetailFocus.EPISODES
             SeriesDetailFocus.EPISODES -> if (delta < 0) SeriesDetailFocus.SORT else null
         }
         target?.let { requestWideFocus(it, if (it == SeriesDetailFocus.PLAY) lastHeroControl else null) }
@@ -654,11 +655,11 @@ internal fun DiscoverySeriesContent(
     ) {
         com.nikhil.niktv.discovery.ProviderDetailHeader(series, CatalogType.SERIES, state,
             compactSeries = mobileEpisodeLayout,
-            play = { primaryEpisodeToPlay?.let(play) }, close = closeSeries,
+            play = { primaryEpisodeToPlay?.let(play) ?: refreshCatalog() }, close = closeSeries,
             favorite = { toggleFavorite(series) }, isFavorite = isFavorite,
             openTmdbMovie = openTmdbMovie, openTmdbSeries = openTmdbSeries,
-            playLabel = if (primaryEpisodeToPlay == null) "Loading episodes…" else if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}" else if (episodeSortDescending) "Play latest" else "Start series",
-            playEnabled = primaryEpisodeToPlay != null,
+            playLabel = if (primaryEpisodeToPlay == null && state.loading) "Loading episodes…" else if (primaryEpisodeToPlay == null) "Retry IPTV episodes" else if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}" else if (episodeSortDescending) "Play latest" else "Start series",
+            playEnabled = primaryEpisodeToPlay != null || !state.loading,
             progressLabel = recentEpisode?.let { episode ->
                 listOfNotNull(episode.actionEpisodeLabel(), episodeRemainingLabel(progressByEpisode[episode.id])).joinToString(" · ")
             },
@@ -690,6 +691,7 @@ internal fun DiscoverySeriesContent(
                 Box {
                     com.nikhil.niktv.discovery.DiscoveryAction("Series options", Icons.Default.Settings, iconOnly = true) { moreActionsExpanded = true }
                     DropdownMenu(moreActionsExpanded, { moreActionsExpanded = false }) {
+                        ProviderMetadataLookupMenuItem(series, CatalogType.SERIES) { moreActionsExpanded = false }
                         NikDropdownMenuItem(text = { Text("Refresh episodes") }, leadingIcon = { Icon(Icons.Default.Refresh, null) },
                             onClick = { moreActionsExpanded = false; refreshCatalog() })
                         NikDropdownMenuItem(text = { Text(if (state.useTmdbEpisodeMetadata) "Use IPTV episode details" else "Use TMDB episode details") },
@@ -703,90 +705,12 @@ internal fun DiscoverySeriesContent(
                     }
                 }
             }, layout = { hero, castRow, supplementary, focusCast, focusRelated ->
-        val detailsTools: @Composable () -> Unit = {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                fun Modifier.toolRoutes(requester: FocusRequester, panel: SeriesDetailPanel,
-                    enter: () -> Boolean): Modifier = focusRequester(requester).onFocusChanged {
-                        if (it.isFocused) lastHeroControl = requester
-                    }.onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                            Key.DirectionUp -> {
-                                if (!mobileEpisodeLayout) { moveWideFocus(SeriesDetailFocus.TOOLS, -1); true } else false
-                            }
-                            Key.DirectionDown -> {
-                                lastHeroControl = requester
-                                if (expandedPanel == panel) detailScope.launch {
-                                    repeat(20) { withFrameNanos { }; if (enter()) return@launch }
-                                } else if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.SORT)
-                                else focusLandscapeEpisode()
-                                true
-                            }
-                            else -> false
-                        }
-                    }
-                focusCast?.let { target ->
-                    val expanded = expandedPanel == SeriesDetailPanel.CAST
-                    com.nikhil.niktv.discovery.DiscoveryAction(if (expanded) "Hide cast" else "Cast",
-                        if (expanded) Icons.Default.ExpandLess else Icons.Default.People,
-                        selected = expanded, iconOnly = true,
-                        modifier = Modifier.toolRoutes(castButtonRequester, SeriesDetailPanel.CAST, target)
-                            .semantics { selected = expanded }) {
-                        expandedPanel = if (expanded) null else SeriesDetailPanel.CAST
-                    }
-                }
-                focusRelated?.let { target ->
-                    val expanded = expandedPanel == SeriesDetailPanel.RELATED
-                    com.nikhil.niktv.discovery.DiscoveryAction(if (expanded) "Hide related" else "Related",
-                        if (expanded) Icons.Default.ExpandLess else Icons.Default.Movie,
-                        selected = expanded, iconOnly = true,
-                        modifier = Modifier.toolRoutes(relatedButtonRequester, SeriesDetailPanel.RELATED, target)
-                            .semantics { selected = expanded }) {
-                        expandedPanel = if (expanded) null else SeriesDetailPanel.RELATED
-                    }
-                }
-            }
-        }
-        val detailsPanel: @Composable () -> Unit = {
-                AnimatedContent(expandedPanel, contentAlignment = Alignment.TopStart,
-                    transitionSpec = {
-                        (fadeIn(tween(if (reducedMotion) 0 else 120)) togetherWith fadeOut(tween(if (reducedMotion) 0 else 90)))
-                            .using(SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(if (reducedMotion) 0 else 180, easing = FastOutSlowInEasing) }))
-                    }, label = "seriesDetailsPanel") { panel ->
-                    Box(Modifier.fillMaxWidth()
-                        .then(if (mobileEpisodeLayout) Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()) else Modifier)
-                        .onFocusChanged {
-                        inlinePanelFocused = it.hasFocus
-                        if (it.hasFocus) focusedPanel = panel
-                    }) {
-                        when (panel) {
-                            SeriesDetailPanel.SEARCH -> Unit
-                            SeriesDetailPanel.CAST -> castRow()
-                            SeriesDetailPanel.RELATED -> supplementary()
-                            null -> Unit
-                        }
-                    }
-                }
-        }
-        val seriesContent: @Composable () -> Unit = {
-        LazyColumn(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
-                .onSizeChanged { contentHeightPx = it.height },
-            state = episodeListState,
-            userScrollEnabled = (!mobileEpisodeLayout && !tabletEpisodeOverlay) || expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED,
-            contentPadding = PaddingValues(bottom = if (mobileEpisodeLayout) 0.dp else 24.dp)
-        ) {
-            item("series-hero") {
-                CompositionLocalProvider(
-                    com.nikhil.niktv.discovery.LocalProviderSynopsisActions provides detailsTools,
-                    com.nikhil.niktv.discovery.LocalProviderSynopsisPanel provides detailsPanel
-                ) { Box(Modifier.onSizeChanged { heroHeightPx = it.height }) { hero() } }
-            }
-
-            val controls: @Composable LazyItemScope.() -> Unit = {
+        val inlineEpisodeControls = !mobileEpisodeLayout
+            val controls: @Composable () -> Unit = {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth().background(Color(0xFF090B10).copy(alpha = if (tabletEpisodeOverlay) .16f else 1f)).onSizeChanged { toolbarHeightPx = it.height }
-                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp, vertical = 10.dp),
+                        .then(if (inlineEpisodeControls) Modifier else Modifier.fillMaxWidth().background(Color(0xFF090B10).copy(alpha = if (tabletEpisodeOverlay) .16f else 1f)).onSizeChanged { toolbarHeightPx = it.height }
+                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp, vertical = 10.dp)),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     SeriesEpisodeToolbar(
@@ -802,7 +726,7 @@ internal fun DiscoverySeriesContent(
                                 }, refresh = refreshCatalog)
                         },
                         count = seriesEpisodeCountLabel(filteredEpisodes.size, state.episodeHasMore, activeSearchQuery.isNotBlank()),
-                        compact = mobileEpisodeLayout,
+                        compact = mobileEpisodeLayout, inline = inlineEpisodeControls,
                         newestFirst = episodeSortDescending, onNewestFirst = {
                             episodeSortDescending = it
                             focusedEpisodeId = null
@@ -880,8 +804,7 @@ internal fun DiscoverySeriesContent(
                                 }
                                 Key.DirectionDown -> {
                                     episodeTextEditing = false; keyboardController?.hide()
-                                    if (!episodeListView && availableSeasons.isNotEmpty()) requestWideFocus(SeriesDetailFocus.SEASONS)
-                                    else focusLandscapeEpisode()
+                                    focusLandscapeEpisode()
                                     true
                                 }
                                 else -> false
@@ -892,8 +815,63 @@ internal fun DiscoverySeriesContent(
                 }
             }
 
+        val detailsTools: @Composable () -> Unit = {
+            com.nikhil.niktv.discovery.DetailMoreActions(
+                Modifier.focusRequester(castButtonRequester).focusRequester(relatedButtonRequester)
+                    .onFocusChanged { if (it.isFocused) lastHeroControl = castButtonRequester }
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) false else {
+                            when (expandedPanel) {
+                                SeriesDetailPanel.CAST -> detailScope.launch { repeat(20) { withFrameNanos { }; if (focusCast?.invoke() == true) return@launch } }
+                                SeriesDetailPanel.RELATED -> detailScope.launch { repeat(20) { withFrameNanos { }; if (focusRelated?.invoke() == true) return@launch } }
+                                else -> focusLandscapeEpisode()
+                            }
+                            true
+                        }
+                    },
+                cast = focusCast?.let { { expandedPanel = if (expandedPanel == SeriesDetailPanel.CAST) null else SeriesDetailPanel.CAST } },
+                related = focusRelated?.let { { expandedPanel = if (expandedPanel == SeriesDetailPanel.RELATED) null else SeriesDetailPanel.RELATED } })
+        }
+        val detailsPanel: @Composable () -> Unit = {
+                AnimatedContent(expandedPanel, contentAlignment = Alignment.TopStart,
+                    transitionSpec = {
+                        (fadeIn(tween(if (reducedMotion) 0 else 120)) togetherWith fadeOut(tween(if (reducedMotion) 0 else 90)))
+                            .using(SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(if (reducedMotion) 0 else 180, easing = FastOutSlowInEasing) }))
+                    }, label = "seriesDetailsPanel") { panel ->
+                    Box(Modifier.fillMaxWidth()
+                        .then(if (mobileEpisodeLayout) Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()) else Modifier)
+                        .onFocusChanged {
+                        inlinePanelFocused = it.hasFocus
+                        if (it.hasFocus) focusedPanel = panel
+                    }) {
+                        when (panel) {
+                            SeriesDetailPanel.SEARCH -> Unit
+                            SeriesDetailPanel.CAST -> castRow()
+                            SeriesDetailPanel.RELATED -> supplementary()
+                            null -> Unit
+                        }
+                    }
+                }
+        }
+        val seriesContent: @Composable () -> Unit = {
+        LazyColumn(
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
+                .onSizeChanged { contentHeightPx = it.height },
+            state = episodeListState,
+            userScrollEnabled = (!mobileEpisodeLayout && !tabletEpisodeOverlay) || expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED,
+            contentPadding = PaddingValues(bottom = if (mobileEpisodeLayout) 0.dp else 24.dp)
+        ) {
+            item("series-hero") {
+                CompositionLocalProvider(
+                    com.nikhil.niktv.discovery.LocalProviderSynopsisActions provides detailsTools,
+                    com.nikhil.niktv.discovery.LocalProviderEpisodeControls provides if (inlineEpisodeControls) controls else null,
+                    com.nikhil.niktv.discovery.LocalProviderSynopsisPanel provides detailsPanel
+                ) { Box(Modifier.onSizeChanged { heroHeightPx = it.height }) { hero() } }
+            }
+
+
             if (mobileEpisodeLayout) stickyHeader("series-controls") { controls() }
-            else item("series-controls", content = controls)
+            else item("series-controls") { if (!inlineEpisodeControls) controls() }
 
             item("series-inline-details") {
                 // Retain the slot so saved episode and pagination indices stay stable.

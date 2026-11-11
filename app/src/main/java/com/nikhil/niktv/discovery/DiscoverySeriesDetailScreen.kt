@@ -41,7 +41,8 @@ internal fun DiscoverySeriesDetailScreen(
     val card = state.detail ?: return
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
+        configuration.screenHeightDp >= configuration.screenWidthDp
     val reduceMotion = android.provider.Settings.Global.getFloat(context.contentResolver,
         android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val playFocus = remember(card.key) { FocusRequester() }
@@ -127,7 +128,7 @@ internal fun DiscoverySeriesDetailScreen(
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF090B10)).statusBarsPadding().navigationBarsPadding().imePadding()) {
-        val episodePane: @Composable () -> Unit = {
+        val episodePane: @Composable ((@Composable (@Composable () -> Unit) -> Unit)?) -> Unit = { header ->
             DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
                 { automaticSeason = null; initialFocusDone = true; loadSeason(it) }, play, download,
                 onFocus = {}, up = {
@@ -137,7 +138,7 @@ internal fun DiscoverySeriesDetailScreen(
                     focusHeader(origin)
                     true
                 }, down = { false }, modifier = Modifier.fillMaxSize(), lastWatched = lastWatched, loadInitialSeason = false,
-                onNewestFirstChanged = { newestFirst = it })
+                onNewestFirstChanged = { newestFirst = it }, header = header)
         }
         ProviderDetailHeader(card.media, CatalogType.SERIES, app,
             play = { primary?.let { play(card, it.first, it.second) } },
@@ -175,14 +176,10 @@ internal fun DiscoverySeriesDetailScreen(
                     }
                 }
                 val actions: @Composable () -> Unit = {
-                    DiscoveryAction(if (panel == "cast") "Hide cast" else "Cast",
-                        if (panel == "cast") Icons.Default.ExpandLess else Icons.Default.People,
-                        selected = panel == "cast", iconOnly = true, enabled = castEntry != null,
-                        modifier = Modifier.focusRequester(castFocus).panelRoutes("cast", castFocus, castEntry)) { panel = if (panel == "cast") null else "cast" }
-                    DiscoveryAction(if (panel == "related") "Hide related" else "Related",
-                        if (panel == "related") Icons.Default.ExpandLess else Icons.Default.Movie,
-                        selected = panel == "related", iconOnly = true,
-                        modifier = Modifier.focusRequester(relatedFocus).panelRoutes("related", relatedFocus, relatedEntry)) { panel = if (panel == "related") null else "related" }
+                    DetailMoreActions(Modifier.focusRequester(castFocus).focusRequester(relatedFocus)
+                        .panelRoutes(panel ?: "cast", castFocus, if (panel == "cast") castEntry else relatedEntry),
+                        cast = castEntry?.let { { panel = if (panel == "cast") null else "cast" } },
+                        related = { panel = if (panel == "related") null else "related" })
                 }
                 val expanded: @Composable () -> Unit = {
                     Column(Modifier.fillMaxWidth().animateContentSize().heightIn(max = 220.dp)
@@ -191,10 +188,16 @@ internal fun DiscoverySeriesDetailScreen(
                         if (panel == "related") related()
                     }
                 }
-                SeriesDetailScaffold(header = {
+                if (!phone) {
+                    episodePane { toolbar ->
+                        CompositionLocalProvider(LocalProviderSynopsisActions provides actions,
+                            LocalProviderEpisodeControls provides toolbar,
+                            LocalProviderSynopsisPanel provides expanded) { hero() }
+                    }
+                } else SeriesDetailScaffold(header = {
                     CompositionLocalProvider(LocalProviderSynopsisActions provides actions,
                         LocalProviderSynopsisPanel provides expanded) { hero() }
-                }, episodes = episodePane)
+                }, episodes = { episodePane(null) })
             })
     }
 }

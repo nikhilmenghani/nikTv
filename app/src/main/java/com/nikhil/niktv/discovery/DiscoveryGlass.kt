@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import com.nikhil.niktv.ui.isTvLikeDevice
 import androidx.compose.ui.unit.dp
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
@@ -43,6 +45,11 @@ internal fun discoveryGlassImageRect(viewport: Rect, image: Size, fit: Boolean =
     return Rect(x, y, x + width, y + height)
 }
 
+@Composable
+internal fun detailActionSize() = if (LocalDetailActionGlass.current &&
+    LocalContext.current.isTvLikeDevice(LocalConfiguration.current)) 40.dp else 48.dp
+
+internal val LocalDetailActionGlass = staticCompositionLocalOf { false }
 internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }
 internal val LocalMobileGlassBounds = staticCompositionLocalOf { Rect.Zero }
 internal val LocalMobileGlassArtwork = staticCompositionLocalOf<String?> { null }
@@ -52,7 +59,9 @@ internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focuse
     if (LocalMobileGlassEnabled.current) CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         DiscoveryGlassPanel(modifier, LocalMobileGlassArtwork.current, LocalMobileGlassBounds.current,
             focused = focused,
-            artworkOpacity = artworkOpacity, tint = tint,
+            artworkOpacity = artworkOpacity,
+            baseColor = if (LocalDetailActionGlass.current) Color(0x66242A34) else Color(0x77171B24),
+            tint = if (LocalDetailActionGlass.current) Color(0x44242A34) else tint,
             fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
             fillWidth = LocalMobileGlassFillWidth.current) { content() }
     }

@@ -50,6 +50,36 @@ internal val LocalProviderDetailNavigation = staticCompositionLocalOf<ProviderDe
 internal val LocalProviderSynopsisActions = staticCompositionLocalOf<(@Composable () -> Unit)?> { null }
 internal val LocalProviderSynopsisPanel = staticCompositionLocalOf<(@Composable () -> Unit)?> { null }
 
+internal val LocalProviderEpisodeControls = staticCompositionLocalOf<(@Composable () -> Unit)?> { null }
+internal val LocalProviderMoreInfo = staticCompositionLocalOf<(() -> Unit)?> { null }
+internal val LocalProviderInfoFocus = staticCompositionLocalOf<FocusRequester?> { null }
+
+@Composable
+internal fun DetailMoreActions(modifier: Modifier = Modifier, cast: (() -> Unit)? = null, related: (() -> Unit)? = null) {
+    val info = LocalProviderMoreInfo.current
+    val infoFocus = LocalProviderInfoFocus.current
+    var expanded by remember { mutableStateOf(false) }
+    val anchor = remember { FocusRequester() }
+    val host = LocalView.current
+    var hadMenu by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) {
+        if (expanded) hadMenu = true
+        else if (hadMenu) {
+            hadMenu = false
+            repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { anchor.requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
+        }
+    }
+    Box {
+        DiscoveryAction("More", Icons.Default.MoreHoriz, iconOnly = true,
+            modifier = modifier.focusRequester(anchor).then(infoFocus?.let { Modifier.focusRequester(it) } ?: Modifier)) { expanded = true }
+        SeriesActionsMenu(expanded, { expanded = false }) {
+            info?.let { EpisodeSortMenuItem("More info", Icons.Default.Info) { expanded = false; it() } }
+            cast?.let { EpisodeSortMenuItem("Cast", Icons.Default.People) { expanded = false; it() } }
+            related?.let { EpisodeSortMenuItem("Related", Icons.Default.Movie) { expanded = false; it() } }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProviderDetailSynopsis(overview: String?, title: String, remoteInfo: Boolean = false,
@@ -125,7 +155,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val navigation = LocalProviderDetailNavigation.current
     val configuration = LocalConfiguration.current
     val profile = app.savedProfile?.cacheKey().orEmpty()
-    val defaultRepository = remember(context) { DiscoveryRepository(context) }
+    val defaultRepository = remember(context, profile) { DiscoveryRepository(context, providerProfile = profile) }
     val repository = metadataSource ?: defaultRepository
     var metadata by remember(profile, item.id, type) { mutableStateOf(DiscoveryDetails(providerDetailFallback(item, type))) }
     var related by remember(profile, item.id, type) { mutableStateOf(emptyList<DiscoveryCard>()) }
@@ -204,7 +234,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         else usesDiscoveryPhoneLayout(configuration, television)
     val landscape = if (seriesDetail) configuration.screenWidthDp >= 600 || television else !phone
     val shortWide = !seriesDetail && configuration.usesShortWideLayout(television)
-    val wideSeries = seriesDetail && (configuration.smallestScreenWidthDp >= 600 || television)
+    val wideSeries = seriesDetail && (configuration.smallestScreenWidthDp >= 600 || television ||
+        configuration.screenWidthDp > configuration.screenHeightDp)
     val tabletSeriesOverlay = wideSeries
     val artworkHeight = detailDiscoveryHeroHeight(phone, television)
     val heroHeight = if (compactSeries && phone)
@@ -225,7 +256,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         }
     }
     val toolbar: @Composable () -> Unit = {
-        CompositionLocalProvider(LocalMobileGlassEnabled provides phone) {
+        CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
         Column {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onPreviewKeyEvent { event ->
                 if ((wideSeries || compactSeries) && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
@@ -289,15 +320,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                                 if (isFavorite) Icons.Default.Check else Icons.Default.Add, iconOnly = true, onClick = favorite)
                             DiscoveryTrailerAction(metadata.card, iconOnly = true)
                             LocalProviderSynopsisActions.current?.invoke()
-                            DiscoveryAction("Series information", Icons.Default.Info, iconOnly = true,
-                                enabled = !metadata.card.overview.isNullOrBlank(),
-                                modifier = Modifier.focusRequester(synopsisRequester).onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                        Key.DirectionUp -> { synopsisUp?.invoke(); synopsisUp != null }
-                                        Key.DirectionDown -> { synopsisDown?.invoke(); synopsisDown != null }
-                                        else -> false
-                                    }
-                                }) { compactInfoOpen = true }
+
                         }
                         progressLabel?.let { Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall) }
                         progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
@@ -335,17 +358,13 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 onUp = { if (wideSeries) { if (heroUp != null) { heroUp(); true } else runCatching { backRequester.requestFocus() }.getOrDefault(false) } else false },
                 previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
                 portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = true, compactDetail = true,
-                categoryActions = if (wideSeries) ({
-                    if (!metadata.card.overview.isNullOrBlank()) DiscoveryAction("More info", Icons.Default.Info, iconOnly = true,
-                        modifier = Modifier.focusRequester(synopsisRequester).onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionUp -> { synopsisUp?.invoke(); synopsisUp != null }
-                                Key.DirectionDown -> { synopsisDown?.invoke(); synopsisDown != null }
-                                else -> false
-                            }
-                        }) { compactInfoOpen = true }
-                    LocalProviderSynopsisActions.current?.invoke()
-                }) else null)
+                categoryActions = ({
+                    val extraActions = LocalProviderSynopsisActions.current
+                    if (extraActions != null) extraActions()
+                    else DetailMoreActions(cast = if (people.isNotEmpty()) ({ focus(castEntry) }) else null,
+                        related = if (related.isNotEmpty()) ({ focus(relatedEntry) }) else null)
+                    LocalProviderEpisodeControls.current?.invoke()
+                }))
             progressLabel?.let {
                 Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 20.dp else 32.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
@@ -453,7 +472,10 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(
             0f to Color(0x55090B10), .65f to Color(0x22090B10), 1f to Color(0xBB090B10))))
     }
-    CompositionLocalProvider(LocalMobileGlassEnabled provides (phone || tabletSeriesOverlay),
+    CompositionLocalProvider(LocalMobileGlassEnabled provides true,
+        LocalDetailActionGlass provides true,
+        LocalProviderMoreInfo provides metadata.card.overview?.takeIf(String::isNotBlank)?.let { { compactInfoOpen = true } },
+        LocalProviderInfoFocus provides synopsisRequester,
         LocalSeriesArtworkGlass provides tabletSeriesOverlay) {
     layout(hero, castRow, supplementary,
         if (people.isEmpty()) null else ({ runCatching { castEntry.requestFocus() }.getOrDefault(false) }),

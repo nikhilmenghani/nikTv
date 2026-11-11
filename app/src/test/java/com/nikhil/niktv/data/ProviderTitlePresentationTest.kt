@@ -19,6 +19,18 @@ class ProviderTitlePresentationTest {
         assertEquals("Kaun Banega Crorepati", providerSeriesTmdbTitle("Sony Set Hindi : Kaun Banega Crorepati"))
         assertEquals("Anupama", providerSeriesTmdbTitle("Star Plus Hindi : Anupama (Hindi)"))
     }
+    @Test fun stalkerCategorySuffixesDoNotBecomeTitleWords() {
+        for (raw in listOf(
+            "Masters of the Universe (English) - ENGLISH | AMAZON",
+            "Masters of the Universe (English) (4K) - ENGLISH | LATEST MOVIES 4K",
+            "Masters of the Universe (Malayalam) (4K) - MALAYALAM | DUBB MOVIES",
+            "Masters of the Universe (Hindi-Amazon Prime) - HINDI | KIDS COLLECTION")) {
+            assertEquals("Masters of the Universe", providerTmdbTitle(raw))
+        }
+        assertEquals("Homeland", providerSeriesTmdbTitle("Homeland (English) - ENGLISH | SERIES"))
+        assertEquals("The Latest", providerTmdbTitle("The Latest"))
+        assertEquals("Kids", providerTmdbTitle("Kids"))
+    }
     @Test fun realTitlesAreNotMetadata() {
         for (raw in listOf("1917", "2001: A Space Odyssey", "V", "English", "Cam", "It: Chapter Two",
             "Hindi Medium", "The Office (US)", "Show (Nikosh Chhaya)", "Spider-Man: Brand New Day", "Unknown : Show")) {

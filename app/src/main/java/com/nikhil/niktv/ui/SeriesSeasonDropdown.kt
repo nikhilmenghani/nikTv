@@ -31,14 +31,21 @@ internal fun SeriesSeasonDropdown(seasons: List<Int>, selected: Int?, requester:
         }
     }
     Box {
+        if (com.nikhil.niktv.discovery.LocalDetailActionGlass.current) {
+            CompositionLocalProvider(com.nikhil.niktv.discovery.LocalCollapsingDiscoveryActions provides false) {
+                com.nikhil.niktv.discovery.DiscoveryAction(selected?.let { "Season $it" } ?: "Choose season",
+                    Icons.Default.ExpandMore, modifier = Modifier.focusRequester(requester)) { expanded = true }
+            }
+        } else {
         NikTvSecondaryActionButton({ expanded = true }, Modifier.focusRequester(requester)) {
             Icon(Icons.Default.ExpandMore, null, Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(selected?.let { "Season $it" } ?: "Choose season", style = MaterialTheme.typography.labelMedium)
         }
+        }
         DropdownMenu(expanded, { expanded = false; restore() }, modifier = Modifier.width(220.dp),
             containerColor = Color.Transparent, tonalElevation = 0.dp, shadowElevation = 0.dp) {
-            EpisodeSortMenuGroup(scrollable = true) {
+            if (seasons.isNotEmpty() || selected != null) EpisodeSortMenuGroup(scrollable = true) {
                 (seasons + listOfNotNull(selected)).distinct().sorted().forEach { season ->
                     EpisodeSortMenuItem("Season $season", Icons.Default.Tv, selected = season == selected,
                         modifier = if (season == selected) Modifier.focusRequester(selectedEntry) else Modifier) {

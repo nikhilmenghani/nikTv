@@ -367,7 +367,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 @Composable
 private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
     val openUserProfiles = LocalOpenUserProfiles.current
+    var metadataLookup by remember { mutableStateOf<Pair<MediaItem, CatalogType>?>(null) }
     androidx.compose.runtime.CompositionLocalProvider(
+        LocalOpenProviderMetadataLookup provides { item, type -> metadataLookup = item to type },
         LocalPlayAlternateSource provides vm::openAlternateSources,
         LocalRefreshProviderCategories provides { type -> vm.refreshProviderCategories(type) },
         com.nikhil.niktv.discovery.LocalOpenDiscovery provides vm::openDiscovery,
@@ -403,6 +405,10 @@ private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
         LocalShowRecommendations provides vm::showRecommendationsOnHome,
         LocalRecommendationTypeFor provides vm::recommendationTypeFor) {
         NikTvAppContent(vm)
+        metadataLookup?.let { (item, type) ->
+            ProviderMetadataLookupDialog(item, type, confirm = { card -> vm.confirmProviderTmdb(item, type, card) },
+                close = { metadataLookup = null })
+        }
     }
 }
 

@@ -1983,6 +1983,7 @@ private fun SearchFavoriteMenu(
         item?.let {
             AlternateSourceMenuItem(it, dismiss = onDismiss)
             ShowRecommendationsMenuItem(it, dismiss = onDismiss)
+            ProviderMetadataLookupMenuItem(it, dismiss = onDismiss)
         }
         NikDropdownMenuItem(
             text = {

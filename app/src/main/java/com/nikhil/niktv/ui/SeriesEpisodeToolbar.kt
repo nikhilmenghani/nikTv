@@ -53,6 +53,7 @@ internal fun SeriesEpisodeToolbar(
     season: @Composable () -> Unit,
     count: String,
     compact: Boolean,
+    inline: Boolean = false,
     newestFirst: Boolean,
     onNewestFirst: (Boolean) -> Unit,
     listView: Boolean,
@@ -121,18 +122,19 @@ internal fun SeriesEpisodeToolbar(
     fun selectLayout(value: Boolean) {
         if (value != listView) { beforeAction(); restoreLayoutFocus = true; onListView(value) }
     }
-    val searchWidth by animateDpAsState(if (searchOpen && !compact) 220.dp else 48.dp,
+    val controlSize = com.nikhil.niktv.discovery.detailActionSize()
+    val searchWidth by animateDpAsState(if (searchOpen && !compact) 220.dp else controlSize,
         tween(220, easing = FastOutSlowInEasing), label = "episodeSearchWidth")
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        Row(if (inline) Modifier else Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(3.dp).height(48.dp).padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
+            Row(if (inline) Modifier else Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                if (!inline) Box(Modifier.width(3.dp).height(48.dp).padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primary) {}
                 }
-                Box(Modifier.padding(start = 10.dp).heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) { season() }
+                Box(Modifier.padding(start = if (inline) 0.dp else 10.dp).heightIn(min = controlSize), contentAlignment = Alignment.CenterStart) { season() }
             }
-            Box(Modifier.width(searchWidth).height(48.dp).clip(RoundedCornerShape(12.dp))) {
+            Box(Modifier.width(searchWidth).height(controlSize).clip(RoundedCornerShape(12.dp))) {
                 if (searchOpen && !compact) Box(Modifier.fillMaxSize().focusRequester(searchRequester)) { searchField() }
                 else EpisodeToolbarIcon(Icons.Default.Search, "Search episodes", searchOpen,
                     Modifier.focusRequester(searchRequester), onSearch)
@@ -173,7 +175,7 @@ internal fun SeriesEpisodeToolbar(
                 }
             }
         }
-        Text(count, Modifier.padding(start = 13.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
+        if (!inline) Text(count, Modifier.padding(start = 13.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
         AnimatedVisibility(searchOpen && compact,
             enter = expandVertically(tween(220)) + fadeIn(tween(150)),
             exit = shrinkVertically(tween(220)) + fadeOut(tween(120))) {
@@ -224,6 +226,11 @@ internal fun EpisodeSortMenuItem(label: String, icon: ImageVector, selected: Boo
 @Composable
 private fun EpisodeToolbarIcon(icon: ImageVector, label: String, active: Boolean,
     modifier: Modifier = Modifier, click: () -> Unit) {
+    if (com.nikhil.niktv.discovery.LocalDetailActionGlass.current) {
+        com.nikhil.niktv.discovery.DiscoveryAction(label, icon, iconOnly = true,
+            modifier = modifier.size(com.nikhil.niktv.discovery.detailActionSize()).semantics { contentDescription = label; selected = active }, onClick = click)
+        return
+    }
     NikTvSecondaryActionButton(click,
         modifier.size(48.dp).semantics { contentDescription = label; selected = active },
         contentPadding = PaddingValues(0.dp)) {

@@ -66,15 +66,17 @@ class SharedSeriesControlsDeviceTest {
                     }
                     CompositionLocalProvider(LocalConfiguration provides config) {
                         Box(Modifier.width(960.dp).height(540.dp)) {
-                            SeriesDetailScaffold(header = {
-                                NikTvSecondaryActionButton({}, Modifier.focusRequester(play)) { Text("Fixture Play") }
-                            }, episodes = {
-                                DiscoverySeriesEpisodes(state, SeriesStartSeason.FIRST, entry,
-                                    loadSeason = {}, play = { _, _, _ -> fail("Focus must not play") },
-                                    download = { _, _, _ -> fail("Focus must not download") },
-                                    onFocus = {}, up = { play.requestFocus() }, down = { false },
-                                    modifier = Modifier.fillMaxSize(), lastWatched = 1 to 2, loadInitialSeason = false)
-                            })
+                            DiscoverySeriesEpisodes(state, SeriesStartSeason.FIRST, entry,
+                                loadSeason = {}, play = { _, _, _ -> fail("Focus must not play") },
+                                download = { _, _, _ -> fail("Focus must not download") },
+                                onFocus = {}, up = { play.requestFocus() }, down = { false },
+                                modifier = Modifier.fillMaxSize(), lastWatched = 1 to 2, loadInitialSeason = false,
+                                header = { toolbar ->
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                        NikTvSecondaryActionButton({}, Modifier.focusRequester(play)) { Text("Fixture Play") }
+                                        toolbar()
+                                    }
+                                })
                         }
                     }
                     LaunchedEffect(Unit) { repeat(5) { withFrameNanos { }; runCatching { entry.requestFocus() } } }

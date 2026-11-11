@@ -14,6 +14,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.Key
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
@@ -128,30 +135,39 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
         yield()
         if (offlineOnly) vm.openProfileDownloads() else vm.openProfileChooser()
         profileDownloads = offlineOnly
-        selectedUser = profileId
-        choosingProfile = false
-        if (offlineOnly) return
+        if (offlineOnly) { selectedUser = profileId; choosingProfile = false; return }
         val destination = store.rememberedDestination(owner)
         val portals = legacyStore.scoped(owner).profiles.first().filter { com.nikhil.niktv.data.ProfilePortalAccess.allowed(context, it, owner) }
         if (store.selectedScope.value != owner) return
+        suspend fun activate(portal: PortalProfile) {
+            vm.switchProfile(portal)
+            // Keep Who's watching visible until its destination is ready; the
+            // temporary null session is not a request to show portal setup.
+            kotlinx.coroutines.withTimeout(95_000L) {
+                vm.state.first { it.session?.profile?.cacheKey() == portal.cacheKey() ||
+                    (!it.loading && it.error != null) }
+            }
+        }
         when (destination?.kind) {
             ViewerDestinationKind.OFFLINE -> {
                 // Older versions remembered Downloads as a portal destination. Resume
                 // the retained content portal now that Downloads lives on the people screen.
                 val previous = store.rememberedPortalKey(owner)
                     ?: legacyStore.scoped(owner).activeProfile.first()?.cacheKey()
-                portals.firstOrNull { it.cacheKey() == previous }?.let(vm::switchProfile)
+                portals.firstOrNull { it.cacheKey() == previous }?.let { activate(it) }
             }
             ViewerDestinationKind.SPORTS -> if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner))
                 context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
-                else portals.firstOrNull()?.let(vm::switchProfile)
-            ViewerDestinationKind.PORTAL -> portals.firstOrNull { it.cacheKey() == destination.portalKey }?.let(vm::switchProfile)
+                else portals.firstOrNull()?.let { activate(it) }
+            ViewerDestinationKind.PORTAL -> portals.firstOrNull { it.cacheKey() == destination.portalKey }?.let { activate(it) }
             null -> {
                 // Upgrade an existing device's last portal only when it belongs to this viewer.
                 val active = legacyStore.scoped(owner).activeProfile.first()
-                portals.firstOrNull { it.cacheKey() == active?.cacheKey() }?.let(vm::switchProfile)
+                portals.firstOrNull { it.cacheKey() == active?.cacheKey() }?.let { activate(it) }
             }
         }
+        selectedUser = profileId
+        choosingProfile = false
     }
     LaunchedEffect(manager) {
         manager.restoreCachedAccount()
@@ -289,6 +305,8 @@ internal fun GitHubAccountScreen(
     }
     val first = remember { FocusRequester() }
     val remote = LocalContext.current.usesRemoteNavigation(LocalConfiguration.current)
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
     if (state.initialized && !state.reconnectRequired) BackHandler(onBack = onProfiles)
     Column(
         Modifier.fillMaxSize().initialFocusEntry(first, remote).background(Color(0xFF090909)).safeDrawingPadding()
@@ -308,7 +326,15 @@ internal fun GitHubAccountScreen(
                 value = token, onValueChange = { token = it },
                 label = { Text(if (state.accountId == null) "GitHub token" else "Replacement GitHub token") },
                 visualTransformation = PasswordVisualTransformation(), singleLine = true,
-                enabled = !state.syncing, modifier = Modifier.fillMaxWidth().focusRequester(first).remoteFocusFrame(RoundedCornerShape(8.dp))
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, showKeyboardOnFocus = !remote),
+                keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focus.clearFocus() }),
+                enabled = !state.syncing, modifier = Modifier.fillMaxWidth().focusRequester(first)
+                    .onPreviewKeyEvent { event ->
+                        if (remote && event.key in menuActivationKeys) {
+                            if (event.type == KeyEventType.KeyUp) keyboard?.show()
+                            true
+                        } else false
+                    }.remoteFocusFrame(RoundedCornerShape(8.dp))
             )
             NikTvPrimaryActionButton(
                 onClick = { onConnect(token.trim()) },

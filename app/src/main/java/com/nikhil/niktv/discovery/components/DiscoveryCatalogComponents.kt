@@ -2431,6 +2431,7 @@ internal fun ModernTileActionsMenu(
         }
         val alternateItem = alternateSource?.item ?: recommendationItem ?: trailerItem
         alternateItem?.let { item ->
+            ProviderMetadataLookupMenuItem(item, alternateSource?.type ?: recommendationType, dismiss)
             MarkUnwatchedMenuItem(item, alternateSource?.type ?: recommendationType ?: if (trailerSeries) CatalogType.SERIES else null,
                 alternateSource?.series, dismiss)
         }

@@ -1567,17 +1567,18 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             }
         }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
+        val detailActionHeight = if (detail) detailActionSize() else 48.dp
         val actions: @Composable () -> Unit = {
             CompositionLocalProvider(LocalCollapsingDiscoveryActions provides false) {
             DiscoveryAction(if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true,
                 horizontalPadding = 16.dp, trailingPadding = 22.dp,
-                modifier = Modifier.heightIn(min = 48.dp).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
+                modifier = Modifier.heightIn(min = detailActionHeight).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
             }
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
-                iconOnly = true, modifier = Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp), enabled = card != null, onFocus = onFocus, onClick = add)
-            DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, modifier = Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp), mediaOverride = trailerMedia)
+                iconOnly = true, modifier = Modifier.widthIn(min = detailActionHeight).heightIn(min = detailActionHeight), enabled = card != null, onFocus = onFocus, onClick = add)
+            DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, modifier = Modifier.widthIn(min = detailActionHeight).heightIn(min = detailActionHeight), mediaOverride = trailerMedia)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
-                modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
+                modifier = Modifier.heightIn(min = detailActionHeight).widthIn(min = detailActionHeight).focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()
             // Keep carousel arrows compact and its counter width reserved while feeds load.
             if (landscape && (carousel || !detail)) CompositionLocalProvider(LocalCollapsingDiscoveryActions provides false) {
@@ -1839,15 +1840,16 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     visualLabel: String = label, horizontalPadding: Dp = 14.dp, trailingPadding: Dp = horizontalPadding,
     onFocus: () -> Unit = {}, containerColor: Color? = null, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val collapsible = LocalCollapsingDiscoveryActions.current && icon != null
+    val collapsible = LocalCollapsingDiscoveryActions.current && icon != null && !iconOnly
     val headerSizing = LocalDiscoveryHeaderActionSizing.current
+    val detailSize = detailActionSize()
     val contentInset = if (headerSizing) 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
     DiscoveryMobileGlassContainer(focused = focused) {
-    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 40.dp)
-        .widthIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) 48.dp else 0.dp)
+    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else 40.dp)
+        .widthIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else 0.dp)
         .then(if (collapsible) Modifier.semantics { contentDescription = label } else Modifier)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() },
-        shape = RoundedCornerShape(10.dp), color = containerColor ?: if (selected) Accent else if (focused) Color.White
+        shape = RoundedCornerShape(10.dp), shadowElevation = 0.dp, tonalElevation = 0.dp, color = containerColor ?: if (selected) Accent else if (focused) Color.White
             else if (LocalMobileGlassEnabled.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
         border = if (LocalMobileGlassEnabled.current) null else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
         contentColor = if (focused && !selected && containerColor == null) Color.Black else Color.White) {

@@ -11,7 +11,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 
 /** No portal client is available here: speculative discovery cannot search/open provider streams. */
-internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClient = TmdbClient()) : DiscoveryDataSource, WatchProvidersSource {
+internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClient = TmdbClient(), private val providerProfile: String? = null) : DiscoveryDataSource, WatchProvidersSource {
     private val cache = DiscoveryCache(java.io.File(context.applicationContext.cacheDir, "discovery_preview"))
     companion object { private val slots = Semaphore(2) }
     private val json = Json { ignoreUnknownKeys = true }
@@ -137,10 +137,26 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
             discoveryActorCredits(tmdb.discoveryJson("/person/$id/combined_credits"))
         }.filter { it.released() }
     }
+    suspend fun providerTitleMatches(query: String, type: com.nikhil.niktv.model.CatalogType): List<DiscoveryCard> {
+        check(configured) { "TMDB is not configured on this device." }
+        val series = type == com.nikhil.niktv.model.CatalogType.SERIES
+        return slots.withPermit { cards(tmdb.discoveryJson(if (series) "/search/tv" else "/search/movie",
+            mapOf("query" to query.trim())), series) }
+    }
+    private fun confirmedKey(profile: String, item: com.nikhil.niktv.model.MediaItem, type: com.nikhil.niktv.model.CatalogType) =
+        "provider-confirmed-v1:$profile:${type.name}:${item.id}:${item.title}"
+    suspend fun confirmProviderTitle(profile: String, item: com.nikhil.niktv.model.MediaItem,
+        type: com.nikhil.niktv.model.CatalogType, card: DiscoveryCard) {
+        cache.write(confirmedKey(profile, item, type), json.encodeToString(DiscoveryCard.serializer(), card))
+    }
     override suspend fun providerDetails(item: com.nikhil.niktv.model.MediaItem, type: com.nikhil.niktv.model.CatalogType,
         stale: (DiscoveryDetails) -> Unit): DiscoveryDetails {
         val fallback = providerDetailFallback(item, type)
-        val card = cachedProviderMetadata(cache, item, type) {
+        val confirmed = providerProfile?.let { profile -> cache.read(confirmedKey(profile, item, type))?.let {
+            runCatching { json.decodeFromString(DiscoveryCard.serializer(), it.payload) }.getOrNull()
+        } }
+        val card = confirmed ?: cachedProviderMetadata(cache, item, type) {
+            check(configured) { "TMDB is not configured on this device." }
             if ((item.externalTmdbId ?: 0) > 0) providerTmdbSeed(item, type)
             else slots.withPermit {
                 val lookup = item.copy(externalTmdbId = null)

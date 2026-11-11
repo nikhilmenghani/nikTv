@@ -33,12 +33,14 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     play: (DiscoveryCard, Int, Int) -> Unit, download: (DiscoveryCard, Int, Int) -> Unit,
     onFocus: () -> Unit, up: () -> Boolean, down: () -> Boolean,
     modifier: Modifier = Modifier, lastWatched: Pair<Int, Int>? = null, loadInitialSeason: Boolean = true,
-    onNewestFirstChanged: (Boolean) -> Unit = {}) {
+    onNewestFirstChanged: (Boolean) -> Unit = {},
+    header: (@Composable (@Composable () -> Unit) -> Unit)? = null) {
     val card = state.detail ?: return
     val alternateSource = LocalPlayAlternateSource.current
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val wide = configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration)
+    val wide = configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration) ||
+        configuration.screenWidthDp > configuration.screenHeightDp
     val seasons = state.details?.seasons.orEmpty()
     val chosen = state.season ?: discoveryInitialSeriesSeason(state.details, startSeason, lastWatched?.first)
     var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
@@ -180,13 +182,14 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         }
         false
     }) {
+        val toolbar: @Composable () -> Unit = {
         SeriesEpisodeToolbar(
             season = { SeriesSeasonDropdown(seasons, chosen, seasonEntry, choose = { season ->
                 interacted = true; entryJob?.cancel(); requestedSeasonFocus = season
                 loadSeason(season)
             }) },
             count = seriesEpisodeCountLabel(episodes.size, false, searchOpen && query.isNotBlank()),
-            compact = !wide, newestFirst = newest, onNewestFirst = {
+            compact = !wide, inline = header != null, newestFirst = newest, onNewestFirst = {
                 newest = it; rememberEpisode(null)
             },
             listView = listView, onListView = { listView = it }, searchOpen = searchOpen,
@@ -212,7 +215,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                     modifier = Modifier.focusRequester(searchInput).onFocusChanged { searchInputFocused = it.isFocused },
                     options = KeyboardOptions(imeAction = ImeAction.Search),
                     actions = KeyboardActions(onSearch = { searchEditing = false; keyboard?.hide() }))
-            }, modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp).onPreviewKeyEvent { event ->
+            }, modifier = Modifier.then(if (header != null) Modifier else Modifier.padding(horizontal = 24.dp, vertical = 12.dp)).onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                     Key.DirectionUp -> {
                         searchEditing = false
@@ -230,6 +233,8 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                     else -> false
                 }
             })
+        }
+        if (header != null) header(toolbar) else toolbar()
         state.errors["season"]?.let { message ->
             DiscoveryAction(message, modifier = Modifier.focusRequester(retrySeason).onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {

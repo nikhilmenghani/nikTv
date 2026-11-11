@@ -3361,14 +3361,35 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         backgroundTmdb: Boolean = false
     ) {
         val session = _state.value.session ?: return
+        var providerSeries = series
         val destinationRevision = episodeDestinationRequest
-        val refreshed = withAutomaticSessionRetry(session) { activeSession ->
+        var refreshed = withAutomaticSessionRetry(session) { activeSession ->
             loadInitialEpisodeBatch(activeSession, series, requestedSeason)
         }
         if (destinationRevision != episodeDestinationRequest || _state.value.episodeDestination?.running == true) return
+        if (refreshed.episodes.isEmpty() && refreshed.availableSeasons.isEmpty() && session.profile.portalType == PortalType.STALKER) {
+            // A provider can renumber a series while its cached tile survives.
+            // This extra request happens only after an empty provider response.
+            val query = com.nikhil.niktv.data.providerSeriesTmdbTitle(series.title)
+            val candidates = withAutomaticSessionRetry(session) { active ->
+                portal.search(active, SearchContentType.SERIES, query, 1).items
+            }
+            staleSeriesReplacement(series, candidates)?.let { replacement ->
+                val recovered = withAutomaticSessionRetry(session) { active -> loadInitialEpisodeBatch(active, replacement, requestedSeason) }
+                if (recovered.episodes.isNotEmpty() || recovered.availableSeasons.isNotEmpty()) {
+                    providerSeries = replacement.withFavoriteSeriesPresentation(series)
+                    refreshed = recovered
+                    _state.update { current -> if (current.session?.profile?.cacheKey() == session.profile.cacheKey() && current.selectedSeries?.id == series.id)
+                        current.copy(selectedSeries = providerSeries) else current }
+                    searchSeriesReturn = searchSeriesReturn?.resolved(session.profile.cacheKey(), series.id, providerSeries.id)
+                    store.mergeSearchMetadata(SearchCatalogCache(session.profile.cacheKey(), CatalogType.SERIES, System.currentTimeMillis(), candidates))
+                }
+            }
+        }
+
         val latestCache = episodeSeasonCaches.firstOrNull { it.profileKey == session.profile.cacheKey() &&
-            it.seriesId == series.id && it.season == refreshed.selectedSeason } ?: previous
-        val loaded = refreshed.retainLoadedEpisodes(latestCache, session.profile.cacheKey(), series.id,
+            it.seriesId == providerSeries.id && it.season == refreshed.selectedSeason } ?: previous
+        val loaded = refreshed.retainLoadedEpisodes(latestCache, session.profile.cacheKey(), providerSeries.id,
             latestCache?.rawIptvEpisodes().orEmpty())
         val raw = loaded.episodes.distinctBy { it.id }
         if (raw.isEmpty() && previous?.rawIptvEpisodes().orEmpty().isNotEmpty()) {
@@ -3380,7 +3401,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val retained = latestCache?.episodes.orEmpty().associateBy { it.id }
         val base = EpisodeSeasonCache(
             profileKey = session.profile.cacheKey(),
-            seriesId = series.id,
+            seriesId = providerSeries.id,
             season = loaded.selectedSeason,
             availableSeasons = loaded.availableSeasons,
             episodes = raw.map { episode -> retained[episode.id]?.copy(episodeAddedAtMillis = episode.episodeAddedAtMillis
@@ -3396,9 +3417,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         )
         cacheSeason(base)
         if (backgroundTmdb) {
-            launchEpisodeMetadataEnrichment(series, base, forceTmdb)
+            launchEpisodeMetadataEnrichment(providerSeries, base, forceTmdb)
         } else {
-            enrichEpisodeCacheFromTmdb(series, base, forceTmdb)
+            enrichEpisodeCacheFromTmdb(providerSeries, base, forceTmdb)
         }
     }
 
@@ -4702,6 +4723,31 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         if (_state.value.session?.profile?.cacheKey() == profileKey) {
             _state.value.browseCachesByType[type]?.let { store.saveBrowseCatalog(it) }
             prefetchArtwork(getApplication(), _state.value.items, limit = 10)
+        }
+    }
+
+    /** Explicit confirmation only; provider IDs and playback commands are retained. */
+    internal suspend fun confirmProviderTmdb(item: MediaItem, type: CatalogType, card: com.nikhil.niktv.discovery.DiscoveryCard) {
+        val owner = store.captureScope()
+        val profile = _state.value.session?.profile?.cacheKey() ?: error("Open a portal first.")
+        require(card.series == (type == CatalogType.SERIES) && card.id > 0)
+        mediaIdentities.save(com.nikhil.niktv.data.MediaIdentity(profile, type, item.id, item.title,
+            movie = if (!card.series) card.movie() else null, series = if (card.series) card.show() else null, method = "confirmed"))
+        com.nikhil.niktv.discovery.DiscoveryRepository(getApplication()).confirmProviderTitle(profile, item, type, card)
+        val enriched = item.copy(externalTmdbId = card.id, logo = card.poster ?: item.logo, description = card.overview ?: item.description)
+        val matches = (tmdbAvailability.read(profile, type).entries[card.id]?.matches.orEmpty() + enriched).distinctBy { it.id }
+        tmdbAvailability.save(profile, type, card.id, TmdbAvailabilityEntry(System.currentTimeMillis(), matches, TMDB_MATCHING_VERSION))
+        if (store.captureScope() != owner) return
+        _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profile) current else {
+                fun enrich(items: List<MediaItem>) = items.map { if (it.id == item.id && it.title == item.title) enriched else it }
+                current.copy(items = if (current.selectedType == type) enrich(current.items) else current.items,
+                    searchResults = enrich(current.searchResults),
+                    providerMovieDetails = current.providerMovieDetails?.let { if (type == CatalogType.MOVIES && it.item.id == item.id) it.copy(item = enriched) else it },
+                    selectedSeries = current.selectedSeries?.let { if (type == CatalogType.SERIES && it.id == item.id) enriched else it },
+                    modernTmdbMovieMatches = if (type == CatalogType.MOVIES) current.modernTmdbMovieMatches + (card.id to matches) else current.modernTmdbMovieMatches,
+                    modernTmdbSeriesMatches = if (type == CatalogType.SERIES) current.modernTmdbSeriesMatches + (card.id to matches) else current.modernTmdbSeriesMatches)
+            }
         }
     }
 
