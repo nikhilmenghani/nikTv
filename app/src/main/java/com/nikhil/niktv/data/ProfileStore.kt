@@ -276,7 +276,9 @@ class ProfileStore @JvmOverloads constructor(
         if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         val profiles = decodeProfiles(it[profilesKey], it[key])
         val sessions = decodeSessions(it[sessionsKey], it[sessionKey])
-        it[profilesKey] = Json.encodeToString((profiles.filterNot { saved -> saved.identity() == session.profile.identity() } + session.profile))
+        it[profilesKey] = Json.encodeToString(if (profiles.any { saved -> saved.identity() == session.profile.identity() })
+            profiles.map { saved -> if (saved.identity() == session.profile.identity()) session.profile else saved }
+            else profiles + session.profile)
         it[sessionsKey] = Json.encodeToString((sessions.filterNot { saved -> saved.profile.identity() == session.profile.identity() } + session))
         it[activeProfileKey] = session.profile.identity()
         it[key] = Json.encodeToString(session.profile)

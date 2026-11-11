@@ -156,10 +156,11 @@ private fun DiscoveryPreviewContent(
     val heroPreferences = remember(context) { com.nikhil.niktv.data.UserProfilePreferences.get(context, "home2_presentation") }
     val profile = app.savedProfile?.cacheKey().orEmpty()
     val metadataKey = discoveryPresentationOptionKey("title_metadata", profile, surface, television)
-    val framingKey = discoveryPresentationOptionKey("home_hero_framing", profile, surface, television)
+    val framingSurface = if (configuration.usesShortWideLayout(television)) DashboardSurface.HOME else surface
+    val framingKey = discoveryPresentationOptionKey("home_hero_framing", profile, framingSurface, television)
     val skeletonKey = discoveryPresentationOptionKey("tile_skeletons", profile, surface, television)
     var optionalHeroMetadata by remember(profile, surface, television) { mutableStateOf(heroPreferences.getBoolean(metadataKey, false)) }
-    var homeHeroFraming by remember(profile, surface, television) { mutableStateOf(heroPreferences.getBoolean(framingKey, true)) }
+    var homeHeroFraming by remember(framingKey) { mutableStateOf(heroPreferences.getBoolean(framingKey, true)) }
     var tileSkeletons by remember(profile, surface, television) { mutableStateOf(heroPreferences.getBoolean(skeletonKey, true)) }
     var activityCollection by rememberSaveable(profile, surface, experiment) { mutableStateOf<String?>(null) }
     val variantKey = discoveryPresenterKey(profile, surface, television)
@@ -750,7 +751,7 @@ private fun DiscoveryPreviewContent(
             val headerArtwork = thumbnailArtworkUrl(heroCard?.backdrop ?: heroCard?.poster, 1280)
             var heroGlassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
             val baseHeroHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeFrame, television)
-            Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp).clipToBounds().onGloballyPositioned {
+            Box((if (phonePortrait) Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp) else Modifier.fillMaxWidth()).clipToBounds().onGloballyPositioned {
                 heroGlassBounds = it.boundsInWindow()
                 if (!phonePortrait) publishGlass(MobileGlassSource(headerArtwork.takeIf { scrollVariant.heroArtwork }, it.boundsInWindow(), topAligned = homeFrame, fillWidth = homeFrame))
             }.then(
@@ -1455,15 +1456,21 @@ internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alig
 
 @Composable
 internal fun DiscoveryBackdropArtwork(requested: String?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center,
-    shaded: Boolean = true, viewportShade: Boolean = false) {
+    shaded: Boolean = true, viewportShade: Boolean = false, fillWidth: Boolean = false) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val preservePortrait = fillWidth || configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
+    var portraitArtwork by remember(requested) { mutableStateOf(false) }
     var ready by remember { mutableStateOf(requested) }
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
         Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else 300), label = "discoveryBackdrop") { url ->
             val request = remember(context, url, shaded, viewportShade) { ImageRequest.Builder(context).data(url).size(1280, 720)
                 .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
-            AsyncImage(request, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = alignment)
+            AsyncImage(request, null, if (fillWidth && !portraitArtwork) Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).aspectRatio(16f / 9f) else Modifier.fillMaxSize(),
+                contentScale = if (preservePortrait && portraitArtwork) ContentScale.Fit else if (fillWidth) ContentScale.FillWidth else ContentScale.Crop,
+                alignment = if (preservePortrait && portraitArtwork) Alignment.CenterEnd else alignment,
+                onSuccess = { portraitArtwork = it.result.image.width < it.result.image.height })
         }
         // Hidden decode layer promotes only the latest successfully prepared backdrop.
         if (requested != null && requested != ready) {

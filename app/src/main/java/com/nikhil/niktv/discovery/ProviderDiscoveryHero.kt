@@ -147,7 +147,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     val headerArtwork = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, 1280)
     var heroGlassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val baseHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), framed, context.isTvLikeDevice(configuration))
-    Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp).clipToBounds().onGloballyPositioned {
+    Box((if (portraitPhone) Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp) else Modifier.fillMaxWidth()).clipToBounds().onGloballyPositioned {
         heroGlassBounds = it.boundsInWindow()
         if (!portraitPhone) publishGlass(MobileGlassSource(headerArtwork.takeIf { display.artwork }, it.boundsInWindow(), topAligned = framed, fillWidth = framed))
     }.then(if (landscape && !phone)

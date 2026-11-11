@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
@@ -93,6 +95,8 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         }
     }
     val navigationInset = LocalHeroNavigationInset.current
+    val wideHeroHeight = trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), true,
+        context.isTvLikeDevice(configuration)), LocalDensity.current.fontScale).dp + navigationInset
     val publishGlass = LocalPublishMobileGlassSource.current
     val headerArtwork = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, 1280)
     val localPlay = remember { FocusRequester() }
@@ -105,7 +109,7 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         else details(requireNotNull(entry).type, favorite.media, listOf(favorite.media))
     }
     // Home's recycled feed reserves a 10dp top gutter before this same hero.
-    Box(Modifier.padding(top = if (phone) 10.dp else 0.dp).wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow())) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
+    Box(Modifier.padding(top = if (phone) 10.dp else 0.dp).then(if (phone) Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp) else Modifier.fillMaxWidth().height(wideHeroHeight)).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow(), topAligned = true, fillWidth = true)) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             touching = true
@@ -115,11 +119,11 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         if (!phone) {
             // Artwork belongs to this scrolling header, never behind the saved rows.
             Box(Modifier.matchParentSize().clipToBounds()) {
-                DiscoveryBackdrop(card?.let { it.copy(backdrop = it.backdrop?.takeIf(String::isNotBlank) ?: it.poster) }, reduced, viewportShade = true)
+                DiscoveryBackdropArtwork(headerArtwork, reduced, Alignment.TopCenter, viewportShade = true, fillWidth = true)
                 DiscoveryHeroShade(Modifier.fillMaxSize())
             }
-            DiscoveryHero(card, null, trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), true, context.isTvLikeDevice(configuration)).dp + navigationInset,
-                landscape = true, compact = false, detail = false, loading = cached == null,
+            DiscoveryHero(card, null, wideHeroHeight,
+                landscape = true, compact = true, detail = false, loading = cached == null,
                 inList = true, playRequester = play, infoRequester = info,
                 play = { open(favorite) }, add = { removal = favorite }, info = openInfo,
                 onFocus = {}, onDown = onDown, onUp = onUp,

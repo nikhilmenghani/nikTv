@@ -45,6 +45,20 @@ class ProfileStoreDispatchTest {
 
     @After fun stop() = runBlocking { scope.coroutineContext.job.cancelAndJoin() }
 
+    @Test fun refreshingEitherPortalPreservesNavigationOrderAndUpdatedCredentials() = runBlocking {
+        val stalker = PortalProfile("Stalker", "https://stalker.invalid", "00:11:22:33:44:55")
+        val xtream = PortalProfile("Xtream", "https://xtream.invalid", "", portalType = PortalType.XTREAM, username = "viewer")
+        fun session(profile: PortalProfile) = PortalSession(profile, "fixture", profile.portalUrl, "", "", "")
+        store.save(session(stalker))
+        store.save(session(xtream))
+        store.save(session(stalker.copy(name = "Renamed Stalker")))
+        store.save(session(xtream.copy(password = "updated")))
+        val portals = store.profiles.first()
+        assertEquals(listOf("Renamed Stalker", "Xtream"), portals.map { it.name })
+        assertEquals("updated", portals.last().password)
+        assertEquals(2, portals.size)
+    }
+
     @Test fun decoderRunsOffCollectorAndIgnoresUnrelatedPreferenceChanges() = runBlocking {
         val library = stringPreferencesKey("library")
         val scalar = intPreferencesKey("setting")
