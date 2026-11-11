@@ -28,6 +28,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -56,6 +57,17 @@ internal fun phoneDiscoveryHeroHeight(): Dp {
     val safeHeight = LocalWindowInfo.current.containerSize.height -
         WindowInsets.safeDrawing.getTop(density) - WindowInsets.safeDrawing.getBottom(density)
     return with(density) { safeHeight.toDp() * .34f }.coerceIn(240.dp, 300.dp)
+}
+
+/** Home's artwork proportions, with room for the detail page's extra metadata. */
+@Composable
+internal fun detailDiscoveryHeroHeight(portraitPhone: Boolean, television: Boolean = false): Dp {
+    val density = LocalDensity.current
+    val safeHeight = LocalWindowInfo.current.containerSize.height -
+        WindowInsets.safeDrawing.getTop(density) - WindowInsets.safeDrawing.getBottom(density)
+    val screenHeight = minOf(LocalConfiguration.current.screenHeightDp.toFloat(), with(density) { safeHeight.toDp().value })
+    return if (portraitPhone) (screenHeight * .55f).coerceIn(360f, 500f).dp
+    else trialHeroFrameHeight(trialHeroBaseHeight(screenHeight, true, television) + 48f, density.fontScale).dp
 }
 
 /** Geometry is device-width based; text scale never changes artwork ratios. */
@@ -175,7 +187,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     val picture = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, if (portraitPoster) 780 else 1280)
     var heroBounds by remember(picture) { mutableStateOf(Rect.Zero) }
     val glassSource = MobileGlassSource(picture, heroBounds, fitArtwork,
-        (compactDetail && !portraitPoster) || artworkAlignment == Alignment.TopCenter, compactDetail && !portraitPoster && !fitArtwork)
+        (compactDetail && !portraitPoster) || artworkAlignment == Alignment.TopCenter, false)
     val publishGlass = LocalPublishMobileGlassSource.current
     LaunchedEffect(glassSource) { publishGlass(glassSource) }
     DisposableEffect(publishGlass) { onDispose { publishGlass(null) } }
@@ -186,9 +198,9 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
         Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds = Rect(it.positionInWindow(), it.size.toSize()) }) {
             Crossfade(picture, modifier = Modifier.matchParentSize(), animationSpec = tween(if (reduceMotion) 0 else 250), label = "phoneHeroArtwork") { url ->
                 AsyncImage(ImageRequest.Builder(context).data(url).size(if (portraitPoster) 780 else 1280, if (portraitPoster) 1170 else 720)
-                    .apply { if (detail) transformations(DiscoveryPhoneBackdropTransformation()) }.crossfade(false).build(), null,
+                    .apply { if (detail && !shadeArtworkBounds) transformations(DiscoveryPhoneBackdropTransformation()) }.crossfade(false).build(), null,
                     Modifier.fillMaxSize(),
-                    contentScale = if (fitArtwork) ContentScale.Fit else if (compactDetail && !portraitPoster) ContentScale.FillWidth else ContentScale.Crop,
+                    contentScale = if (fitArtwork) ContentScale.Fit else ContentScale.Crop,
                     alignment = if (compactDetail && !portraitPoster) Alignment.TopCenter else artworkAlignment)
             }
             // Shade the viewport, not the source bitmap: a portrait crop must not cut away its fades.
@@ -205,10 +217,11 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         onDragEnd = { if (drag < -dragThreshold) next() else if (drag > dragThreshold) previous() },
                         onHorizontalDrag = { change, amount -> change.consume(); drag += amount })
                 })
-            Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().then(if (compactDetail) Modifier.heightIn(min = height + navigationInset) else Modifier)) {
                 header?.invoke()
                 Spacer(Modifier.height(navigationInset))
-                Spacer(Modifier.height(if (compactDetail) 52.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .10f).coerceIn(20.dp, 30.dp)))
+                if (compactDetail) Spacer(Modifier.weight(1f))
+                else Spacer(Modifier.height(if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .10f).coerceIn(20.dp, 30.dp)))
                 // Move the content into the space previously occupied by the
                 // carousel row, keeping the hero and first rail at the same height.
                 if (!detail) Spacer(Modifier.height(56.dp))

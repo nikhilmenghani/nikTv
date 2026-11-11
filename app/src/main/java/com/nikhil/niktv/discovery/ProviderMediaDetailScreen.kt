@@ -201,6 +201,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
         configuration.screenHeightDp >= configuration.screenWidthDp
     val wideSeries = type == CatalogType.SERIES && (configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration))
+    val heroHeight = detailDiscoveryHeroHeight(phone, context.isTvLikeDevice(configuration))
     var compactInfoOpen by remember(item.id) { mutableStateOf(false) }
     val compactInfoRequester = remember(item.id) { FocusRequester() }
     if (compactInfoOpen) FullDescriptionDialog(metadata.card.title,
@@ -210,7 +211,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             repeat(30) {
                 withFrameNanos { }
                 if (host.hasWindowFocus() && runCatching {
-                    (if (wideSeries) synopsisRequester else compactInfoRequester).requestFocus()
+                    (if (wideSeries || compactSeries) synopsisRequester else compactInfoRequester).requestFocus()
                 }.getOrDefault(false)) return@launch
             }
         }
@@ -219,7 +220,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         CompositionLocalProvider(LocalMobileGlassEnabled provides phone) {
         Column {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onPreviewKeyEvent { event ->
-                if (wideSeries && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                if ((wideSeries || compactSeries) && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
                     if (topDown != null) { topDown(); true } else runCatching { playRequester.requestFocus() }.getOrDefault(false)
                 } else false
             },
@@ -259,12 +260,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false) }
                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                     0f to Color(0x99090B10), .30f to Color.Transparent, .58f to Color(0x33090B10), 1f to Color(0xFF090B10))))
-                // Reserve artwork above the compact actions, matching the movie detail hero
-                // without making the independently scrolling episode pane disappear.
-                Column(Modifier.fillMaxWidth().heightIn(
-                    min = (configuration.screenHeightDp * .34f).coerceIn(
-                        if (configuration.screenHeightDp >= configuration.screenWidthDp) 240f else 160f,
-                        if (configuration.screenHeightDp >= configuration.screenWidthDp) 320f else 220f).dp),
+                Column(Modifier.fillMaxWidth().heightIn(min = heroHeight),
                     verticalArrangement = Arrangement.SpaceBetween) {
                     toolbar()
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -274,8 +270,14 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth().onKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                    Key.DirectionDown -> { down(); true }
+                                    Key.DirectionUp -> { heroUp?.invoke(); heroUp != null }
+                                    else -> false
+                                }
+                            }) {
                             DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true, iconOnly = true,
                                 enabled = playEnabled, modifier = Modifier.focusRequester(playRequester), onClick = play)
                             DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
@@ -284,7 +286,13 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                             LocalProviderSynopsisActions.current?.invoke()
                             DiscoveryAction("Series information", Icons.Default.Info, iconOnly = true,
                                 enabled = !metadata.card.overview.isNullOrBlank(),
-                                modifier = Modifier.focusRequester(compactInfoRequester)) { compactInfoOpen = true }
+                                modifier = Modifier.focusRequester(synopsisRequester).onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                        Key.DirectionUp -> { synopsisUp?.invoke(); synopsisUp != null }
+                                        Key.DirectionDown -> { synopsisDown?.invoke(); synopsisDown != null }
+                                        else -> false
+                                    }
+                                }) { compactInfoOpen = true }
                         }
                         progressLabel?.let { Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall) }
                         progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
@@ -314,7 +322,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             }
             Column {
             if (!phone) toolbar()
-            DiscoveryHero(metadata.card, null, if (wideSeries) 200.dp else if (landscape) 280.dp else 255.dp, landscape,
+            DiscoveryHero(metadata.card, null, heroHeight, landscape,
                 compact = configuration.screenHeightDp < 480, detail = true, loading = false,
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},

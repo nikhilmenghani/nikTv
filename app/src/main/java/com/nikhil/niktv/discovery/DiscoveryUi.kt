@@ -1142,7 +1142,8 @@ private fun DiscoveryPreviewContent(
                         } else {
                         val origin = "hero:${displayed?.key}"
                         val infoFocusRequester = remember(origin) { returnRequesters.getOrPut(origin) { FocusRequester() } }
-                        val heroHeight = if (phonePortrait) phoneDiscoveryHeroHeight()
+                        val heroHeight = if (state.detail != null) detailDiscoveryHeroHeight(phonePortrait, television)
+                            else if (phonePortrait) phoneDiscoveryHeroHeight()
                             else if (compactLandscape) (screenHeight * .52f).coerceIn(165.dp, 230.dp)
                             else if (landscape) (screenHeight * .55f).coerceIn(235.dp, 355.dp) else (screenHeight * .45f).coerceIn(255.dp, 355.dp)
                         DiscoveryHero(displayed?.let { if (showBackdrop) it else it.copy(backdrop = null, poster = null, titleLogo = null) }, if (state.detail == null) state.feeds[if (displayed?.series == true) TmdbHomeSection.TRENDING_SERIES else TmdbHomeSection.TRENDING_MOVIES]
