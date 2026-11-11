@@ -46,7 +46,6 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     LaunchedEffect(newest) { onNewestFirstChanged(newest) }
     var searchOpen by rememberSaveable(state.profile, card.key) { mutableStateOf(false) }
     var query by rememberSaveable(state.profile, card.key) { mutableStateOf("") }
-    var seasonOpen by remember { mutableStateOf(false) }
     // A season change must not reuse another season's episode key or viewport.
     var focusedBySeason by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, String>()) }
     var viewportsBySeason by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, List<Int>>()) }
@@ -60,12 +59,22 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     val search = remember { FocusRequester() }
     val searchInput = remember { FocusRequester() }
     var searchInputFocused by remember { mutableStateOf(false) }
-    val toolbarSearch = if (wide) seasonEntry else search
+    var searchEditing by remember { mutableStateOf(false) }
+    val toolbarSearch = search
     val sort = remember { FocusRequester() }
     val layout = remember { FocusRequester() }
-    val sidebar = remember { FocusRequester() }
     val retrySeason = remember { FocusRequester() }
-    val selectedSeason = remember { FocusRequester() }
+    var requestedSeasonFocus by remember(card.key) { mutableStateOf<Int?>(null) }
+    val seasonHost = LocalView.current
+    LaunchedEffect(requestedSeasonFocus, chosen, state.loading, state.episodes) {
+        val requested = requestedSeasonFocus ?: return@LaunchedEffect
+        repeat(30) { withFrameNanos { }
+            if (seasonHost.hasWindowFocus() && runCatching { seasonEntry.requestFocus() }.getOrDefault(false)) {
+                if (chosen == requested && "season" !in state.loading) requestedSeasonFocus = null
+                return@LaunchedEffect
+            }
+        }
+    }
     val requesters = remember(card.key) { mutableMapOf<String, FocusRequester>() }
     val episodeState = key(card.key, chosen) {
         val viewport = chosen?.let(viewportsBySeason::get)
@@ -102,14 +111,14 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         onDispose { entryJob?.cancel() }
     }
     fun closeSearch() {
-        searchOpen = false; keyboard?.hide()
+        searchOpen = false; searchEditing = false; keyboard?.hide()
         scope.launch { withFrameNanos { }; runCatching { toolbarSearch.requestFocus() } }
     }
     BackHandler(searchOpen, ::closeSearch)
     LaunchedEffect(searchOpen) {
         if (searchOpen) repeat(12) {
             withFrameNanos { }
-            if (runCatching { (if (wide) toolbarSearch else searchInput).requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            if (runCatching { searchInput.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
     }
     fun focusEpisode(index: Int): Boolean {
@@ -134,7 +143,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         return true
     }
     fun focusSeasonChoice(): Boolean = if (seasons.isNotEmpty())
-        runCatching { (if (wide) sidebar else seasonEntry).requestFocus() }.getOrDefault(false) else false
+        runCatching { seasonEntry.requestFocus() }.getOrDefault(false) else false
     fun enterEpisodes(fromStart: Boolean = false) {
         val index = if (fromStart) 0 else episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.coerceAtLeast(0)
         focusEpisode(index)
@@ -163,12 +172,6 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             loadSeason(it)
         }
     }
-    LaunchedEffect(seasonOpen) {
-        if (seasonOpen) repeat(12) {
-            withFrameNanos { }
-            if (runCatching { selectedSeason.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-        }
-    }
     Column(modifier.onPreviewKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key in listOf(
                 Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
@@ -178,18 +181,10 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         false
     }) {
         SeriesEpisodeToolbar(
-            season = { if (wide) Text("Episodes", color = androidx.compose.ui.graphics.Color.White, style = MaterialTheme.typography.titleMedium) else Box {
-                DiscoveryAction(chosen?.let { "Season $it" } ?: "Episodes", Icons.Default.ExpandMore,
-                    modifier = Modifier.focusRequester(seasonEntry)) { seasonOpen = true }
-                DropdownMenu(seasonOpen, { seasonOpen = false }) {
-                    seasons.sorted().forEach { season ->
-                        NikDropdownMenuItem(text = { Text("Season $season") },
-                            modifier = if (season == chosen) Modifier.focusRequester(selectedSeason) else Modifier,
-                            leadingIcon = if (season == chosen) {{ Icon(Icons.Default.Check, null) }} else null,
-                            onClick = { seasonOpen = false; loadSeason(season) })
-                    }
-                }
-            } },
+            season = { SeriesSeasonDropdown(seasons, chosen, seasonEntry, choose = { season ->
+                interacted = true; entryJob?.cancel(); requestedSeasonFocus = season
+                loadSeason(season)
+            }) },
             count = seriesEpisodeCountLabel(episodes.size, false, searchOpen && query.isNotBlank()),
             compact = !wide, newestFirst = newest, onNewestFirst = {
                 newest = it; rememberEpisode(null)
@@ -208,24 +203,28 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                     loadSeason(watched.first)
                 } else enterEpisodes()
             } },
-            beforeAction = { keyboard?.hide() },
+            beforeAction = { searchEditing = false; keyboard?.hide() },
             searchField = {
                 SeriesEpisodeSearchField(query, { query = it; scrollReset++ }, ::closeSearch,
                     clear = { query = ""; scrollReset++ },
+                    readOnly = !searchEditing,
+                    activate = { searchEditing = true; scope.launch { withFrameNanos { }; searchInput.requestFocus(); keyboard?.show() } },
                     modifier = Modifier.focusRequester(searchInput).onFocusChanged { searchInputFocused = it.isFocused },
                     options = KeyboardOptions(imeAction = ImeAction.Search),
-                    actions = KeyboardActions(onSearch = { keyboard?.hide() }))
+                    actions = KeyboardActions(onSearch = { searchEditing = false; keyboard?.hide() }))
             }, modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp).onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                     Key.DirectionUp -> {
+                        searchEditing = false
                         keyboard?.hide()
                         if (!wide && searchOpen && searchInputFocused) runCatching { toolbarSearch.requestFocus() }.getOrDefault(false) else up()
                     }
                     Key.DirectionDown -> {
+                        searchEditing = false; keyboard?.hide()
                         if (!wide && searchOpen && !searchInputFocused) runCatching { searchInput.requestFocus() }
                         else if (state.errors["season"] != null) runCatching { retrySeason.requestFocus() }
                         else if (episodes.isEmpty()) focusSeasonChoice()
-                        else if (wide && !listView && seasons.isNotEmpty()) runCatching { sidebar.requestFocus() } else enterEpisodes()
+                        else enterEpisodes()
                         true
                     }
                     else -> false
@@ -263,6 +262,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                     repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
                 }
             }
+            Box {
             DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
                 listView = listView, overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
                 modifier = (if (listView) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
@@ -270,10 +270,10 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                         if (event.type != KeyEventType.KeyDown) false else {
                         val cursor = episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.takeIf { it >= 0 } ?: index
                         when (event.key) {
-                            Key.DirectionLeft -> if (listView && wide && seasons.isNotEmpty()) runCatching { sidebar.requestFocus() }.getOrDefault(false)
+                            Key.DirectionLeft -> if (listView && seasons.isNotEmpty()) runCatching { seasonEntry.requestFocus() }.getOrDefault(false)
                                 else if (!listView) { focusEpisode(cursor - 1); true } else false
                             Key.DirectionRight -> if (!listView) { focusEpisode(cursor + 1); true } else false
-                            Key.DirectionUp -> if (!listView && wide && seasons.isNotEmpty()) runCatching { sidebar.requestFocus() }.getOrDefault(false)
+                            Key.DirectionUp -> if (!listView && seasons.isNotEmpty()) runCatching { sort.requestFocus() }.getOrDefault(false)
                                 else if (!listView || cursor == 0) runCatching { (if (!wide && searchOpen) searchInput else toolbarSearch).requestFocus() }.getOrDefault(false)
                                 else focusEpisode(cursor - 1)
                             Key.DirectionDown -> if (!listView || cursor == episodes.lastIndex) { down(); true }
@@ -282,11 +282,11 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                         }
                         }
                     },
-                onFocus = { rememberEpisode(identity); onFocus() }, onClick = { play(card, episode.season, episode.number) }, onLongClick = { options = true })
-            if (options) AlertDialog(onDismissRequest = { options = false }, title = { Text(episode.title) },
-                text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                onFocus = { rememberEpisode(identity); onFocus() }, onClick = { play(card, episode.season, episode.number) },
+                onLongClick = { runCatching { requester.requestFocus() }; options = true })
+            SeriesActionsMenu(options, { options = false }) {
                     alternateSource?.let { playAlternate ->
-                        NikTvSecondaryActionButton({
+                        EpisodeSortMenuItem("Play from another source", Icons.Default.PlayArrow, onClick = {
                             options = false
                             playAlternate(AlternateSourceRequest(card.media.copy(
                                 id = "${card.media.id}:s${episode.season}:e${episode.number}",
@@ -294,28 +294,21 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                                 description = episode.overview, seasonNumber = episode.season,
                                 episodeNumber = episode.number), CatalogType.SERIES, card.media,
                                 episode.season, episode.number))
-                        }, Modifier.fillMaxWidth()) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Play from another source")
-                        }
+                        })
                     }
-                    NikTvSecondaryActionButton({ options = false; download(card, episode.season, episode.number) }, Modifier.fillMaxWidth()) { Text("Download") }
-                    if (!episode.overview.isNullOrBlank()) NikTvSecondaryActionButton({ options = false; description = true }, Modifier.fillMaxWidth()) { Text("Description") }
-                } }, confirmButton = { NikTvSecondaryActionButton({ options = false }) { Text("Close") } })
+                    EpisodeSortMenuItem("Download episode", Icons.Default.Download, onClick = { options = false; download(card, episode.season, episode.number) })
+                    if (!episode.overview.isNullOrBlank()) EpisodeSortMenuItem("View description", Icons.Default.Info,
+                        onClick = { options = false; description = true })
+            }
+            }
             if (description) FullDescriptionDialog(episode.title, episode.overview.orEmpty()) { description = false }
         }
         val counts = state.details?.seasonEpisodeCounts.orEmpty().mapValues { "${it.value} episodes" }.toMutableMap()
         if (chosen != null && "season" !in state.loading) counts[chosen] = "${state.episodes.size} episodes"
         // Local function references compare equal even when their captured episode
         // list changes. A lambda keeps the sidebar callback current after loading.
-        if (wide && !listView && seasons.isNotEmpty()) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
-            loadSeason, { enterEpisodes() }, { runCatching { toolbarSearch.requestFocus() } },
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), horizontal = true)
         if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
             .weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (wide && seasons.isNotEmpty()) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
-                loadSeason, { enterEpisodes() }, { runCatching { seasonEntry.requestFocus() } }, Modifier.width(156.dp).fillMaxHeight())
             LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (episodes.isEmpty()) item("episode-status") {
                     Text(if ("season" in state.loading) "Loading episodes…"

@@ -50,29 +50,26 @@ internal fun DiscoverySeriesDetailScreen(
     val relatedFocus = remember(card.key) { FocusRequester() }
     val infoFocus = remember(card.key) { FocusRequester() }
     val backFocus = remember(card.key) { FocusRequester() }
-    val page = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val coordinator = remember(card.key) { DiscoveryScrollCoordinator(scope) }
     var hasSynopsis by remember(card.key) { mutableStateOf(false) }
     var hasCast by remember(card.key) { mutableStateOf(false) }
     var lastHeroControl by remember(card.key) { mutableStateOf<FocusRequester?>(null) }
     var navigationMove by remember(card.key) { mutableStateOf<Job?>(null) }
-    DisposableEffect(card.key) { onDispose { navigationMove?.cancel(); coordinator.cancel() } }
+    DisposableEffect(card.key) { onDispose { navigationMove?.cancel() } }
     fun focusHeader(requester: FocusRequester) {
         navigationMove?.cancel()
-        navigationMove = coordinator.move(page, 0, reduceMotion) {
-            runCatching { requester.requestFocus() }.getOrDefault(false)
+        navigationMove = scope.launch {
+            repeat(20) { withFrameNanos { }; if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch }
         }
     }
     fun focusEpisodes() {
         navigationMove?.cancel()
-        navigationMove = coordinator.move(page, 1, reduceMotion) {
-            runCatching { episodesFocus.requestFocus() }.getOrDefault(false)
+        navigationMove = scope.launch {
+            repeat(20) { withFrameNanos { }; if (runCatching { episodesFocus.requestFocus() }.getOrDefault(false)) return@launch }
         }
     }
     fun focusPanel(entry: () -> Boolean) {
         navigationMove?.cancel()
-        coordinator.cancel()
         navigationMove = scope.launch {
             repeat(20) { withFrameNanos { }; if (entry()) return@launch }
         }
@@ -130,10 +127,18 @@ internal fun DiscoverySeriesDetailScreen(
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF090B10)).statusBarsPadding().navigationBarsPadding().imePadding()) {
-        val episodeHeight = maxHeight
-        DiscoveryVerticalFocusViewport(coordinator) {
-        LazyColumn(Modifier.fillMaxSize(), state = page) {
-        item("series-header:${card.key}") {
+        val episodePane: @Composable () -> Unit = {
+            DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
+                { automaticSeason = null; initialFocusDone = true; loadSeason(it) }, play, download,
+                onFocus = {}, up = {
+                    val origin = lastHeroControl?.takeUnless {
+                        it == infoFocus && !hasSynopsis || it == castFocus && !hasCast
+                    } ?: if (primary != null) playFocus else backFocus
+                    focusHeader(origin)
+                    true
+                }, down = { false }, modifier = Modifier.fillMaxSize(), lastWatched = lastWatched, loadInitialSeason = false,
+                onNewestFirstChanged = { newestFirst = it })
+        }
         ProviderDetailHeader(card.media, CatalogType.SERIES, app,
             play = { primary?.let { play(card, it.first, it.second) } },
             close = close, favorite = favorite,
@@ -186,29 +191,11 @@ internal fun DiscoverySeriesDetailScreen(
                         if (panel == "related") related()
                     }
                 }
-                CompositionLocalProvider(LocalProviderSynopsisActions provides actions,
-                    LocalProviderSynopsisPanel provides expanded) { hero() }
+                SeriesDetailScaffold(header = {
+                    CompositionLocalProvider(LocalProviderSynopsisActions provides actions,
+                        LocalProviderSynopsisPanel provides expanded) { hero() }
+                }, episodes = episodePane)
             })
-        }
-        item("series-episodes:${card.key}") {
-            var paneFocused by remember { mutableStateOf(false) }
-            DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
-                { automaticSeason = null; loadSeason(it) }, play, download,
-                onFocus = {}, up = {
-                    val origin = lastHeroControl?.takeUnless {
-                        it == infoFocus && !hasSynopsis || it == castFocus && !hasCast
-                    } ?: if (primary != null) playFocus else backFocus
-                    focusHeader(origin)
-                    true
-                }, down = { false },
-                modifier = Modifier.height(episodeHeight).onFocusChanged {
-                    if (it.hasFocus && !paneFocused) coordinator.align(page, 1, reduceMotion)
-                    paneFocused = it.hasFocus
-                }.focusGroup(), lastWatched = lastWatched, loadInitialSeason = false,
-                onNewestFirstChanged = { newestFirst = it })
-        }
-        }
-        }
     }
 }
 

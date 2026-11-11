@@ -46,7 +46,7 @@ class AccountProfilesDeviceTest {
         try {
             assertFalse(store.enabledProfileIds("999910011").contains(first.id))
             fixture({
-                if (settingsVisible.value) CompositionLocalProvider(LocalSettingsPage provides SettingsPage.PROFILES) { DeviceProfileSettings() }
+                if (settingsVisible.value) CompositionLocalProvider(LocalSettingsPage provides SettingsPage.PROFILES) { DeviceProfileSettings(manage = {}) }
                 else UserProfilesScreen(emptyList(), AccountSyncState(initialized = true), null,
                     {}, { _, _, _, _, _ -> }, {}, {}, {}, onSettings = {})
             }) {

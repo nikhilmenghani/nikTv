@@ -205,7 +205,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val landscape = if (seriesDetail) configuration.screenWidthDp >= 600 || television else !phone
     val shortWide = !seriesDetail && configuration.usesShortWideLayout(television)
     val wideSeries = seriesDetail && (configuration.smallestScreenWidthDp >= 600 || television)
-    val tabletSeriesOverlay = wideSeries && !television
+    val tabletSeriesOverlay = wideSeries
     val artworkHeight = detailDiscoveryHeroHeight(phone, television)
     val heroHeight = if (compactSeries && phone)
         (configuration.screenHeightDp * .30f).dp.coerceAtLeast(220.dp)

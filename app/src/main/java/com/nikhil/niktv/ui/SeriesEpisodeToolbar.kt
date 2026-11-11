@@ -5,6 +5,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -343,18 +345,25 @@ internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, c
     modifier: Modifier = Modifier, readOnly: Boolean = false,
     options: KeyboardOptions = KeyboardOptions.Default, actions: KeyboardActions = KeyboardActions.Default,
     placeholder: String = "Search episodes…", closeLabel: String = "Close episode search",
-    clear: (() -> Unit)? = null) {
+    clear: (() -> Unit)? = null, activate: (() -> Unit)? = null) {
     var focused by remember { mutableStateOf(false) }
+    var editorFocused by remember { mutableStateOf(false) }
     Surface(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp), color = Color(0xFF171B23),
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58))) {
-        BasicTextField(value, change, modifier.fillMaxSize().onFocusChanged { focused = it.hasFocus },
+        BasicTextField(value, change, modifier.fillMaxSize().onFocusChanged { focused = it.hasFocus; editorFocused = it.isFocused }
+            .onPreviewKeyEvent {
+                if (readOnly && editorFocused && activate != null && it.type == KeyEventType.KeyUp &&
+                    it.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) { activate(); true } else false
+            },
             readOnly = readOnly, singleLine = true, textStyle = MaterialTheme.typography.bodySmall.copy(color = Color.White),
             cursorBrush = SolidColor(Color.White), keyboardOptions = options, keyboardActions = actions,
             decorationBox = { input ->
                 Row(Modifier.fillMaxSize().padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.Search, null, Modifier.size(18.dp), tint = Color(0xFFB9BDC7))
-                    Box(Modifier.weight(1f)) {
+                    Box(Modifier.weight(1f).then(if (readOnly && activate != null) Modifier.pointerInput(activate) {
+                        detectTapGestures(onTap = { activate() })
+                    } else Modifier)) {
                         if (value.isEmpty()) Text(placeholder, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                         input()
                     }

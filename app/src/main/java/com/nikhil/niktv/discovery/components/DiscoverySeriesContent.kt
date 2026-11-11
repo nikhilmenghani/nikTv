@@ -175,10 +175,8 @@ internal fun DiscoverySeriesContent(
     var lastHeroControl by remember(series.id) { mutableStateOf<FocusRequester?>(null) }
     var inlinePanelFocused by remember { mutableStateOf(false) }
     var focusedPanel by remember { mutableStateOf<SeriesDetailPanel?>(null) }
-    var seasonMenuExpanded by remember(series.id) { mutableStateOf(false) }
     val seasonButtonRequester = remember(series.id) { FocusRequester() }
     var requestedSeasonFocus by remember(series.id) { mutableStateOf<Int?>(null) }
-    val selectedSeasonRequester = remember(series.id) { FocusRequester() }
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
     val entryEpisodeRequester = remember(series.id) { FocusRequester() }
     val firstEpisodeRequester = remember(series.id) { FocusRequester() }
@@ -207,7 +205,7 @@ internal fun DiscoverySeriesContent(
     val mobileEpisodeLayout =
         !episodeIsTv &&
             episodeConfiguration.smallestScreenWidthDp < 600
-    val tabletEpisodeOverlay = !mobileEpisodeLayout && !episodeIsTv
+    val tabletEpisodeOverlay = !mobileEpisodeLayout
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
     // Episodes always own their scroll state; phones keep the compact header in view.
     val verticalEpisodeLayout = false
@@ -219,7 +217,7 @@ internal fun DiscoverySeriesContent(
     val phoneEpisodeHeight = with(density) { (contentHeightPx - heroHeightPx - toolbarHeightPx).toDp() }
         .coerceAtLeast(96.dp)
     val wideEpisodeHeight = with(density) { (contentHeightPx - toolbarHeightPx - if (tabletEpisodeOverlay) heroHeightPx else 0).toDp() }
-        .minus(if (tabletEpisodeOverlay) 32.dp else 24.dp).coerceAtLeast(260.dp)
+        .minus(if (tabletEpisodeOverlay) 32.dp else 24.dp).coerceAtLeast(if (tabletEpisodeOverlay) 96.dp else 260.dp)
     val layoutRequester = remember(series.id) { FocusRequester() }
 
     val episodeRowState = key(profile, series.id, state.selectedSeriesSeason) { rememberLazyListState() }
@@ -339,12 +337,6 @@ internal fun DiscoverySeriesContent(
         state.seriesSeasonEpisodeCounts.takeIf { state.seriesSeasonEpisodeCountsKey == "$profile|${series.id}" }.orEmpty(),
         tmdbSeasonCounts, selectedSeason, state.items.size, state.episodeHasMore, state.loading)
 
-    LaunchedEffect(seasonMenuExpanded) {
-        if (seasonMenuExpanded && remoteNavigationActive) repeat(6) {
-            withFrameNanos { }
-            if (runCatching { selectedSeasonRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-        }
-    }
 
     val comparator = remember(episodeSortDescending) {
         episodeComparator(episodeSortDescending)
@@ -799,36 +791,15 @@ internal fun DiscoverySeriesContent(
                 ) {
                     SeriesEpisodeToolbar(
                         season = {
-                            Box {
-                                SeriesToolbarButton(Icons.Default.ExpandMore, selectedSeason?.let { "Season $it" } ?: "Choose season",
-                                    modifier = Modifier.focusRequester(seasonButtonRequester)) { seasonMenuExpanded = true }
-                                DropdownMenu(seasonMenuExpanded, { seasonMenuExpanded = false }, modifier = Modifier.width(220.dp),
-                                    containerColor = Color.Transparent, tonalElevation = 0.dp, shadowElevation = 0.dp) {
-                                    EpisodeSortMenuGroup(scrollable = true) {
-                                    (availableSeasons + listOfNotNull(selectedSeason)).distinct().sorted().forEach { season ->
-                                        EpisodeSortMenuItem("Season $season", Icons.Default.Tv, selected = season == selectedSeason,
-                                            modifier = if (season == selectedSeason) Modifier.focusRequester(selectedSeasonRequester) else Modifier,
-                                            onClick = {
-                                                seasonMenuExpanded = false
+                            SeriesSeasonDropdown(availableSeasons, selectedSeason, seasonButtonRequester,
+                                choose = { season ->
                                                 episodeMove?.cancel()
                                                 wideFocusCoordinator.cancel()
                                                 initialEpisodeFocusComplete = true
                                                 handledPlaybackReturnFocusId = entryPlaybackReturnFocusId
                                                 requestedSeasonFocus = season
                                                 loadSeriesSeason(season)
-                                                if (remoteNavigationActive) detailScope.launch {
-                                                    repeat(3) { withFrameNanos { }; runCatching { seasonButtonRequester.requestFocus() } }
-                                                }
-                                            })
-                                    }
-                                    }
-                                    Spacer(Modifier.height(4.dp))
-                                    EpisodeSortMenuGroup {
-                                    EpisodeSortMenuItem("Refresh seasons", Icons.Default.Refresh,
-                                        onClick = { seasonMenuExpanded = false; refreshCatalog() })
-                                    }
-                                }
-                            }
+                                }, refresh = refreshCatalog)
                         },
                         count = seriesEpisodeCountLabel(filteredEpisodes.size, state.episodeHasMore, activeSearchQuery.isNotBlank()),
                         compact = mobileEpisodeLayout,
@@ -870,11 +841,11 @@ internal fun DiscoverySeriesContent(
                                     close = ::closeEpisodeSearch,
                                     clear = { searchQuery = ""; episodeScrollReset++ },
                                     readOnly = !episodeTextEditing,
+                                    activate = {
+                                        episodeTextEditing = true
+                                        detailScope.launch { withFrameNanos { }; episodeSearchRequester.requestFocus(); keyboardController?.show() }
+                                    },
                                     modifier = Modifier.fillMaxWidth().focusRequester(episodeSearchRequester)
-                                        .pointerInput(Unit) { detectTapGestures(onTap = {
-                                            episodeTextEditing = true
-                                            detailScope.launch { withFrameNanos { }; episodeSearchRequester.requestFocus(); keyboardController?.show() }
-                                        }) }
                                         .onPreviewKeyEvent { event ->
                                             when {
                                                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
@@ -891,10 +862,6 @@ internal fun DiscoverySeriesContent(
                                                             repeat(12) { withFrameNanos { }; if (runCatching { firstEpisodeRequester.requestFocus() }.getOrDefault(false)) return@launch }
                                                         }
                                                     }; true
-                                                }
-                                                !episodeTextEditing && event.type == KeyEventType.KeyUp &&
-                                                    event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter) -> {
-                                                    episodeTextEditing = true; keyboardController?.show(); true
                                                 }
                                                 else -> false
                                             }
@@ -1359,13 +1326,7 @@ internal fun ModernEpisodeCard(
         }
     }
     if (refreshingTmdb) CircularProgressIndicator(Modifier.align(Alignment.TopEnd).padding(8.dp).size(18.dp), strokeWidth = 2.dp)
-    DropdownMenu(
-        expanded = episodeActionsExpanded,
-        onDismissRequest = { episodeActionsExpanded = false },
-        modifier = Modifier.width(220.dp), containerColor = Color.Transparent,
-        tonalElevation = 0.dp, shadowElevation = 0.dp
-    ) {
-        EpisodeSortMenuGroup {
+    SeriesActionsMenu(episodeActionsExpanded, { episodeActionsExpanded = false }) {
         if (refreshTmdb != null) NikDropdownMenuItem(
             text = { Text(if (refreshingTmdb) "Refreshing TMDB details…" else "Refresh TMDB details") },
             leadingIcon = { if (refreshingTmdb) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -1419,7 +1380,6 @@ internal fun ModernEpisodeCard(
                 }
             )
         }
-    }
     }
     } // Episode row and menu share a fixed overlay anchor.
     episodeDescription?.takeIf(String::isNotBlank)?.let { description ->
