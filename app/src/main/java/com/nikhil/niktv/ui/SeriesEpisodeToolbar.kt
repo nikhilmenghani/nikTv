@@ -214,8 +214,8 @@ internal fun EpisodeSortMenuItem(label: String, icon: ImageVector, selected: Boo
         text = { Text(label, color = Color.White, style = MaterialTheme.typography.bodySmall,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
         leadingIcon = { Icon(if (selected) Icons.Default.Check else icon, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
-        modifier = modifier.padding(horizontal = 2.dp).clip(RoundedCornerShape(9.dp))
-            .background(if (selected) Color(0xFFE50925) else Color.Transparent).semantics { this.selected = selected },
+        selected = selected,
+        modifier = modifier.semantics { this.selected = selected },
         onClick = onClick)
 }
 

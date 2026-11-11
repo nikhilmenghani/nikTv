@@ -31,12 +31,18 @@ internal fun NikDropdownMenuItem(
     modifier: Modifier = Modifier,
     leadingIcon: (@Composable () -> Unit)? = null,
     trailingIcon: (@Composable () -> Unit)? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    selected: Boolean = false
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(9.dp)
     val background by animateColorAsState(
-        if (focused) Color.White.copy(alpha = 0.12f) else Color.Transparent,
+        when {
+            selected && focused -> Color(0xFFFA1537)
+            selected -> Color(0xFFE50925)
+            focused -> Color.White.copy(alpha = 0.12f)
+            else -> Color.Transparent
+        },
         label = "popupMenuItemBackground"
     )
     val outline by animateColorAsState(
