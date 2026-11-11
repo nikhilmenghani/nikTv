@@ -7,28 +7,61 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: niktv-stable-release
   cancel-in-progress: false
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Check source credentials
         run: |
           python3 tools/check-source-secrets.py
           python3 tools/check-release-validation.py
+      - name: Read release version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < release.txt)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release.txt must contain x.y.z"; exit 1; }
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))" >> "$GITHUB_ENV"
+      - name: Apply version
+        run: |
+          sed -i "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
+          sed -i "s/versionCode = .*/versionCode = ${VERSION_CODE}/" app/build.gradle.kts
+      - name: Verify pre-created release tag
+        shell: bash
+        run: |
+          TARGET=$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{ print $1 }')
+          [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "::error::Push the release commit and its lightweight version tag together before building."; exit 1; }
+      - id: version
+        run: echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+  validation:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [unit, debug-lint, release-lint]
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: zulu
       - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare Gradle wrapper
+        run: chmod +x ./gradlew
       - name: Read release version
         shell: bash
         run: |
@@ -48,22 +81,61 @@ jobs:
           TARGET=$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{ print $1 }')
           [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "::error::Push the release commit and its lightweight version tag together before building."; exit 1; }
       - name: Unit tests
+        if: matrix.check == 'unit'
         timeout-minutes: 10
-        run: |
-          bash tools/ci-unit-diagnostics.sh
-      - name: Preserve failed unit diagnostics
+        run: bash tools/ci-unit-diagnostics.sh
+      - name: Debug lint
+        if: matrix.check == 'debug-lint'
+        run: ./gradlew :app:lintDebug -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+      - name: Release lint
+        if: matrix.check == 'release-lint'
+        run: ./gradlew :app:lintRelease -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+      - name: Preserve failed validation diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: failed-unit-diagnostics-${{ env.TAG }}
+          name: failed-${{ matrix.check }}-${{ env.TAG }}
           path: |
             build/ci-diagnostics/
-            app/build/test-results/testDebugUnitTest/
+            app/build/test-results/
+            app/build/reports/lint-results-*
           retention-days: 7
-      - name: Debug lint
-        run: ./gradlew :app:lintDebug -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
-      - name: Release lint
-        run: ./gradlew :app:lintRelease -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+
+  apk:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [standard, firetv]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: zulu
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare Gradle wrapper
+        run: chmod +x ./gradlew
+      - name: Read release version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < release.txt)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release.txt must contain x.y.z"; exit 1; }
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))" >> "$GITHUB_ENV"
+      - name: Apply version
+        run: |
+          sed -i "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
+          sed -i "s/versionCode = .*/versionCode = ${VERSION_CODE}/" app/build.gradle.kts
+      - name: Verify pre-created release tag
+        shell: bash
+        run: |
+          TARGET=$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{ print $1 }')
+          [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "::error::Push the release commit and its lightweight version tag together before building."; exit 1; }
       - name: Verify release tag ownership
         shell: bash
         run: |
@@ -87,18 +159,21 @@ jobs:
           echo "RELEASE_KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
       - name: Build signed release APK
         env:
+          DISTRIBUTION: ${{ matrix.distribution }}
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           RELEASE_KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          chmod +x ./gradlew
-          ./gradlew assembleRelease
           mkdir -p "$RUNNER_TEMP/niktv-apks"
-          cp app/build/outputs/apk/release/app-arm64-v8a-release.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-arm64-v8a.apk"
-          cp app/build/outputs/apk/release/app-armeabi-v7a-release.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-armeabi-v7a.apk"
-          cp app/build/outputs/apk/release/app-universal-release.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-universal.apk"
-          cp app/build/outputs/apk/release/app-universal-release.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}.apk"
-          ./gradlew clean assembleRelease -PfireTvApk=true
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-firetv.apk"
+          if [[ "$DISTRIBUTION" == firetv ]]; then
+            ./gradlew assembleRelease -PfireTvApk=true
+            cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-firetv.apk"
+          else
+            ./gradlew assembleRelease
+            for ABI in arm64-v8a armeabi-v7a universal; do
+              cp "app/build/outputs/apk/release/app-${ABI}-release.apk" "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-${ABI}.apk"
+            done
+            cp "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-universal.apk" "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}.apk"
+          fi
       - name: Verify published APK identities
         shell: bash
         run: |
@@ -116,10 +191,48 @@ jobs:
       - name: Preserve signed APKs
         uses: actions/upload-artifact@v4
         with:
-          name: signed-apks-${{ env.TAG }}
+          name: signed-apks-${{ env.TAG }}-${{ matrix.distribution }}
           path: ${{ runner.temp }}/niktv-apks/*.apk
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    needs: [prepare, validation, apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read release version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < release.txt)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release.txt must contain x.y.z"; exit 1; }
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))" >> "$GITHUB_ENV"
+      - name: Apply version
+        run: |
+          sed -i "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
+          sed -i "s/versionCode = .*/versionCode = ${VERSION_CODE}/" app/build.gradle.kts
+      - name: Verify pre-created release tag
+        shell: bash
+        run: |
+          TARGET=$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{ print $1 }')
+          [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "::error::Push the release commit and its lightweight version tag together before building."; exit 1; }
+      - name: Download verified APKs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: signed-apks-${{ needs.prepare.outputs.tag }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/niktv-apks
+      - name: Verify complete APK set
+        run: |
+          for SUFFIX in '-arm64-v8a' '-armeabi-v7a' '-universal' '-firetv' ''; do
+            test -s "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}${SUFFIX}.apk"
+          done
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
