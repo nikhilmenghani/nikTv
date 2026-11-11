@@ -58,6 +58,51 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
             action?.invoke()
         }
     }
+    @Composable fun options() {
+            Box {
+                DiscoveryAction("Sports options", Icons.Default.MoreVert, iconOnly = true,
+                    modifier = Modifier.size(48.dp).focusRequester(menuFocus), onClick = { expanded = true })
+                DropdownMenu(expanded, { close() }, containerColor = SportsSurface,
+                    modifier = Modifier.initialFocusEntry(firstAction)) {
+                    actions.forEachIndexed { index, action ->
+                        NikDropdownMenuItem(text = { Text(action.label, color = Color.White) },
+                            leadingIcon = { Icon(action.icon, null, tint = Color.White) },
+                            trailingIcon = { if (action.selected) Icon(Icons.Default.Check, null, tint = Color.White) },
+                            modifier = Modifier.then(if (index == 0) Modifier.focusRequester(firstAction) else Modifier)
+                                .semantics { selected = action.selected },
+                            onClick = { close(action.onClick) })
+                    }
+                }
+            }
+    }
+    if (!phone) {
+        val configuration = LocalConfiguration.current
+        val shortWide = configuration.screenHeightDp < 480 && !LocalContext.current.isTvLikeDevice(configuration)
+        val headerHeight = maxOf(56.dp, (24f * androidx.compose.ui.platform.LocalDensity.current.fontScale + 24f).dp)
+        Row(Modifier.fillMaxWidth().padding(vertical = if (shortWide) 6.dp else 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            DiscoveryGlassPanel(Modifier.weight(1f).height(headerHeight), null, androidx.compose.ui.geometry.Rect.Zero) {
+                CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDiscoveryGlassButtons provides true,
+                    com.nikhil.niktv.discovery.LocalDiscoveryHeaderActionSizing provides true) {
+                    Row(Modifier.fillMaxSize().padding(5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                            Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV",
+                                Modifier.fillMaxSize().graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
+                        }
+                        DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
+                            modifier = Modifier.focusRequester(backFocus), onClick = back)
+                        navigation(Modifier.weight(1f))
+                        options()
+                    }
+                }
+            }
+            com.nikhil.niktv.discovery.DiscoveryClockProfile(viewer?.name.orEmpty(),
+                Modifier.width(if (shortWide) 214.dp else 284.dp).height(headerHeight),
+                null, androidx.compose.ui.geometry.Rect.Zero, {})
+        }
+        return
+    }
     Surface(Modifier.fillMaxWidth().padding(top = if (phone) 8.dp else 10.dp), shape = SportsShape,
         color = if (phone) Color.Transparent else SportsSurface, contentColor = Color.White) {
         Row(Modifier.fillMaxWidth().padding(if (phone) 0.dp else 6.dp), verticalAlignment = Alignment.CenterVertically,
@@ -75,21 +120,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
                     modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: ${profile.name}" },
                     onClick = openProfiles)
             }
-            Box {
-                DiscoveryAction("Sports options", Icons.Default.MoreVert, iconOnly = true,
-                    modifier = Modifier.size(48.dp).focusRequester(menuFocus), onClick = { expanded = true })
-                DropdownMenu(expanded, { close() }, containerColor = SportsSurface,
-                    modifier = Modifier.initialFocusEntry(firstAction)) {
-                    actions.forEachIndexed { index, action ->
-                        NikDropdownMenuItem(text = { Text(action.label, color = Color.White) },
-                            leadingIcon = { Icon(action.icon, null, tint = Color.White) },
-                            trailingIcon = { if (action.selected) Icon(Icons.Default.Check, null, tint = Color.White) },
-                            modifier = Modifier.then(if (index == 0) Modifier.focusRequester(firstAction) else Modifier)
-                                .semantics { selected = action.selected },
-                            onClick = { close(action.onClick) })
-                    }
-                }
-            }
+            options()
         }
     }
 }

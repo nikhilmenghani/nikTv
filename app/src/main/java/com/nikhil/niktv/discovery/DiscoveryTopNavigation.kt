@@ -168,7 +168,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
 }
 
 @Composable
-private fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, openPortals: () -> Unit) {
+internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, openPortals: () -> Unit) {
     val context = LocalContext.current
     val openUserProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
     val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
