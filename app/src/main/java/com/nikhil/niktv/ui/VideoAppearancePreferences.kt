@@ -655,6 +655,7 @@ private fun QueueArtworkFallback(item: MediaItem) {
 internal fun PlayerQueueOverlay(
     items: List<MediaItem>,
     playingId: String,
+    catalogType: com.nikhil.niktv.model.CatalogType? = null,
     alternateSeries: MediaItem? = null,
     pinnedIds: List<String> = emptyList(),
     favoriteIds: Set<String> = emptySet(),
@@ -707,7 +708,7 @@ internal fun PlayerQueueOverlay(
         (configuration.screenWidthDp.dp * .30f).coerceIn(260.dp, 330.dp)
     }
     val touchQueueRail = !tvQueueGrid && !listQueue
-    val liveChannelQueue = onTogglePin != null
+    val liveChannelQueue = catalogType?.let { it == com.nikhil.niktv.model.CatalogType.LIVE_TV } ?: (onTogglePin != null)
     val compactQueueGrid =
         touchQueueRail && configuration.smallestScreenWidthDp < 600
     val queueColumnCount = when {
@@ -819,8 +820,13 @@ internal fun PlayerQueueOverlay(
         orderedPlayerQueue(items, pinnedIds)
     }
     fun entryKey(index: Int) = "$index:${uniqueItems[index].id}"
-    val isEpisodeQueue = uniqueItems.any {
+    val isEpisodeQueue = catalogType == com.nikhil.niktv.model.CatalogType.SERIES || uniqueItems.any {
         it.seasonNumber != null || it.episodeNumber != null
+    }
+    val queueType = catalogType ?: when {
+        liveChannelQueue -> com.nikhil.niktv.model.CatalogType.LIVE_TV
+        isEpisodeQueue -> com.nikhil.niktv.model.CatalogType.SERIES
+        else -> com.nikhil.niktv.model.CatalogType.MOVIES
     }
     val earliestEpisodeNumber = if (isEpisodeQueue) {
         uniqueItems.mapNotNull { it.episodeNumber }.minOrNull()
@@ -851,6 +857,7 @@ internal fun PlayerQueueOverlay(
 
     var focusedIndex by remember(playingId) { mutableIntStateOf(currentIndex) }
     var focusMoveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    DisposableEffect(Unit) { onDispose { focusMoveJob?.cancel() } }
     var previousItemIds by remember {
         mutableStateOf(uniqueItems.mapTo(linkedSetOf()) { it.id })
     }
@@ -1152,7 +1159,7 @@ internal fun PlayerQueueOverlay(
                     if (isFocused) focusedIndex = index
                 },
                 onMenuVisibilityChange = { visible ->
-                    favoriteMenuItemId = item.id.takeIf { visible }
+                    favoriteMenuItemId = entryKey(index).takeIf { visible }
                 }
             )
             return
@@ -1182,13 +1189,10 @@ internal fun PlayerQueueOverlay(
                     }
                     .remoteCombinedClickable(
                         onClick = { onSelect(item, index) },
-                        onLongClick = if (
-                            onToggleFavorite != null ||
-                            onTogglePin != null ||
-                            onRefreshProgramme != null
-                        ) {
-                            { favoriteMenuItemId = item.id }
-                        } else null
+                        onLongClick = {
+                            focusMoveJob?.cancel()
+                            favoriteMenuItemId = entryKey(index)
+                        }
                     )
                     .focusable(),
                 color = when {
@@ -1211,16 +1215,20 @@ internal fun PlayerQueueOverlay(
 
             }
 
-            if (
-                onToggleFavorite != null ||
-                onTogglePin != null ||
-                onRefreshProgramme != null
-            ) {
                 ModernTileActionsMenu(
-                    expanded = favoriteMenuItemId == item.id,
+                    expanded = favoriteMenuItemId == entryKey(index),
                     isFavorite = item.id in favoriteIds,
-                    dismiss = { favoriteMenuItemId = null },
+                    dismiss = {
+                        favoriteMenuItemId = null
+                        focusMoveJob?.cancel()
+                        focusMoveJob = scope.launch {
+                            delay(80L)
+                            repeat(20) { withFrameNanos { }; if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch }
+                        }
+                    },
                     toggleFavorite = { onToggleFavorite?.invoke(item) },
+                    showFavorite = onToggleFavorite != null,
+                    playAction = { onSelect(item, index) },
                     clear = null,
                     availabilityFlag = availability.flags[item.id],
                     toggleAvailability = if (availabilityProfile.isBlank() || !liveChannelQueue) null else ({ availability.toggle(item.id) }),
@@ -1228,12 +1236,9 @@ internal fun PlayerQueueOverlay(
                     togglePin = onTogglePin?.let { pin -> { pin(item) } },
                     refreshProgramme = onRefreshProgramme?.let { refresh -> { refresh(item) } },
                     recommendationItem = item,
-                    alternateSource = if (!liveChannelQueue) alternateSourceRequest(item,
-                        if (isEpisodeQueue) com.nikhil.niktv.model.CatalogType.SERIES else com.nikhil.niktv.model.CatalogType.MOVIES,
-                        series = alternateSeries) else null,
-                    recommendationType = com.nikhil.niktv.model.CatalogType.LIVE_TV
+                    alternateSource = if (!liveChannelQueue) alternateSourceRequest(item, queueType, series = alternateSeries) else null,
+                    recommendationType = queueType
                 )
-            }
         }
     }
 
@@ -1306,10 +1311,11 @@ internal fun PlayerQueueOverlay(
 
                         when (event.key) {
                             Key.DirectionUp -> {
-                                if (layoutIndex < queueColumnCount) {
-                                    runCatching { layoutToggleRequester.requestFocus() }
-                                } else {
+                                if (layoutIndex >= queueColumnCount) {
                                     focusAt(focusedIndex - queueColumnCount)
+                                } else if (!listQueue) {
+                                    focusMoveJob?.cancel()
+                                    runCatching { layoutToggleRequester.requestFocus() }
                                 }
                                 true
                             }
@@ -1324,7 +1330,10 @@ internal fun PlayerQueueOverlay(
 
                             Key.DirectionRight -> {
                                 val target = focusedIndex + 1
-                                if (
+                                if (listQueue || currentColumn == queueColumnCount - 1 || target > maxIndex) {
+                                    focusMoveJob?.cancel()
+                                    runCatching { layoutToggleRequester.requestFocus() }
+                                } else if (
                                     currentColumn < queueColumnCount - 1 &&
                                     target <= maxIndex
                                 ) {
@@ -1444,10 +1453,10 @@ internal fun PlayerQueueOverlay(
                         color = Color.White,
                         maxLines = 1
                     )
-                    if (listQueue) Spacer(Modifier.weight(1f)) else Text(
+                    if (listQueue || phoneQueue) Spacer(Modifier.weight(1f)) else Text(
                         when {
                             listQueue -> if (tvQueueGrid) "↑↓ browse · ← closes" else "Tap to play · Hold for options"
-                            tvQueueGrid -> "D-pad browse  •  ↑ View  •  Back closes"
+                            tvQueueGrid -> "D-pad browse  •  → View at row end  •  Back closes"
                             touchQueueRail -> "Swipe sideways to browse  •  Swipe down to close"
                             else -> "Swipe to browse  •  Swipe down to close"
                         },

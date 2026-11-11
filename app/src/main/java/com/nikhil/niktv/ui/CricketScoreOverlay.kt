@@ -158,10 +158,12 @@ internal class CricketScoreController(context: Context) {
 
 /** Up enters the overlay independently of where the user has dragged it. */
 internal fun Modifier.cricketScoreEntry(controller: CricketScoreController, enabled: Boolean,
+    enter: ((() -> Unit) -> Unit)? = null,
     returnToPlayer: () -> Unit): Modifier = onPreviewKeyEvent { event ->
     if (enabled && controller.selected != null && !controller.moving &&
         event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-        controller.focusBadge(returnToPlayer)
+        val action = { controller.focusBadge(returnToPlayer) }
+        if (enter != null) enter(action) else action()
         true
     } else false
 }

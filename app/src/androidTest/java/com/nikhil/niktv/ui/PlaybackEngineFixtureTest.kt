@@ -627,8 +627,10 @@ class PlaybackEngineFixtureTest {
             await("Sports applies the timeout callback") { control("Controls timeout: ${playerControlsTimeoutLabel(next)}") != null }
             assertEquals(next, runBlocking { store.playerControlsTimeoutSeconds.first() })
             assertEquals("Sports timeout leaves IPTV unchanged", iptvTimeout, runBlocking { iptv.playerControlsTimeoutSeconds.first() })
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await("Back closes settings before the transport timeout resumes") { control("Playback settings") == null }
             await("The new timeout actually hides the overlay", (next + 4) * 1_000L) {
-                control("Controls timeout: ${playerControlsTimeoutLabel(next)}") == null
+                control("More controls") == null && control("Pause") == null && control("Play") == null
             }
             instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
             await("Main controls reopen after timeout") { control("More controls") != null }
@@ -639,9 +641,9 @@ class PlaybackEngineFixtureTest {
             clickControl("Skip")
             await("Resize closes without interrupting playback") { control("Video resize") == null }
             clickControl("Choose picture mode:", true)
-            await("Picture mode opens") { control("Picture mode") != null }
+            await("Picture mode opens") { control("Picture mode") != null && control("Apply") != null && control("Skip") != null }
             clickControl("Skip")
-            await("Picture mode closes") { control("Picture mode") == null }
+            await("Picture mode closes") { control("Apply") == null && control("Skip") == null }
             clickControl("Playback information")
             await("Playback information opens") { control("Details for the current stream") != null }
             clickControl("Close")

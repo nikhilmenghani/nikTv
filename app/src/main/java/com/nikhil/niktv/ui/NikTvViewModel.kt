@@ -5506,7 +5506,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             ).distinctBy { it.id }
 
         _state.update { current ->
-            if (current.searchType != type) {
+            if (current.searchType != type || current.session?.profile?.cacheKey() != profileKey) {
                 current
             } else {
                 val categoryId =
@@ -5524,7 +5524,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
         val current = _state.value
         if (
-            current.searchType == type &&
+            current.searchOpen && current.session?.profile?.cacheKey() == profileKey && current.searchType == type &&
             current.searchCategoryId != beforeCategoryId &&
             current.searchQuery.isNotBlank()
         ) {
@@ -7381,7 +7381,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             ?: snapshot.selectedCategory?.id
             ?: return providerOrder
         val pinnedOrder = playing.queueFilter?.pinnedIds ?: IptvPinPreferences.pinnedChannelOrder(
-            getApplication(), profileKey, categoryId
+            getApplication<Application>(), profileKey, categoryId
         )
         return orderedPlayerQueue(providerOrder, pinnedOrder)
     }
@@ -8103,9 +8103,19 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         updateProfileLoad(0.12f, "Connecting to ${profile.name}; waiting for provider authentication…")
         return authenticateProfileForOpening(profile).also { ownedStore.save(it, owns) }
     }
-    fun switchProfile(profile: PortalProfile) = switchProfileOwned(profile, beginPortalActivation())
-    private fun switchProfileOwned(profile: PortalProfile, activation: Long) = task {
+    fun switchProfile(profile: PortalProfile) {
+        val destination = PortalSwitchDestination.capture(_state.value)
+        switchProfileOwned(profile, beginPortalActivation(), destination)
+    }
+    private fun switchProfileOwned(profile: PortalProfile, activation: Long, destination: PortalSwitchDestination) = task {
         movieStructureJob?.cancel()
+        movieMatchLookupJob?.cancel()
+        pendingDiscoveryEpisode = null
+        cancelEpisodeDestination()
+        episodePageJob?.cancel()
+        episodeMetadataRefreshJob?.cancel()
+        singleEpisodeMetadataJob?.cancel()
+        discoveryMetadataRequests.cancel()
         categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
         categoryMetadataRefreshJobs.clear()
         searchSeriesReturn = null
@@ -8114,6 +8124,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         profilePreparationJob?.cancel()
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
+        globalSearchPager = null
+        globalSearchPagerKey = null
         catalogueTitleIndex = null
         _state.update { it.copy(savedProfile = profile, providerMovieDetails = null) }
         updateProfileLoad(0.04f, "Loading ${profile.name}…")
@@ -8124,20 +8136,22 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         if (portalActivation.get() != activation) throw kotlinx.coroutines.CancellationException("Portal changed")
         rememberPortalForViewer(profile)
         updateProfileLoad(0.24f, "Authentication complete")
-        _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
-            modernIptvCategory = null, modernTmdbSection = null, selectedCategory = null, playbackReturnFocusId = null,
-            searchQuery = "", searchResults = emptyList(), searchLocalLoading = false, searchServerLoading = false,
-            searchOpen = false, favoritesOpen = false, homeOpen = true,
-            watchProvidersOpen = false, discoverySurface = DashboardSurface.HOME, discoveryExperiment = true, offlineDownloadsOpen = false,
+        _state.update { current -> destination.restore(current).copy(session = session, savedProfile = profile, profileEditorOpen = false,
             categories = emptyList(), rawCategoriesByType = emptyMap(),
-            categoryManagerOpen = false, items = emptyList(),
-            selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList(),
+            items = emptyList(), catalogPage = 1, catalogHasMore = false, catalogLoadingMore = false,
+            browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null,
+            fullSearchLoading = false, fullSearchCachedAtMillis = null, playbackUrls = emptyList(),
             trendingMovies = emptyList(), trendingMoviesLoading = false, trendingMoviesError = null,
             trendingSeries = emptyList(), trendingSeriesLoading = false, trendingSeriesError = null,
             thrillerMovies = emptyList(), thrillerMoviesLoading = false, thrillerMoviesError = null) }
         updateProfileLoad(0.26f, "Loading saved favorites and watch history…")
         loadProfileLibrary(session.profile.cacheKey())
+        if (portalActivation.get() != activation) throw kotlinx.coroutines.CancellationException("Portal changed")
         prepareDashboardInBackground(session)
+        if (_state.value.searchOpen) {
+            loadSearchCategories(_state.value.searchType)
+            if (_state.value.searchQuery.isNotBlank()) search(forceServer = true)
+        }
         SearchMetadataSyncScheduler.configureProfile(getApplication(), session.profile)
     }
     fun removeProfile(profile: PortalProfile) = launchForViewer launch@ {

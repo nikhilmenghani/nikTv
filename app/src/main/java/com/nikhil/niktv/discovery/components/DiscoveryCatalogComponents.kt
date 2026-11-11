@@ -2,6 +2,8 @@ package com.nikhil.niktv.discovery.components
 
 import com.nikhil.niktv.ui.*
 import com.nikhil.niktv.discovery.LocalDiscoveryExperiment
+import com.nikhil.niktv.discovery.providerCollectionOccurrences
+import com.nikhil.niktv.discovery.providerCollectionRestoreIndex
 
 import androidx.compose.material.icons.filled.SportsCricket
 
@@ -481,15 +483,10 @@ private fun ModernDestinationHub(
             resetSurface = resetSurface
         )
     }
-    var pinnedLiveCategories by remember(profileKey) {
-        mutableStateOf(IptvPinPreferences.pinnedCategories(context, profileKey, CatalogType.LIVE_TV))
-    }
-    var pinnedMovieCategories by remember(profileKey) {
-        mutableStateOf(IptvPinPreferences.pinnedCategories(context, profileKey, CatalogType.MOVIES))
-    }
-    var pinnedSeriesCategories by remember(profileKey) {
-        mutableStateOf(IptvPinPreferences.pinnedCategories(context, profileKey, CatalogType.SERIES))
-    }
+    val categoryPins = rememberIptvPins(profileKey)
+    val pinnedLiveCategories = categoryPins.pinnedCategories(CatalogType.LIVE_TV)
+    val pinnedMovieCategories = categoryPins.pinnedCategories(CatalogType.MOVIES)
+    val pinnedSeriesCategories = categoryPins.pinnedCategories(CatalogType.SERIES)
     /*
      * PROFILE_TILE_VISUAL_LANGUAGE_V33
      *
@@ -870,7 +867,7 @@ private fun ModernDestinationHub(
                     modifier = hubEntryModifier("live:${category.id}"),
                     pinned = category.id in pinnedLiveCategories,
                     onTogglePin = {
-                        pinnedLiveCategories = IptvPinPreferences.toggleCategory(
+                        IptvPinPreferences.toggleCategory(
                             context, profileKey, CatalogType.LIVE_TV, category.id
                         )
                     },
@@ -902,7 +899,7 @@ private fun ModernDestinationHub(
                     modifier = hubEntryModifier("movie:${category.id}"),
                     pinned = category.id in pinnedMovieCategories,
                     onTogglePin = {
-                        pinnedMovieCategories = IptvPinPreferences.toggleCategory(
+                        IptvPinPreferences.toggleCategory(
                             context, profileKey, CatalogType.MOVIES, category.id
                         )
                     },
@@ -934,7 +931,7 @@ private fun ModernDestinationHub(
                     modifier = hubEntryModifier("series:${category.id}"),
                     pinned = category.id in pinnedSeriesCategories,
                     onTogglePin = {
-                        pinnedSeriesCategories = IptvPinPreferences.toggleCategory(
+                        IptvPinPreferences.toggleCategory(
                             context, profileKey, CatalogType.SERIES, category.id
                         )
                     },
@@ -2389,7 +2386,8 @@ internal fun ModernTileActionsMenu(
     alternateSource: AlternateSourceRequest? = null,
     movieForVersionChoice: com.nikhil.niktv.data.TmdbMovie? = null,
     availabilityFlag: IptvChannelFlag? = null,
-    toggleAvailability: (() -> Unit)? = null
+    toggleAvailability: (() -> Unit)? = null,
+    showFavorite: Boolean = true
 ) {
     val chooseVersion = LocalChooseIptvMovieVersion.current
     val versionItem = trailerItem ?: recommendationItem
@@ -2511,7 +2509,7 @@ internal fun ModernTileActionsMenu(
                 leadingIcon = { Icon(Icons.Default.Flag, null, tint = IptvAvailabilityAmber) },
                 onClick = { dismiss(); action() })
         }
-        NikDropdownMenuItem(
+        if (showFavorite) NikDropdownMenuItem(
             text = {
                 Text(if (isFavorite) "Remove from My List" else "Add to My List")
             },
@@ -3111,13 +3109,13 @@ internal fun ModernIptvCollection(
             value = System.currentTimeMillis()
         }
     }
-    var pinnedChannelIds by remember(profileKey, category.id) {
-        mutableStateOf(IptvPinPreferences.pinnedChannelOrder(context, profileKey, category.id))
-    }
+    val channelPins = rememberIptvPins(profileKey)
+    val pinnedChannelIds = if (isLiveTv) channelPins.pinnedChannelOrder(category.id) else emptyList()
     val pinnedItems = remember(state.items, pinnedChannelIds) {
         pinnedChannelIds.mapNotNull { id -> state.items.firstOrNull { it.id == id } }
     }
-    val matchingItems by produceState(state.items, state.items, pinnedItems, trimmedChannelQuery, sourceFilter,
+    var appliedPinOrder by remember(profileKey, category.id) { mutableStateOf(pinnedChannelIds) }
+    val matchingOccurrences by produceState(providerCollectionOccurrences(emptyList(), state.items), state.items, pinnedItems, pinnedChannelIds, trimmedChannelQuery, sourceFilter,
         availability.flags, availability.filter,
         if (trimmedChannelQuery.isEmpty() || !isLiveTv) 0L else guideClock.value) {
         value = withContext(Dispatchers.Default) {
@@ -3128,19 +3126,22 @@ internal fun ModernIptvCollection(
             if (trimmedChannelQuery.isNotEmpty()) {
                 val now = System.currentTimeMillis()
                 val matchesTitle = CategoryOrganization.titleMatcher(trimmedChannelQuery)
-                candidates.filter {
+                providerCollectionOccurrences(emptyList(), candidates.filter {
                     if (isLiveTv) it.matchesLiveChannelQuery(trimmedChannelQuery, now)
                     else matchesTitle(it.title)
-                }
-            } else pinnedItems.filter { (sourceFilter == null || it.portalCategoryId in filteredSourceIds.orEmpty()) &&
-                (!isLiveTv || availability.filter.includes(availability.flags[it.id])) } + candidates
+                })
+            } else providerCollectionOccurrences(pinnedItems.filter { (sourceFilter == null || it.portalCategoryId in filteredSourceIds.orEmpty()) &&
+                (!isLiveTv || availability.filter.includes(availability.flags[it.id])) }, candidates)
         }
+        appliedPinOrder = pinnedChannelIds
         appliedAvailability = availabilityToken
     }
     var localVisibleCount by rememberSaveable(profileKey, category.id, trimmedChannelQuery, sourceFilter, availability.filter) { mutableIntStateOf(120) }
-    val displayedItems = remember(matchingItems, localVisibleCount) {
-        if (localTitleSearch) matchingItems.take(localVisibleCount) else matchingItems
+    val matchingItems = remember(matchingOccurrences) { matchingOccurrences.map { it.media } }
+    val displayedOccurrences = remember(matchingOccurrences, localVisibleCount) {
+        if (localTitleSearch) matchingOccurrences.take(localVisibleCount) else matchingOccurrences
     }
+    val displayedItems = remember(displayedOccurrences) { displayedOccurrences.map { it.media } }
     val hasLocalMore = displayedItems.size < matchingItems.size
     val loadMoreVisible: () -> Unit = {
         if (hasLocalMore) localVisibleCount += 120 else loadMore()
@@ -3170,12 +3171,14 @@ internal fun ModernIptvCollection(
         CatalogType.SERIES -> FavoriteKind.SERIES
         CatalogType.RADIO -> FavoriteKind.CHANNEL
     }
-    val focusIds = remember(displayedItems) {
-        displayedItems.mapIndexed { index, media -> "$index:${media.id}" }
+    val focusIds = remember(displayedOccurrences) { displayedOccurrences.map { it.key } }
+    var lastFocusedOccurrenceKey by rememberSaveable(profileKey, category.id, state.modernIptvCategoryOpenId) {
+        mutableStateOf<String?>(null)
     }
     var lastFocusedMediaId by rememberSaveable(profileKey, category.id, state.modernIptvCategoryOpenId) {
         mutableStateOf<String?>(null)
     }
+    fun restoredChannelIndex() = providerCollectionRestoreIndex(displayedOccurrences, lastFocusedOccurrenceKey, lastFocusedMediaId)
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
@@ -3206,6 +3209,28 @@ internal fun ModernIptvCollection(
             ?: 0,
         initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
     ) }
+    var pendingPinAnchor by remember(viewportKey, visitId) { mutableStateOf<Pair<String, Int>?>(null) }
+    var observedPinOrder by remember(viewportKey, visitId) { mutableStateOf(pinnedChannelIds) }
+    fun capturePinAnchor() {
+        if (trimmedChannelQuery.isNotEmpty()) return
+        val first = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == gridState.firstVisibleItemIndex }
+        if (first != null) pendingPinAnchor = first.key.toString() to gridState.firstVisibleItemScrollOffset
+    }
+    LaunchedEffect(pinnedChannelIds) {
+        if (observedPinOrder != pinnedChannelIds) {
+            if (pendingPinAnchor == null) capturePinAnchor()
+            observedPinOrder = pinnedChannelIds
+        }
+    }
+    LaunchedEffect(focusIds, appliedPinOrder, pendingPinAnchor) {
+        if (focusedPosterIndex >= 0) restoredChannelIndex()?.let { focusedPosterIndex = it }
+        val anchor = pendingPinAnchor
+        if (anchor != null && appliedPinOrder == pinnedChannelIds) {
+            val index = focusIds.indexOfFirst { "modern-iptv-${category.type.name}-$it" == anchor.first }
+            if (index >= 0) gridState.scrollToItem(index, anchor.second)
+            pendingPinAnchor = null
+        }
+    }
     LaunchedEffect(gridState, displayedItems, isLiveTv) {
         // Live tiles draw a channel/programme card; provider logos are intentionally hidden.
         if (isLiveTv) return@LaunchedEffect
@@ -3368,8 +3393,7 @@ internal fun ModernIptvCollection(
         if (remoteNavigationActive && !availabilityFocusPending && !availabilityControlsOwnNavigation && initialTilesPositioned && retainFocusAfterItemChange && focusIds.isNotEmpty()) {
             withFrameNanos { }
             if (focusedPosterIndex < 0 && !focusMoveInProgress) {
-                val target = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
-                    .takeIf { it >= 0 } ?: gridState.firstVisibleItemIndex.coerceAtMost(displayedItems.lastIndex)
+                val target = restoredChannelIndex() ?: gridState.firstVisibleItemIndex.coerceAtMost(displayedItems.lastIndex)
                 moveFocusToIndex(target)
             }
         }
@@ -3383,8 +3407,7 @@ internal fun ModernIptvCollection(
     }
     LaunchedEffect(remoteNavigationActive, gridOwnsFocus, initialTilesPositioned, focusIds.isNotEmpty(), availabilityFocusPending) {
         if (remoteNavigationActive && !availabilityFocusPending && !availabilityControlsOwnNavigation && gridOwnsFocus && initialTilesPositioned && !focusMoveInProgress) {
-            val targetIndex = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
-                .takeIf { it >= 0 } ?: gridState.firstVisibleItemIndex
+            val targetIndex = restoredChannelIndex() ?: gridState.firstVisibleItemIndex
             moveFocusToIndex(targetIndex)
         }
     }
@@ -3409,8 +3432,7 @@ internal fun ModernIptvCollection(
         hasItems = focusIds.isNotEmpty(),
         focusedIndex = { if (availabilityFocusPending || availabilityControlsOwnNavigation) 0 else focusedPosterIndex },
         restoreIndex = {
-            displayedItems.indexOfFirst { it.id == lastFocusedMediaId }.takeIf { it >= 0 }
-                ?: gridState.firstVisibleItemIndex.coerceAtMost((displayedItems.size - 1).coerceAtLeast(0))
+            restoredChannelIndex() ?: gridState.firstVisibleItemIndex.coerceAtMost((displayedItems.size - 1).coerceAtLeast(0))
         },
         moveFocus = moveFocusToIndex
     )
@@ -3598,9 +3620,7 @@ internal fun ModernIptvCollection(
                 // Parking is only an intermediate stop during lazy-row moves;
                 // an ordinary entry must hand focus to an actual media tile.
                 if (remoteNavigationActive && !availabilityFocusPending && !availabilityControlsOwnNavigation && initialTilesPositioned && focusState.isFocused && !focusMoveInProgress) {
-                    val targetIndex = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
-                        .takeIf { it >= 0 }
-                        ?: gridState.firstVisibleItemIndex
+                    val targetIndex = restoredChannelIndex() ?: gridState.firstVisibleItemIndex
                     moveFocusToIndex(targetIndex.coerceIn(0, (focusIds.size - 1).coerceAtLeast(0)))
                 }
             }
@@ -3626,11 +3646,16 @@ internal fun ModernIptvCollection(
         )
     ) {
         gridItemsIndexed(
-            items = displayedItems,
-            key = { index, media ->
-                "modern-iptv-${category.type.name}-$index-${media.id}"
+            items = displayedOccurrences,
+            key = { _, occurrence ->
+                "modern-iptv-${category.type.name}-${occurrence.key}"
             }
-        ) { index, media ->
+        ) { index, occurrence ->
+            val media = occurrence.media
+            var pinFeedback by remember(occurrence.key) { mutableStateOf<String?>(null) }
+            LaunchedEffect(pinFeedback) {
+                if (pinFeedback != null) { delay(1_600); pinFeedback = null }
+            }
             val tileModifier = Modifier
                 .animateItem(
                     fadeInSpec = tween(160),
@@ -3641,6 +3666,7 @@ internal fun ModernIptvCollection(
                     if (it.hasFocus) {
                         focusedPosterIndex = index
                         lastFocusedMediaId = media.id
+                        lastFocusedOccurrenceKey = occurrence.key
                     } else if (focusedPosterIndex == index && !focusMoveInProgress) {
                         focusedPosterIndex = -1
                     }
@@ -3685,8 +3711,13 @@ internal fun ModernIptvCollection(
                     isFavorite = favorite,
                     onFavorite = favoriteAction,
                     isPinned = media.id in pinnedChannelIds,
+                    pinFeedback = pinFeedback,
                     onTogglePin = {
-                        pinnedChannelIds = IptvPinPreferences.toggleChannel(
+                        capturePinAnchor()
+                        lastFocusedOccurrenceKey = occurrence.key
+                        lastFocusedMediaId = media.id
+                        pinFeedback = if (media.id in pinnedChannelIds) "Pin removed" else "Pinned to top"
+                        IptvPinPreferences.toggleChannel(
                             context, profileKey, category.id, media.id
                         )
                     },
@@ -3959,7 +3990,8 @@ internal fun ModernLiveChannelTile(
     onFocusChange: (Boolean) -> Unit = {},
     onMenuVisibilityChange: (Boolean) -> Unit = {},
     availabilityProfile: String = "",
-    onAvailabilityChanged: () -> Unit = {}
+    onAvailabilityChanged: () -> Unit = {},
+    pinFeedback: String? = null
 ) {
     val availability = rememberIptvAvailability(availabilityProfile)
     val availabilityFlag = availability.flags[item.id]
@@ -4174,6 +4206,17 @@ internal fun ModernLiveChannelTile(
                     }
                     Column(horizontalAlignment = Alignment.End,
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.animation.AnimatedVisibility(pinFeedback != null,
+                            enter = androidx.compose.animation.fadeIn(tween(160)),
+                            exit = androidx.compose.animation.fadeOut(tween(180))) {
+                            Surface(color = ModernBrandAccent.copy(alpha = .20f), shape = RoundedCornerShape(6.dp)) {
+                                Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = Color.White)
+                                    Text(pinFeedback.orEmpty(), color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                }
+                            }
+                        }
                         quality?.takeIf { showQualityBadge || xtream }?.let {
                             Surface(
                                 color = Color.White.copy(alpha = .10f),

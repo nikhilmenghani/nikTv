@@ -73,9 +73,9 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val live = destination == DiscoveryLibraryDestination.LIVE_TV
     val favoritesHero = !live && libraryFavoriteHeroes(state.favorites, profile).isNotEmpty()
     val firstRowIndex = if (live) 2 else 1
-    var pinRevision by remember(profile) { mutableIntStateOf(0) }
-    val pins = remember(profile, state.categories, pinRevision) { state.categories.associate {
-        it.id to IptvPinPreferences.pinnedChannelOrder(context, profile, it.id)
+    val pinSnapshot = rememberIptvPins(profile)
+    val pins = remember(profile, state.categories, pinSnapshot) { state.categories.associate {
+        it.id to pinSnapshot.pinnedChannelOrder(it.id)
     } }
     val progress = rememberDiscoveryProgressLookup(profile, state.recentlyPlayed, state.playbackProgress)
     val feedIdentity = "$profile:$destination"
@@ -284,7 +284,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                                             isFavorite = state.favorites.any { it.profileKey == profile && it.kind == FavoriteKind.CHANNEL && it.media.id == channel.id },
                                             onFavorite = { if (entry.favorite != null) remove = entry.favorite else toggleFavorite(saved(entry)) },
                                             isPinned = channel.id in pins[entry.category?.id].orEmpty(), onTogglePin = entry.category?.let { category -> {
-                                                IptvPinPreferences.toggleChannel(context, profile, category.id, channel.id); pinRevision++
+                                                IptvPinPreferences.toggleChannel(context, profile, category.id, channel.id)
                                             } }, onClick = { open(entry) }, isTv = tv, compact = true,
                                             onFocusChange = { focused = it })
                                     } else LibrarySavedPoster(entry, state, if (entry.live) (if (phone) 240.dp else 220.dp) else width, sensitive, progress?.provider(entry.type, entry.media.id),

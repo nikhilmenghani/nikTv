@@ -130,7 +130,7 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
                     .graphicsLayer { scaleX = 2.4f; scaleY = 2.4f })
             }
             Spacer(Modifier.weight(1f))
-            if (!detail) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 DiscoveryAction("Play on NikTV", Icons.Default.Cast, iconOnly = true,
                     selected = com.nikhil.niktv.ui.LocalLanPlaybackTarget.current != null,
                     onClick = com.nikhil.niktv.ui.LocalOpenLanPlayback.current)
@@ -144,7 +144,7 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
                 DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
             }
         }
-        if (!detail) DirectPortalButtons(Modifier.fillMaxWidth(), labels = true)
+        DirectPortalButtons(Modifier.fillMaxWidth().padding(top = 4.dp), labels = true)
     }
     }
 }

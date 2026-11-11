@@ -577,7 +577,7 @@ fun PlayerScreen(
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
+    val playerOptionsOpen = extraControlsOpen || speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
@@ -2234,7 +2234,6 @@ fun PlayerScreen(
 
             val secondaryActionRequesters = buildList {
                 if (media.catalogType != CatalogType.LIVE_TV) {
-                    if (introAvailable) add(skipIntroFocusRequester)
                     if (introSettings.target != null) add(introFocusRequester)
                     add(subtitleFocusRequester)
                     if (audioTracks.size > 1) add(audioFocusRequester)
@@ -2253,6 +2252,7 @@ fun PlayerScreen(
             }
             val firstQuickActionRequester = when {
                 media.catalogType == CatalogType.LIVE_TV -> programmeGuideFocusRequester
+                introAvailable -> skipIntroFocusRequester
                 extraControlsOpen -> secondaryActionRequesters.first()
                 else -> extraControlsRequester
             }
@@ -2349,12 +2349,7 @@ fun PlayerScreen(
                     }
                 }
 
-                val quickActions: @Composable RowScope.() -> Unit = {
-                        if (introAvailable) PlayerChromeIconButton(
-                            icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
-                            modifier = Modifier.playerSecondaryFocus(skipIntroFocusRequester, secondaryActionRequesters,
-                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it })
+                val quickActions: @Composable () -> Unit = {
                         if (introSettings.target != null) PlayerChromeIconButton(
                             icon = Icons.Default.Flag, contentDescription = "Intro timing",
                             onClick = {
@@ -2492,8 +2487,11 @@ PlayerChromeIconButton(
                         PlayerChromeIconButton(
                             icon = Icons.Default.SportsCricket,
                             contentDescription = "Live cricket scores",
-                            onClick = { cricketScores.pickerOpen = true },
-                            modifier = Modifier.cricketScoreEntry(cricketScores, true) { showControlsAndFocusPlayPause() }
+                            onClick = { extraControlsOpen = false; cricketScores.pickerOpen = true },
+                            modifier = Modifier.cricketScoreEntry(cricketScores, true, enter = { action ->
+                                    extraControlsOpen = false
+                                    coroutineScope.launch { delay(80L); action() }
+                                }) { showControlsAndFocusPlayPause() }
                                 .playerSecondaryFocus(cricketScoreFocusRequester, secondaryActionRequesters,
                                 extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
                             onFocused = { controlsFocused = it }
@@ -2788,6 +2786,14 @@ PlayerChromeIconButton(
                                     }
                                 }
 
+                                if (introAvailable) PlayerChromeIconButton(
+                                    icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
+                                    modifier = Modifier.focusRequester(skipIntroFocusRequester).playerDpadFocusRoutes(
+                                        left = lastPlaybackActionRequester, right = extraControlsRequester,
+                                        up = if (seekable) progressFocusRequester else backFocusRequester),
+                                    size = if (compactMobileControls) 44.dp else 48.dp,
+                                    onFocused = { controlsFocused = it })
+
                                 if (media.catalogType == CatalogType.LIVE_TV) {
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 4.dp),
@@ -2800,7 +2806,10 @@ PlayerChromeIconButton(
                                     modifier = Modifier.weight(1f),
                                     contentAlignment = Alignment.CenterEnd
                                 ) {
-                                PlayerExtraControls(visible = extraControlsOpen) {
+                                PlayerExtraControls(visible = extraControlsOpen, entry = secondaryActionRequesters.first(), onDismiss = {
+                                    extraControlsOpen = false
+                                    coroutineScope.launch { delay(80L); runCatching { extraControlsRequester.requestFocus() } }
+                                }) {
                                 quickActions()
                                 if (pipAvailable) {
                                     val pipLeftRequester = moreFocusRequester
@@ -2829,12 +2838,12 @@ PlayerChromeIconButton(
                                     selected = extraControlsOpen,
                                     modifier = Modifier.focusRequester(extraControlsRequester)
                                         .focusProperties {
-                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else lastPlaybackActionRequester
+                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester
                                             right = FocusRequester.Cancel
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else lastPlaybackActionRequester,
+                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
                                             right = FocusRequester.Cancel,
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         ),
@@ -2895,15 +2904,12 @@ PlayerChromeIconButton(
             })
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
+            catalogType = media.catalogType,
             alternateSeries = media.series,
             pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
             favoriteIds = queueFavoriteIds,
-            onToggleFavorite = if (media.catalogType == CatalogType.LIVE_TV) {
-                onToggleQueueFavorite
-            } else {
-                null
-            },
+            onToggleFavorite = onToggleQueueFavorite,
             onTogglePin = if (media.catalogType == CatalogType.LIVE_TV) onToggleQueuePin else null,
             onRefreshProgramme = if (media.catalogType == CatalogType.LIVE_TV) onRefreshQueueProgramme else null,
             onVisibleChannels = onVisibleQueueChannels,
@@ -3478,6 +3484,10 @@ internal fun PlayerChromeIconButton(
     iconSize: Dp = if (primaryAction) 28.dp else 23.dp,
     onFocused: (Boolean) -> Unit = {}
 ) {
+    if (LocalPlayerOverflowNavigation.current != null) {
+        PlayerOverflowAction(icon, contentDescription, onClick, modifier, selected, progress, indeterminateProgress, badgeText, onFocused)
+        return
+    }
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val minimumFocusSize = when {
@@ -3485,7 +3495,8 @@ internal fun PlayerChromeIconButton(
         configuration.smallestScreenWidthDp < 600 -> 44.dp
         else -> 48.dp
     }
-    val controlSize = if (size < minimumFocusSize) minimumFocusSize else size
+    val requestedSize = if (minimumFocusSize == 44.dp && size == 48.dp) 44.dp else size
+    val controlSize = if (requestedSize < minimumFocusSize) minimumFocusSize else requestedSize
     val shape = RoundedCornerShape(if (primaryAction) 16.dp else 12.dp)
     var isFocused by remember { mutableStateOf(false) }
     Surface(

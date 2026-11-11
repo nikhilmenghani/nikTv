@@ -15,6 +15,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalContext
@@ -27,6 +28,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
@@ -122,6 +130,8 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
     val connectFocus = remember { FocusRequester() }
     val receiveFocus = remember { FocusRequester() }
     val doneFocus = remember { FocusRequester() }
+    val footerFocus = remember { FocusRequester() }
+    val remoteFocus = remember { FocusRequester() }
     val inputMode = LocalInputModeManager.current
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -147,25 +157,24 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
     }
     val muted = Color(0xFFADB4C2)
     @Composable fun receiverCode(modifier: Modifier) {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF191F29), border = BorderStroke(1.dp, Color(0xFF2B303A))) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Pairing code", style = MaterialTheme.typography.labelMedium, color = muted)
-                    Text(state.pin.chunked(3).joinToString(" "), style = MaterialTheme.typography.headlineMedium)
-                    val seconds = state.pinSecondsRemaining
-                    Text("Refreshes automatically in ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}",
-                        style = MaterialTheme.typography.bodySmall, color = muted)
-                }
+        LanPlaybackSection("Ready to receive", Icons.Default.Tv, modifier) {
+            Text("Pairing code", style = MaterialTheme.typography.labelMedium, color = muted)
+            Text(state.pin.chunked(3).joinToString(" "), fontSize = 32.sp, lineHeight = 38.sp,
+                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+            val seconds = state.pinSecondsRemaining
+            Text("Refreshes automatically in ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}",
+                style = MaterialTheme.typography.bodySmall, color = muted)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Default.Wifi, null, Modifier.size(16.dp), tint = muted)
+                Text("${state.address}:${state.port}", style = MaterialTheme.typography.bodySmall)
             }
-            Text("${state.address} : ${state.port}", style = MaterialTheme.typography.bodyMedium)
-            Text("Keep NikTV open on the receiver.", style = MaterialTheme.typography.bodySmall, color = muted)
+            Text("Keep NikTV open here.", style = MaterialTheme.typography.bodySmall, color = muted)
         }
     }
     @Composable fun pairedDevices(modifier: Modifier) {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Paired devices (${state.pairedDevices.size})", style = MaterialTheme.typography.titleSmall)
-            if (state.pairedDevices.isEmpty()) Text("No devices paired yet.", style = MaterialTheme.typography.bodyMedium, color = muted)
-            Column(Modifier.fillMaxWidth().heightIn(max = 176.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LanPlaybackSection("Paired devices (${state.pairedDevices.size})", Icons.Default.Devices, modifier) {
+            if (state.pairedDevices.isEmpty()) Text("No devices paired yet.", style = MaterialTheme.typography.bodySmall, color = muted)
+            Column(Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 state.pairedDevices.forEach { device ->
                     Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF191F29), border = BorderStroke(1.dp, Color(0xFF2B303A))) {
                         Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -184,12 +193,12 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                     }
                 }
             }
-            Text("One device controls playback at a time. Disconnecting its entry stops its movie.",
+            Text("One device controls playback at a time.",
                 style = MaterialTheme.typography.bodySmall, color = muted)
         }
     }
     @Composable fun devicePicker(modifier: Modifier) {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LanPlaybackSection(if (manual) "Receiver address" else "Nearby devices", Icons.Default.Devices, modifier) {
             if (!manual) {
                 Column(Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     state.devices.forEach { device ->
@@ -205,20 +214,22 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 NikTvSecondaryActionButton({ manual = !manual; selected = null }, modifier = Modifier.weight(1f).focusRequester(manualFocus)) {
                     Icon(if (manual) Icons.Default.Tv else Icons.Default.Link, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
-                    Text(if (manual) "Nearby devices" else "Connect by address", style = MaterialTheme.typography.labelLarge)
+                    Text(if (manual) "Nearby devices" else "Connect by address", style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (!manual) NikTvSecondaryActionButton({ selected = null; refresh() }, enabled = !state.busy, contentPadding = PaddingValues(12.dp)) {
                     Icon(Icons.Default.Refresh, "Refresh devices", Modifier.size(20.dp))
                 }
             }
-            if (allowReceiving) NikTvSecondaryActionButton({ receive(true) }, enabled = !state.busy,
+            if (allowReceiving) NikTvTextActionButton({ receive(true) }, enabled = !state.busy,
                 modifier = Modifier.focusRequester(receiveFocus).fillMaxWidth()) {
-                Icon(Icons.Default.Tv, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Receive on this device")
+                Icon(Icons.Default.Tv, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                Text("Receive on this device", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
     @Composable fun pairingFields(modifier: Modifier) {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LanPlaybackSection("Pair with receiver", Icons.Default.Link, modifier) {
             if (manual) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(host, { host = it.trim() }, label = { Text("IP address") }, singleLine = true,
                     modifier = Modifier.weight(1f).focusRequester(hostFocus).then(fieldNavigation(manualFocus, pinFocus, right = portFocus)),
@@ -233,23 +244,29 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                     modifier = Modifier.fillMaxWidth().focusRequester(pinFocus).then(fieldNavigation(if (manual) hostFocus else manualFocus, if (canConnect) connectFocus else doneFocus)),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
-            } else Text("Select a device, then enter its pairing code.", style = MaterialTheme.typography.bodyMedium, color = muted)
+            } else Text("Select a device, then enter the code shown on its screen.", style = MaterialTheme.typography.bodySmall, color = muted)
         }
     }
-    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp), contentAlignment = Alignment.Center) {
-            val wide = maxWidth >= 720.dp
-            Surface(Modifier.widthIn(max = 920.dp).fillMaxWidth().heightIn(max = maxHeight).initialFocusEntry(doneFocus, enabled = focusActionsOnOpen),
-                shape = RoundedCornerShape(18.dp), color = Color(0xF510131A), contentColor = Color.White, border = BorderStroke(1.dp, Color(0xFF2B303A))) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val wide = maxWidth >= 600.dp
+            Surface(Modifier.widthIn(max = 920.dp).fillMaxWidth().heightIn(max = maxHeight)
+                .semantics { paneTitle = "Play on NikTV" }
+                .initialFocusEntry(doneFocus, enabled = focusActionsOnOpen),
+                shape = RoundedCornerShape(18.dp), color = NikColors.background, contentColor = Color.White,
+                border = BorderStroke(1.dp, Color.White.copy(alpha = .14f))) {
+                Column(Modifier.padding(if (wide) 16.dp else 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Icon(Icons.Default.Cast, null, Modifier.size(28.dp), tint = NikColors.primary)
+                        Surface(shape = RoundedCornerShape(10.dp), color = NikColors.primary.copy(alpha = .16f)) {
+                            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                                Icon(if (state.receiving) Icons.Default.Tv else Icons.Default.Cast, null, Modifier.size(24.dp), tint = NikColors.primary)
+                            }
+                        }
                         Column(Modifier.weight(1f)) {
                             Text(if (state.receiving) "Receive on NikTV" else "Play on NikTV", style = MaterialTheme.typography.titleMedium)
-                            Text("Devices on your Wi-Fi", style = MaterialTheme.typography.bodySmall, color = muted)
+                            Text("Connect over the same Wi-Fi", style = MaterialTheme.typography.bodySmall, color = muted)
                         }
                     }
-                    HorizontalDivider(color = Color(0xFF2B303A))
                     Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         (pendingTitle ?: state.remoteVideo)?.let { Text(it, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
                         if (state.receiving) {
@@ -257,16 +274,18 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                                 receiverCode(Modifier.weight(1f)); pairedDevices(Modifier.weight(1f))
                             } else { receiverCode(Modifier.fillMaxWidth()); pairedDevices(Modifier.fillMaxWidth()) }
                         } else if (state.target != null) {
-                            Text("Connected to ${state.target.name}", style = MaterialTheme.typography.titleSmall)
-                            Text("Choose a movie, or share a video from the player. You can keep using your phone.", style = MaterialTheme.typography.bodySmall, color = muted)
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                NikTvSecondaryActionButton({ control("pause") }, enabled = !state.busy, modifier = Modifier.weight(1f)) { Text("Pause") }
-                                NikTvSecondaryActionButton({ control("resume") }, enabled = !state.busy, modifier = Modifier.weight(1f)) { Text("Resume") }
-                                NikTvSecondaryActionButton({ control("stop") }, enabled = !state.busy, modifier = Modifier.weight(1f)) { Text("Stop") }
+                            LanPlaybackSection("Connected to ${state.target.name}", Icons.Default.CastConnected, Modifier.fillMaxWidth()) {
+                                Text("Choose a movie or send a video from the player. You can keep using your phone.", style = MaterialTheme.typography.bodySmall, color = muted)
+                                Row(Modifier.fillMaxWidth().focusProperties { down = footerFocus },
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+                                    LanRemoteAction("Pause", Icons.Default.Pause, !state.busy, Modifier.focusRequester(remoteFocus)) { control("pause") }
+                                    LanRemoteAction("Resume", Icons.Default.PlayArrow, !state.busy) { control("resume") }
+                                    LanRemoteAction("Stop", Icons.Default.Stop, !state.busy) { control("stop") }
+                                    LanRemoteAction("Playback status", Icons.Default.Refresh, !state.busy) { control("status") }
+                                }
                             }
-                            NikTvSecondaryActionButton({ control("status") }, enabled = !state.busy) { Text("Playback status") }
                         } else {
-                            Text("Open Receive on this device on your TV or tablet.", style = MaterialTheme.typography.bodySmall, color = muted)
+                            Text("On your TV or tablet, choose Receive on this device.", style = MaterialTheme.typography.bodySmall, color = muted)
                             if (wide) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 devicePicker(Modifier.weight(1f)); pairingFields(Modifier.weight(1f))
                             } else { devicePicker(Modifier.fillMaxWidth()); pairingFields(Modifier.fillMaxWidth()) }
@@ -274,15 +293,46 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                         if (state.message.isNotBlank()) Text(state.message, style = MaterialTheme.typography.bodySmall, color = muted)
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
+                    HorizontalDivider(color = Color.White.copy(alpha = .1f))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                        if (state.receiving) NikTvSecondaryActionButton({ receive(false) }, enabled = !state.busy) { Text("Stop receiving") }
-                        else if (state.target != null) NikTvSecondaryActionButton(disconnect, enabled = !state.busy) { Text("Disconnect") }
-                        else NikTvPrimaryActionButton(::connect, enabled = canConnect, modifier = Modifier.focusRequester(connectFocus)) { Text("Connect") }
-                        NikTvSecondaryActionButton(close, modifier = Modifier.focusRequester(doneFocus)) { Text("Done") }
+                        val footerRoute = Modifier.focusRequester(footerFocus).focusProperties { right = doneFocus }
+                        if (state.receiving) NikTvSecondaryActionButton({ receive(false) }, enabled = !state.busy, modifier = footerRoute) { Text("Stop receiving") }
+                        else if (state.target != null) NikTvSecondaryActionButton(disconnect, enabled = !state.busy,
+                            modifier = footerRoute.focusProperties { up = remoteFocus }) { Text("Disconnect") }
+                        else NikTvPrimaryActionButton(::connect, enabled = canConnect, modifier = Modifier.focusRequester(connectFocus)
+                            .focusProperties { right = doneFocus; up = if (currentDevice != null || manual) pinFocus else manualFocus }) { Text("Connect") }
+                        NikTvSecondaryActionButton(close, modifier = Modifier.focusRequester(doneFocus).focusProperties {
+                            if (state.receiving || state.target != null) left = footerFocus else if (canConnect) left = connectFocus
+                            if (state.target != null) up = remoteFocus
+                        }) { Text("Done") }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LanPlaybackSection(title: String, icon: ImageVector, modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit) {
+    com.nikhil.niktv.discovery.DiscoveryGlassPanel(modifier, artwork = null,
+        backdropBounds = androidx.compose.ui.geometry.Rect.Zero, baseColor = Color(0xFF171C26), tint = Color.Transparent) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(icon, null, Modifier.size(18.dp), tint = Color(0xFFADB4C2))
+                Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun LanRemoteAction(label: String, icon: ImageVector, enabled: Boolean, modifier: Modifier = Modifier,
+    action: () -> Unit) {
+    NikTvSecondaryActionButton(action, modifier.size(48.dp).semantics { contentDescription = label }, enabled,
+        contentPadding = PaddingValues(10.dp)) {
+        Icon(icon, null, Modifier.size(22.dp))
     }
 }
 
@@ -299,14 +349,19 @@ internal fun RemotePlaybackStandby(onBack: () -> Unit, mediaId: String? = null):
         onDispose { }
     }
     Surface(Modifier.fillMaxSize(), color = NikColors.background) {
-        Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Icon(Icons.Default.CastConnected, null, Modifier.size(64.dp), tint = NikColors.primary)
-            Spacer(Modifier.height(20.dp))
-            Text("Playing on ${state.target?.name ?: "your receiver"}", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp)); Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp)); Text("You can use other apps. Keep this phone connected to Wi-Fi.", color = Color(0xFFADB4C2))
-            Spacer(Modifier.height(24.dp)); NikTvSecondaryActionButton(onClick = open) { Text("Remote controls") }
-            Spacer(Modifier.height(8.dp)); NikTvSecondaryActionButton(onClick = onBack) { Text("Back") }
+        Box(Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp), contentAlignment = Alignment.Center) {
+            LanPlaybackSection("Playing on ${state.target?.name ?: "your receiver"}", Icons.Default.CastConnected,
+                Modifier.widthIn(max = 620.dp).fillMaxWidth()) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text("You can use other apps. Keep this phone on Wi-Fi.", style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFADB4C2))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NikTvPrimaryActionButton(onClick = open) {
+                        Icon(Icons.Default.Cast, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Remote controls")
+                    }
+                    NikTvSecondaryActionButton(onClick = onBack) { Text("Back") }
+                }
+            }
         }
     }
     return true

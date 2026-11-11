@@ -30,11 +30,15 @@ import java.util.zip.ZipInputStream
 class CricketScoreOverlayDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
+    private var failureDetails: () -> String = { "" }
     private fun main(block: () -> Unit) = instrumentation.runOnMainSync(block)
     private fun await(label: String, timeout: Long = 15_000, predicate: () -> Boolean) {
         val until = SystemClock.elapsedRealtime() + timeout
         while (SystemClock.elapsedRealtime() < until) { if (predicate()) return; Thread.sleep(80) }
-        fail(label)
+        NavigationAuditEvidence.capture("cricket-score-failure")
+        val details = failureDetails()
+        File(context.externalCacheDir, "cricket-score-failure.txt").writeText("$label\n$details")
+        fail("$label. $details")
     }
     private fun node(text: String, prefix: Boolean = false): AccessibilityNodeInfo? {
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
@@ -145,6 +149,13 @@ class CricketScoreOverlayDeviceTest {
                 child(2) { child(1) { text(1, if (stage == 1) wicketDescription else if (stage > 1) "The next batter takes a single." else "A single to square leg.")
                     number(2, 100L + stage * 100); number(4, 1); double(3, 10.0 + stage * .1); text(5, if (stage == 1) "WICKET" else "NONE") } }
             }
+        }
+        val fixtureMatch = CricketScoreProtobuf.matches(listing).single { it.id == 4242 }
+        assertEquals("IND 100/1 (10)", CricketScoreProtobuf.score(score(), fixtureMatch).innings.single().label)
+        failureDetails = {
+            "selectedMatch=${prefs.getInt("match", 0)}, polls=${polls.get()}, revision=${revision.get()}, " +
+                "badge=${node("Live cricket score.", true)?.contentDescription}, " +
+                "overflowVisible=${node("Hide extra controls") != null}, pickerVisible=${node("IND vs AUS") != null}"
         }
         val repo = CricketLiveScoresRepository(CricbuzzDirectClient(CricketHighlightsTransport { url, _ ->
             when { url.endsWith("settings") -> settings; url.endsWith("live") -> listing

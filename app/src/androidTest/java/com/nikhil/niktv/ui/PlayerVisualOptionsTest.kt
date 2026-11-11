@@ -48,11 +48,13 @@ class PlayerVisualOptionsTest {
         fail("Cannot click $value")
     }
     private fun confirmOrigin(title: String) {
-        await("Dialog must close before restoring focus") { label(title) == null }
+        await("Dialog must close before restoring focus") { !visualDialogShown(title) }
         Thread.sleep(250)
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-        await("OK must reopen $title from the originating button, without pausing playback") { label(title) != null }
+        await("OK must reopen $title from the originating button, without pausing playback") { visualDialogShown(title) }
     }
+    private fun visualDialogShown(title: String): Boolean = label(title) != null && label("Skip") != null &&
+        label(if (title == "Picture mode") "Apply" else "Save") != null
     @Test fun exoVisualOptionsKeepPreviewAndFocusSeparateFromPlayback() = exercise("MEDIA3")
     @Test fun vlcVisualOptionsKeepPreviewAndFocusSeparateFromPlayback() = exercise("VLC")
     private fun exercise(engine: String) {
@@ -76,7 +78,7 @@ class PlayerVisualOptionsTest {
             await("Local playback must advance") { PlaybackRegressionActivity.progress > 3000L }
             click("More controls")
             click("Video fit: Fit")
-            await("Resize choices must be visible") { label("Video resize") != null }
+            await("Resize choices must be visible") { visualDialogShown("Video resize") }
             click("Zoom")
             await("Resize selection must preview Zoom") {
                 find(instrumentation.uiAutomation.rootInActiveWindow) { it.text?.startsWith("Preview: Zoom") == true } != null
@@ -104,7 +106,7 @@ class PlayerVisualOptionsTest {
             confirmOrigin("Video resize")
             assertEquals("Back must skip the preview", VideoResizeMode.FILL, VideoResizePreferences.mode(context))
             click("Skip")
-            await("Resize closes") { label("Video resize") == null }
+            await("Resize closes") { !visualDialogShown("Video resize") }
 
             var picture = find(instrumentation.uiAutomation.rootInActiveWindow) {
                 it.contentDescription?.startsWith("Choose picture mode:") == true
@@ -115,7 +117,7 @@ class PlayerVisualOptionsTest {
                 picture = picture.parent
             }
             assertTrue("Picture mode button must be clickable", pictureClicked)
-            await("Picture modes open") { label("Picture mode") != null }
+            await("Picture modes open") { visualDialogShown("Picture mode") }
             val alternative = VideoAppearancePreferences.profiles(context).first { it.id != "default" }
             click(alternative.name)
             click("Skip")

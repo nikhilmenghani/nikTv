@@ -97,6 +97,7 @@ private fun ProviderDetailSynopsis(overview: String?, title: String, remoteInfo:
 }
 
 /** Provider identity is never replaced by the TMDB identity used for presentation. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTvState,
     play: () -> Unit, close: () -> Unit, favorite: () -> Unit, isFavorite: Boolean,
@@ -215,6 +216,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         }
     }
     val toolbar: @Composable () -> Unit = {
+        CompositionLocalProvider(LocalMobileGlassEnabled provides phone) {
+        Column {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onPreviewKeyEvent { event ->
                 if (wideSeries && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
                     if (topDown != null) { topDown(); true } else runCatching { playRequester.requestFocus() }.getOrDefault(false)
@@ -224,6 +227,15 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
                     modifier = Modifier.focusRequester(backRequester), onClick = close)
                 Spacer(Modifier.weight(1f))
+                if (phone) {
+                    DiscoveryAction("Play on NikTV", Icons.Default.Cast, iconOnly = true,
+                        selected = LocalLanPlaybackTarget.current != null, onClick = LocalOpenLanPlayback.current)
+                    val viewer = LocalSelectedUserProfile.current
+                    DiscoveryAction("Switch profile: ${viewer?.name.orEmpty()}",
+                        visualLabel = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() } ?: "N",
+                        containerColor = viewer?.let { Color(it.color) }, horizontalPadding = 0.dp,
+                        modifier = Modifier.size(48.dp), onClick = LocalOpenUserProfiles.current)
+                }
                 tools()
                 if (type == CatalogType.MOVIES) Box {
                     DiscoveryAction("Movie options", Icons.Default.MoreHoriz, iconOnly = true) { movieOptions = true }
@@ -233,9 +245,15 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         onTrailerReturned = { runCatching { playRequester.requestFocus() }.getOrDefault(false) })
                 }
             }
+            if (phone) CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
+                DirectPortalButtons(Modifier.fillMaxWidth().padding(horizontal = 16.dp), labels = true)
+            }
+        }
+        }
     }
     val hero: @Composable () -> Unit = {
         if (!wideSeries && compactSeries) {
+            CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalHeroActionSizing provides true) {
             Column(Modifier.fillMaxWidth()) {
             Box(Modifier.fillMaxWidth()) {
                 Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false) }
@@ -256,7 +274,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true, iconOnly = true,
                                 enabled = playEnabled, modifier = Modifier.focusRequester(playRequester), onClick = play)
                             DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
@@ -275,6 +294,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 }
             }
             LocalProviderSynopsisPanel.current?.invoke()
+            }
             }
         } else {
         Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
@@ -349,23 +369,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                     top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(if (type == CatalogType.MOVIES) 16.dp else 12.dp)) {
                     itemsIndexed(people, key = { _, person -> person.id!! }) { index, person ->
                         val requester = if (index == 0) castEntry else remember(person.id) { FocusRequester() }
-                        if (type == CatalogType.MOVIES) DiscoveryCastTile(person, Modifier.focusRequester(requester)) {
+                        DiscoveryCastTile(person, Modifier.focusRequester(requester)) {
                             actorOrigin = requester; actor = person
-                        } else {
-                        var focused by remember { mutableStateOf(false) }
-                        Surface(onClick = { actorOrigin = requester; actor = person },
-                            modifier = Modifier.width(if (phone) 92.dp else 104.dp).focusRequester(requester).onFocusChanged { focused = it.isFocused },
-                            color = if (focused) Color(0xFF303641) else Color(0xFF181C24), shape = RoundedCornerShape(10.dp),
-                            border = if (focused) BorderStroke(2.dp, Color.White) else null) {
-                            Column(Modifier.padding(8.dp)) {
-                                AsyncImage(person.portrait, person.name, Modifier.fillMaxWidth().height(105.dp), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-                                val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
-                                Text(person.name, Modifier.height(34.dp * fontScale).padding(top = 4.dp), color = Color.White,
-                                    style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(person.role, Modifier.height(32.dp * fontScale), color = Color.LightGray,
-                                    style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
                         }
                     }
                 }

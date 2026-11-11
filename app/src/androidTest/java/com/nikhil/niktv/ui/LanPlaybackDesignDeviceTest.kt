@@ -220,4 +220,48 @@ class LanPlaybackDesignDeviceTest {
         key(KeyEvent.KEYCODE_DPAD_UP)
         await("Up reaches first paired device") { focused("Disconnect Samsung") }
     }
+
+    @Test fun nearbyPairingFitsThePageWithCodeAndFooterVisible() = fixture(touchMode = true) { activity ->
+        instrument.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+            LanPlaybackDialog(LanPlaybackState(devices = listOf(
+                LanDevice("Tablet receiver", "192.168.1.2", 1234), LanDevice("TV receiver", "192.168.1.3", 1234))),
+                {}, {}, {}, { _, _ -> }, {})
+        } } }
+        await("Nearby devices appear") { button("Tablet receiver") != null }
+        click("Tablet receiver")
+        await("Code entry is available") { all().count { it.className == "android.widget.EditText" } == 1 }
+        val root = bounds(instrument.uiAutomation.rootInActiveWindow)
+        for (name in listOf("Tablet receiver", "TV receiver", "Connect by address", "Receive on this device", "Done")) {
+            val target = requireNotNull(button(name))
+            assertTrue("$name stays visible on the same page", target.isVisibleToUser && root.contains(bounds(target)))
+        }
+        assertTrue("Pairing code stays on the same page", root.contains(bounds(all().single { it.className == "android.widget.EditText" })))
+        screenshot("nearby-compact-page")
+    }
+
+    @Test fun connectedIconControlsFollowDpadOrderAndKeepTheFooterVisible() = fixture { activity ->
+        val actions = java.util.concurrent.CopyOnWriteArrayList<String>()
+        instrument.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+            LanPlaybackDialog(LanPlaybackState(target = LanTarget("Tablet receiver", "192.168.1.2", 1234, "fixture"),
+                remoteVideo = "Remote movie fixture"), {}, {}, { actions += "disconnect" }, { _, _ -> }, { actions += it })
+        } } }
+        await("Connected remote controls appear") { button("Pause") != null && focused("Done") }
+        key(KeyEvent.KEYCODE_DPAD_UP)
+        await("Up enters Pause") { focused("Pause") }
+        for ((label, action) in listOf("Pause" to "pause", "Resume" to "resume", "Stop" to "stop", "Playback status" to "status")) {
+            await("D-pad reaches $label") { focused(label) }
+            val buttonBounds = bounds(requireNotNull(button(label)))
+            val density = instrument.targetContext.resources.displayMetrics.density
+            assertTrue("$label retains a 48dp touch target", buttonBounds.width() >= 47 * density && buttonBounds.height() >= 47 * density)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("$label dispatches its own command") { actions.lastOrNull() == action }
+            if (label != "Playback status") key(KeyEvent.KEYCODE_DPAD_RIGHT)
+        }
+        key(KeyEvent.KEYCODE_DPAD_DOWN)
+        await("Down enters Disconnect") { focused("Disconnect") }
+        key(KeyEvent.KEYCODE_DPAD_RIGHT)
+        await("Right returns to Done") { focused("Done") }
+        sameRow("Disconnect", "Done")
+        screenshot("connected-compact-controls")
+    }
 }

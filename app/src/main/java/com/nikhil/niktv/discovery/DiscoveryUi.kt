@@ -139,6 +139,11 @@ private fun DiscoveryPreviewContent(
     var nativeNavigationId by rememberSaveable(app.savedProfile?.cacheKey(), surface, experiment) { mutableLongStateOf(-1L) }
     val context = LocalContext.current
     val portalFocusReturn = LocalPortalFocusReturn.current
+    DisposableEffect(portalFocusReturn) {
+        val owner = Any()
+        portalFocusReturn.ownRoute(owner)
+        onDispose { portalFocusReturn.releaseRoute(owner) }
+    }
     val hostView = LocalView.current
     val navigationTrace = LocalDiscoveryNavigationTrace.current
     val downloadEpisode = LocalDownloadDiscoveryEpisode.current

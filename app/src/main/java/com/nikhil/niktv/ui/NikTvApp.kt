@@ -366,6 +366,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
+    val openUserProfiles = LocalOpenUserProfiles.current
     androidx.compose.runtime.CompositionLocalProvider(
         LocalPlayAlternateSource provides vm::openAlternateSources,
         LocalRefreshProviderCategories provides { type -> vm.refreshProviderCategories(type) },
@@ -393,7 +394,7 @@ private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
                 "Previous Series" -> vm.openPreviousDiscovery(DashboardSurface.SERIES)
                 "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
-                "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileChooser()
+                "Settings" -> vm.openSettings(); "Profile" -> openUserProfiles()
             } }, favorite = { vm.toggleFavorite(it) }, playEpisode = vm::openDiscoveryEpisode,
             recent = vm::openRecent, watched = vm::openWatchedEpisode, category = vm::openModernIptvCategory,
             section = vm::openModernTmdbSection, removeRecent = vm::removeRecent,
@@ -536,17 +537,20 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                  */
                 state.nowPlaying != null -> {
                   val playback = state.nowPlaying!!
-                  val profileKey = state.session?.profile?.cacheKey()
+                  val profileKey = playback.profileKey.takeIf { it.isNotBlank() } ?: state.session?.profile?.cacheKey()
                       ?: state.savedProfile?.cacheKey().orEmpty()
                   val channelCategoryId = state.nowPlaying?.media?.portalCategoryId
                       ?.takeIf { it.isNotBlank() } ?: state.selectedCategory?.id.orEmpty()
                   val channelCategoryTitle = state.rawCategoriesByType[CatalogType.LIVE_TV]
                       ?.firstOrNull { it.id == channelCategoryId }?.title
                       ?: state.selectedCategory?.takeIf { it.id == channelCategoryId }?.title.orEmpty()
-                  var pinnedQueueIds by remember(profileKey, channelCategoryId) {
-                      mutableStateOf(IptvPinPreferences.pinnedChannelOrder(
-                          appContext, profileKey, channelCategoryId
-                      ))
+                  val queuePins = rememberIptvPins(profileKey)
+                  val pinnedQueueIds = queuePins.pinnedChannelOrder(channelCategoryId)
+                  val queueFavoriteKind = when (playback.catalogType) {
+                      CatalogType.LIVE_TV, CatalogType.RADIO -> FavoriteKind.CHANNEL
+                      CatalogType.SERIES -> FavoriteKind.EPISODE
+                      else -> if (playback.series != null || playback.media.episodeNumber != null)
+                          FavoriteKind.EPISODE else FavoriteKind.MOVIE
                   }
                   PlayerScreen(
                     media = playback,
@@ -607,22 +611,23 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     pinnedQueueIds = playback.queueFilter?.pinnedIds ?: pinnedQueueIds,
                     queueFavoriteIds = state.favorites
                         .asSequence()
-                        .filter { it.kind == FavoriteKind.CHANNEL }
+                        .filter { it.kind == queueFavoriteKind && (it.profileKey == profileKey || it.profileKey.isBlank()) }
                         .map { it.media.id }
                         .toSet(),
                     onToggleQueueFavorite = { item ->
                         vm.toggleFavorite(
-                            FavoriteItem(FavoriteKind.CHANNEL, item)
+                            FavoriteItem(queueFavoriteKind, item, series = playback.series,
+                                profileKey = profileKey,
+                                categoryTitle = if (queueFavoriteKind == FavoriteKind.CHANNEL) channelCategoryTitle else null)
                         )
                     },
                     onToggleQueuePin = { item ->
                         val categoryId = item.portalCategoryId?.takeIf { it.isNotBlank() }
                             ?: channelCategoryId
                         if (categoryId.isNotBlank()) {
-                            val updated = IptvPinPreferences.toggleChannel(
+                            IptvPinPreferences.toggleChannel(
                                 appContext, profileKey, categoryId, item.id
                             )
-                            if (categoryId == channelCategoryId) pinnedQueueIds = updated
                         }
                     },
                     onRefreshQueueProgramme = vm::refreshLiveProgramme,
