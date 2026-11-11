@@ -268,7 +268,7 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(section.title, Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.SemiBold,
                         style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (section.id != null) DiscoveryAction("View all ${section.title}", Icons.Default.ChevronRight,
+                    if (section.id != null && section.hasMore) DiscoveryAction("View all ${section.title}", Icons.Default.ChevronRight,
                         visualLabel = "View all", modifier = Modifier.semantics { contentDescription = "View all ${section.title}" },
                         onClick = { selectCollection(section.id) })
                 }

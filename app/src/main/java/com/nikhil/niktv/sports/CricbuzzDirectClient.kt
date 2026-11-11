@@ -65,9 +65,9 @@ internal class CricbuzzDirectClient(
         collectionSections.forEach { section -> section.videos.forEach { locations.putIfAbsent(it.id, Location(section.id, null)) } }
         if (collectionId == null && cursor == null) {
             sections = listOf(CricketVideoSection(null, "Featured highlights", home)) + collectionSections.map {
-                if (it.id == 1) it.copy(videos = page.videos) else it
+                if (it.id == 1) it.copy(videos = page.videos, hasMore = page.nextCursor != null) else it
             }
-            if (sections.none { it.id == 1 }) sections = sections + CricketVideoSection(1, "Latest Videos", page.videos)
+            if (sections.none { it.id == 1 }) sections = sections + CricketVideoSection(1, "Latest Videos", page.videos, page.nextCursor != null)
         }
         while (locations.size > 500) locations.remove(locations.keys.first())
         return page.copy(videos = rows)

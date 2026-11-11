@@ -15,6 +15,19 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryViewModelTest {
+    @Test fun feedPaginationSurvivesPublishingAndRefresh() {
+        var more = true
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun feedPage(section: TmdbHomeSection, stale: (DiscoveryFeedPage) -> Unit) =
+                DiscoveryFeedPage(listOf(card(1)), more)
+        })
+        vm.bind("feed-pagination", DashboardSurface.HOME, emptyList()); pump()
+        assertEquals(true, vm.state.value.feedHasMore[TmdbHomeSection.TRENDING_MOVIES])
+        more = false
+        vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES, true); pump()
+        assertEquals(false, vm.state.value.feedHasMore[TmdbHomeSection.TRENDING_MOVIES])
+        vm.pause()
+    }
     @Test fun selectedTabActivationClearsTheEntireDetailStackWithoutReloadingLandingFeeds() {
         val vm = DiscoveryViewModel(app, Source())
         vm.bind("landing-reset", DashboardSurface.HOME, emptyList()); pump()

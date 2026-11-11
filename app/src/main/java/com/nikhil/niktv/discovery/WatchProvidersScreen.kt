@@ -181,6 +181,7 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
             LaunchedEffect(provider.id, state.region, state.series, state.revision, metadataActive) { if (metadataActive) load(provider.id, false) else leave(provider.id) }
             DisposableEffect(provider.id, state.region, state.series, state.revision) { onDispose { leave(provider.id) } }
             val row = state.rows[provider.id] ?: WatchProviderRow(loading = true)
+            val showAll = discoveryRowHasMore(row.cards.size, row.cards.size, row.page > 0 && row.more)
             val allFocus = headers.getValue(provider.id)
             val rowEntry = remember(provider.id) { FocusRequester() }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -188,8 +189,11 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     provider.logo?.let { AsyncImage(it, null, Modifier.size(30.dp)) }
                     Text(provider.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp,
-                        modifier = Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    DiscoveryAction("View all ${provider.name}", visualLabel = "View all",
+                        modifier = Modifier.weight(1f).then(if (showAll) Modifier else Modifier.focusRequester(allFocus)
+                            .focusProperties { down = if (interactiveRow(row)) rowEntry else FocusRequester.Default }
+                            .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)).focusable()),
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    if (showAll) DiscoveryAction("View all ${provider.name}", visualLabel = "View all",
                         modifier = Modifier.focusRequester(allFocus).onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false
                             else when {

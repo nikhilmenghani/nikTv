@@ -43,12 +43,21 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
             }
         }.let { it.copy(cards = it.cards.filter { card -> card.released() }) }
     override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> =
-        cached("feed-v4:${section.name}", DiscoveryCache.FEED_TTL, ListSerializer(DiscoveryCard.serializer()), stale) {
+        feedPage(section) { stale(it.cards) }.cards
+    override suspend fun feedPage(section: TmdbHomeSection, stale: (DiscoveryFeedPage) -> Unit): DiscoveryFeedPage =
+        cached("feed-v5:${section.name}", DiscoveryCache.FEED_TTL, DiscoveryFeedPage.serializer(),
+            { stale(it.copy(cards = it.cards.filter { card -> card.released() })) }) {
             val (path, query) = discoveryFeedRequest(section)
-            val first = cards(tmdb.discoveryJson(path, query + ("page" to "1")), section.series).filter { it.originalLanguage == section.regionalLanguage }
-            if (first.size >= 10) first
-            else (first + cards(tmdb.discoveryJson(path, query + ("page" to "2")), section.series).filter { it.originalLanguage == section.regionalLanguage }).distinctBy { it.key }.take(30)
-        }.filter { it.released() }
+            val firstRoot = tmdb.discoveryJson(path, query + ("page" to "1"))
+            val first = cards(firstRoot, section.series).filter { it.originalLanguage == section.regionalLanguage }
+            val totalPages = firstRoot["total_pages"]?.jsonPrimitive?.intOrNull ?: 1
+            if (first.size >= 10 || totalPages <= 1) DiscoveryFeedPage(first, totalPages > 1)
+            else {
+                val secondRoot = tmdb.discoveryJson(path, query + ("page" to "2"))
+                val merged = (first + cards(secondRoot, section.series).filter { it.originalLanguage == section.regionalLanguage }).distinctBy { it.key }
+                DiscoveryFeedPage(merged.take(30), merged.size > 30 || (secondRoot["total_pages"]?.jsonPrimitive?.intOrNull ?: totalPages) > 2)
+            }
+        }.let { it.copy(cards = it.cards.filter { card -> card.released() }) }
 
     override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails =
         cached("detail-v4:${card.key}", DiscoveryCache.DETAIL_TTL, DiscoveryDetails.serializer(), stale) {

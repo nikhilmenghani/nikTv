@@ -85,7 +85,8 @@ internal data class RailEntry(val key: String, val title: String, val artwork: S
 }
 internal data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
     val section: TmdbHomeSection? = null, val providerType: CatalogType? = null, val providerCategory: Category? = null,
-    val recommendation: com.nikhil.niktv.data.HistoryRecommendationRow? = null, val viewAll: (() -> Unit)? = null)
+    val recommendation: com.nikhil.niktv.data.HistoryRecommendationRow? = null, val viewAll: (() -> Unit)? = null,
+    val hasMore: Boolean = false)
 
 /** Keep the large screen body out of the many-argument Compose entry method.
  * A combined entry exceeded 255 DEX registers and ART rejected its generated dirty-mask code. */
@@ -466,16 +467,17 @@ private fun DiscoveryPreviewContent(
     val providerRailModels = remember(profile, surface, windowedProviderPreview, progressLookup, scrollVariant.tileLimit) {
         linkedMapOf<String, Pair<List<Any?>, Rail>>()
     }
-    val rails = remember(profile, surface, state.detail?.key, state.feeds, state.sections,
+    val rails = remember(profile, surface, state.detail?.key, state.feeds, state.feedHasMore, state.sections,
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
         app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection,
         watchProviders.providers, watchProviders.loading, watchProviders.error) { buildList {
         val detail = state.detail
         if (detail == null) {
-            val recents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
+            val allRecents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
                 it.kind == if (surface == DashboardSurface.MOVIES) FavoriteKind.MOVIE else FavoriteKind.SERIES) }
-                .filterNot { it.media.isAdult }.distinctRecentContent().take(if (activityCollection == "continue") Int.MAX_VALUE else scrollVariant.tileLimit)
+                .filterNot { it.media.isAdult }.distinctRecentContent()
+            val recents = allRecents.take(if (activityCollection == "continue") Int.MAX_VALUE else scrollVariant.tileLimit)
             if (recents.isNotEmpty()) add(Rail("continue", "Continue Watching", recents.map { recent ->
                 val progress = progressLookup?.recent(recent)
                 RailEntry("continue:${recent.contentIdentity()}", providerDisplayTitle(recent.media.title, if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES), recent.media.logo,
@@ -500,7 +502,7 @@ private fun DiscoveryPreviewContent(
                             onTrailerReturned = restore, playAction = { (currentProviderRecent ?: currentOpenRecent)(recent) })
                         if (descriptionOpen) FullDescriptionDialog(recent.media.title, recent.media.description.orEmpty()) { descriptionOpen = false; restore() }
                     })
-            }))
+            }, hasMore = discoveryRowHasMore(allRecents.size, recents.size)))
             if (surface != DashboardSurface.MOVIES) {
                 val episodes = newEpisodeGroups(app.watchedSeries, profile)
                 if (episodes.isNotEmpty()) add(Rail("episodes", "New Episodes", episodes.take(if (activityCollection == "episodes") Int.MAX_VALUE else scrollVariant.tileLimit).map { group ->
@@ -523,18 +525,24 @@ private fun DiscoveryPreviewContent(
                                 onTrailerReturned = restore, playAction = { currentOpenWatched(group.watched, episode) })
                             if (descriptionOpen) FullDescriptionDialog(episode.title, episode.description.orEmpty()) { descriptionOpen = false; restore() }
                         })
-                }))
+                }, hasMore = episodes.size > scrollVariant.tileLimit))
             }
             if (surface == DashboardSurface.HOME) add(Rail("daily-movies", "Trending Movies Today",
-                state.feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty().take(minOf(10, scrollVariant.tileLimit)).map { cardEntry(it, "daily-movies") }, true, TmdbHomeSection.TRENDING_MOVIES))
+                state.feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty().take(minOf(10, scrollVariant.tileLimit)).map { cardEntry(it, "daily-movies") }, true, TmdbHomeSection.TRENDING_MOVIES,
+                hasMore = discoveryRowHasMore(state.feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty().size, minOf(state.feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty().size, 10, scrollVariant.tileLimit), state.feedHasMore[TmdbHomeSection.TRENDING_MOVIES] == true)))
             if (surface == DashboardSurface.HOME) add(Rail("daily-series", "Trending Series Today",
-                state.feeds[TmdbHomeSection.TRENDING_SERIES].orEmpty().take(minOf(10, scrollVariant.tileLimit)).map { cardEntry(it, "daily-series") }, true, TmdbHomeSection.TRENDING_SERIES))
+                state.feeds[TmdbHomeSection.TRENDING_SERIES].orEmpty().take(minOf(10, scrollVariant.tileLimit)).map { cardEntry(it, "daily-series") }, true, TmdbHomeSection.TRENDING_SERIES,
+                hasMore = discoveryRowHasMore(state.feeds[TmdbHomeSection.TRENDING_SERIES].orEmpty().size, minOf(state.feeds[TmdbHomeSection.TRENDING_SERIES].orEmpty().size, 10, scrollVariant.tileLimit), state.feedHasMore[TmdbHomeSection.TRENDING_SERIES] == true)))
             if (surface == DashboardSurface.HOME) app.historyRecommendations.filter { it.profile == profile }.forEach { row ->
                 val cards = (row.movies.map { it.discovery() } + row.series.map { it.discovery() }).filter { it.released() }
-                if (cards.isNotEmpty() && size < scrollVariant.rowLimit) add(Rail("personal:${row.key}", row.title, cards.take(scrollVariant.tileLimit).map { cardEntry(it, "personal:${row.key}") }, recommendation = row))
+                if (cards.isNotEmpty() && size < scrollVariant.rowLimit) add(Rail("personal:${row.key}", row.title,
+                    cards.take(if (activityCollection == "personal:${row.key}") Int.MAX_VALUE else scrollVariant.tileLimit).map { cardEntry(it, "personal:${row.key}") },
+                    recommendation = row, hasMore = cards.size > scrollVariant.tileLimit))
             }
             state.sections.filter { surface == DashboardSurface.HOME }.filterNot { it in setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES) }.forEach { section ->
-                if (size < scrollVariant.rowLimit) add(Rail("section:${section.name}", section.title, state.feeds[section].orEmpty().take(scrollVariant.tileLimit).map { cardEntry(it, "section:${section.name}") }, section = section))
+                val cards = state.feeds[section].orEmpty()
+                if (size < scrollVariant.rowLimit) add(Rail("section:${section.name}", section.title, cards.take(scrollVariant.tileLimit).map { cardEntry(it, "section:${section.name}") }, section = section,
+                    hasMore = discoveryRowHasMore(cards.size, minOf(cards.size, scrollVariant.tileLimit), state.feedHasMore[section] == true)))
             }
             providerSelections.filterValues { it.isNotEmpty() }.forEach { (type, categories) ->
                 categories.forEach { category ->
@@ -585,6 +593,14 @@ private fun DiscoveryPreviewContent(
                 val page = providerState.pages[category.type]?.get(source.id)
                 page != null && page.page > 0 && !page.hasMore && !page.truncated && page.items.isEmpty()
             } } == true
+    }.map { row ->
+        if (row.providerCategory == null || row.providerType == null) row
+        else {
+            val sources = providerDiscoverySources(listOf(row.providerCategory))
+            val pages = sources.mapNotNull { providerState.pages[row.providerType]?.get(it.id) }
+            row.copy(hasMore = discoveryRowHasMore(providerQueues.second[row.key].orEmpty().size, row.entries.size,
+                pages.any { it.hasMore || it.truncated }))
+        }
     } }
     val routeKey = "$profile:${surface.name}:${state.detail?.key ?: "landing"}"
     val focusedRail = if (state.detail == null && !fastTvLanding) rails.firstOrNull { row -> row.entries.any { it.key == state.focusedEntryKey } } else null
@@ -852,7 +868,7 @@ private fun DiscoveryPreviewContent(
                 action = if (!recycled || row.key in setOf("continue", "episodes")) null else ({
                     if (row.recommendation != null && actions.dismissRecommendation != null) actions.dismissRecommendation(row.recommendation)
                     else setHiddenTrialRows(hiddenTrialRows + row.key)
-                }), viewAll = all.takeIf { recycled }, loading = row.key in loadingRows)
+                }), viewAll = all.takeIf { recycled && row.hasMore }, loading = row.key in loadingRows)
         } }
         if (activityCollection != null) {
             val row = rails.firstOrNull { it.key == activityCollection }
@@ -1244,8 +1260,9 @@ private fun DiscoveryPreviewContent(
                                 }
                             },
                             move = { delta -> moveRow(index, delta) }, reenter = { focusRow(index) },
-                            viewAll = row.providerType?.let { type -> { focusOrigins.returningTo = "${row.key}:all"; providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
-                                ?: row.section?.let { section -> { focusOrigins.returningTo = "${row.key}:all"; actions.openSection(section) } })
+                            viewAll = (row.providerType?.let { type -> { focusOrigins.returningTo = "${row.key}:all"; providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
+                                ?: row.section?.let { section -> { focusOrigins.returningTo = "${row.key}:all"; actions.openSection(section) } }
+                                ?: ({ focusOrigins.returningTo = "${row.key}:all"; activityCollection = row.key })).takeIf { row.hasMore })
                         row.providerType?.let { type ->
                             if (row.entries.isEmpty() && type in providerState.errors) {
                                 providerState.errors[type]?.let { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray) }
@@ -1633,9 +1650,9 @@ internal fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requeste
         }
     }
     val entryKeys by rememberUpdatedState(remember(row.entries) { row.entries.map { it.key } })
-    DisposableEffect(row.key, navigationIndex) {
+    DisposableEffect(row.key, navigationIndex, viewAll != null) {
         register {
-            focusDiscoveryRowEntry(selected, entryKeys, "${row.key}:all".takeIf { row.providerType != null || viewAll != null },
+            focusDiscoveryRowEntry(selected, entryKeys, "${row.key}:all".takeIf { viewAll != null },
                 allIsRowItem = row.providerType == null,
                 isFullyVisible = { index ->
                     val layout = rowState.layoutInfo

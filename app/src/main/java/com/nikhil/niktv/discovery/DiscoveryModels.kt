@@ -62,9 +62,12 @@ internal data class DiscoveryEpisode(
 }
 
 internal data class DiscoveryRow(val id: String, val title: String, val cards: List<DiscoveryCard>, val ranked: Boolean = false)
+@kotlinx.serialization.Serializable
+internal data class DiscoveryFeedPage(val cards: List<DiscoveryCard>, val hasMore: Boolean = false)
 internal data class DiscoveryState(
     val profile: String = "", val surface: DashboardSurface = DashboardSurface.HOME,
     val sections: List<TmdbHomeSection> = emptyList(), val feeds: Map<TmdbHomeSection, List<DiscoveryCard>> = emptyMap(),
+    val feedHasMore: Map<TmdbHomeSection, Boolean> = emptyMap(),
     val loading: Set<String> = emptySet(), val errors: Map<String, String> = emptyMap(),
     val detail: DiscoveryCard? = null, val details: DiscoveryDetails? = null,
     val related: List<DiscoveryCard> = emptyList(), val collection: List<DiscoveryCard> = emptyList(),

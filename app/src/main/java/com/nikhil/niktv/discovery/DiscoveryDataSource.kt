@@ -8,6 +8,8 @@ internal interface DiscoveryDataSource {
     suspend fun providerDetails(item: com.nikhil.niktv.model.MediaItem, type: com.nikhil.niktv.model.CatalogType,
         stale: (DiscoveryDetails) -> Unit = {}): DiscoveryDetails = DiscoveryDetails(providerDetailFallback(item, type))
     suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit = {}): List<DiscoveryCard>
+    suspend fun feedPage(section: TmdbHomeSection, stale: (DiscoveryFeedPage) -> Unit = {}): DiscoveryFeedPage =
+        DiscoveryFeedPage(feed(section) { stale(DiscoveryFeedPage(it)) })
     suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit = {}): DiscoveryDetails
     suspend fun related(card: DiscoveryCard): List<DiscoveryCard>
     suspend fun collection(id: Int): List<DiscoveryCard>

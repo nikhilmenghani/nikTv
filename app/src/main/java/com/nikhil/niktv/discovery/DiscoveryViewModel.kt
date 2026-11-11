@@ -90,12 +90,12 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         preferences.edit().putString(preferenceKey(s.profile, s.surface, boundExperiment), sections.joinToString(",") { it.name }).apply()
         _state.update { it.copy(sections = sections) }
     }
-    private fun publishFeed(section: TmdbHomeSection, cards: List<DiscoveryCard>) = _state.update { current ->
-        val feeds = current.feeds + (section to cards.filter { it.released() })
+    private fun publishFeed(section: TmdbHomeSection, page: DiscoveryFeedPage) = _state.update { current ->
+        val feeds = current.feeds + (section to page.cards.filter { it.released() })
         val heroes = discoveryHeroes(current.surface,
             feeds[TmdbHomeSection.TRENDING_MOVIES].orEmpty(), feeds[TmdbHomeSection.TRENDING_SERIES].orEmpty())
         val selected = heroes.indexOfFirst { it.key == current.hero?.key }.takeIf { it >= 0 } ?: 0
-        current.copy(feeds = feeds, heroes = heroes, heroIndex = selected)
+        current.copy(feeds = feeds, feedHasMore = current.feedHasMore + (section to page.hasMore), heroes = heroes, heroIndex = selected)
     }
     fun loadFeed(section: TmdbHomeSection, retry: Boolean = false) {
         val key = "feed:${section.name}"
@@ -104,7 +104,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         jobs[key] = viewModelScope.launch {
             _state.update { it.copy(loading = it.loading + key, errors = it.errors - key) }
             try {
-                val cards = repository.feed(section) { cached -> if (screen.accepts(token)) publishFeed(section, cached) }
+                val cards = repository.feedPage(section) { cached -> if (screen.accepts(token)) publishFeed(section, cached) }
                 if (screen.accepts(token)) publishFeed(section, cards)
             } catch (c: CancellationException) { throw c }
               catch (_: Exception) { if (screen.accepts(token)) _state.update { it.copy(errors = it.errors + (key to "Could not load ${section.title}. Retry when connected.")) } }

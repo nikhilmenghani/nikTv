@@ -10,6 +10,19 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class DiscoveryLibraryFeedTest {
+    @Test fun liveViewAllRequiresOmittedChannelsOrAnotherPage() {
+        val category = Category("one", "English", CatalogType.LIVE_TV)
+        fun row(count: Int, more: Boolean = false): LibraryRow {
+            val cache = BrowseCatalogCache("a", CatalogType.LIVE_TV, 1, listOf(category),
+                mapOf("one" to (1..count).map { media(it.toString()) }), hasMoreByCategory = mapOf("one" to more))
+            return libraryLiveRows(NikTvState(categories = listOf(category), browseCachesByType = mapOf(CatalogType.LIVE_TV to cache)), "a", emptyMap()).single()
+        }
+        assertFalse(row(1).hasMore)
+        assertFalse(row(12).hasMore)
+        assertTrue(row(13).hasMore)
+        assertEquals(12, row(13).entries.size)
+        assertTrue(row(8, more = true).hasMore)
+    }
     @get:Rule val temporary = TemporaryFolder()
     private fun media(id: String, title: String = id) = MediaItem(id, title, null, "private-command")
     @Test fun favoritesHeroExcludesOtherProfilesChannelsEpisodesAndSensitiveContent() {

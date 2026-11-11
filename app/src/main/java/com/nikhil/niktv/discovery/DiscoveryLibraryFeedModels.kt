@@ -9,7 +9,8 @@ internal data class LibraryEntry(val media: MediaItem, val kind: FavoriteKind,
     val live get() = kind == FavoriteKind.CHANNEL
     val type get() = when (kind) { FavoriteKind.CHANNEL -> CatalogType.LIVE_TV; FavoriteKind.MOVIE -> CatalogType.MOVIES; else -> CatalogType.SERIES }
 }
-internal data class LibraryRow(val key: String, val title: String, val entries: List<LibraryEntry>, val category: Category? = null)
+internal data class LibraryRow(val key: String, val title: String, val entries: List<LibraryEntry>, val category: Category? = null,
+    val hasMore: Boolean = false)
 internal enum class LibrarySort(val title: String) { RECENT("Recently added"), TITLE("Title A–Z") }
 internal fun librarySavedRows(state: NikTvState, profile: String, kind: FavoriteKind?, query: String,
     sort: LibrarySort): List<LibraryRow> {
@@ -37,8 +38,9 @@ internal fun libraryLiveRows(state: NikTvState, profile: String, pins: Map<Strin
     val rows = categories.mapNotNull { category ->
         val sources = category.sourceCategoryIds.ifEmpty { listOf(category.id) }
         val entries = sources.asSequence().flatMap { cache?.itemsByCategory?.get(it).orEmpty().asSequence() }
-            .take(12).map { LibraryEntry(it, FavoriteKind.CHANNEL, category) }.toList()
-        entries.takeIf { it.isNotEmpty() }?.let { LibraryRow("live:${category.id}", category.title, it, category) }
+            .take(13).map { LibraryEntry(it, FavoriteKind.CHANNEL, category) }.toList()
+        entries.takeIf { it.isNotEmpty() }?.let { LibraryRow("live:${category.id}", category.title, it.take(12), category,
+            hasMore = discoveryRowHasMore(it.size, minOf(it.size, 12), sources.any { source -> cache?.hasMoreByCategory?.get(source) == true })) }
     }
     val recent = state.recentlyPlayed.filter { it.profileKey == profile && it.kind == FavoriteKind.CHANNEL }
         .distinctBy { it.media.id }.map { recent -> LibraryEntry(recent.media, FavoriteKind.CHANNEL,

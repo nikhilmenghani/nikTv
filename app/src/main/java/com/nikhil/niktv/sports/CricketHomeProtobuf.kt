@@ -2,7 +2,7 @@ package com.nikhil.niktv.sports
 
 internal data class CricketVideoCollection(val id: Int, val title: String)
 internal data class CricketVideoPage(val videos: List<CricketHighlight>, val nextCursor: String?)
-internal data class CricketVideoSection(val id: Int?, val title: String, val videos: List<CricketHighlight>)
+internal data class CricketVideoSection(val id: Int?, val title: String, val videos: List<CricketHighlight>, val hasMore: Boolean = false)
 
 /** Bounded readers for Home, VideoList and VideoCollectionsDetail's declared wrapper fields. */
 internal object CricketHomeProtobuf {
@@ -27,7 +27,8 @@ internal object CricketHomeProtobuf {
     fun sections(bytes: ByteArray): List<CricketVideoSection> = collectionMessages(message(bytes)).mapNotNull { item ->
         val id = item.number(1)?.takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: return@mapNotNull null
         val title = item.text(2).trim().takeIf { it.isNotEmpty() && it.length <= 300 } ?: return@mapNotNull null
-        CricketVideoSection(id, title, page(item.blobs(6)).videos)
+        val page = page(item.blobs(6))
+        CricketVideoSection(id, title, page.videos, page.nextCursor != null)
     }.distinctBy { it.id }.take(100)
 
     fun collectionPage(bytes: ByteArray): CricketVideoPage {

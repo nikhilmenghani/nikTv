@@ -236,6 +236,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                 val rowState = rememberLazyListState()
                 var last by rememberSaveable(row.key) { mutableStateOf<String?>(null) }
                 val visibleEntries = remember(row) { if (row.category != null) row.entries.take(12) else row.entries }
+                val hasMore = discoveryRowHasMore(row.entries.size, visibleEntries.size, row.hasMore)
                 val currentKeys by rememberUpdatedState(visibleEntries.mapIndexed { ordinal, item -> "${row.key}:${item.key}:$ordinal" })
                 DisposableEffect(row.key) {
                     rowRequesters[row.key] = {
@@ -253,7 +254,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                             fontSize = if (phone) 17.sp else MaterialTheme.typography.titleMedium.fontSize,
                             lineHeight = if (phone) 22.sp else MaterialTheme.typography.titleMedium.lineHeight,
                             fontWeight = if (phone) FontWeight.Bold else MaterialTheme.typography.titleMedium.fontWeight)
-                        if (!phonePosterRow && (!live || row.category != null)) DiscoveryAction("View all", Icons.Default.ChevronRight) { row.category?.let(openCategory) ?: browseSaved(row.entries.firstOrNull()?.kind) }
+                        if (hasMore && !phonePosterRow && (!live || row.category != null)) DiscoveryAction("View all", Icons.Default.ChevronRight) { row.category?.let(openCategory) ?: browseSaved(row.entries.firstOrNull()?.kind) }
                     }
                     DiscoveryHorizontalFocusViewport(16.dp) {
                         LazyRow(Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
@@ -291,7 +292,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                                         { open(entry) }, { remove = saved(entry) }, { focused = true })
                                 }
                             }
-                            if (phonePosterRow) item("view-all") {
+                            if (hasMore && phonePosterRow) item("view-all") {
                                 Box(Modifier.width(width).height(width * 1.5f), contentAlignment = Alignment.Center) {
                                     DiscoveryAction("View all ${row.title}", visualLabel = "View all",
                                         modifier = Modifier.semantics { contentDescription = "View all ${row.title}" }) {
