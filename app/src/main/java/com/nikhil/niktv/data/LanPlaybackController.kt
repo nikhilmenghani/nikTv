@@ -1,4 +1,5 @@
 package com.nikhil.niktv.data
+import kotlinx.coroutines.sync.withLock
 
 import android.content.Context
 import android.net.nsd.NsdManager
@@ -188,18 +189,19 @@ class LanPlaybackController(context: Context, private val scope: CoroutineScope,
                 LanCommand("pair", pin, sender = name.take(64), senderId = installation)) }
             check(response.ok) { response.message }
             val token = requireNotNull(response.credential)
-            mutable.update { it.copy(target = LanTarget(device.name, device.host, device.port, token), message = "Connected. Movie Play buttons now play on ${device.name}.") }
+            mutable.update { it.copy(target = LanTarget(device.name, device.host, device.port, token), message = "Connected to ${device.name}. Use remote controls or choose media to play.") }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { mutable.update { it.copy(message = failure.message ?: "Cannot connect. Check Wi-Fi and the receiver code.") } }
         finally { mutable.update { it.copy(busy = false) } }
     }
-    suspend fun send(action: String, video: RemoteVideo? = null): LanReply {
+    private val inputCommands = kotlinx.coroutines.sync.Mutex()
+    suspend fun send(action: String, video: RemoteVideo? = null, key: String? = null, text: String? = null): LanReply = inputCommands.withLock {
         video?.validate()
         val target = requireNotNull(mutable.value.target) { "Choose a receiving device first." }
-        val reply = withContext(Dispatchers.IO) { sendLanCommand(target.host, target.port, LanCommand(action, target.credential, video = video)) }
+        val reply = withContext(Dispatchers.IO) { sendLanCommand(target.host, target.port, LanCommand(action, target.credential, video = video, key = key, text = text)) }
         mutable.update { it.copy(message = reply.message) }
         check(reply.ok) { reply.message }
-        return reply
+        reply
     }
     suspend fun playVideo(media: com.nikhil.niktv.model.PlayingMedia, at: Long, portal: String? = null) {
         check(media.streamDrm == null && media.separateAudioUrl == null) { "This protected or separate-audio source needs playback on this device." }

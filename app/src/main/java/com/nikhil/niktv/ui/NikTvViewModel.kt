@@ -6526,6 +6526,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     val lanPlayback get() = lanPlaybackDelegate.value
 
     internal suspend fun receiveLanCommand(command: com.nikhil.niktv.data.LanCommand): com.nikhil.niktv.data.LanReply {
+        if (command.action in setOf("navigate", "text", "clear_text")) return LanUiRemote.execute(command)
         val playing = _state.value.nowPlaying
         when (command.action) {
             "status" -> {

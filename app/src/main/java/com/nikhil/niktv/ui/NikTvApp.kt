@@ -360,7 +360,7 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
-    AccountProfileGate(vm) { LanPlaybackHost(vm) { NikTvAuthenticatedApp(vm) } }
+    LanPlaybackHost(vm) { AccountProfileGate(vm) { NikTvAuthenticatedApp(vm) } }
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

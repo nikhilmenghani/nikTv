@@ -96,7 +96,9 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
                     finish()
                 }) {
             androidx.compose.material3.Surface(color = NikColors.background, contentColor = NikColors.onBackground) {
-                SportsScreen(onClose = ::finish)
+                com.nikhil.niktv.ui.LanPlaybackHost(com.nikhil.niktv.data.LanPlaybackSessions.get(applicationContext)) {
+                    SportsScreen(onClose = ::finish)
+                }
             }
             }
         } }

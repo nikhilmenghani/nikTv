@@ -46,7 +46,7 @@ data class RemoteVideo(val url: String, val title: String, val format: String = 
 
 @Serializable
 data class LanCommand(val action: String, val credential: String, val movie: RemoteMovie? = null, val video: RemoteVideo? = null,
-    val sender: String = "", val senderId: String = "")
+    val sender: String = "", val senderId: String = "", val key: String? = null, val text: String? = null)
 
 @Serializable
 data class LanReply(val ok: Boolean, val message: String, val credential: String? = null,
@@ -134,7 +134,11 @@ class LanPlaybackServer(address: InetAddress, preferredPort: Int = 0, private va
     private fun accept(command: LanCommand): LanReply {
         if (command.action == "pair") return sessions.pair(command.credential, command.sender, command.senderId)
         if (!sessions.authenticated(command.credential)) return LanReply(false, "Pair again on the receiving device.")
-        if (command.action !in setOf("play", "pause", "resume", "stop", "status")) return LanReply(false, "Unsupported command")
+        if (command.action !in setOf("play", "pause", "resume", "stop", "status", "navigate", "text", "clear_text")) return LanReply(false, "Unsupported command")
+        if (command.action == "navigate" && command.key !in setOf("up", "down", "left", "right", "ok", "back"))
+            return LanReply(false, "Invalid navigation key")
+        if (command.action == "text" && (command.text == null || command.text.length > 1024 || '\u0000' in command.text))
+            return LanReply(false, "Invalid text request")
         if (command.action == "play" && command.movie != null)
             return LanReply(false, "Update both devices. The sender must send the selected movie's playback link.")
         if (command.action == "play") runCatching {

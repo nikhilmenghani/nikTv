@@ -8,6 +8,22 @@ import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
 
 class LanPlaybackProtocolTest {
+    @Test fun remoteInputRequiresPairingAndRejectsInvalidPayloads() {
+        val received = mutableListOf<LanCommand>()
+        LanPlaybackServer(InetAddress.getByName("127.0.0.1")) { received += it; LanReply(true, "Accepted") }.use { server ->
+            fun command(action: String, credential: String, key: String? = null, text: String? = null) =
+                sendLanCommand("127.0.0.1", server.port, LanCommand(action, credential, key = key, text = text))
+            assertFalse(command("navigate", "unpaired", "ok").ok)
+            val token = requireNotNull(sendLanCommand("127.0.0.1", server.port, LanCommand("pair", server.pin)).credential)
+            assertFalse(command("navigate", token, "power").ok)
+            assertFalse(command("text", token, text = "x".repeat(1025)).ok)
+            assertTrue(command("navigate", token, "down").ok)
+            assertTrue(command("text", token, text = "remote-entry-fixture").ok)
+            assertTrue(command("clear_text", token).ok)
+            assertEquals(listOf("navigate", "text", "clear_text"), received.map { it.action })
+            assertEquals("remote-entry-fixture", received[1].text)
+        }
+    }
     private val host = InetAddress.getByName("127.0.0.1")
     private val movie = RemoteMovie(remotePortalIdentity("XTREAM", "https://provider.test"), "42", "An old movie")
     private fun send(server: LanPlaybackServer, action: String, credential: String, item: RemoteMovie? = null) =

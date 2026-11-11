@@ -64,18 +64,20 @@ internal fun LanPlaybackHost(controller: com.nikhil.niktv.data.LanPlaybackContro
     var pending by remember { mutableStateOf<PendingLanVideo?>(null) }
     val owner = LocalLifecycleOwner.current
     val context = LocalContext.current
+    val remoteView = androidx.compose.ui.platform.LocalView.current
     var notificationsAsked by rememberSaveable { mutableStateOf(false) }
     val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
-    DisposableEffect(controller, owner) {
+    DisposableEffect(controller, owner, remoteView) {
         val observer = LifecycleEventObserver { _, event -> when (event) {
-            Lifecycle.Event.ON_START -> controller.foreground(owner, true)
-            Lifecycle.Event.ON_STOP -> controller.foreground(owner, false)
+            Lifecycle.Event.ON_START -> { LanUiRemote.attach(remoteView); controller.foreground(owner, true) }
+            Lifecycle.Event.ON_STOP -> { LanUiRemote.detach(remoteView); controller.foreground(owner, false) }
             else -> Unit
         } }
         owner.lifecycle.addObserver(observer)
+        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) LanUiRemote.attach(remoteView)
         controller.foreground(owner, owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
-        onDispose { owner.lifecycle.removeObserver(observer); controller.foreground(owner, false) }
+        onDispose { LanUiRemote.detach(remoteView); owner.lifecycle.removeObserver(observer); controller.foreground(owner, false) }
     }
     LaunchedEffect(open, state.receiving) {
         if (open && !state.receiving) controller.discover() else controller.stopDiscovery()
@@ -108,7 +110,8 @@ internal fun LanPlaybackHost(controller: com.nikhil.niktv.data.LanPlaybackContro
     if (open) MaterialTheme(colorScheme = NikColors) {
         LanPlaybackDialog(state, { open = false; if (state.target == null) pending = null }, controller::setReceiving, controller::disconnect,
             { device, pin -> controller.pair(device, pin) }, { controller.control(it) }, allowReceiving, pending?.media?.media?.title,
-            controller::refreshDevices, controller::removePairedDevice)
+            controller::refreshDevices, controller::removePairedDevice,
+            remote = { action, key, text -> controller.send(action, key = key, text = text) })
     }
 }
 
@@ -116,7 +119,7 @@ internal fun LanPlaybackHost(controller: com.nikhil.niktv.data.LanPlaybackContro
 internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, close: () -> Unit,
     receive: (Boolean) -> Unit, disconnect: () -> Unit, pair: (LanDevice, String) -> Unit,
     control: (String) -> Unit, allowReceiving: Boolean = true, pendingTitle: String? = null, refresh: () -> Unit = {},
-    removePaired: (String) -> Unit = {}) {
+    removePaired: (String) -> Unit = {}, remote: suspend (String, String?, String?) -> Unit = { _, _, _ -> }) {
     var selected by remember { mutableStateOf<LanDevice?>(null) }
     var host by rememberSaveable { mutableStateOf("") }
     var port by rememberSaveable { mutableStateOf("") }
@@ -217,15 +220,8 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                     Text(if (manual) "Nearby devices" else "Connect by address", style = MaterialTheme.typography.labelMedium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (!manual) NikTvSecondaryActionButton({ selected = null; refresh() }, enabled = !state.busy, contentPadding = PaddingValues(12.dp)) {
-                    Icon(Icons.Default.Refresh, "Refresh devices", Modifier.size(20.dp))
-                }
             }
-            if (allowReceiving) NikTvTextActionButton({ receive(true) }, enabled = !state.busy,
-                modifier = Modifier.focusRequester(receiveFocus).fillMaxWidth()) {
-                Icon(Icons.Default.Tv, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
-                Text("Receive on this device", style = MaterialTheme.typography.labelMedium)
-            }
+
         }
     }
     @Composable fun pairingFields(modifier: Modifier) {
@@ -251,7 +247,7 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp), contentAlignment = Alignment.Center) {
             val wide = maxWidth >= 600.dp
             Surface(Modifier.widthIn(max = 920.dp).fillMaxWidth().heightIn(max = maxHeight)
-                .semantics { paneTitle = "Play on NikTV" }
+                .semantics { paneTitle = "NikTV remote" }
                 .initialFocusEntry(doneFocus, enabled = focusActionsOnOpen),
                 shape = RoundedCornerShape(18.dp), color = NikColors.background, contentColor = Color.White,
                 border = BorderStroke(1.dp, Color.White.copy(alpha = .14f))) {
@@ -259,12 +255,15 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Surface(shape = RoundedCornerShape(10.dp), color = NikColors.primary.copy(alpha = .16f)) {
                             Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                                Icon(if (state.receiving) Icons.Default.Tv else Icons.Default.Cast, null, Modifier.size(24.dp), tint = NikColors.primary)
+                                Icon(if (state.receiving) Icons.Default.Tv else Icons.Default.SettingsRemote, null, Modifier.size(24.dp), tint = NikColors.primary)
                             }
                         }
                         Column(Modifier.weight(1f)) {
-                            Text(if (state.receiving) "Receive on NikTV" else "Play on NikTV", style = MaterialTheme.typography.titleMedium)
+                            Text(if (state.receiving) "Receive on NikTV" else "NikTV remote", style = MaterialTheme.typography.titleMedium)
                             Text("Connect over the same Wi-Fi", style = MaterialTheme.typography.bodySmall, color = muted)
+                        }
+                        IconButton(onClick = { selected = null; refresh() }, enabled = !state.busy) {
+                            Icon(Icons.Default.Refresh, "Refresh devices")
                         }
                     }
                     Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -274,6 +273,7 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                                 receiverCode(Modifier.weight(1f)); pairedDevices(Modifier.weight(1f))
                             } else { receiverCode(Modifier.fillMaxWidth()); pairedDevices(Modifier.fillMaxWidth()) }
                         } else if (state.target != null) {
+                            LanUiRemoteControls(remote)
                             LanPlaybackSection("Connected to ${state.target.name}", Icons.Default.CastConnected, Modifier.fillMaxWidth()) {
                                 Text("Choose a movie or send a video from the player. You can keep using your phone.", style = MaterialTheme.typography.bodySmall, color = muted)
                                 Row(Modifier.fillMaxWidth().focusProperties { down = footerFocus },
@@ -285,7 +285,7 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                                 }
                             }
                         } else {
-                            Text("On your TV or tablet, choose Receive on this device.", style = MaterialTheme.typography.bodySmall, color = muted)
+                            Text("On your TV or tablet, choose Receive.", style = MaterialTheme.typography.bodySmall, color = muted)
                             if (wide) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 devicePicker(Modifier.weight(1f)); pairingFields(Modifier.weight(1f))
                             } else { devicePicker(Modifier.fillMaxWidth()); pairingFields(Modifier.fillMaxWidth()) }
@@ -299,10 +299,17 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                         if (state.receiving) NikTvSecondaryActionButton({ receive(false) }, enabled = !state.busy, modifier = footerRoute) { Text("Stop receiving") }
                         else if (state.target != null) NikTvSecondaryActionButton(disconnect, enabled = !state.busy,
                             modifier = footerRoute.focusProperties { up = remoteFocus }) { Text("Disconnect") }
-                        else NikTvPrimaryActionButton(::connect, enabled = canConnect, modifier = Modifier.focusRequester(connectFocus)
-                            .focusProperties { right = doneFocus; up = if (currentDevice != null || manual) pinFocus else manualFocus }) { Text("Connect") }
-                        NikTvSecondaryActionButton(close, modifier = Modifier.focusRequester(doneFocus).focusProperties {
-                            if (state.receiving || state.target != null) left = footerFocus else if (canConnect) left = connectFocus
+                        else NikTvPrimaryActionButton(::connect, enabled = canConnect, modifier = Modifier.weight(1f).focusRequester(connectFocus)
+                            .focusProperties { right = if (allowReceiving) receiveFocus else doneFocus; up = if (currentDevice != null || manual) pinFocus else manualFocus }) { Text("Connect") }
+                        if (!state.receiving && state.target == null && allowReceiving)
+                            NikTvSecondaryActionButton({ receive(true) }, enabled = !state.busy,
+                                modifier = Modifier.weight(1f).focusRequester(receiveFocus).focusProperties {
+                                    if (canConnect) left = connectFocus
+                                    right = doneFocus
+                                }) { Text("Receive") }
+                        NikTvSecondaryActionButton(close, modifier = Modifier.weight(1f).focusRequester(doneFocus).focusProperties {
+                            if (state.receiving || state.target != null) left = footerFocus
+                            else if (allowReceiving) left = receiveFocus else if (canConnect) left = connectFocus
                             if (state.target != null) up = remoteFocus
                         }) { Text("Done") }
                     }

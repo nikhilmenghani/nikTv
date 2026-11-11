@@ -1,4 +1,6 @@
 package com.nikhil.niktv.ui
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.SettingsRemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
@@ -289,6 +291,10 @@ internal fun GitHubAccountScreen(
         Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("NikTV", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Text("GitHub account", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            NikTvSecondaryActionButton(onClick = LocalOpenLanPlayback.current, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.SettingsRemote, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp)); Text("Remote control")
+            }
             Text(state.login?.let { "Connected as $it" } ?: "Connect your GitHub account to sync the people watching and their viewing data.")
             OutlinedTextField(
                 value = token, onValueChange = { token = it },
@@ -355,6 +361,10 @@ internal fun UserProfilesScreen(
         Column(Modifier.fillMaxSize().initialFocusEntry(first, remote).verticalScroll(rememberScrollState())
             .heightIn(min = maxHeight).padding(horizontal = 16.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            NikTvSecondaryActionButton(onClick = LocalOpenLanPlayback.current) {
+                Icon(Icons.Default.SettingsRemote, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp)); Text("Remote control")
+            }
             Text("NIKTV", color = Color(0xFFE50914), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(14.dp))
             if (profiles.isEmpty()) Text("Enable profiles in Settings to show and sync them on this device.",
