@@ -490,6 +490,13 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val requiredUpdate = discoveredUpdate ?: pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     val directPortalOwner = LocalViewingOwner.current
+    val requestedPortal by com.nikhil.niktv.discovery.PortalNavigationRequests.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(requestedPortal, state.profiles) {
+        val identity = requestedPortal ?: return@LaunchedEffect
+        val portal = state.profiles.firstOrNull { it.cacheKey() == identity } ?: return@LaunchedEffect
+        com.nikhil.niktv.discovery.PortalNavigationRequests.pending.value = null
+        vm.switchProfile(portal)
+    }
     val directPortalScope = rememberCoroutineScope()
     val portalFocusReturn = remember(directPortalOwner) { com.nikhil.niktv.discovery.PortalFocusReturn() }
     val directPortals = state.profiles.map { portal ->

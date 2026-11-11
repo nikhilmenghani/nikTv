@@ -56,12 +56,12 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
             action?.invoke()
         }
     }
-    Surface(Modifier.fillMaxWidth().padding(top = 10.dp), shape = SportsShape,
-        color = SportsSurface, contentColor = Color.White) {
-        Row(Modifier.fillMaxWidth().padding(6.dp), verticalAlignment = Alignment.CenterVertically,
+    Surface(Modifier.fillMaxWidth().padding(top = if (phone) 8.dp else 10.dp), shape = SportsShape,
+        color = if (phone) Color.Transparent else SportsSurface, contentColor = Color.White) {
+        Row(Modifier.fillMaxWidth().padding(if (phone) 0.dp else 6.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV",
-                Modifier.size(if (phone) 32.dp else 42.dp).graphicsLayer { scaleX = 1.6f; scaleY = 1.6f })
+                Modifier.size(42.dp).graphicsLayer { scaleX = if (phone) 2.4f else 1.6f; scaleY = if (phone) 2.4f else 1.6f })
             DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
                 modifier = Modifier.size(48.dp).focusRequester(backFocus), onClick = back)
             if (phone) Text(title, Modifier.weight(1f).semantics { contentDescription = "Sports page title" },
@@ -125,6 +125,30 @@ internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
                     }
                 }
             }
+            SportsPortalMenu(Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun SportsPortalMenu(modifier: Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    val portals = com.nikhil.niktv.discovery.LocalDirectPortalActions.current
+    Box(modifier) {
+        Surface(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .semantics { contentDescription = "Portals" }, shape = RoundedCornerShape(8.dp), color = Color.Transparent) {
+            Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Icon(Icons.Default.Subscriptions, null, Modifier.size(22.dp), tint = Color(0xFFB1B1B9))
+                Text("Portals", fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFB1B1B9), fontWeight = FontWeight.Medium)
+            }
+        }
+        DropdownMenu(expanded, { expanded = false }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
+            portals.forEach { portal -> NikDropdownMenuItem(text = { Text(portal.name) },
+                leadingIcon = { Icon(portal.icon, null) },
+                trailingIcon = { if (portal.selected) Icon(Icons.Default.Check, "Selected portal") },
+                modifier = Modifier.semantics { selected = portal.selected },
+                onClick = { expanded = false; portal.open() }) }
         }
     }
 }

@@ -63,6 +63,10 @@ class MainActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPic
             playerTransportKeyHandler?.invoke(event) == true
         }
         PairingInvites.accept(intent?.data)
+        intent?.getStringExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL)?.let {
+            com.nikhil.niktv.discovery.PortalNavigationRequests.pending.value = it
+            intent.removeExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL)
+        }
         setContent { com.nikhil.niktv.ui.SetupRecoveryGate(prepare = {
             AppUpdates.initialize(applicationContext)
             GitHubBackupScheduler.initialize(applicationContext)
@@ -86,6 +90,10 @@ class MainActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPic
         super.onNewIntent(intent)
         setIntent(intent)
         PairingInvites.accept(intent.data)
+        intent.getStringExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL)?.let {
+            com.nikhil.niktv.discovery.PortalNavigationRequests.pending.value = it
+            intent.removeExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL)
+        }
     }
 
     override fun onStart() {

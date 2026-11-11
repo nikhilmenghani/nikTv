@@ -11,6 +11,8 @@ import kotlinx.coroutines.launch
 import com.nikhil.niktv.data.UserSyncStore
 import androidx.compose.material3.MaterialTheme
 import com.nikhil.niktv.ui.NikColors
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.filled.*
 
 open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPictureHost {
     private var playerActive = false
@@ -70,8 +72,20 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
 
     protected open fun showSportsContent() {
         setContent { MaterialTheme(colorScheme = NikColors) {
+            val store = androidx.compose.runtime.remember { com.nikhil.niktv.data.ProfileStore(applicationContext) }
+            val portals = store.profiles.collectAsStateWithLifecycle(initialValue = emptyList()).value
+            val actions = portals.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
+                if (portal.portalType == com.nikhil.niktv.model.PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
+                open = {
+                    startActivity(Intent(this, com.nikhil.niktv.MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL, portal.cacheKey()))
+                    finish()
+                }) } + com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, selected = true, open = {})
+            androidx.compose.runtime.CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides actions) {
             androidx.compose.material3.Surface(color = NikColors.background, contentColor = NikColors.onBackground) {
                 SportsScreen(onClose = ::finish)
+            }
             }
         } }
     }
