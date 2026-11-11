@@ -3,6 +3,8 @@ package com.nikhil.niktv.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -195,11 +197,12 @@ internal fun SeriesEpisodeToolbar(
 }
 
 @Composable
-internal fun EpisodeSortMenuGroup(content: @Composable ColumnScope.() -> Unit) {
+internal fun EpisodeSortMenuGroup(scrollable: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = Color(0xFF24252B),
         border = BorderStroke(1.dp, Color.White.copy(alpha = .08f)), shadowElevation = 6.dp) {
         ProvideTextStyle(MaterialTheme.typography.bodySmall) {
-            Column(Modifier.padding(vertical = 2.dp), content = content)
+            Column(Modifier.padding(vertical = 2.dp)
+                .then(if (scrollable) Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()) else Modifier), content = content)
         }
     }
 }

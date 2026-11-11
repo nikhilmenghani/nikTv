@@ -793,9 +793,9 @@ internal fun DiscoverySeriesContent(
                             Box {
                                 SeriesToolbarButton(Icons.Default.ExpandMore, selectedSeason?.let { "Season $it" } ?: "Choose season",
                                     modifier = Modifier.focusRequester(seasonButtonRequester)) { seasonMenuExpanded = true }
-                                DropdownMenu(seasonMenuExpanded, { seasonMenuExpanded = false }, modifier = Modifier.width(220.dp).heightIn(max = 320.dp),
+                                DropdownMenu(seasonMenuExpanded, { seasonMenuExpanded = false }, modifier = Modifier.width(220.dp),
                                     containerColor = Color.Transparent, tonalElevation = 0.dp, shadowElevation = 0.dp) {
-                                    EpisodeSortMenuGroup {
+                                    EpisodeSortMenuGroup(scrollable = true) {
                                     (availableSeasons + listOfNotNull(selectedSeason)).distinct().sorted().forEach { season ->
                                         EpisodeSortMenuItem("Season $season", Icons.Default.Tv, selected = season == selectedSeason,
                                             modifier = if (season == selectedSeason) Modifier.focusRequester(selectedSeasonRequester) else Modifier,
