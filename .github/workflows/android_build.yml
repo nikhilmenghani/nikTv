@@ -80,6 +80,10 @@ jobs:
         run: |
           TARGET=$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{ print $1 }')
           [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "::error::Push the release commit and its lightweight version tag together before building."; exit 1; }
+      - name: Compile unit-test sources
+        if: matrix.check == 'unit'
+        timeout-minutes: 10
+        run: ./gradlew :app:compileDebugUnitTestKotlin -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
       - name: Unit tests
         if: matrix.check == 'unit'
         timeout-minutes: 10

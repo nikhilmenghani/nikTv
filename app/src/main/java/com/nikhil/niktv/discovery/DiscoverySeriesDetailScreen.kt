@@ -127,7 +127,7 @@ internal fun DiscoverySeriesDetailScreen(
             }
         }
     }
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF090B10)).statusBarsPadding().navigationBarsPadding().imePadding()) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF090B10)).statusBarsPadding().navigationBarsPadding().imePadding()) {
         val episodePane: @Composable ((@Composable (@Composable () -> Unit) -> Unit)?) -> Unit = { header ->
             DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
                 { automaticSeason = null; initialFocusDone = true; loadSeason(it) }, play, download,
