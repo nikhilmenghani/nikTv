@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: niktv-stable-release
+  group: niktv-stable-release-main
   cancel-in-progress: false
 
 jobs:
@@ -95,6 +95,7 @@ jobs:
         if: matrix.check == 'release-lint'
         run: ./gradlew :app:lintRelease -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
       - name: Preserve failed validation diagnostics
+        timeout-minutes: 3
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -193,6 +194,7 @@ jobs:
             }
           done
       - name: Preserve signed APKs
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: signed-apks-${{ env.TAG }}-${{ matrix.distribution }}
