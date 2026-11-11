@@ -256,7 +256,7 @@ internal fun DiscoverySeriesContent(
     val wideFocusCoordinator = remember(series.id) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(detailScope) }
     var episodePaneFocused by remember(series.id) { mutableStateOf(false) }
     fun Modifier.episodeViewportFocus() = onFocusChanged {
-        if (!mobileEpisodeLayout && it.hasFocus && !episodePaneFocused)
+        if (!mobileEpisodeLayout && !tabletEpisodeOverlay && it.hasFocus && !episodePaneFocused)
             wideFocusCoordinator.align(episodeListState, seriesDetailFocusSlot(SeriesDetailFocus.SORT), reducedMotion)
         episodePaneFocused = it.hasFocus
     }.focusGroup()
@@ -444,7 +444,7 @@ internal fun DiscoverySeriesContent(
             // Seasons and their episode list share this outer row. Scrolling it
             // during Right fights the sidebar's own focus reveal on short lists.
             if (!mobileEpisodeLayout && forceReveal && verticalEpisodeLayout) episodeListState.scrollToItem(verticalIndex, -toolbarHeightPx)
-            else if (!mobileEpisodeLayout && revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
+            else if (!mobileEpisodeLayout && !tabletEpisodeOverlay && revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
                 visible.offset + visible.size > viewport.viewportEndOffset))
                 episodeListState.scrollToItem(verticalIndex)
             if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) episodeRowState.scrollToItem(
