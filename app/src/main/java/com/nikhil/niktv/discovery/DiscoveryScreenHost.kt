@@ -551,8 +551,7 @@ internal fun DiscoveryScreenHost(
         // Settings owns its header, navigation and system insets on every layout.
         MainContent(Modifier.fillMaxSize())
     } else if (phoneExperience) {
-        val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&
-            state.movieMatchSelection == null && state.seriesMatchSelection == null && !state.categoryManagerOpen
+        val showPhoneBar = !state.categoryManagerOpen
         val destination = when {
             state.searchOpen -> null
             state.favoritesOpen || state.offlineDownloadsOpen -> DiscoveryPhoneDestination.LIBRARY

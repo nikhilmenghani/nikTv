@@ -85,14 +85,10 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -205,19 +201,20 @@ internal fun DiscoverySeriesContent(
     val episodeIsTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     val remoteNavigationActive = episodeContext.usesRemoteNavigation(episodeConfiguration) ||
         LocalInputModeManager.current.inputMode == InputMode.Keyboard
-    val compactPortrait = episodeConfiguration.usesPhoneLayout(episodeIsTv)
-    val mobileEpisodeLayout = compactPortrait
-    val seasonSidebarWidth = if (episodeConfiguration.usesShortWideLayout(episodeIsTv))
-        (episodeConfiguration.screenWidthDp * .20f).coerceIn(112f, 156f).dp else 156.dp
+    val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
+        episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val mobileEpisodeLayout =
+        !episodeIsTv &&
+            episodeConfiguration.smallestScreenWidthDp < 600
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
-    // The nested episode cursor survives revealing or collapsing the artwork.
+    // Episodes always own their scroll state; phones keep the compact header in view.
     val verticalEpisodeLayout = false
     var contentHeightPx by remember { mutableIntStateOf(0) }
     var heroHeightPx by remember { mutableIntStateOf(0) }
     var episodeViewportHeightPx by remember { mutableIntStateOf(0) }
     var lastEpisodeHeightPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
-    val phoneEpisodeHeight = with(density) { (contentHeightPx - toolbarHeightPx).toDp() }
+    val phoneEpisodeHeight = with(density) { (contentHeightPx - heroHeightPx - toolbarHeightPx).toDp() }
         .minus(24.dp).coerceAtLeast(96.dp)
     val wideEpisodeHeight = with(density) { (contentHeightPx - toolbarHeightPx).toDp() }
         .minus(24.dp).coerceAtLeast(260.dp)
@@ -257,24 +254,11 @@ internal fun DiscoverySeriesContent(
     var hasSynopsis by remember(series.id) { mutableStateOf(false) }
     val wideFocusCoordinator = remember(series.id) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(detailScope) }
     var episodePaneFocused by remember(series.id) { mutableStateOf(false) }
-    var episodeToolbarFocused by remember(series.id) { mutableStateOf(false) }
-    val phoneEpisodeScroll = remember(episodeListState, mobileEpisodeLayout, heroHeightPx) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (!mobileEpisodeLayout || source != NestedScrollSource.UserInput || available.y >= 0f ||
-                    episodeListState.firstVisibleItemIndex != 0) return Offset.Zero
-                wideFocusCoordinator.cancel()
-                val remainingHero = (heroHeightPx - episodeListState.firstVisibleItemScrollOffset).coerceAtLeast(0)
-                val consumed = episodeListState.dispatchRawDelta((-available.y).coerceAtMost(remainingHero.toFloat()))
-                return Offset(0f, -consumed)
-            }
-        }
-    }
     fun Modifier.episodeViewportFocus() = onFocusChanged {
-        if (it.hasFocus && !episodePaneFocused && (!mobileEpisodeLayout || !wideFocusCoordinator.blocksAutomaticReveal))
+        if (!mobileEpisodeLayout && it.hasFocus && !episodePaneFocused)
             wideFocusCoordinator.align(episodeListState, seriesDetailFocusSlot(SeriesDetailFocus.SORT), reducedMotion)
         episodePaneFocused = it.hasFocus
-    }.focusGroup().then(if (mobileEpisodeLayout) Modifier.nestedScroll(phoneEpisodeScroll) else Modifier)
+    }.focusGroup()
     val moreRequester = remember(series.id) { FocusRequester() }
     var episodeMove by remember { mutableStateOf<Job?>(null) }
 
@@ -438,15 +422,12 @@ internal fun DiscoverySeriesContent(
         val innerVisible = verticalEpisodeLayout || (innerItem != null && innerItem.offset >= innerViewport.viewportStartOffset &&
             innerItem.offset + innerItem.size <= innerViewport.viewportEndOffset)
         navigationTrace?.invoke("provider-episode-enter remembered=$focusedEpisodeId target=$targetId innerVisible=$innerVisible parent=$revealParent")
-        val phonePaneRevealed = !mobileEpisodeLayout || episodeListState.firstVisibleItemIndex > 0
-        if (!forceReveal && (!revealParent || parentVisible) && innerVisible && phonePaneRevealed) {
+        if (!forceReveal && (!revealParent || parentVisible) && innerVisible) {
             val accepted = runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)
             navigationTrace?.invoke("provider-episode-focus target=$targetId accepted=$accepted")
             if (accepted) return
         }
         episodeMove = detailScope.launch {
-            if (mobileEpisodeLayout && revealParent)
-                wideFocusCoordinator.align(episodeListState, seriesDetailFocusSlot(SeriesDetailFocus.SORT), reducedMotion)
             val visible = viewport.visibleItemsInfo.firstOrNull { it.index == verticalIndex }
             // Seasons and their episode list share this outer row. Scrolling it
             // during Right fights the sidebar's own focus reveal on short lists.
@@ -515,11 +496,10 @@ internal fun DiscoverySeriesContent(
             SeriesDetailFocus.PLAY -> detailPlayRequester
             SeriesDetailFocus.INFO -> synopsisRequester
             SeriesDetailFocus.SEASONS -> if (mobileEpisodeLayout) seasonButtonRequester else seasonSidebarRequester
-            SeriesDetailFocus.SORT -> if (mobileEpisodeLayout) seasonButtonRequester else sortRequester
+            SeriesDetailFocus.SORT -> sortRequester
             else -> toolbarRequester
         }
-        wideFocusCoordinator.move(episodeListState, seriesDetailFocusSlot(target), reducedMotion,
-            focusAfterScroll = mobileEpisodeLayout && seriesDetailFocusSlot(target) == 0) {
+        wideFocusCoordinator.move(episodeListState, seriesDetailFocusSlot(target), reducedMotion) {
             if (target == SeriesDetailFocus.TOOLS && preferred == null) {
                 runCatching { castButtonRequester.requestFocus() }.getOrDefault(false) ||
                     runCatching { relatedButtonRequester.requestFocus() }.getOrDefault(false) ||
@@ -594,16 +574,13 @@ internal fun DiscoverySeriesContent(
             }
             is SeriesEpisodeEntryFocus.Episode -> {
                 val listIndex = seriesEpisodeVerticalIndex(target.index, !verticalEpisodeLayout)
-                if (mobileEpisodeLayout) episodeListState.scrollToItem(seriesDetailFocusSlot(SeriesDetailFocus.SORT))
-                else if (episodeListState.layoutInfo.visibleItemsInfo.none { it.index == listIndex }) {
-                    // A large artwork can leave this inner LazyColumn entirely
-                    // unmounted. Reveal its outer item before awaiting its layout.
-                    episodeListState.scrollToItem(listIndex, -toolbarHeightPx)
-                }
                 if (!verticalEpisodeLayout) episodeRowState.scrollToItem(seriesEpisodeResumeAnchor(target.index, episodeIds.size))
                 if (!verticalEpisodeLayout && target.index == episodeIds.lastIndex) {
                     repeat(2) { withFrameNanos { } }
                     episodeRowState.scrollToItem(target.index)
+                }
+                if (!mobileEpisodeLayout && episodeListState.layoutInfo.visibleItemsInfo.none { it.index == listIndex }) {
+                    episodeListState.scrollToItem(listIndex, -toolbarHeightPx)
                 }
                 entryEpisodeRequester
             }
@@ -674,20 +651,24 @@ internal fun DiscoverySeriesContent(
             progressFraction = recentEpisode?.let { progressByEpisode[it.id] }?.takeIf { it.durationMillis > 0 }?.let {
                 (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f)
             },
-            castUp = { requestWideFocus(SeriesDetailFocus.TOOLS, castButtonRequester) },
-            relatedUp = { requestWideFocus(SeriesDetailFocus.TOOLS, relatedButtonRequester) },
+            castUp = { if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.TOOLS, castButtonRequester) else runCatching { castButtonRequester.requestFocus() } },
+            relatedUp = { if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.TOOLS, relatedButtonRequester) else runCatching { relatedButtonRequester.requestFocus() } },
             playRequester = detailPlayRequester, backRequester = heroActionRequesters[0],
-            episodeDown = { focusLandscapeEpisode() },
-            heroUp = { moveWideFocus(SeriesDetailFocus.PLAY, -1) },
-            topDown = { moveWideFocus(SeriesDetailFocus.TOP, 1) },
+            episodeDown = if (!mobileEpisodeLayout) ({ focusLandscapeEpisode() }) else null,
+            heroUp = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.PLAY, -1) }) else null,
+            topDown = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.TOP, 1) }) else null,
             seasonCounts = { tmdbSeasonCounts = it },
             synopsisRequester = synopsisRequester,
             synopsisAvailable = { hasSynopsis = it },
-            synopsisUp = { moveWideFocus(SeriesDetailFocus.INFO, -1) },
-            synopsisDown = { lastHeroControl = synopsisRequester; moveWideFocus(SeriesDetailFocus.INFO, 1) },
+            synopsisUp = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.INFO, -1) }) else null,
+            synopsisDown = if (!mobileEpisodeLayout) ({ lastHeroControl = synopsisRequester; moveWideFocus(SeriesDetailFocus.INFO, 1) }) else null,
             down = {
-                lastHeroControl = detailPlayRequester
-                moveWideFocus(SeriesDetailFocus.PLAY, 1)
+                if (!mobileEpisodeLayout) { lastHeroControl = detailPlayRequester; moveWideFocus(SeriesDetailFocus.PLAY, 1) } else detailScope.launch {
+                    if (filteredEpisodes.isNotEmpty()) {
+                        if (!mobileEpisodeLayout) episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX, -toolbarHeightPx)
+                        repeat(12) { withFrameNanos { }; if (runCatching { firstEpisodeRequester.requestFocus() }.getOrDefault(false)) return@launch }
+                    }
+                }
             }, tools = {
                 com.nikhil.niktv.discovery.DiscoveryAction(
                     if (isWatched) "Following" else "Notify me", if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
@@ -716,13 +697,14 @@ internal fun DiscoverySeriesContent(
                     }.onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                             Key.DirectionUp -> {
-                                moveWideFocus(SeriesDetailFocus.TOOLS, -1); true
+                                if (!mobileEpisodeLayout) { moveWideFocus(SeriesDetailFocus.TOOLS, -1); true } else false
                             }
                             Key.DirectionDown -> {
                                 lastHeroControl = requester
                                 if (expandedPanel == panel) detailScope.launch {
                                     repeat(20) { withFrameNanos { }; if (enter()) return@launch }
-                                } else requestWideFocus(SeriesDetailFocus.SORT)
+                                } else if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.SORT)
+                                else focusLandscapeEpisode()
                                 true
                             }
                             else -> false
@@ -776,7 +758,7 @@ internal fun DiscoverySeriesContent(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
                 .onSizeChanged { contentHeightPx = it.height },
             state = episodeListState,
-            userScrollEnabled = true,
+            userScrollEnabled = !mobileEpisodeLayout || expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED,
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
             item("series-hero") {
@@ -790,11 +772,6 @@ internal fun DiscoverySeriesContent(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth().background(Color(0xFF090B10)).onSizeChanged { toolbarHeightPx = it.height }
-                        .then(if (mobileEpisodeLayout) Modifier.onFocusChanged {
-                            if (it.hasFocus && !episodeToolbarFocused && !wideFocusCoordinator.blocksAutomaticReveal)
-                                wideFocusCoordinator.align(episodeListState, seriesDetailFocusSlot(SeriesDetailFocus.SORT), reducedMotion)
-                            episodeToolbarFocused = it.hasFocus
-                        }.focusGroup() else Modifier)
                         .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -894,7 +871,7 @@ internal fun DiscoverySeriesContent(
                                         focusManager.clearFocus()
                                     })) },
                         modifier = Modifier.onPreviewKeyEvent { event ->
-                            if ((!mobileEpisodeLayout || expandedPanel != SeriesDetailPanel.SEARCH) && event.type == KeyEventType.KeyDown) when (event.key) {
+                            if (!mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                 Key.DirectionUp -> {
                                     episodeTextEditing = false; keyboardController?.hide()
                                     moveWideFocus(SeriesDetailFocus.SORT, -1); true
@@ -907,19 +884,7 @@ internal fun DiscoverySeriesContent(
                                 }
                                 else -> false
                             } else false
-                        }.then(if (mobileEpisodeLayout) Modifier.onKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionUp -> {
-                                    episodeTextEditing = false; keyboardController?.hide()
-                                    moveWideFocus(SeriesDetailFocus.SORT, -1); true
-                                }
-                                Key.DirectionDown -> {
-                                    episodeTextEditing = false; keyboardController?.hide()
-                                    focusLandscapeEpisode(); true
-                                }
-                                else -> false
-                            }
-                        } else Modifier)
+                        }
                     )
 
                     if (!mobileEpisodeLayout && !episodeListView && availableSeasons.isNotEmpty()) {
@@ -994,9 +959,9 @@ internal fun DiscoverySeriesContent(
                             .then(if (episodeListView) Modifier.fillMaxWidth() else Modifier.width(if (mobileEpisodeLayout) 170.dp else 200.dp))
                             .focusRequester(remember(landscapeRequesters, episode.id) { landscapeRequesters.getOrPut(episode.id) { FocusRequester() } })
                             .onPreviewKeyEvent { event ->
-                                if (episodeListView && event.type == KeyEventType.KeyDown) when (event.key) {
+                                if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                     Key.DirectionUp -> if (episode.id == filteredEpisodes.firstOrNull()?.id) { requestWideFocus(SeriesDetailFocus.SORT); true } else false
-                                    Key.DirectionLeft -> if (!mobileEpisodeLayout && availableSeasons.isNotEmpty()) runCatching { seasonSidebarRequester.requestFocus() }.getOrDefault(false) else false
+                                    Key.DirectionLeft -> if (availableSeasons.isNotEmpty()) runCatching { seasonSidebarRequester.requestFocus() }.getOrDefault(false) else false
                                     else -> false
                                 } else false
                             }
@@ -1021,7 +986,7 @@ internal fun DiscoverySeriesContent(
                         if (!mobileEpisodeLayout && availableSeasons.isNotEmpty()) SeriesSeasonSidebar(availableSeasons, selectedSeason,
                             seasonCounts,
                             seasonSidebarRequester, loadSeriesSeason, { requestEpisodeFocus(revealParent = false) },
-                            { requestWideFocus(SeriesDetailFocus.SORT) }, Modifier.width(seasonSidebarWidth).fillMaxHeight())
+                            { requestWideFocus(SeriesDetailFocus.SORT) }, Modifier.width(156.dp).fillMaxHeight())
                         Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { episodeViewportHeightPx = it.height }) {
                         LazyColumn(Modifier.fillMaxSize().padding(end = 6.dp), state = episodeRowState,
                             contentPadding = PaddingValues(bottom = if (!state.episodeHasMore &&
@@ -1051,7 +1016,7 @@ internal fun DiscoverySeriesContent(
                 } else item("episode-row") {
                     LazyRow(state = episodeRowState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier.fillMaxWidth().height(if (mobileEpisodeLayout) phoneEpisodeHeight else wideEpisodeHeight)
+                        modifier = Modifier.fillMaxWidth().then(if (!mobileEpisodeLayout) Modifier.height(wideEpisodeHeight) else Modifier)
                             .episodeViewportFocus().onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                                 Key.DirectionUp -> {
@@ -1103,7 +1068,8 @@ internal fun DiscoverySeriesContent(
             }
         }
         }
-        com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(wideFocusCoordinator, seriesContent)
+        if (mobileEpisodeLayout) seriesContent()
+        else com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(wideFocusCoordinator, seriesContent)
         })
 
     }
@@ -1209,7 +1175,9 @@ internal fun ModernEpisodeCard(
     val displayedOfflineStatus =
         if (downloadRequested && offlineDownload == null) OfflineDownloadStatus.QUEUED else offlineStatus
 
-    val mobileLayout = episodeConfiguration.usesPhoneLayout(isTv)
+    val mobileLayout =
+        !isTv &&
+            episodeConfiguration.smallestScreenWidthDp < 600
     val imageUrl = episode.logo?.takeIf(String::isNotBlank) ?: series.logo
     val episodeDescription = episode.description?.takeUnless { description ->
         description.trim().equals(series.description?.trim(), ignoreCase = true)

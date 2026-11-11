@@ -48,7 +48,7 @@ import com.nikhil.niktv.ui.tileFocusOutline
 import com.nikhil.niktv.ui.usesShortWideLayout
 
 internal enum class DiscoveryPhoneDestination(val title: String) {
-    HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), PROVIDERS("Providers"), LIBRARY("My List")
+    HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), PROVIDERS("Portals"), LIBRARY("My List")
 }
 
 /** Both feeds anchor hero actions to the same full-screen safe viewport. */
@@ -80,12 +80,15 @@ internal fun usesDiscoveryPhoneLayout(smallestWidthDp: Int, television: Boolean)
 @Composable
 internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?,
     select: (DiscoveryPhoneDestination) -> Unit, modifier: Modifier = Modifier) {
+    var portalsOpen by remember { mutableStateOf(false) }
+    val portals = LocalDirectPortalActions.current
+    val portalFocusReturn = LocalPortalFocusReturn.current
     DiscoveryGlassPanel(modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
         artwork = LocalMobileGlassArtwork.current, backdropBounds = LocalMobileGlassBounds.current,
         fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
         fillWidth = LocalMobileGlassFillWidth.current) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS }.forEach { destination ->
+            (DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS } + DiscoveryPhoneDestination.PROVIDERS).forEach { destination ->
                 val active = destination == selected
                 val icon = when (destination) {
                     DiscoveryPhoneDestination.HOME -> Icons.Default.Home
@@ -95,8 +98,9 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                     DiscoveryPhoneDestination.PROVIDERS -> Icons.Default.Subscriptions
                     DiscoveryPhoneDestination.LIBRARY -> Icons.Default.VideoLibrary
                 }
-                Surface(onClick = { select(destination) },
-                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { this.selected = active; contentDescription = destination.title },
+                Box(Modifier.weight(1f)) {
+                Surface(onClick = { if (destination == DiscoveryPhoneDestination.PROVIDERS) portalsOpen = true else select(destination) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { this.selected = active; contentDescription = destination.title },
                     shape = RoundedCornerShape(8.dp),
                     color = if (active) Color(0x663D3E45) else Color.Transparent,
                     contentColor = if (active) Color.White else Color(0xFFB1B1B9)) {
@@ -110,6 +114,19 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                             maxLines = 1, softWrap = false,
                             autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 11.sp, stepSize = .5.sp))
                     }
+                }
+                if (destination == DiscoveryPhoneDestination.PROVIDERS) DropdownMenu(
+                    expanded = portalsOpen, onDismissRequest = { portalsOpen = false },
+                    containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
+                    portals.forEach { portal ->
+                        com.nikhil.niktv.ui.NikDropdownMenuItem(
+                            text = { Text(portal.name) },
+                            leadingIcon = { Icon(portal.icon, null) },
+                            trailingIcon = if (portal.selected) ({ Icon(Icons.Default.Check, "Selected portal") }) else null,
+                            modifier = Modifier.semantics { this.selected = portal.selected },
+                            onClick = { portalsOpen = false; portalFocusReturn.cancel(); portal.open() })
+                    }
+                }
                 }
             }
         }
@@ -159,7 +176,6 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
                 DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
             }
         }
-        DirectPortalButtons(Modifier.fillMaxWidth().padding(top = 4.dp), labels = true)
     }
     }
 }

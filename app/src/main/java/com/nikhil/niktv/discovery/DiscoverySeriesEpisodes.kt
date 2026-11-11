@@ -38,9 +38,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     val alternateSource = LocalPlayAlternateSource.current
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val wide = !usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
-    val sidebarWidth = if (configuration.usesShortWideLayout(context.isTvLikeDevice(configuration)))
-        (configuration.screenWidthDp * .20f).coerceIn(112f, 156f).dp else 156.dp
+    val wide = configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration)
     val seasons = state.details?.seasons.orEmpty()
     val chosen = state.season ?: discoveryInitialSeriesSeason(state.details, startSeason, lastWatched?.first)
     var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
@@ -317,7 +315,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
             .weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (wide && seasons.isNotEmpty()) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
-                loadSeason, { enterEpisodes() }, { runCatching { seasonEntry.requestFocus() } }, Modifier.width(sidebarWidth).fillMaxHeight())
+                loadSeason, { enterEpisodes() }, { runCatching { seasonEntry.requestFocus() } }, Modifier.width(156.dp).fillMaxHeight())
             LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (episodes.isEmpty()) item("episode-status") {
                     Text(if ("season" in state.loading) "Loading episodes…"

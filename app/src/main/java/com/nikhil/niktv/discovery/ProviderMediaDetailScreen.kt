@@ -197,11 +197,17 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val people = metadata.cast.filter { (it.id ?: 0) > 0 }.distinctBy { it.id }
     LaunchedEffect(profile, item.id, metadata.seasonEpisodeCounts) { seasonCounts(metadata.seasonEpisodeCounts) }
     LaunchedEffect(profile, item.id, metadata.card.overview) { synopsisAvailable(!metadata.card.overview.isNullOrBlank()) }
-    val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
-    val landscape = !phone
-    val shortWide = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
-    val wideSeries = type == CatalogType.SERIES && !phone
-    val heroHeight = detailDiscoveryHeroHeight(phone, context.isTvLikeDevice(configuration))
+    val television = context.isTvLikeDevice(configuration)
+    val seriesDetail = type == CatalogType.SERIES
+    val phone = if (seriesDetail) usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, television) &&
+        configuration.screenHeightDp >= configuration.screenWidthDp
+        else usesDiscoveryPhoneLayout(configuration, television)
+    val landscape = if (seriesDetail) configuration.screenWidthDp >= 600 || television else !phone
+    val shortWide = !seriesDetail && configuration.usesShortWideLayout(television)
+    val wideSeries = seriesDetail && (configuration.smallestScreenWidthDp >= 600 || television)
+    val heroHeight = if (compactSeries && phone)
+        (configuration.screenHeightDp * .30f).dp.coerceAtLeast(220.dp)
+        else detailDiscoveryHeroHeight(phone, context.isTvLikeDevice(configuration))
     var compactInfoOpen by remember(item.id) { mutableStateOf(false) }
     val compactInfoRequester = remember(item.id) { FocusRequester() }
     if (compactInfoOpen) FullDescriptionDialog(metadata.card.title,
@@ -247,7 +253,6 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 }
             }
             if (phone) CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
-                DirectPortalButtons(Modifier.fillMaxWidth().padding(horizontal = 16.dp), labels = true)
             }
         }
         }
