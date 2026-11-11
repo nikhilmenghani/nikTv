@@ -1,4 +1,5 @@
 package com.nikhil.niktv.discovery
+import com.nikhil.niktv.ui.isTvLikeDevice
 
 import android.content.Context
 import android.graphics.Color
@@ -137,7 +138,8 @@ private class NativeDiscoveryScroll(context: Context) : ScrollView(context) {
         // Keep scrolled cards inside this viewport, below the separate header.
         outlineProvider = ViewOutlineProvider.BOUNDS
         clipToOutline = true
-        setPadding(dp(18), dp(10), dp(18), dp(24))
+        // Keep scroll clearance inside the viewport so cards paint behind the glass dock.
+        setPadding(dp(18), dp(10), dp(18), dp(if (usesDiscoveryPhoneLayout(resources.configuration, context.isTvLikeDevice(resources.configuration))) 120 else 24))
         clipToPadding = false
         setOnScrollChangeListener { _, _, y, _, _ -> onPosition(currentFocusId ?: restoredFocus, y) }
     }

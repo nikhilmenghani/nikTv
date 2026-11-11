@@ -1,4 +1,5 @@
 package com.nikhil.niktv.discovery
+import androidx.compose.ui.layout.onSizeChanged
 
 import com.nikhil.niktv.ui.*
 
@@ -551,7 +552,8 @@ internal fun DiscoveryScreenHost(
         // Settings owns its header, navigation and system insets on every layout.
         MainContent(Modifier.fillMaxSize())
     } else if (phoneExperience) {
-        val showPhoneBar = !state.categoryManagerOpen
+        val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&
+            state.movieMatchSelection == null && state.seriesMatchSelection == null && !state.categoryManagerOpen
         val destination = when {
             state.searchOpen -> null
             state.favoritesOpen || state.offlineDownloadsOpen -> DiscoveryPhoneDestination.LIBRARY
@@ -585,16 +587,23 @@ internal fun DiscoveryScreenHost(
                     }
                 }))
         }
+        var bottomChromeHeight by remember { mutableStateOf(0.dp) }
+        val chromeDensity = androidx.compose.ui.platform.LocalDensity.current
         Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
+            CompositionLocalProvider(LocalPhoneBottomChromeHeight provides if (showPhoneBar) bottomChromeHeight else 0.dp) {
             Column(Modifier.fillMaxSize()
                 .then(if (providersVisible || previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
                 LibraryContent(Modifier.weight(1f).fillMaxWidth())
+            }
+            }
+            if (showPhoneBar) Column(Modifier.align(Alignment.BottomCenter).onSizeChanged {
+                bottomChromeHeight = with(chromeDensity) { it.height.toDp() }
+            }) {
                 if (!state.searchOpen && (state.favoritesOpen || state.offlineDownloadsOpen)) MobileLibrarySwitcher(
                     downloadsSelected = state.offlineDownloadsOpen, storageSelected = libraryPane == LibraryPane.STORAGE,
                     openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane, openStorage = ::openStoragePane)
-                if (showPhoneBar && !previewVisible) PhoneBottomBar()
+                PhoneBottomBar()
             }
-            if (showPhoneBar && previewVisible) Box(Modifier.align(Alignment.BottomCenter)) { PhoneBottomBar() }
         }
     } else if (providersVisible || previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) {
         LibraryContent(Modifier.fillMaxSize())

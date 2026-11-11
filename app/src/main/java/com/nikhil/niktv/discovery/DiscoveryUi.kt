@@ -908,8 +908,7 @@ private fun DiscoveryPreviewContent(
                             }
                         }
                     }
-                    if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.fillMaxSize()
-                        .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
+                    if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.fillMaxSize(), playRequester,
                         up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = discoveryNativeFocusMotion(scrollVariant, television),
                         cacheTileDrawing = discoveryCacheTileDrawing(scrollVariant, television), focusRestorer = nativeFocusRestorer,
                         popupAnchor = { nativePopupAnchor = it },
@@ -925,8 +924,7 @@ private fun DiscoveryPreviewContent(
                         hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
                             runCatching { (if (id == "info") heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
                         })
-                    else NativeDiscoveryRows(nativeRows, Modifier.fillMaxSize()
-                        .then(if (phone) Modifier.padding(bottom = 96.dp) else Modifier), playRequester,
+                    else NativeDiscoveryRows(nativeRows, Modifier.fillMaxSize(), playRequester,
                         up = { runCatching { tabRequester.requestFocus() } }, animateFocus = scrollVariant.animateNativeFocus)
                 }
             })

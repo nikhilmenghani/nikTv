@@ -230,7 +230,7 @@ internal fun MobileLibrarySwitcher(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = Color(0xFF090909)
+        color = Color.Transparent
     ) {
         Row(
             Modifier

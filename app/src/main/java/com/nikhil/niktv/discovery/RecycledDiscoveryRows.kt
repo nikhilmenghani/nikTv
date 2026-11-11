@@ -388,7 +388,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         // The hero extends across the row gutters; the recycler's outline still
         // contains drawing at the screen edge.
         clipChildren = false
-        setPadding(dp(18), dp(10), dp(18), dp(24))
+        // Keep scroll clearance inside the viewport so cards paint behind the glass dock.
+        setPadding(dp(18), dp(10), dp(18), dp(if (usesDiscoveryPhoneLayout(resources.configuration, context.isTvLikeDevice(resources.configuration))) 120 else 24))
         setBackgroundColor(Color.rgb(9, 11, 16)); outlineProvider = ViewOutlineProvider.BOUNDS; clipToOutline = true
         isFocusable = true; isFocusableInTouchMode = true
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS

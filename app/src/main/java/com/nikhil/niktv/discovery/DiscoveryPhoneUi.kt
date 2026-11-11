@@ -51,6 +51,8 @@ internal enum class DiscoveryPhoneDestination(val title: String) {
     HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), PROVIDERS("Portals"), LIBRARY("My List")
 }
 
+internal val LocalPhoneBottomChromeHeight = staticCompositionLocalOf { 0.dp }
+
 /** Both feeds anchor hero actions to the same full-screen safe viewport. */
 @Composable
 internal fun phoneDiscoveryHeroHeight(): Dp {

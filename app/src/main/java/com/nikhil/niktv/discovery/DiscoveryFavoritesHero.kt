@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.platform.LocalConfiguration
@@ -103,7 +104,8 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         else if (favorite.source == FavoriteSource.TMDB) open(favorite)
         else details(requireNotNull(entry).type, favorite.media, listOf(favorite.media))
     }
-    Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow())) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
+    // Home's recycled feed reserves a 10dp top gutter before this same hero.
+    Box(Modifier.padding(top = if (phone) 10.dp else 0.dp).wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow())) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             touching = true

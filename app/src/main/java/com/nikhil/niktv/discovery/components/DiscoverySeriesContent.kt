@@ -215,7 +215,7 @@ internal fun DiscoverySeriesContent(
     var lastEpisodeHeightPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val phoneEpisodeHeight = with(density) { (contentHeightPx - heroHeightPx - toolbarHeightPx).toDp() }
-        .minus(24.dp).coerceAtLeast(96.dp)
+        .coerceAtLeast(96.dp)
     val wideEpisodeHeight = with(density) { (contentHeightPx - toolbarHeightPx).toDp() }
         .minus(24.dp).coerceAtLeast(260.dp)
     val seasonSidebarRequester = remember(series.id) { FocusRequester() }
@@ -759,7 +759,7 @@ internal fun DiscoverySeriesContent(
                 .onSizeChanged { contentHeightPx = it.height },
             state = episodeListState,
             userScrollEnabled = !mobileEpisodeLayout || expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED,
-            contentPadding = PaddingValues(bottom = 24.dp)
+            contentPadding = PaddingValues(bottom = if (mobileEpisodeLayout) 0.dp else 24.dp)
         ) {
             item("series-hero") {
                 CompositionLocalProvider(

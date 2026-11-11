@@ -179,7 +179,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     }
     DiscoveryVerticalFocusViewport(coordinator) {
         LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(bottom = 24.dp)) {
+            contentPadding = PaddingValues(bottom = 24.dp + if (phone) LocalPhoneBottomChromeHeight.current else 0.dp)) {
             item("hero") {
                 if (favoritesHero) DiscoveryFavoritesHero(state, scrolling || list.firstVisibleItemIndex > 0,
                     open = { favorite -> open(LibraryEntry(favorite.media, favorite.kind, favorite = favorite), hero = true) },
