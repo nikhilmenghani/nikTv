@@ -208,10 +208,12 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                         NikTvSecondaryActionButton({ selected = device; manual = false }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                             Box(Modifier.fillMaxWidth()) {
                                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.Tv, null, Modifier.size(20.dp))
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(device.name, Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Row(verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+                                        Icon(Icons.Default.Tv, null, Modifier.size(20.dp))
+                                        Text(device.name, textAlign = TextAlign.Center,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                     Text("${device.host}:${device.port}", Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
                                         style = MaterialTheme.typography.bodySmall, color = muted,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
