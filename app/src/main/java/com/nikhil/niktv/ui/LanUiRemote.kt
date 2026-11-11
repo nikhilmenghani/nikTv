@@ -90,21 +90,35 @@ internal fun LanUiRemoteControls(send: suspend (String, String?, String?) -> Uni
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Remote control", style = MaterialTheme.typography.titleSmall)
-        FilledTonalIconButton({ command("navigate", "up") }) { Icon(Icons.Default.KeyboardArrowUp, "Up") }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FilledTonalIconButton({ command("navigate", "left") }) { Icon(Icons.Default.KeyboardArrowLeft, "Left") }
-            Button({ command("navigate", "ok") }) { Text("OK") }
-            FilledTonalIconButton({ command("navigate", "right") }) { Icon(Icons.Default.KeyboardArrowRight, "Right") }
-        }
-        FilledTonalIconButton({ command("navigate", "down") }) { Icon(Icons.Default.KeyboardArrowDown, "Down") }
-        TextButton({ command("navigate", "back") }) { Text("Back") }
         OutlinedTextField(text, { text = it.take(1024) }, Modifier.fillMaxWidth(), label = { Text("Text for selected field") },
             singleLine = true, visualTransformation = PasswordVisualTransformation())
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton({ command("clear_text") }, enabled = !sending) { Text("Clear receiver field") }
-            Button({ command("text", value = text) }, enabled = !sending && text.isNotEmpty()) { Text("Send text") }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NikTvSecondaryActionButton({ command("clear_text") }, Modifier.weight(1f), enabled = !sending,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) {
+                Text("Clear receiver field", style = MaterialTheme.typography.labelMedium)
+            }
+            NikTvPrimaryActionButton({ command("text", value = text) }, Modifier.weight(1f), enabled = !sending && text.isNotEmpty(),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) {
+                Text("Send text", style = MaterialTheme.typography.labelMedium)
+            }
         }
         Text("Select a field on the receiver, then send text. Sent text is cleared from this phone.", style = MaterialTheme.typography.bodySmall)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        NikTvSecondaryActionButton({ command("navigate", "up") }, Modifier.size(48.dp), contentPadding = PaddingValues(8.dp)) {
+            Icon(Icons.Default.KeyboardArrowUp, "Up")
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            NikTvSecondaryActionButton({ command("navigate", "left") }, Modifier.size(48.dp), contentPadding = PaddingValues(8.dp)) {
+                Icon(Icons.Default.KeyboardArrowLeft, "Left")
+            }
+            NikTvPrimaryActionButton({ command("navigate", "ok") }, Modifier.width(64.dp).height(48.dp)) { Text("OK") }
+            NikTvSecondaryActionButton({ command("navigate", "right") }, Modifier.size(48.dp), contentPadding = PaddingValues(8.dp)) {
+                Icon(Icons.Default.KeyboardArrowRight, "Right")
+            }
+        }
+        NikTvSecondaryActionButton({ command("navigate", "down") }, Modifier.size(48.dp), contentPadding = PaddingValues(8.dp)) {
+            Icon(Icons.Default.KeyboardArrowDown, "Down")
+        }
+        NikTvSecondaryActionButton({ command("navigate", "back") }) { Text("Back") }
     }
 }

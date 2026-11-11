@@ -1,9 +1,10 @@
 package com.nikhil.niktv.ui
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.SettingsRemote
+import androidx.compose.material.icons.filled.*
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,6 +38,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
@@ -56,6 +61,7 @@ import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.model.PortalProfile
+import com.nikhil.niktv.R
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
@@ -361,11 +367,9 @@ internal fun UserProfilesScreen(
         Column(Modifier.fillMaxSize().initialFocusEntry(first, remote).verticalScroll(rememberScrollState())
             .heightIn(min = maxHeight).padding(horizontal = 16.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            NikTvSecondaryActionButton(onClick = LocalOpenLanPlayback.current) {
-                Icon(Icons.Default.SettingsRemote, null, Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp)); Text("Remote control")
-            }
-            Text("NIKTV", color = Color(0xFFE50914), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+            Image(painterResource(R.drawable.niktv_logo_foreground), contentDescription = "NikTV",
+                modifier = Modifier.size(64.dp).graphicsLayer { scaleX = 1.8f; scaleY = 1.8f },
+                contentScale = ContentScale.Fit)
             Spacer(Modifier.height(14.dp))
             if (profiles.isEmpty()) Text("Enable profiles in Settings to show and sync them on this device.",
                 style = MaterialTheme.typography.bodySmall, color = Color(0xFF9699A2), textAlign = TextAlign.Center)
@@ -389,29 +393,33 @@ internal fun UserProfilesScreen(
             Text(if (remote) "Hold OK or press Menu to manage a profile" else "Touch and hold a profile to manage it",
                 color = Color(0xFF9699A2), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
-            if (profiles.isNotEmpty()) Row(Modifier.widthIn(max = 440.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                NikTvSecondaryActionButton(onClick = { managementPicker = true },
-                    modifier = Modifier.weight(1f).heightIn(min = 44.dp)) {
-                    Text("Manage profiles", style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+            Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (profiles.isNotEmpty()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProfileChooserAction("Manage profiles", Icons.Default.People, { managementPicker = true }, Modifier.weight(1f))
+                    onOfflineDownloads?.let { open ->
+                        ProfileChooserAction("Offline downloads", Icons.Default.Download, {
+                            if (profiles.size == 1) open(profiles.single()) else offlinePicker = true
+                        }, Modifier.weight(1f))
+                    }
                 }
-                onOfflineDownloads?.let { open -> NikTvSecondaryActionButton(onClick = {
-                    if (profiles.size == 1) open(profiles.single()) else offlinePicker = true
-                }, modifier = Modifier.weight(1f).heightIn(min = 44.dp)) {
-                    Text("Offline downloads", style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
-                } }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProfileChooserAction("GitHub account", Icons.Default.AccountCircle, onAccount, Modifier.weight(1f))
+                    ProfileChooserAction("Sync now", Icons.Default.Sync, onSync, Modifier.weight(1f), enabled = !state.syncing)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProfileChooserAction("Remote control", Icons.Default.SettingsRemote, LocalOpenLanPlayback.current, Modifier.weight(1f))
+                    onSettings?.let { ProfileChooserAction("Settings", Icons.Default.Settings, it, Modifier.weight(1f)) }
+                }
             }
             Spacer(Modifier.height(10.dp))
             (error ?: state.error)?.let { Text(it, modifier = Modifier.widthIn(max = 640.dp),
                 color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
-            Row(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
                 if (state.syncing) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text(if (state.syncing) state.message.ifBlank { "Syncing…" } else state.message.ifBlank { "Changes are saved on this device" },
-                    modifier = Modifier.weight(1f), color = Color(0xFF9699A2), style = MaterialTheme.typography.labelSmall)
-                NikTvTextActionButton(onClick = onSync, enabled = !state.syncing) { Text("Sync now", style = MaterialTheme.typography.labelMedium) }
+                    color = Color(0xFF9699A2), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
             }
-            NikTvTextActionButton(onClick = onAccount) { Text("GitHub account & Settings", color = Color(0xFFB5B7BE), style = MaterialTheme.typography.labelMedium) }
-            onSettings?.let { NikTvSecondaryActionButton(onClick = it) { Text("Settings") } }
         }
     }
     if (managementPicker) AlertDialog(onDismissRequest = { managementPicker = false },
@@ -454,6 +462,18 @@ internal fun UserProfilesScreen(
         text = { Text("Assign this device's viewing data from the previous NikTV version to this user profile. This import is performed once and preserves existing account data.") },
         confirmButton = { NikTvPrimaryActionButton(onClick = { onImportLegacy?.invoke(profile); importing = null }) { Text("Import into ${profile.name}") } },
         dismissButton = { NikTvTextActionButton(onClick = { importing = null }) { Text("Cancel") } }) }
+}
+
+@Composable
+private fun ProfileChooserAction(label: String, icon: ImageVector, onClick: () -> Unit,
+    modifier: Modifier = Modifier, enabled: Boolean = true) {
+    NikTvSecondaryActionButton(onClick, modifier.height(52.dp), enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) {
+        Icon(icon, null, Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 2,
+            overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

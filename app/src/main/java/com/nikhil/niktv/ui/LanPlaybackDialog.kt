@@ -134,7 +134,6 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
     val receiveFocus = remember { FocusRequester() }
     val doneFocus = remember { FocusRequester() }
     val footerFocus = remember { FocusRequester() }
-    val remoteFocus = remember { FocusRequester() }
     val inputMode = LocalInputModeManager.current
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -273,17 +272,17 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                                 receiverCode(Modifier.weight(1f)); pairedDevices(Modifier.weight(1f))
                             } else { receiverCode(Modifier.fillMaxWidth()); pairedDevices(Modifier.fillMaxWidth()) }
                         } else if (state.target != null) {
-                            LanUiRemoteControls(remote)
                             LanPlaybackSection("Connected to ${state.target.name}", Icons.Default.CastConnected, Modifier.fillMaxWidth()) {
                                 Text("Choose a movie or send a video from the player. You can keep using your phone.", style = MaterialTheme.typography.bodySmall, color = muted)
-                                Row(Modifier.fillMaxWidth().focusProperties { down = footerFocus },
+                                Row(Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-                                    LanRemoteAction("Pause", Icons.Default.Pause, !state.busy, Modifier.focusRequester(remoteFocus)) { control("pause") }
+                                    LanRemoteAction("Pause", Icons.Default.Pause, !state.busy) { control("pause") }
                                     LanRemoteAction("Resume", Icons.Default.PlayArrow, !state.busy) { control("resume") }
                                     LanRemoteAction("Stop", Icons.Default.Stop, !state.busy) { control("stop") }
                                     LanRemoteAction("Playback status", Icons.Default.Refresh, !state.busy) { control("status") }
                                 }
                             }
+                            LanUiRemoteControls(remote)
                         } else {
                             Text("On your TV or tablet, choose Receive.", style = MaterialTheme.typography.bodySmall, color = muted)
                             if (wide) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -296,9 +295,9 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                     HorizontalDivider(color = Color.White.copy(alpha = .1f))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
                         val footerRoute = Modifier.focusRequester(footerFocus).focusProperties { right = doneFocus }
-                        if (state.receiving) NikTvSecondaryActionButton({ receive(false) }, enabled = !state.busy, modifier = footerRoute) { Text("Stop receiving") }
+                        if (state.receiving) NikTvSecondaryActionButton({ receive(false) }, enabled = !state.busy, modifier = Modifier.weight(1f).then(footerRoute)) { Text("Stop receiving") }
                         else if (state.target != null) NikTvSecondaryActionButton(disconnect, enabled = !state.busy,
-                            modifier = footerRoute.focusProperties { up = remoteFocus }) { Text("Disconnect") }
+                            modifier = Modifier.weight(1f).then(footerRoute)) { Text("Disconnect") }
                         else NikTvPrimaryActionButton(::connect, enabled = canConnect, modifier = Modifier.weight(1f).focusRequester(connectFocus)
                             .focusProperties { right = if (allowReceiving) receiveFocus else doneFocus; up = if (currentDevice != null || manual) pinFocus else manualFocus }) { Text("Connect") }
                         if (!state.receiving && state.target == null && allowReceiving)
@@ -310,7 +309,6 @@ internal fun LanPlaybackDialog(state: com.nikhil.niktv.data.LanPlaybackState, cl
                         NikTvSecondaryActionButton(close, modifier = Modifier.weight(1f).focusRequester(doneFocus).focusProperties {
                             if (state.receiving || state.target != null) left = footerFocus
                             else if (allowReceiving) left = receiveFocus else if (canConnect) left = connectFocus
-                            if (state.target != null) up = remoteFocus
                         }) { Text("Done") }
                     }
                 }
