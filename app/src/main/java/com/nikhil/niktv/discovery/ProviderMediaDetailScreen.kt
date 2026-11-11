@@ -205,9 +205,11 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val landscape = if (seriesDetail) configuration.screenWidthDp >= 600 || television else !phone
     val shortWide = !seriesDetail && configuration.usesShortWideLayout(television)
     val wideSeries = seriesDetail && (configuration.smallestScreenWidthDp >= 600 || television)
+    val tabletSeriesOverlay = wideSeries && !television
+    val artworkHeight = detailDiscoveryHeroHeight(phone, television)
     val heroHeight = if (compactSeries && phone)
         (configuration.screenHeightDp * .30f).dp.coerceAtLeast(220.dp)
-        else detailDiscoveryHeroHeight(phone, context.isTvLikeDevice(configuration))
+        else if (tabletSeriesOverlay) 160.dp else artworkHeight
     var compactInfoOpen by remember(item.id) { mutableStateOf(false) }
     val compactInfoRequester = remember(item.id) { FocusRequester() }
     if (compactInfoOpen) FullDescriptionDialog(metadata.card.title,
@@ -308,9 +310,9 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             }
             }
         } else {
-        Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
+        Column(Modifier.fillMaxWidth().then(if (tabletSeriesOverlay) Modifier else Modifier.background(Color(0xFF090B10)))) {
             Box(Modifier.fillMaxWidth()) {
-            if (!phone) Box(Modifier.matchParentSize()) {
+            if (!phone && !tabletSeriesOverlay) Box(Modifier.matchParentSize()) {
                 // This screen owns the readability gradients. Applying the feed's
                 // pre-shaded bitmap as well would hide the artwork under actions.
                 DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false)
@@ -442,9 +444,22 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             }
         }
     }
+    Box(Modifier.fillMaxSize()) {
+    if (tabletSeriesOverlay) {
+        DiscoveryBackdropArtwork(metadata.card.backdrop ?: metadata.card.poster, reduceMotion,
+            Alignment.TopCenter, shaded = false, fillWidth = true)
+        Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
+            0f to Color(0x99090B10), .55f to Color(0x33090B10), 1f to Color.Transparent)))
+        Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+            0f to Color(0x55090B10), .65f to Color(0x22090B10), 1f to Color(0xBB090B10))))
+    }
+    CompositionLocalProvider(LocalMobileGlassEnabled provides (phone || tabletSeriesOverlay),
+        LocalSeriesArtworkGlass provides tabletSeriesOverlay) {
     layout(hero, castRow, supplementary,
         if (people.isEmpty()) null else ({ runCatching { castEntry.requestFocus() }.getOrDefault(false) }),
         if (type != CatalogType.SERIES && related.isEmpty()) null else ({ runCatching { relatedEntry.requestFocus() }.getOrDefault(false) }))
+    }
+    }
     actor?.takeIf { relatedDetail == null }?.let { person ->
         actorPages.SaveableStateProvider("actor:${person.id}") {
             DiscoveryActorDialog(person, load = repository::actorCredits, loadInfo = repository::actorInfo,

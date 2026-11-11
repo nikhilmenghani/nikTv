@@ -26,6 +26,8 @@ import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.discovery.components.EpisodeMetadataBadge
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
+internal val LocalSeriesArtworkGlass = staticCompositionLocalOf { false }
+
 /** Shared landscape episode treatment. Provider-specific actions remain with the caller. */
 @Composable
 internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String, metadata: String,
@@ -35,10 +37,12 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
     var focused by remember { mutableStateOf(false) }
     val compact = LocalConfiguration.current.screenWidthDp < 600
     val shape = RoundedCornerShape(10.dp)
+    val glass = LocalSeriesArtworkGlass.current
     Surface(modifier.onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
         .remoteCombinedClickable(onClick = onClick, onLongClick = onLongClick,
             interactionSource = remember { MutableInteractionSource() }, showIndication = false),
-        shape = shape, color = if (focused) Color(0xFF303A49) else Color(0xFF161B23),
+        shape = shape, color = (if (focused) Color(0xFF303A49) else Color(0xFF161B23))
+            .copy(alpha = if (glass) { if (focused) .78f else .48f } else 1f),
         border = BorderStroke(if (focused) 2.dp else 1.dp,
             if (focused) Color.White else if (resume) Color(0xFF9B3744) else Color.White.copy(alpha = .12f))) {
         val image: @Composable (Modifier) -> Unit = { imageModifier ->

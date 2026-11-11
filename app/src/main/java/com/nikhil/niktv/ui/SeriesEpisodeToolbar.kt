@@ -110,7 +110,7 @@ internal fun SeriesEpisodeToolbar(
     LaunchedEffect(listView) {
         if (restoreLayoutFocus) {
             withFrameNanos { }
-            runCatching { (if (compact) sortRequester else layoutRequester).requestFocus() }
+            runCatching { sortRequester.requestFocus() }
             restoreLayoutFocus = false
         }
     }
@@ -135,9 +135,9 @@ internal fun SeriesEpisodeToolbar(
             }
             Box {
                 EpisodeToolbarIcon(Icons.AutoMirrored.Filled.Sort,
-                    if (compact) "Episode options" else "Sort episodes", sortOpen,
-                    Modifier.focusRequester(sortRequester)) { beforeAction(); sortOpen = true }
-                DropdownMenu(sortOpen, ::dismissSort, modifier = Modifier.width(if (compact) 228.dp else 244.dp),
+                    "Episode options", sortOpen,
+                    Modifier.focusRequester(sortRequester).focusRequester(layoutRequester)) { beforeAction(); sortOpen = true }
+                DropdownMenu(sortOpen, ::dismissSort, modifier = Modifier.width(220.dp),
                     containerColor = Color.Transparent, tonalElevation = 0.dp, shadowElevation = 0.dp) {
                     EpisodeSortMenuGroup {
                     listOf(true to "Latest first", false to "Earliest first").forEach { (descending, label) ->
@@ -156,7 +156,7 @@ internal fun SeriesEpisodeToolbar(
                         onClick = { beforeAction(); lastWatchedSelected = true; dismissSort() })
                     }
                     }
-                    if (compact) {
+                    run {
                         Spacer(Modifier.height(6.dp))
                         EpisodeSortMenuGroup {
                         listOf(true to "List view", false to "Grid view").forEach { (list, label) ->
@@ -167,12 +167,6 @@ internal fun SeriesEpisodeToolbar(
                         }
                     }
                 }
-            }
-            if (!compact) Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                EpisodeToolbarIcon(Icons.AutoMirrored.Filled.ViewList, "Episode list view", listView,
-                    if (!listView) Modifier.focusRequester(layoutRequester) else Modifier) { selectLayout(true) }
-                EpisodeToolbarIcon(Icons.Default.GridView, "Episode grid view", !listView,
-                    if (listView) Modifier.focusRequester(layoutRequester) else Modifier) { selectLayout(false) }
             }
         }
         Text(count, Modifier.padding(start = 13.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
@@ -201,18 +195,20 @@ internal fun SeriesEpisodeToolbar(
 }
 
 @Composable
-private fun EpisodeSortMenuGroup(content: @Composable ColumnScope.() -> Unit) {
+internal fun EpisodeSortMenuGroup(content: @Composable ColumnScope.() -> Unit) {
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = Color(0xFF24252B),
         border = BorderStroke(1.dp, Color.White.copy(alpha = .08f)), shadowElevation = 6.dp) {
-        Column(Modifier.padding(vertical = 2.dp), content = content)
+        ProvideTextStyle(MaterialTheme.typography.bodySmall) {
+            Column(Modifier.padding(vertical = 2.dp), content = content)
+        }
     }
 }
 
 @Composable
-private fun EpisodeSortMenuItem(label: String, icon: ImageVector, selected: Boolean = false,
+internal fun EpisodeSortMenuItem(label: String, icon: ImageVector, selected: Boolean = false,
     modifier: Modifier = Modifier, onClick: () -> Unit) {
     NikDropdownMenuItem(
-        text = { Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium,
+        text = { Text(label, color = Color.White, style = MaterialTheme.typography.bodySmall,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
         leadingIcon = { Icon(if (selected) Icons.Default.Check else icon, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
         modifier = modifier.padding(horizontal = 2.dp).clip(RoundedCornerShape(9.dp))
@@ -359,10 +355,10 @@ internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, c
                         if (value.isEmpty()) Text(placeholder, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                         input()
                     }
-                    if (clear != null) IconButton(clear, Modifier.size(32.dp)) {
+                    if (clear != null && value.isNotEmpty()) IconButton(clear, Modifier.size(32.dp)) {
                         Icon(Icons.Default.Backspace, "Clear episode search", Modifier.size(18.dp))
                     }
-                    IconButton(close, Modifier.size(32.dp)) {
+                    else IconButton(close, Modifier.size(32.dp)) {
                         Icon(Icons.Default.Close, closeLabel, Modifier.size(18.dp))
                     }
                 }
