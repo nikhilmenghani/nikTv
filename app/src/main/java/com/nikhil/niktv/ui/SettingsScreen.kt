@@ -517,6 +517,7 @@ internal fun ModernSettingsScreen(
     var returnToMobileCategory by remember { mutableStateOf(false) }
     val mobileCategoryScrollState = rememberScrollState()
     var managedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
+    var managedViewerId by rememberSaveable { mutableStateOf<String?>(null) }
     var returnToSettingsPage by remember { mutableStateOf<SettingsPage?>(null) }
     var enterSettingsPage by remember { mutableStateOf(false) }
     val settingsPageParents = rememberSaveable(saver = mapSaver<MutableMap<SettingsPage, SettingsPage>>(
@@ -660,7 +661,7 @@ internal fun ModernSettingsScreen(
             fontWeight = FontWeight.SemiBold)
 
         if (activePage == SettingsPage.PROFILES) {
-            DeviceProfileSettings()
+            DeviceProfileSettings { id -> managedViewerId = id; openSettingsPage(SettingsPage.VIEWER_PORTALS) }
             SettingsSection("Portals & access", page = SettingsPage.PROFILES) {
                 SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "${state.profiles.size} saved")
                 if (profile != null) SettingsLinkRow(SettingsPage.CONNECTION, profile.name)
@@ -668,6 +669,9 @@ internal fun ModernSettingsScreen(
                 SettingsLinkRow(SettingsPage.PRIVATE_CONFIGURATION, if (RemoteCredentials.configured(context)) "Configured" else "Set up")
                 SettingsLinkRow(SettingsPage.PAIRING, "Nearby, remote or file")
             }
+        }
+        if (activePage == SettingsPage.VIEWER_PORTALS) {
+            ViewerPortalSettings(managedViewerId, state.profiles)
         }
         if (activePage == SettingsPage.LIBRARY) {
             SettingsSection("Library & backup", page = SettingsPage.LIBRARY) {
@@ -762,7 +766,7 @@ internal fun ModernSettingsScreen(
                 if (builtIn != null) {
                     val available = builtIn.portalUrl.isNotBlank() && (builtIn.portalType == PortalType.STALKER ||
                         (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
-                    SettingsControlRow("Enable portal", checked = saved != null, onToggle = { enabled ->
+                    SettingsControlRow("Configure connection on this device", checked = saved != null, onToggle = { enabled ->
                         if (available || !enabled) setPreconfiguredProfileEnabled(builtIn, enabled)
                         else profileSetupExplanation = "Sync private configuration before enabling ${builtIn.name}."
                     })
@@ -1835,28 +1839,60 @@ internal fun ModernSettingsScreen(
 }
 
 @Composable
-internal fun DeviceProfileSettings() {
+internal fun DeviceProfileSettings(manage: (String) -> Unit) {
     val context = LocalContext.current
     val store = remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context) }
     val profiles by store.profiles.collectAsStateWithLifecycle(emptyList())
     val enabled by store.enabledProfiles.collectAsStateWithLifecycle(emptySet())
-    val scope = rememberCoroutineScope()
-    var error by remember { mutableStateOf<String?>(null) }
     SettingsSection("Profiles on this device", page = SettingsPage.PROFILES) {
-        Text("Enable only the profiles you want to show and sync here. New profiles start disabled.", style = MaterialTheme.typography.bodySmall)
+        Text("Choose a profile to control its visibility, sync and available portals.", style = MaterialTheme.typography.bodySmall)
         profiles.forEach { profile ->
-            SettingsControlRow(profile.name, checked = profile.id in enabled, onToggle = { checked ->
-                scope.launch {
-                    try {
-                        store.setProfileEnabled(profile.id, checked)
-                        error = null
-                        if (checked) com.nikhil.niktv.data.AccountSyncManager.get(context).requestManualSync()
-                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                    catch (_: Exception) { error = "Could not update this profile. Please try again." }
-                }
-            })
+            SettingsControlRow(profile.name, if (profile.id in enabled) "Enabled · Manage portals" else "Disabled on this device",
+                onClick = { manage(profile.id) })
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+private fun ViewerPortalSettings(profileId: String?, portals: List<com.nikhil.niktv.model.PortalProfile>) {
+    val context = LocalContext.current
+    val users = remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context) }
+    val profiles by users.profiles.collectAsStateWithLifecycle(emptyList())
+    val enabled by users.enabledProfiles.collectAsStateWithLifecycle(emptySet())
+    val account by users.selectedAccount.collectAsStateWithLifecycle()
+    val profile = profiles.firstOrNull { it.id == profileId }
+    val owner = account?.let { id -> profile?.let { com.nikhil.niktv.data.UserScope(id, it.id) } }
+    val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
+        .collectAsStateWithLifecycle(emptySet())
+    val scope = rememberCoroutineScope()
+    var error by remember(owner) { mutableStateOf<String?>(null) }
+    fun update(action: suspend () -> Unit) { scope.launch {
+        try { action(); error = null }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { error = "Could not save profile access. Please try again." }
+    } }
+    SettingsSection(profile?.name ?: "Profile", page = SettingsPage.VIEWER_PORTALS) {
+        if (profile != null && owner != null) {
+            SettingsControlRow("Show and sync on this device", checked = profile.id in enabled,
+                description = "Controls whether this profile appears on Who’s watching.",
+                onToggle = { checked -> update {
+                    users.setProfileEnabled(profile.id, checked)
+                    if (checked) com.nikhil.niktv.data.AccountSyncManager.get(context).requestManualSync()
+                } })
+            Text("Available portals for ${profile.name}", style = MaterialTheme.typography.titleSmall)
+            Text("Choose the connections this profile can open. Access choices sync with the profile; connection setup stays on each device.",
+                style = MaterialTheme.typography.bodySmall)
+            portals.forEach { portal ->
+                val key = com.nikhil.niktv.data.ProfilePortalAccess.key(portal)
+                SettingsControlRow(portal.name, checked = key !in hidden,
+                    onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner, key, checked) } })
+            }
+            SettingsControlRow("Sports", checked = com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hidden,
+                onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
+                    com.nikhil.niktv.data.ProfilePortalAccess.SPORTS, checked) } })
+            SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "Shared portal connections")
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        } else Text("This profile is no longer available.")
     }
 }
 

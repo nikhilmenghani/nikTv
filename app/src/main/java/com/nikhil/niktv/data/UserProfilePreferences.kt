@@ -99,7 +99,7 @@ internal object UserProfilePreferences {
             updates.value = next
         }
     }
-    private val portableDomains = setOf("iptv_pin_preferences", "browse_collections", "player_media_browser",
+    private val portableDomains = setOf("profile_portal_access_v1", "iptv_pin_preferences", "browse_collections", "player_media_browser",
         "sports_browse", "sports_availability_v1", "iptv_channel_availability_v1", "sports_favorites_v2",
         "home2_presentation", "discovery_trial_v1", "watch_providers", "discovery_experience", "niktv_playback_ui", "player_intro_timings")
 

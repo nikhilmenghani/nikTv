@@ -132,7 +132,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
         choosingProfile = false
         if (offlineOnly) return
         val destination = store.rememberedDestination(owner)
-        val portals = legacyStore.scoped(owner).profiles.first()
+        val portals = legacyStore.scoped(owner).profiles.first().filter { com.nikhil.niktv.data.ProfilePortalAccess.allowed(context, it, owner) }
         if (store.selectedScope.value != owner) return
         when (destination?.kind) {
             ViewerDestinationKind.OFFLINE -> {
@@ -142,7 +142,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                     ?: legacyStore.scoped(owner).activeProfile.first()?.cacheKey()
                 portals.firstOrNull { it.cacheKey() == previous }?.let(vm::switchProfile)
             }
-            ViewerDestinationKind.SPORTS -> context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
+            ViewerDestinationKind.SPORTS -> if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner))
+                context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
+                else portals.firstOrNull()?.let(vm::switchProfile)
             ViewerDestinationKind.PORTAL -> portals.firstOrNull { it.cacheKey() == destination.portalKey }?.let(vm::switchProfile)
             null -> {
                 // Upgrade an existing device's last portal only when it belongs to this viewer.

@@ -81,7 +81,8 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
                 text = { Text("Suggested artwork: ${if (suggestedArtwork) "On" else "Off"}") },
                 leadingIcon = { Icon(if (suggestedArtwork) Icons.Default.Image else Icons.Default.HideImage, null) },
                 onClick = { DiscoveryArtworkPreference.setEnabled(context, !suggestedArtwork); change(false) })
-            NikDropdownMenuItem(text = { Text("Sports") }, onClick = { change(false); context.openSports() })
+            if (LocalDirectPortalActions.current.any { it.name == "Sports" })
+                NikDropdownMenuItem(text = { Text("Sports") }, onClick = { change(false); context.openSports() })
             NikDropdownMenuItem(text = { Text("Play on NikTV") }, onClick = { change(false); openLanPlayback() })
             listOf("Offline", "Settings").forEach { label ->
                 NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); navigate(label) })

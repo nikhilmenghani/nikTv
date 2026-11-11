@@ -18,8 +18,8 @@ internal enum class SettingsDestination(
         "Brightness, orientation and screen awake"
     ),
     PROFILES(
-        "Portals & access",
-        "Accounts, portals and session access"
+        "Profiles & portals",
+        "Profile access and portal connections"
     ),
     CATALOG(
         "Library & backup",
@@ -69,12 +69,13 @@ internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
 internal enum class SettingsPage(val destination: SettingsDestination, val title: String, val parent: SettingsPage? = null) {
     PLAYBACK(SettingsDestination.PLAYBACK, "Playback"),
     DISPLAY(SettingsDestination.GENERAL, "Display & controls"),
-    PROFILES(SettingsDestination.PROFILES, "Portals & access"),
+    PROFILES(SettingsDestination.PROFILES, "Profiles & portals"),
+    VIEWER_PORTALS(SettingsDestination.PROFILES, "Profile portal access", PROFILES),
     LIBRARY(SettingsDestination.CATALOG, "Library & backup"),
     APP(SettingsDestination.SYSTEM, "App & updates"),
     COMPATIBILITY(SettingsDestination.PLAYBACK, "Compatibility", PLAYBACK),
-    MANAGE_PROFILES(SettingsDestination.PROFILES, "Manage portals", PROFILES),
-    PROFILE_DETAILS(SettingsDestination.PROFILES, "Portal details", MANAGE_PROFILES),
+    MANAGE_PROFILES(SettingsDestination.PROFILES, "Portal connections", PROFILES),
+    PROFILE_DETAILS(SettingsDestination.PROFILES, "Connection details", MANAGE_PROFILES),
     CONNECTION(SettingsDestination.PROFILES, "Connection", PROFILES),
     PARENTAL(SettingsDestination.PROFILES, "Parental controls", PROFILES),
     PRIVATE_CONFIGURATION(SettingsDestination.PROFILES, "Private configuration", PROFILES),

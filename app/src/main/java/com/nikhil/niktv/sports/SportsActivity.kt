@@ -76,9 +76,12 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
             val portals = store.profiles.collectAsStateWithLifecycle(initialValue = emptyList()).value
             val users = androidx.compose.runtime.remember { UserSyncStore.get(applicationContext) }
             val viewerScope = users.selectedScope.collectAsStateWithLifecycle().value
+            val hiddenPortals = androidx.compose.runtime.remember(viewerScope) {
+                com.nikhil.niktv.data.ProfilePortalAccess.observe(applicationContext, viewerScope)
+            }.collectAsStateWithLifecycle(initialValue = emptySet()).value
             val viewers = users.profiles.collectAsStateWithLifecycle(initialValue = emptyList()).value
             val viewer = viewers.firstOrNull { it.id == viewerScope?.profileId }
-            val actions = portals.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
+            val actions = portals.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
                 if (portal.portalType == com.nikhil.niktv.model.PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
                 open = {
                     startActivity(Intent(this, com.nikhil.niktv.MainActivity::class.java)
@@ -86,6 +89,15 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
                         .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL, portal.cacheKey()))
                     finish()
                 }) } + com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, selected = true, open = {})
+            if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS in hiddenPortals) {
+                androidx.compose.runtime.LaunchedEffect(viewerScope) {
+                    startActivity(Intent(this@SportsActivity, com.nikhil.niktv.MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL,
+                            com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER))
+                    finish()
+                }
+            }
             androidx.compose.runtime.CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides actions,
                 com.nikhil.niktv.ui.LocalSelectedUserProfile provides viewer,
                 com.nikhil.niktv.ui.LocalOpenUserProfiles provides {

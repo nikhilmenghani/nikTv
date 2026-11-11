@@ -491,26 +491,29 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     val directPortalOwner = LocalViewingOwner.current
     val requestedPortal by com.nikhil.niktv.discovery.PortalNavigationRequests.pending.collectAsStateWithLifecycle()
-    LaunchedEffect(requestedPortal, state.profiles) {
+    val hiddenPortals by remember(directPortalOwner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(appContext, directPortalOwner) }
+        .collectAsStateWithLifecycle(emptySet())
+    val accessiblePortals = state.profiles.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }
+    LaunchedEffect(requestedPortal, state.profiles, hiddenPortals) {
         val identity = requestedPortal ?: return@LaunchedEffect
         if (identity == com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER) {
             com.nikhil.niktv.discovery.PortalNavigationRequests.pending.value = null
             openUserProfiles()
             return@LaunchedEffect
         }
-        val portal = state.profiles.firstOrNull { it.cacheKey() == identity } ?: return@LaunchedEffect
+        val portal = accessiblePortals.firstOrNull { it.cacheKey() == identity } ?: return@LaunchedEffect
         com.nikhil.niktv.discovery.PortalNavigationRequests.pending.value = null
         vm.switchProfile(portal)
     }
     val directPortalScope = rememberCoroutineScope()
     val portalFocusReturn = remember(directPortalOwner) { com.nikhil.niktv.discovery.PortalFocusReturn() }
-    val directPortals = state.profiles.map { portal ->
+    val directPortals = accessiblePortals.map { portal ->
         com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
             if (portal.portalType == PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
             selected = portal.cacheKey() == state.savedProfile?.cacheKey(), id = portal.cacheKey(), open = {
                 if (portal.cacheKey() != state.savedProfile?.cacheKey()) vm.switchProfile(portal)
             })
-    } + com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, open = {
+    } + listOfNotNull(com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, open = {
         directPortalScope.launch {
             directPortalOwner?.let { owner ->
                 com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
@@ -518,12 +521,12 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
             }
             appContext.startActivity(android.content.Intent(appContext, com.nikhil.niktv.sports.SportsActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         }
-    })
+    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
         com.nikhil.niktv.discovery.LocalPortalFocusReturn provides portalFocusReturn) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
-        if (state.profileSwitcherOpen) ModernProfileSwitchDialog(state.profiles, state.savedProfile,
+        if (state.profileSwitcherOpen) ModernProfileSwitchDialog(accessiblePortals, state.savedProfile,
             close = vm::closeProfileSwitcher, select = vm::switchProfile,
             openChooser = { vm.closeProfileSwitcher(); openUserProfiles() },
             openOffline = vm::openOfflineDownloads, configurePortals = vm::openProfileChooser)
@@ -686,7 +689,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     setBrowseLayout = vm::setBrowseLayout,
                     openCategoryManager = vm::openCategoryManager
                 )
-                state.session == null && !state.offlineDownloadsOpen -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, { openAccount() }, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup, vm::openOfflineDownloads, openUserProfiles = openUserProfiles)
+                state.session == null && !state.offlineDownloadsOpen -> ProfileScreen(state.savedProfile?.takeIf { it in accessiblePortals }, accessiblePortals, state.profileEditorOpen, state.loading, { openAccount() }, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup, vm::openOfflineDownloads, openUserProfiles = openUserProfiles)
                 else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { DiscoveryScreenHost(
                     state = state,
                     selectType = vm::openCatalogType,

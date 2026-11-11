@@ -506,6 +506,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
     fun connect(profile: PortalProfile) = connectOwned(profile, beginPortalActivation())
     private fun connectOwned(profile: PortalProfile, activation: Long) = task {
+        check(com.nikhil.niktv.data.ProfilePortalAccess.allowed(getApplication(), profile)) { "This portal is disabled for this profile." }
         portal.prioritizePlayback()
         profilePreparationJob?.cancel()
         searchPreviewJob?.cancel()
@@ -7824,6 +7825,11 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
     }
     fun closeSettings() {
+        if (_state.value.savedProfile?.let { !com.nikhil.niktv.data.ProfilePortalAccess.allowed(getApplication(), it) } == true) {
+            settingsReturnSurface = null
+            openProfileChooser()
+            return
+        }
         val origin = settingsReturnSurface
         settingsReturnSurface = null
         _state.update { origin?.restore(it) ?: it.copy(settingsOpen = false) }
@@ -8105,6 +8111,10 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         return authenticateProfileForOpening(profile).also { ownedStore.save(it, owns) }
     }
     fun switchProfile(profile: PortalProfile) {
+        if (!com.nikhil.niktv.data.ProfilePortalAccess.allowed(getApplication(), profile)) {
+            _state.update { it.copy(error = "This portal is disabled for this profile.") }
+            return
+        }
         val destination = PortalSwitchDestination.capture(_state.value)
         switchProfileOwned(profile, beginPortalActivation(), destination)
     }

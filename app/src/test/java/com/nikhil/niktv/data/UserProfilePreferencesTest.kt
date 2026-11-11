@@ -25,6 +25,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
+    @Test fun portalAccessIsProfileSpecificPortableAndDoesNotExposeConnectionDetails() = runBlocking {
+        val portal = PortalProfile("Private", "http://private-provider.test", "00:11:22:33:44:55")
+        assertTrue(ProfilePortalAccess.allowed(context, portal, family()))
+        assertTrue(ProfilePortalAccess.allowed(context, portal, kids()))
+        withTimeout(5_000) { ProfilePortalAccess.setAllowed(context, family(), ProfilePortalAccess.key(portal), false) }
+        assertFalse(ProfilePortalAccess.allowed(context, portal, family()))
+        assertTrue(ProfilePortalAccess.allowed(context, portal, kids()))
+        users.selectProfile(kids().profileId)
+        ProfilePortalAccess.setAllowed(context, family(), ProfilePortalAccess.SPORTS, false)
+        assertTrue(ProfilePortalAccess.hidden(context, kids()).isEmpty())
+        assertEquals(setOf(ProfilePortalAccess.key(portal), ProfilePortalAccess.SPORTS), ProfilePortalAccess.hidden(context, family()))
+        val records = users.snapshot("101").filter { it.payload.contains("profile_portal_access_v1") }
+        assertTrue(records.isNotEmpty())
+        assertTrue(records.all { it.profileId == family().profileId })
+        assertFalse(records.any { it.payload.contains("private-provider") || it.payload.contains("00:11:22:33:44:55") })
+        ProfilePortalAccess.setAllowed(context, family(), ProfilePortalAccess.key(portal), true)
+        assertTrue(ProfilePortalAccess.allowed(context, portal, family()))
+        assertTrue(ProfilePortalAccess.allowed(context, portal.copy(name = "Renamed"), family()))
+    }
     private val context get() = RuntimeEnvironment.getApplication()
     private val users get() = UserSyncStore.get(context)
     private fun family(account: String = "101") = UserScope(account, UserSyncStore.defaultProfileId(account, UserProfileType.GENERAL))
