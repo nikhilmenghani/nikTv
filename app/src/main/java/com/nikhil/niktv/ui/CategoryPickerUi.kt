@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
-    applyFilters: (Map<CatalogType, List<String>>) -> Unit) {
+    applyFilters: (Map<CatalogType, List<String>>) -> Unit, refresh: (() -> Unit)? = null) {
     val type = state.categoryManagerType
     val profile = state.savedProfile?.cacheKey()
     val raw = state.rawCategoriesByType[type].orEmpty().ifEmpty {
@@ -78,8 +78,17 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     var focusJob by remember { mutableStateOf<Job?>(null) }
     var entered by remember(profile, type) { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
+    var refreshRequested by remember { mutableStateOf(false) }
+    val refreshing = (profile to type) in state.categoryRefreshes
     var searchFocused by remember { mutableStateOf(false) }
     var initialFocusHandled by remember(profile, type) { mutableStateOf(false) }
+    LaunchedEffect(editing) {
+        if (editing) {
+            focusJob?.cancel()
+            repeat(2) { withFrameNanos { } }
+            if (runCatching { search.requestFocus() }.getOrDefault(false)) keyboard?.show()
+        }
+    }
     fun focusCategory(index: Int) {
         val item = filtered.getOrNull(index) ?: return
         focusJob?.cancel()
@@ -119,7 +128,7 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
             border = if (compact) null else BorderStroke(1.dp, Color.White.copy(alpha = .16f))) {
             Column(Modifier.fillMaxSize().focusProperties {
                 onEnter = {
-                    if (!initialFocusHandled) {
+                    if (!initialFocusHandled && television) {
                         initialFocusHandled = true
                         val first = filtered.firstOrNull { it.id in selected } ?: filtered.firstOrNull()
                         val target = first?.let { requesters[it.id] } ?: cancel
@@ -138,23 +147,32 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
                             if (query.isBlank()) "${raw.size} available" else "${filtered.size} results",
                             style = MaterialTheme.typography.labelMedium, color = Color(0xFFB6BAC5))
                     }
+                    refresh?.let { reload ->
+                        IconButton(onClick = { refreshRequested = true; reload() }, enabled = !refreshing,
+                            modifier = Modifier.size(48.dp).remoteFocusFrame(RoundedCornerShape(12.dp))) {
+                            if (refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.Refresh, "Refresh categories")
+                        }
+                    }
+                }
+                if (refreshRequested && !refreshing) state.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 }
                 // Focusing search with a remote does not summon the keyboard until Select.
                 val searchField: @Composable () -> Unit = {
-                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1B1E26),
+                    Surface(modifier = Modifier.pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            focusJob?.cancel()
+                            editing = true
+                        }
+                    }, shape = RoundedCornerShape(12.dp), color = Color(0xFF1B1E26),
                         border = BorderStroke(if (searchFocused) 2.dp else 1.dp, if (searchFocused) Color.White else Color(0xFF353944))) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = Color.LightGray)
-                            BasicTextField(query, { query = it }, singleLine = true, readOnly = !editing,
+                            BasicTextField(query, { query = it }, singleLine = true, readOnly = television && !editing,
                                 modifier = Modifier.weight(1f).focusRequester(search)
-                                    .pointerInput(Unit) {
-                                        awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                            editing = true; search.requestFocus()
-                                            scope.launch { withFrameNanos { }; keyboard?.show() }
-                                        }
-                                    }
                                     .onFocusChanged { searchFocused = it.isFocused; if (!it.isFocused) { editing = false; keyboard?.hide() } }
                                     .focusProperties { up = cancel; right = bulk }
                                     .onPreviewKeyEvent { event ->
@@ -163,13 +181,13 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
                                                 if (inlineTools) enterGrid() else bulk.requestFocus(); true
                                             }
                                             event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter) && !editing -> {
-                                                if (event.type == KeyEventType.KeyUp) { editing = true; keyboard?.show() }; true
+                                                if (event.type == KeyEventType.KeyUp) editing = true; true
                                             }
                                             else -> false
                                         }
                                     },
                                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White), cursorBrush = SolidColor(accent),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, showKeyboardOnFocus = false),
                                 keyboardActions = KeyboardActions(onDone = { editing = false; keyboard?.hide(); enterGrid() }),
                                 decorationBox = { inner -> Box { if (query.isEmpty()) Text("Search categories", color = Color(0xFFA7ABB5)); inner() } })
                             if (query.isNotEmpty()) IconButton(onClick = { query = "" }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Close, "Clear search") }

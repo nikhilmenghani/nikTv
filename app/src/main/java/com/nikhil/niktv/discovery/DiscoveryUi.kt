@@ -1458,19 +1458,14 @@ internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alig
 internal fun DiscoveryBackdropArtwork(requested: String?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center,
     shaded: Boolean = true, viewportShade: Boolean = false, fillWidth: Boolean = false) {
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val preservePortrait = fillWidth || configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
-    var portraitArtwork by remember(requested) { mutableStateOf(false) }
     var ready by remember { mutableStateOf(requested) }
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
         Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else 300), label = "discoveryBackdrop") { url ->
             val request = remember(context, url, shaded, viewportShade) { ImageRequest.Builder(context).data(url).size(1280, 720)
                 .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
-            AsyncImage(request, null, if (fillWidth && !portraitArtwork) Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).aspectRatio(16f / 9f) else Modifier.fillMaxSize(),
-                contentScale = if (preservePortrait && portraitArtwork) ContentScale.Fit else if (fillWidth) ContentScale.FillWidth else ContentScale.Crop,
-                alignment = if (preservePortrait && portraitArtwork) Alignment.CenterEnd else alignment,
-                onSuccess = { portraitArtwork = it.result.image.width < it.result.image.height })
+            AsyncImage(request, null, if (fillWidth) Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).aspectRatio(16f / 9f) else Modifier.fillMaxSize(),
+                contentScale = if (fillWidth) ContentScale.FillWidth else ContentScale.Crop, alignment = alignment)
         }
         // Hidden decode layer promotes only the latest successfully prepared backdrop.
         if (requested != null && requested != ready) {

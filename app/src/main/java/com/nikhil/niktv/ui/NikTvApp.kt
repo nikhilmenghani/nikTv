@@ -787,7 +787,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                 CategoryManagerDialog(
                     state = state,
                     close = vm::closeCategoryManager,
-                    applyFilters = vm::applyCategoryFilters
+                    applyFilters = vm::applyCategoryFilters,
+                    refresh = { vm.refreshProviderCategories(state.categoryManagerType) }
                 )
             }
             if (confirmPlayerDownloadRemoval) {

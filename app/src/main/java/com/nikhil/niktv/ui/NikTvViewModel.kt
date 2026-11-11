@@ -2387,7 +2387,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         if (!userRequested && categoryRefreshAttempts[key]?.let { now - it < 5 * 60_000L } == true) return
         categoryRefreshAttempts[key] = now
         val job = launchForViewer(start = kotlinx.coroutines.CoroutineStart.LAZY) launch@ {
-            _state.update { it.copy(categoryRefreshes = it.categoryRefreshes + key) }
+            _state.update { it.copy(categoryRefreshes = it.categoryRefreshes + key, error = if (userRequested) null else it.error) }
             try {
                 val fresh = categoryRefreshSlots.withPermit {
                     withAutomaticSessionRetry(session) { active -> categoryMetadataLookup(active, type, !userRequested) }
