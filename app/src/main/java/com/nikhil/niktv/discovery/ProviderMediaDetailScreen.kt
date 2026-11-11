@@ -235,8 +235,6 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                     modifier = Modifier.focusRequester(backRequester), onClick = close)
                 Spacer(Modifier.weight(1f))
                 if (phone) {
-                    DiscoveryAction("Play on NikTV", Icons.Default.Cast, iconOnly = true,
-                        selected = LocalLanPlaybackTarget.current != null, onClick = LocalOpenLanPlayback.current)
                     val viewer = LocalSelectedUserProfile.current
                     DiscoveryAction("Switch profile: ${viewer?.name.orEmpty()}",
                         visualLabel = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() } ?: "N",

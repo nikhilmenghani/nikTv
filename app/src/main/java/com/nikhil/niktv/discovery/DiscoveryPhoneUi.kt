@@ -165,9 +165,6 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             }
             Spacer(Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                DiscoveryAction("Play on NikTV", Icons.Default.Cast, iconOnly = true,
-                    selected = com.nikhil.niktv.ui.LocalLanPlaybackTarget.current != null,
-                    onClick = com.nikhil.niktv.ui.LocalOpenLanPlayback.current)
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
                     modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
                 DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
