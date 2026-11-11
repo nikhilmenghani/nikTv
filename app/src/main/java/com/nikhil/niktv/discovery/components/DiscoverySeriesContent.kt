@@ -219,7 +219,7 @@ internal fun DiscoverySeriesContent(
     val phoneEpisodeHeight = with(density) { (contentHeightPx - heroHeightPx - toolbarHeightPx).toDp() }
         .coerceAtLeast(96.dp)
     val wideEpisodeHeight = with(density) { (contentHeightPx - toolbarHeightPx - if (tabletEpisodeOverlay) heroHeightPx else 0).toDp() }
-        .minus(24.dp).coerceAtLeast(260.dp)
+        .minus(if (tabletEpisodeOverlay) 32.dp else 24.dp).coerceAtLeast(260.dp)
     val layoutRequester = remember(series.id) { FocusRequester() }
 
     val episodeRowState = key(profile, series.id, state.selectedSeriesSeason) { rememberLazyListState() }
@@ -511,13 +511,22 @@ internal fun DiscoverySeriesContent(
             SeriesDetailFocus.SORT -> sortRequester
             else -> toolbarRequester
         }
-        wideFocusCoordinator.move(episodeListState, seriesDetailFocusSlot(target), reducedMotion) {
+        val focusTarget: suspend () -> Boolean = {
             if (target == SeriesDetailFocus.TOOLS && preferred == null) {
                 runCatching { castButtonRequester.requestFocus() }.getOrDefault(false) ||
                     runCatching { relatedButtonRequester.requestFocus() }.getOrDefault(false) ||
                     runCatching { toolbarRequester.requestFocus() }.getOrDefault(false)
             } else runCatching { requester.requestFocus() }.getOrDefault(false)
         }
+        if (tabletEpisodeOverlay && expandedPanel !in setOf(SeriesDetailPanel.CAST, SeriesDetailPanel.RELATED)) {
+            wideFocusCoordinator.cancel()
+            detailScope.launch {
+                wideFocusCoordinator.withAutomaticRevealSuppressed {
+                    episodeListState.scrollToItem(0)
+                    focusTarget()
+                }
+            }
+        } else wideFocusCoordinator.move(episodeListState, seriesDetailFocusSlot(target), reducedMotion, focus = focusTarget)
     }
     fun moveWideFocus(from: SeriesDetailFocus, delta: Int) {
         // Info/Cast/Related now share the Play action row. Crossing those controls
