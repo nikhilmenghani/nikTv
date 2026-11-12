@@ -233,6 +233,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         configuration.screenHeightDp >= configuration.screenWidthDp
         else usesDiscoveryPhoneLayout(configuration, television)
     val landscape = if (seriesDetail) configuration.screenWidthDp >= 600 || television else !phone
+    val shortLandscapeSeries = seriesDetail && configuration.usesShortWideLayout(television)
     val shortWide = !seriesDetail && configuration.usesShortWideLayout(television)
     val wideSeries = seriesDetail && (configuration.smallestScreenWidthDp >= 600 || television ||
         configuration.screenWidthDp > configuration.screenHeightDp)
@@ -289,7 +290,50 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         }
     }
     val hero: @Composable () -> Unit = {
-        if (!wideSeries && compactSeries) {
+        if (shortLandscapeSeries) {
+            CompositionLocalProvider(LocalMobileGlassEnabled provides true,
+                LocalDiscoveryHeaderActionSizing provides true, LocalCollapsingDiscoveryActions provides false) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
+                            modifier = Modifier.focusRequester(backRequester), onClick = close)
+                        Column(Modifier.weight(1f)) {
+                            Text(metadata.card.title, color = Color.White, style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(discoveryDetailMetadata(metadata.card).joinToString(" · "),
+                                color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        tools()
+                    }
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).onKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                            Key.DirectionDown -> { down(); true }
+                            Key.DirectionUp -> { if (heroUp != null) heroUp() else runCatching { backRequester.requestFocus() }; true }
+                            else -> false
+                        }
+                    }, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        DiscoveryAction(if (playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true, enabled = playEnabled,
+                            modifier = Modifier.focusRequester(playRequester), onClick = play)
+                        DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
+                            if (isFavorite) Icons.Default.Check else Icons.Default.Add, iconOnly = true, onClick = favorite)
+                        DiscoveryTrailerAction(metadata.card, iconOnly = true)
+                        LocalProviderSynopsisActions.current?.invoke()
+                        LocalProviderEpisodeControls.current?.invoke()
+                    }
+                    progressLabel?.let {
+                        Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
+                        modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth().height(2.dp),
+                        color = Color(0xFFE50925), trackColor = Color(0xFF343842), drawStopIndicator = {}) }
+                    LocalProviderSynopsisPanel.current?.invoke()
+                }
+            }
+        } else if (!wideSeries && compactSeries) {
             CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalHeroActionSizing provides true) {
             Column(Modifier.fillMaxWidth()) {
             Box(Modifier.fillMaxWidth()) {

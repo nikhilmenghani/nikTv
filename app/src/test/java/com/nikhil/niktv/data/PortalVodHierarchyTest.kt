@@ -89,4 +89,60 @@ class PortalVodHierarchyTest {
         for (json in listOf("""[{"is_season":"1"}]""", """{"data":[{"is_episode":true}]}""", """[{"series":["1","2"]}]"""))
             assertTrue(portalVodHasEpisodes(Json.parseToJsonElement(json)))
     }
+    @Test fun playbackRefreshFindsALaterPageInTheRequestedSeason() {
+        fixture({ request -> when {
+            request.contains("season_id=season2") && request.contains("p=2") ->
+                """{"js":{"data":[{"id":"fresh4","cmd":"fresh-four","is_episode":true,"episode_number":4}],"max_page":2}}"""
+            request.contains("season_id=season2") ->
+                """{"js":{"data":[{"id":"first","cmd":"wrong-first-page","is_episode":true,"episode_number":1}],"max_page":2}}"""
+            else -> """{"js":{"data":[{"id":"season1","is_season":true,"season_number":1},{"id":"season2","is_season":true,"season_number":2}]}}"""
+        } }) { client, session, requests ->
+            val requested = MediaItem("movie:2:4", "Fourth episode", null, "stale", seasonNumber = 2,
+                episodeNumber = 4, portalSeasonId = "season2", portalEpisodeId = "old4")
+            val fresh = client.refreshPlaybackItem(session, requested, CatalogType.SERIES, container)
+            assertEquals(2, fresh.seasonNumber)
+            assertEquals(4, fresh.episodeNumber)
+            assertEquals("fresh-four", fresh.command)
+            assertEquals(3, requests.size)
+            assertFalse("Recovery must not fetch season one", requests.any { it.contains("season_id=season1") })
+        }
+    }
+
+    @Test fun playbackRefreshHonoursProviderSeasonIdWhenOrdinalIsMissing() {
+        fixture({ request -> if (request.contains("season_id=season2"))
+            """{"js":{"data":[{"id":"fresh4","cmd":"season-two","is_episode":true,"episode_number":4}],"max_page":1}}"""
+            else """{"js":{"data":[{"id":"season1","is_season":true,"season_number":1},{"id":"season2","is_season":true,"season_number":2}]}}"""
+        }) { client, session, requests ->
+            val requested = MediaItem("movie:2:4", "Fourth episode", null, "stale", episodeNumber = 4, portalSeasonId = "season2")
+            assertEquals("season-two", client.refreshPlaybackItem(session, requested, CatalogType.SERIES, container).command)
+            assertEquals(2, requests.size)
+        }
+    }
+
+    @Test fun playbackRefreshAcceptsReplacedProviderIdsOnlyForTheSameSeasonAndEpisode() {
+        fixture({ request -> if (request.contains("season_id=season2"))
+            """{"js":{"data":[{"id":"new4","cmd":"replacement","is_episode":true,"episode_number":4}],"max_page":1}}"""
+            else """{"js":{"data":[{"id":"season2","is_season":true,"season_number":2}]}}"""
+        }) { client, session, _ ->
+            val requested = MediaItem("old-id", "Fourth episode", null, "stale", seasonNumber = 2,
+                episodeNumber = 4, portalSeasonId = "season2", portalEpisodeId = "old-file")
+            val fresh = client.refreshPlaybackItem(session, requested, CatalogType.SERIES, container)
+            assertEquals("new4", fresh.portalEpisodeId)
+            assertEquals("replacement", fresh.command)
+        }
+    }
+
+    @Test fun playbackRefreshStopsOnRepeatedPagesAndNeverSubstitutesAnotherEpisode() {
+        fixture({ request -> if (request.contains("season_id=season2"))
+            """{"js":{"data":[{"id":"shared-file","cmd":"wrong-episode","is_episode":true,"episode_number":1}],"max_page":50}}"""
+            else """{"js":{"data":[{"id":"season2","is_season":true,"season_number":2}]}}"""
+        }) { client, session, requests ->
+            val requested = MediaItem("movie:2:4", "Fourth episode", null, "stale", seasonNumber = 2,
+                episodeNumber = 4, portalSeasonId = "season2", portalEpisodeId = "shared-file")
+            try { client.refreshPlaybackItem(session, requested, CatalogType.SERIES, container); fail("A different episode must not play") }
+            catch (expected: IllegalStateException) { assertTrue(expected.message.orEmpty().contains("no longer listed")) }
+            assertEquals("Root plus two repeated season pages", 3, requests.size)
+        }
+    }
+
 }

@@ -207,6 +207,7 @@ internal fun DiscoverySeriesContent(
             episodeConfiguration.smallestScreenWidthDp < 600 &&
             episodeConfiguration.screenHeightDp >= episodeConfiguration.screenWidthDp
     val tabletEpisodeOverlay = !mobileEpisodeLayout
+    val shortLandscapeEpisodes = episodeConfiguration.usesShortWideLayout(episodeIsTv)
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
     // Episodes always own their scroll state; phones keep the compact header in view.
     val verticalEpisodeLayout = false
@@ -218,7 +219,7 @@ internal fun DiscoverySeriesContent(
     val phoneEpisodeHeight = with(density) { (contentHeightPx - heroHeightPx - toolbarHeightPx).toDp() }
         .coerceAtLeast(96.dp)
     val wideEpisodeHeight = with(density) { (contentHeightPx - toolbarHeightPx - if (tabletEpisodeOverlay) heroHeightPx else 0).toDp() }
-        .minus(if (tabletEpisodeOverlay) 32.dp else 24.dp).coerceAtLeast(if (tabletEpisodeOverlay) 96.dp else 260.dp)
+        .minus(if (shortLandscapeEpisodes) 8.dp else if (tabletEpisodeOverlay) 32.dp else 24.dp).coerceAtLeast(if (tabletEpisodeOverlay) 96.dp else 260.dp)
     val layoutRequester = remember(series.id) { FocusRequester() }
 
     val episodeRowState = key(profile, series.id, state.selectedSeriesSeason) { rememberLazyListState() }

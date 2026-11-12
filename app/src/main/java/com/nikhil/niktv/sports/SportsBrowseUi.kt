@@ -66,7 +66,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val selected = state.selected
     var relatedExpanded by rememberSaveable(selected?.key) { mutableStateOf(false) }
     val hasGroups = (if (state.favouritesOnly) state.favourites else state.collectionChannels).any { it.group.isNotBlank() }
-    val headerFocus = tabFocus.getValue(state.tab)
+    val headerFocus = if (state.tab == SportsTab.CATEGORIES) optionsAction else tabFocus.getValue(state.tab)
     var searchOpen by rememberSaveable { mutableStateOf(query.isNotBlank()) }
     var editing by remember { mutableStateOf(false) }
     var addOpen by rememberSaveable { mutableStateOf(false) }
@@ -106,6 +106,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
         .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp)) {
       Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val headerActions = buildList {
+            add(SportsHeaderAction("Categories", Icons.Default.Category, state.tab == SportsTab.CATEGORIES) { selectTab(SportsTab.CATEGORIES) })
             if (selected == null) add(SportsHeaderAction("Search sports", Icons.Default.Search, searchOpen) {
                 if (searchOpen) closeSearch() else { editing = true; searchOpen = true }
             })
@@ -122,9 +123,9 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             add(SportsHeaderAction("Stream compatibility: ${resolverMode.title}", Icons.Default.Settings) { resolverOpen = true })
         }
         SportsHeader("Sports", back, headerActions, backFocus, optionsAction) { modifier ->
-            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                SportsTab.entries.forEach { tab ->
-                    DiscoveryAction(tab.title, selected = state.tab == tab,
+            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                sportsMainTabs.forEach { tab ->
+                    DiscoveryAction(tab.title, horizontalPadding = 12.dp, selected = state.tab == tab,
                         modifier = Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
                             val target = when { selected != null -> sourceFocus.firstOrNull() ?: backFocus

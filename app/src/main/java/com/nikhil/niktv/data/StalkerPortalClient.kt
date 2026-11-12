@@ -403,6 +403,36 @@ class StalkerPortalClient(private val context: Context) {
 
     suspend fun refreshPlaybackItem(session: PortalSession, item: MediaItem, type: CatalogType, series: MediaItem? = null): MediaItem {
         if (type == CatalogType.MOVIES) synchronized(vodRoots) { vodRoots.remove(vodRootKey(session, item)) }
+        if (type == CatalogType.SERIES && series != null && session.profile.portalType == PortalType.STALKER) {
+            var page = 1
+            var seasonId = item.portalSeasonId
+            val seen = mutableSetOf<String>()
+            while (true) {
+                val result = episodeSeason(session, series, SeriesStartSeason.FIRST,
+                    requestedSeason = item.seasonNumber, page = page, requestedSeasonId = seasonId)
+                val candidates = result.episodes.filter { candidate ->
+                    item.seasonNumber == null || candidate.seasonNumber == null || candidate.seasonNumber == item.seasonNumber
+                }
+                val match = candidates.firstOrNull { it.id == item.id }
+                    ?: candidates.firstOrNull { candidate ->
+                        candidate.portalEpisodeId != null && candidate.portalEpisodeId == item.portalEpisodeId &&
+                            candidate.episodeNumber == item.episodeNumber
+                    }
+                    ?: candidates.singleOrNull { candidate ->
+                        item.seasonNumber != null && candidate.seasonNumber == item.seasonNumber &&
+                            item.episodeNumber != null && candidate.episodeNumber == item.episodeNumber
+                    }
+                if (match != null) return match
+                // Providers sometimes advertise more pages but repeat the same records.
+                // Do not loop forever, or interpret the first partial page as the complete season.
+                val advanced = result.episodes.map { "${it.id}:${it.portalEpisodeId}:${it.seasonNumber}:${it.episodeNumber}" }
+                    .map { seen.add(it) }.any { it }
+                if (!result.hasMore || !advanced) break
+                seasonId = result.episodes.firstNotNullOfOrNull { it.portalSeasonId } ?: seasonId
+                page++
+            }
+            error("This episode is no longer listed by the provider. Refresh the series.")
+        }
         if (type == CatalogType.SERIES && series != null) {
             return episodes(session, series).firstOrNull { it.id == item.id ||
                 (it.portalEpisodeId != null && it.portalEpisodeId == item.portalEpisodeId && it.episodeNumber == item.episodeNumber) }
@@ -521,7 +551,8 @@ class StalkerPortalClient(private val context: Context) {
         }.distinctBy { it.first }.mapIndexed { index, pair -> pair.first to (pair.second ?: index + 1) }
         if (seasons.isEmpty()) return@withContext EpisodeSeasonResult(emptyList(), emptyList(), null)
         val available = seasons.map { it.second }.distinct().sorted()
-        val selected = requestedSeason?.takeIf { it in available }
+        val selected = seasons.firstOrNull { it.first == requestedSeasonId }?.second
+            ?: requestedSeason?.takeIf { it in available }
             ?: if (preference == SeriesStartSeason.LAST) available.last() else available.first()
         val (seasonId, seasonNumber) = seasons.first { it.second == selected }
         val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams + ("season_id" to seasonId)))

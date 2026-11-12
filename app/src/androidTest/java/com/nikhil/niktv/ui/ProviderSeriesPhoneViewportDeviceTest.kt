@@ -79,7 +79,9 @@ class ProviderSeriesPhoneViewportDeviceTest {
         for (height in listOf(480, 800)) exercise(height)
     }
 
-    private fun exercise(height: Int) {
+    @Test fun landscapePhoneShowsEpisodesBelowCompactHeaderAndSupportsDpad() = exercise(360, landscape = true)
+
+    private fun exercise(height: Int, landscape: Boolean = false) {
         val context = ins.targetContext
         val series = MediaItem("phone-viewport-$height", "Phone viewport series $height", null, null,
             description = "A synopsis for checking the full artwork and the series information dialog.")
@@ -97,11 +99,11 @@ class ProviderSeriesPhoneViewportDeviceTest {
         try {
             ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
                 val phone = Configuration(LocalConfiguration.current).apply {
-                    screenWidthDp = 400; screenHeightDp = height; smallestScreenWidthDp = 400
-                    orientation = Configuration.ORIENTATION_PORTRAIT
+                    screenWidthDp = if (landscape) 800 else 400; screenHeightDp = height; smallestScreenWidthDp = 400
+                    orientation = if (landscape) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
                 }
                 CompositionLocalProvider(LocalConfiguration provides phone) {
-                    Box(Modifier.width(400.dp).height(height.dp).onGloballyPositioned {
+                    Box(Modifier.width(if (landscape) 800.dp else 400.dp).height(height.dp).onGloballyPositioned {
                         val b = it.boundsInWindow()
                         frame.set(Rect(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt()))
                     }) {
@@ -113,6 +115,27 @@ class ProviderSeriesPhoneViewportDeviceTest {
                 }
             } } }
             val density = context.resources.displayMetrics.density
+            if (landscape) {
+                await("Landscape series hero is ready") { find("Play latest") != null }
+                ins.setInTouchMode(true)
+                val rect = frame.get()
+                await("Compact landscape header leaves a complete episode visible") {
+                    owner("Phone pane episode 24")?.let { it.isVisibleToUser && rect.contains(bounds(it)) } == true
+                }
+                var pane = find("Phone pane episode 24")
+                while (pane != null && !pane.isScrollable) pane = pane.parent
+                assertNotNull("Landscape retains an independent episode list", pane)
+                assertTrue("Episodes use most of the landscape viewport", bounds(pane!!).height() >= rect.height() * .45f)
+                NavigationAuditEvidence.capture("provider-phone-landscape-episodes")
+                ins.setInTouchMode(false)
+                focus("Phone pane episode 24")
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Landscape D-pad reaches next episode") { focused("Phone pane episode 23") }
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Landscape episode activates once") { plays.size == 1 }
+                assertEquals("phone-pane-23", plays.single())
+                return
+            }
             fun alignedToolbar() = find("Season 1")?.let { bounds(it).top <= frame.get().top + (80 * density).roundToInt() } == true
             fun assertFullPane() {
                 var pane = find("Phone pane episode 24")

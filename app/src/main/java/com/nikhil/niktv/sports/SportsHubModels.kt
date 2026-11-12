@@ -8,6 +8,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 internal enum class SportsTab(val title: String) { EVENTS("Live Events"), CHANNELS("Sports"), CATEGORIES("Categories"), HIGHLIGHTS("Highlights") }
 
+internal val sportsMainTabs = listOf(SportsTab.EVENTS, SportsTab.CHANNELS, SportsTab.HIGHLIGHTS)
+
 @Serializable
 internal data class SportsFormat(val title: String, val webLink: String = "", val geo: String = "ALL")
 

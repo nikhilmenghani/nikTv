@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -151,6 +152,7 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
       Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val title = state.collections.firstOrNull { it.id == state.collectionId }?.title ?: "Highlights"
         val headerActions = buildList {
+            add(SportsHeaderAction("Categories", Icons.Default.Category) { selectTab(SportsTab.CATEGORIES) })
             if (state.configured) add(SportsHeaderAction("Search highlights", Icons.Default.Search, searchVisible) {
                 searchVisible = !searchVisible; if (!searchVisible) query = ""
             })
@@ -159,9 +161,9 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
         }
         SportsHeader(title, { if (state.collectionId != null) selectCollection(null) else onClose() },
             headerActions, backFocus, menuFocus) { modifier ->
-            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                SportsTab.entries.forEach { tab ->
-                    DiscoveryAction(tab.title, selected = tab == SportsTab.HIGHLIGHTS,
+            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                sportsMainTabs.forEach { tab ->
+                    DiscoveryAction(tab.title, horizontalPadding = 12.dp, selected = tab == SportsTab.HIGHLIGHTS,
                         modifier = Modifier.focusRequester(tabFocus.getValue(tab))
                             .onPreviewKeyEvent {
                                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown &&
@@ -316,7 +318,7 @@ private fun CricketHighlightTile(video: CricketHighlight, preparing: Boolean, mo
                     color = Color.White, style = MaterialTheme.typography.labelSmall)
             }
             Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (preparing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Default.PlayArrow, contentDescription = null, Modifier.size(22.dp), tint = Color.White)
                 Text(video.title, color = Color.White,

@@ -10,6 +10,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -42,6 +44,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -60,6 +64,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.focused
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -79,9 +85,9 @@ import kotlinx.coroutines.launch
 
 private val searchVisibleTypes = listOf(
     SearchContentType.ALL,
-    SearchContentType.LIVE_TV,
     SearchContentType.SERIES,
-    SearchContentType.MOVIES
+    SearchContentType.MOVIES,
+    SearchContentType.LIVE_TV
 )
 
 private val SearchBackground = Color(0xFF090B10)
@@ -152,6 +158,7 @@ internal fun DiscoverySearchContent(
     val submitSearchRequester = remember { FocusRequester() }
     val categoryRequester = remember { FocusRequester() }
     val contentRequester = remember { FocusRequester() }
+    var resultsEntryRequest by remember { mutableIntStateOf(0) }
     val providerSearchRequester = remember { FocusRequester() }
     val typeRequesters = remember { searchVisibleTypes.associateWith { FocusRequester() } }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -160,12 +167,9 @@ internal fun DiscoverySearchContent(
     val isTv = context.isSearchTvLikeDevice(configuration)
     val wideControls = !configuration.usesPhoneLayout(isTv) && configuration.screenWidthDp >=
         (if (configuration.usesShortWideLayout(isTv)) 480 else 600) * configuration.fontScale.coerceAtLeast(1f)
-    val inlineFilters = configuration.screenWidthDp >= 900 * configuration.fontScale.coerceAtLeast(1f)
-    val controlHeight = if (isTv) 36.dp else 48.dp
-    val queryActionSize = if (isTv) 36.dp else 44.dp
+    val controlHeight = searchControlHeight()
     val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
         androidx.compose.ui.platform.LocalInputModeManager.current.inputMode == androidx.compose.ui.input.InputMode.Keyboard
-    var resultsFocused by remember(state.searchQuery, state.searchType, state.searchCategoryId) { mutableStateOf(false) }
 
     LaunchedEffect(state.searchLocalLoading, state.searchServerLoading) {
         if (state.searchLocalLoading && !state.searchServerLoading) {
@@ -253,15 +257,11 @@ internal fun DiscoverySearchContent(
         recentRemovalFocus = null
     }
     val hasContentFocusTarget =
-        (state.searchType == SearchContentType.ALL && state.searchQuery.isNotBlank()) ||
         state.searchResults.isNotEmpty() ||
             state.searchHasMore ||
             (state.searchQuery.isBlank() && visibleRecentSearches.isNotEmpty())
     val belowFiltersRequester = if (hasContentFocusTarget) contentRequester else FocusRequester.Cancel
-    val firstFilterRequester = if (state.searchScopeLocked) categoryRequester
-        else typeRequesters.getValue(searchVisibleTypes.first())
-    val typeBelowSearch = if (inlineFilters) belowFiltersRequester
-        else if (state.searchScopeLocked) categoryRequester else selectedTypeRequester
+    val typeBelowSearch = if (state.searchScopeLocked) categoryRequester else selectedTypeRequester
 
 
     fun activateSearchField() {
@@ -330,74 +330,47 @@ internal fun DiscoverySearchContent(
         }
     }
 
-    LaunchedEffect(
-        state.searchResults.firstOrNull()?.searchIdentity(state.searchType),
-        state.searchLocalLoading,
-        state.searchServerLoading,
-        state.searchUsedServer,
-        searchEditing,
-        headerHasFocus
-    ) {
-        if (state.searchType != SearchContentType.ALL && !resultsFocused && remoteNavigationActive && !headerHasFocus && !searchEditing && !queryFocused && !restoreQueryFocus &&
-            !state.searchLocalLoading && !state.searchServerLoading &&
-            state.searchResults.isNotEmpty()
-        ) {
-            searchEditing = false
-            keyboard?.hide()
-            repeat(6) { attempt ->
-                withFrameNanos { }
-                if (runCatching { contentRequester.requestFocus() }.getOrDefault(false)) {
-                    resultsFocused = true
-                    return@LaunchedEffect
-                }
-                kotlinx.coroutines.delay(40L * (attempt + 1))
-            }
-        }
-    }
-
     @Composable
     fun SearchFilters(modifier: Modifier = Modifier) {
-        @Composable
-        fun CategoryControl(modifier: Modifier) {
+        @Composable fun CategoryControl(modifier: Modifier) {
             SearchCategoryButton(selectedCategoryTitle, onClick = {
                 restoreCategoryFocus = true
                 categoryPickerOpen = true
             }, modifier = modifier.focusRequester(categoryRequester).focusProperties {
-                up = if (wideControls) searchRequester else selectedTypeRequester
-                left = if (wideControls && !state.searchScopeLocked)
-                    typeRequesters.getValue(searchVisibleTypes.last()) else FocusRequester.Default
+                up = if (wideControls || state.searchScopeLocked) searchRequester else selectedTypeRequester
+                left = if (state.searchScopeLocked) searchRequester else if (wideControls) typeRequesters.getValue(searchVisibleTypes.last()) else selectedTypeRequester
                 down = if (state.searchQuery.isNotBlank()) providerSearchRequester else belowFiltersRequester
                 right = FocusRequester.Cancel
             })
         }
         Column(modifier) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                if (!state.searchScopeLocked) searchVisibleTypes.forEachIndexed { index, type ->
-                    val width = when (type) {
-                        SearchContentType.ALL -> 48
-                        SearchContentType.LIVE_TV -> 72
-                        else -> 64
-                    } * configuration.fontScale.coerceAtLeast(1f)
-                    SearchScopeButton(type, state.searchType == type, { setType(type) },
-                        (if (wideControls) Modifier.width(width.dp) else Modifier.weight(1f))
-                            .focusRequester(typeRequesters.getValue(type)).focusProperties {
-                                up = if (inlineFilters) headerFocusRequester ?: searchRequester else searchRequester
-                                down = if (wideControls) belowFiltersRequester else categoryRequester
-                                left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)]
-                                    ?: if (inlineFilters) submitSearchRequester else FocusRequester.Default
-                                right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)]
-                                    ?: if (wideControls) categoryRequester else FocusRequester.Cancel
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (!state.searchScopeLocked) Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    searchVisibleTypes.forEachIndexed { index, type ->
+                        val count = when {
+                            state.searchQuery.isBlank() -> null
+                            state.searchType == SearchContentType.ALL -> if (type == SearchContentType.ALL) state.searchResults.size
+                                else state.searchResults.count { it.searchResultType == type }
+                            state.searchType == type -> state.searchResults.size
+                            else -> null
+                        }
+                        SearchScopeButton(type, state.searchType == type, { setType(type) }, count,
+                            Modifier.focusRequester(typeRequesters.getValue(type)).focusProperties {
+                                up = searchRequester
+                                down = if (!wideControls) categoryRequester else if (state.searchQuery.isNotBlank()) providerSearchRequester else belowFiltersRequester
+                                left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: searchRequester
+                                right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)] ?: categoryRequester
                             })
+                    }
                 }
                 if (wideControls || state.searchScopeLocked) CategoryControl(
-                    if (inlineFilters) Modifier.width((164 * configuration.fontScale.coerceAtLeast(1f)).dp)
-                    else Modifier.weight(1f))
+                    if (state.searchScopeLocked) Modifier.weight(1f) else Modifier.widthIn(max = 180.dp))
             }
-            if (!wideControls && !state.searchScopeLocked) {
-                Spacer(Modifier.height(6.dp))
-                CategoryControl(Modifier.fillMaxWidth())
+            if (!wideControls && !state.searchScopeLocked) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                CategoryControl(Modifier.widthIn(max = 220.dp))
             }
+            HorizontalDivider(color = SearchOutline)
         }
     }
 
@@ -587,26 +560,27 @@ internal fun DiscoverySearchContent(
                             }
                         )
 
-                        if (state.searchQuery.isNotEmpty()) {
-                            SearchIconControl("Clear search", Icons.Default.Close,
-                                onClick = {
-                                    searchEditing = false
-                                    keyboard?.hide()
-                                    setQuery("")
-                                    restoreQueryFocus = true
-                                },
-                                modifier = Modifier
-                                    .width(queryActionSize)
-                                    .focusRequester(clearSearchRequester)
-                                    .focusProperties {
-                                        left = searchRequester
-                                        right = submitSearchRequester
-                                        down = typeBelowSearch
-                                    }
-                            )
-                        }
+
 
                     }
+                }
+                if (state.searchQuery.isNotEmpty()) {
+                    SearchIconControl("Clear search", Icons.Default.Close,
+                        onClick = {
+                            searchEditing = false
+                            keyboard?.hide()
+                            setQuery("")
+                            restoreQueryFocus = true
+                        },
+                        modifier = Modifier
+                            .width(controlHeight)
+                            .focusRequester(clearSearchRequester)
+                            .focusProperties {
+                                left = searchRequester
+                                right = submitSearchRequester
+                                down = typeBelowSearch
+                            }
+                    )
                 }
                 SearchIconControl("Search", Icons.AutoMirrored.Filled.ArrowForward,
                     selected = state.searchQuery.isNotBlank() && !state.searchServerLoading,
@@ -616,19 +590,16 @@ internal fun DiscoverySearchContent(
                         search(false)
                     }, modifier = Modifier.width(controlHeight).focusRequester(submitSearchRequester).focusProperties {
                         left = if (state.searchQuery.isNotEmpty()) clearSearchRequester else searchRequester
-                        right = if (inlineFilters) firstFilterRequester else FocusRequester.Cancel
+                        right = FocusRequester.Cancel
                         down = typeBelowSearch
                         headerFocusRequester?.let { up = it }
                     })
 
             }
-            if (inlineFilters) SearchFilters(Modifier.width(IntrinsicSize.Max))
         }
 
-        if (!inlineFilters) {
-            Spacer(Modifier.height(6.dp))
-            SearchFilters()
-        }
+        Spacer(Modifier.height(6.dp))
+        SearchFilters()
 
         Spacer(Modifier.height(4.dp))
 
@@ -659,6 +630,12 @@ internal fun DiscoverySearchContent(
                 }
                 SearchProviderAction(state, { search(true) }, Modifier.height(controlHeight)
                         .focusRequester(providerSearchRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (event.key == Key.DirectionDown && state.searchResults.isNotEmpty()) {
+                                if (event.type == KeyEventType.KeyDown) resultsEntryRequest++
+                                true
+                            } else false
+                        }
                         .focusProperties {
                             up = categoryRequester
                             left = submitSearchRequester
@@ -680,19 +657,6 @@ internal fun DiscoverySearchContent(
             Text(message, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 4.dp))
-        }
-        if (!wideControls && state.searchQuery.isNotBlank()) {
-            Box(Modifier.fillMaxWidth().height(24.dp)) {
-                if (state.searchServerLoading || showLocalSearchProgress) SearchActivityCard(
-                    title = state.searchActivityTitle
-                        ?: if (state.searchServerLoading) "Searching IPTV provider" else "Searching this device",
-                    detail = state.searchActivityDetail
-                        ?: if (state.searchServerLoading) "Waiting for provider results" else "Checking saved titles on this device",
-                    progress = state.searchActivityProgress,
-                    providerSearch = state.searchServerLoading
-                )
-            }
-            Spacer(Modifier.height(4.dp))
         }
 
         /*
@@ -753,7 +717,6 @@ internal fun DiscoverySearchContent(
         }
         if (
             state.searchQuery.isNotBlank() &&
-            state.searchType != SearchContentType.ALL &&
             state.searchResults.isEmpty() &&
             !state.searchHasMore &&
             !state.searchLocalLoading &&
@@ -812,8 +775,7 @@ internal fun DiscoverySearchContent(
             }
         }
 
-        if (state.searchResults.isNotEmpty() || state.searchHasMore ||
-            (state.searchType == SearchContentType.ALL && state.searchQuery.isNotBlank())) {
+        if (state.searchResults.isNotEmpty() || state.searchHasMore) {
             /*
              * SEARCH_RESULTS_ADAPTIVE_V4
              *
@@ -829,7 +791,8 @@ internal fun DiscoverySearchContent(
                 loadMore = loadMore,
                 toggleFavorite = toggleFavorite,
                 firstItemRequester = contentRequester,
-                topRequester = submitSearchRequester,
+                entryRequest = resultsEntryRequest,
+                topRequester = if (state.searchScopeLocked) categoryRequester else selectedTypeRequester,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -850,6 +813,31 @@ internal fun DiscoverySearchContent(
 }
 
 @Composable
+private fun searchControlHeight(): androidx.compose.ui.unit.Dp {
+    val configuration = LocalConfiguration.current
+    val tv = LocalContext.current.isSearchTvLikeDevice(configuration)
+    return if (tv) 36.dp else if (configuration.usesShortWideLayout(tv)) 40.dp else 48.dp
+}
+
+@Composable
+private fun SearchQuietControl(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit
+) {
+    val isTv = LocalContext.current.isSearchTvLikeDevice(LocalConfiguration.current)
+    val shape = RoundedCornerShape(6.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(onClick = onClick, color = if (focused) SearchRaised else Color.Transparent,
+        shape = shape, modifier = modifier.height(searchControlHeight())
+            .onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape)) {
+        Row(Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center, content = content)
+    }
+}
+
+@Composable
 private fun SearchControl(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -859,9 +847,9 @@ private fun SearchControl(
 ) {
     val isTv = LocalContext.current.isSearchTvLikeDevice(LocalConfiguration.current)
     val shape = RoundedCornerShape(10.dp)
-    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides if (isTv) 0.dp else 48.dp) {
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides if (isTv) 0.dp else searchControlHeight()) {
         Surface(onClick = onClick,
-            modifier = modifier.height(if (isTv) 36.dp else 48.dp).remoteFocusFrame(shape),
+            modifier = modifier.height(searchControlHeight()).remoteFocusFrame(shape),
             shape = shape, color = if (selected) SearchAccent else SearchSurface,
             border = BorderStroke(1.dp, if (selected) SearchAccent else SearchOutline)) {
             Row(Modifier.fillMaxHeight().padding(contentPadding),
@@ -886,7 +874,9 @@ private fun SearchIconControl(
 
 @Composable
 private fun SearchProviderAction(state: NikTvState, search: () -> Unit, modifier: Modifier = Modifier) {
-    SearchControl({ if (!state.searchServerLoading && !state.searchLocalLoading) search() }, modifier) {
+    SearchQuietControl({ if (!state.searchServerLoading && !state.searchLocalLoading) search() }, modifier) {
+        Icon(Icons.Default.Refresh, null, Modifier.size(16.dp), tint = SearchMuted)
+        Spacer(Modifier.width(6.dp))
         Text(when {
             state.searchServerLoading -> "Searching provider…"
             state.searchLocalLoading -> "Checking cache…"
@@ -979,29 +969,36 @@ private fun SyncProgressCard(
 }
 
 @Composable
-private fun SearchScopeButton(
-    type: SearchContentType,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    SearchControl(onClick, modifier, selected) {
-        Text(type.title, color = if (selected) Color.White else SearchMuted,
-            style = MaterialTheme.typography.labelMedium, maxLines = 1,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium)
+private fun SearchScopeButton(type: SearchContentType, selected: Boolean, onClick: () -> Unit,
+    count: Int?, modifier: Modifier = Modifier) {
+    val isTv = LocalContext.current.isSearchTvLikeDevice(LocalConfiguration.current)
+    val shape = RoundedCornerShape(6.dp)
+    Surface(onClick = onClick, color = Color.Transparent, shape = shape,
+        modifier = modifier.height(searchControlHeight()).remoteFocusFrame(shape)
+            .semantics { this.selected = selected; contentDescription = "Search type: ${type.title}" }) {
+        Column(Modifier.width(IntrinsicSize.Max), horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(Modifier.weight(1f).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(type.title, color = if (selected) Color.White else SearchMuted,
+                    style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium)
+                count?.let { Text(it.toString(), color = SearchMuted, style = MaterialTheme.typography.labelSmall) }
+            }
+            Box(Modifier.fillMaxWidth().height(3.dp).background(if (selected) SearchAccent else Color.Transparent))
+        }
     }
 }
 
 @Composable
 private fun SearchCategoryButton(title: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    SearchControl(onClick, modifier) {
-        Icon(Icons.Default.FilterAlt, null, Modifier.size(16.dp), tint = SearchAccent)
+    SearchQuietControl(onClick, modifier) {
+        Icon(Icons.Default.Tune, null, Modifier.size(16.dp), tint = SearchMuted)
         Spacer(Modifier.width(6.dp))
         Text(title, Modifier.weight(1f), color = Color.White,
             style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.width(4.dp))
-        Icon(Icons.Default.ChevronRight, "Choose category", Modifier.size(20.dp), tint = SearchMuted)
+        Icon(Icons.Default.ExpandMore, "Choose category", Modifier.size(20.dp), tint = SearchMuted)
     }
 }
 
@@ -1354,6 +1351,7 @@ private fun SearchResultsContent(
     loadMore: () -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     firstItemRequester: FocusRequester,
+    entryRequest: Int,
     topRequester: FocusRequester,
     modifier: Modifier = Modifier
 ) {
@@ -1361,39 +1359,11 @@ private fun SearchResultsContent(
     val configuration = LocalConfiguration.current
     val phoneLayout = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration,
         LocalContext.current.isTvLikeDevice(configuration))
-    var resultTab by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(SearchContentType.SERIES) }
-    var resultTabChosen by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(false) }
-    LaunchedEffect(all, state.searchResults, resultTabChosen) {
-        if (all && !resultTabChosen && state.searchResults.none { it.searchResultType == resultTab }) {
-            globalSearchTypes.firstOrNull { type -> state.searchResults.any { it.searchResultType == type } }
-                ?.let { resultTab = it }
-        }
-    }
-    val tabRequesters = remember { globalSearchTypes.associateWith { FocusRequester() } }
-    val resultRequester = if (all) remember { FocusRequester() } else firstItemRequester
+    val resultRequester = firstItemRequester
     val denseResults = !phoneLayout
-    val posterGrid = !denseResults &&
-        (if (all) resultTab else state.searchType) in setOf(SearchContentType.MOVIES, SearchContentType.SERIES)
-    val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
-    val columns = when {
-        denseResults -> 2
-        liveGrid -> 2
-        !posterGrid -> 1
-        isTv -> 6
-        screenWidthDp >= 1200 -> 5
-        screenWidthDp >= 840 -> 4
-        else -> 3
-    }
-    val entries = remember(state.searchResults, state.searchType, resultTab) {
-        buildList {
-            if (all) {
-                state.searchResults.filter { it.searchResultType == resultTab }.forEach {
-                    add(SearchResultEntry(it.searchIdentity(state.searchType), media = it))
-                }
-            } else state.searchResults.forEach {
-                add(SearchResultEntry(it.searchIdentity(state.searchType), media = it))
-            }
-        }
+    val columns = if (phoneLayout) 1 else 2
+    val entries = remember(state.searchResults, state.searchType) {
+        state.searchResults.map { SearchResultEntry(it.searchIdentity(state.searchType), media = it) }
     }
     val results = entries.mapNotNull { it.media }
     val keys = results.map { it.searchIdentity(state.searchType) }
@@ -1401,17 +1371,10 @@ private fun SearchResultsContent(
     val lazyIndices = entries.withIndex().associate { it.value.key to it.index }
     val footer = state.searchHasMore || state.searchUsedServer || (all && results.isEmpty())
     val footerKey = "search-pagination"
-    val scopedGridState = rememberLazyGridState()
-    val seriesGridState = rememberLazyGridState()
-    val moviesGridState = rememberLazyGridState()
-    val channelsGridState = rememberLazyGridState()
-    val gridState = if (!all) scopedGridState else when (resultTab) {
-        SearchContentType.SERIES -> seriesGridState
-        SearchContentType.MOVIES -> moviesGridState
-        else -> channelsGridState
-    }
+    val gridState = rememberLazyGridState()
+    LaunchedEffect(state.searchType, state.searchQuery, state.searchCategoryId) { gridState.scrollToItem(0) }
     PrefetchCatalogPage(
-        scope = "search:${state.session?.profile?.cacheKey()}:${state.searchQuery}:${state.searchType}:${state.searchCategoryId}:$resultTab",
+        scope = "search:${state.session?.profile?.cacheKey()}:${state.searchQuery}:${state.searchType}:${state.searchCategoryId}",
         ids = keys,
         enabled = state.searchHasMore && !state.searchLocalLoading,
         loading = state.searchServerLoading,
@@ -1423,10 +1386,10 @@ private fun SearchResultsContent(
     val scope = rememberCoroutineScope()
     val requesters = remember(state.searchType, state.searchQuery, state.searchCategoryId) { mutableMapOf<String, FocusRequester>() }
     val footerRequester = remember { FocusRequester() }
-    var footerFocused by remember(resultTab) { mutableStateOf(false) }
+    var footerFocused by remember(state.searchType) { mutableStateOf(false) }
     var navigationJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    LaunchedEffect(resultTab) { navigationJob?.cancel() }
-    var pendingPage by remember(state.searchType, state.searchQuery, state.searchCategoryId, resultTab) {
+    LaunchedEffect(state.searchType) { navigationJob?.cancel() }
+    var pendingPage by remember(state.searchType, state.searchQuery, state.searchCategoryId) {
         mutableStateOf<Pair<Int, Set<String>>?>(null)
     }
     fun requesterAt(index: Int): FocusRequester = when {
@@ -1435,7 +1398,7 @@ private fun SearchResultsContent(
         else -> requesters.getOrPut(keys[index]) { FocusRequester() }
     }
     fun moveTo(index: Int) {
-        if (index < 0) { runCatching { (if (all) tabRequesters.getValue(resultTab) else topRequester).requestFocus() }; return }
+        if (index < 0) { runCatching { topRequester.requestFocus() }; return }
         if (index > results.size || (index == results.size && !footer)) return
         val requester = requesterAt(index)
         val lazyIndex = if (index == results.size) entries.size else lazyIndices.getValue(keys[index])
@@ -1447,6 +1410,9 @@ private fun SearchResultsContent(
                 if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
             }
         }
+    }
+    LaunchedEffect(entryRequest) {
+        if (entryRequest > 0 && results.isNotEmpty()) moveTo(0)
     }
     fun navigation(index: Int): Modifier = Modifier.onPreviewKeyEvent { event ->
         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -1486,44 +1452,6 @@ private fun SearchResultsContent(
         }
     }
     Column(modifier.fillMaxWidth()) {
-    if (all) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            globalSearchTypes.forEachIndexed { index, type ->
-                val selected = type == resultTab
-                val count = state.searchResults.count { it.searchResultType == type }
-                val shape = RoundedCornerShape(8.dp)
-                Surface(
-                    onClick = { resultTabChosen = true; resultTab = type },
-                    shape = shape,
-                    color = if (selected) SearchAccent.copy(alpha = 0.2f) else SearchSurface,
-                    border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) SearchAccent else SearchOutline),
-                    modifier = Modifier.weight(1f).height(if (isTv) 36.dp else 48.dp)
-                        .then(if (selected) Modifier.focusRequester(firstItemRequester) else Modifier)
-                        .focusRequester(tabRequesters.getValue(type))
-                        .onFocusChanged { if (it.isFocused) { resultTabChosen = true; resultTab = type } }
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionLeft, Key.DirectionRight -> {
-                                    val target = index + if (event.key == Key.DirectionLeft) -1 else 1
-                                    if (target in globalSearchTypes.indices) {
-                                        tabRequesters.getValue(globalSearchTypes[target]).requestFocus()
-                                        true
-                                    } else event.key == Key.DirectionRight
-                                }
-                                Key.DirectionDown -> { moveTo(0); true }
-                                Key.DirectionUp -> { topRequester.requestFocus(); true }
-                                else -> false
-                            }
-                        }.remoteFocusFrame(shape)
-                ) {
-                    Box(Modifier.fillMaxSize().padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
-                        Text("${type.title} · $count", color = Color.White,
-                            style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
-        }
-    }
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = gridState,
@@ -1554,9 +1482,6 @@ private fun SearchResultsContent(
                 if (type == SearchContentType.LIVE_TV) {
                     ModernSearchLiveResultRow(item, label, state.isSearchFavorite(item), toggle,
                         { openResult(item) }, isTv, itemModifier)
-                } else if (posterGrid) {
-                    ModernSearchPosterResultCard(item, type, label, state.isSearchFavorite(item), toggle,
-                        { openResult(item) }, isTv, itemModifier)
                 } else {
                     ModernSearchMediaResultRow(item, type, label, state.isSearchFavorite(item), toggle,
                         { openResult(item) }, isTv, itemModifier)
@@ -1569,8 +1494,8 @@ private fun SearchResultsContent(
                 hasMore = state.searchHasMore,
                 idleLabel = when {
                     all && state.searchLocalLoading -> "Checking local indexes…"
-                    all && !state.searchUsedServer && results.isEmpty() -> "No cached ${resultTab.title.lowercase()} matches · Search provider for more"
-                    all && state.searchHasMore -> "Load more across all tabs"
+                    all && !state.searchUsedServer && results.isEmpty() -> "No cached matches · Search provider for more"
+                    all && state.searchHasMore -> "Load more results"
                     else -> null
                 },
                 onClick = {
@@ -1618,13 +1543,7 @@ private fun SearchLoadMoreButton(
     idleLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
-    NikTvSecondaryActionButton(
-        onClick = { if (!loading && hasMore) onClick() },
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .remoteFocusFrame()
-    ) {
+    SearchQuietControl(onClick = { if (!loading && hasMore) onClick() }, modifier = modifier) {
         if (loading) {
             CircularProgressIndicator(
                 Modifier.size(20.dp),
@@ -1662,14 +1581,14 @@ private fun ModernSearchLiveResultRow(
         Surface(
             modifier = modifier
                 .fillMaxWidth()
+                .drawBehind { drawLine(SearchOutline, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }
                 .remoteFocusFrame(shape)
                 .remoteCombinedClickable(
                     onClick = onClick,
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
-            color = SearchSurface,
-            border = BorderStroke(1.dp, SearchOutline)
+            color = Color.Transparent
         ) {
             Row(
                 Modifier.padding(if (dense) 6.dp else 10.dp),
@@ -1827,14 +1746,14 @@ private fun ModernSearchMediaResultRow(
         Surface(
             modifier = modifier
                 .fillMaxWidth()
+                .drawBehind { drawLine(SearchOutline, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }
                 .remoteFocusFrame(shape)
                 .remoteCombinedClickable(
                     onClick = onClick,
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
-            color = SearchSurface,
-            border = BorderStroke(1.dp, SearchOutline)
+            color = Color.Transparent
         ) {
             Row(
                 Modifier.padding(if (dense) 6.dp else 10.dp),
@@ -1843,7 +1762,7 @@ private fun ModernSearchMediaResultRow(
             ) {
                 Box(
                     Modifier
-                        .width(if (dense) 32.dp else 78.dp)
+                        .width(if (dense) 32.dp else 48.dp)
                         .aspectRatio(2f / 3f)
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xFF292D34)),
@@ -1899,13 +1818,8 @@ private fun ModernSearchMediaResultRow(
                     categoryTitle
                         ?.takeIf { it.isNotBlank() }
                         ?.let {
-                            if (dense) Text(it, color = SearchMuted,
-                                style = MaterialTheme.typography.labelSmall,
+                            Text(it, color = SearchMuted, style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            else SearchMetadataBadge(
-                                it,
-                                Color(0xFF34383F)
-                            )
                         }
 
                     description?.takeUnless { dense }?.let {
@@ -1913,7 +1827,7 @@ private fun ModernSearchMediaResultRow(
                             it,
                             color = Color(0xFFB8BCC4),
                             style = MaterialTheme.typography.bodySmall,
-                            maxLines = if (isTv) 1 else 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

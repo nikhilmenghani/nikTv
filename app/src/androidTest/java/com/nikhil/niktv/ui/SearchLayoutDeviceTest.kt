@@ -11,6 +11,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.boundsInWindow
@@ -30,7 +32,7 @@ class SearchLayoutDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
 
-    @Test fun allSearchShowsPopulatedTabAndPreservesExplicitEmptyTabSelection() {
+    @Test fun underlineTabsShowMixedResultsAndKeepSearchActionsSeparate() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
         val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
@@ -41,7 +43,7 @@ class SearchLayoutDeviceTest {
         val state = mutableStateOf(NikTvState(savedProfile = profile, restoring = false,
             session = PortalSession(profile, "fixture", "https://search.invalid", "", "", ""),
             searchOpen = true, searchQuery = "fixture", searchType = SearchContentType.ALL,
-            searchUsedServer = true, searchServerLoading = true))
+            searchUsedServer = true, searchResults = listOf(movie)))
         val query = AtomicReference<FocusRequester>()
         val opened = AtomicReference<MediaItem>()
         try {
@@ -50,20 +52,21 @@ class SearchLayoutDeviceTest {
                 DiscoverySearchScreen(state.value, {}, {}, {}) {
                     val queryFocus = LocalDiscoverySearchQueryFocus.current
                     SideEffect { query.set(queryFocus) }
-                    DiscoverySearchContent(state.value, {}, {}, {}, {}, {}, {}, {}, opened::set, {}, {},
+                    DiscoverySearchContent(state.value, {},
+                        setType = { type -> state.value = state.value.copy(searchType = type,
+                            searchResults = if (type in listOf(SearchContentType.ALL, SearchContentType.MOVIES)) listOf(movie) else emptyList()) },
+                        setCategory = {}, setQuery = { state.value = state.value.copy(searchQuery = it) },
+                        search = {}, useRecent = {}, deleteRecent = {}, openResult = opened::set,
+                        loadMore = {}, toggleFavorite = {},
                         headerFocusRequester = LocalDiscoverySearchHeaderFocus.current, queryFocusRequester = queryFocus)
                 }
             } } }
-            await("Initial result tabs are visible") { label("Movies · 0") != null }
-            instrumentation.runOnMainSync { state.value = state.value.copy(searchResults = listOf(movie), searchServerLoading = false) }
-            await("A movie-only search displays the matching tile automatically") { label(movie.title) != null }
-            NavigationAuditEvidence.capture("all-search-auto-movie-tab")
-            assertTrue(clickable(label("Series · 0")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
-            await("User can inspect the empty Series tab") { label(movie.title) == null }
-            instrumentation.runOnMainSync { state.value = state.value.copy(searchResults = listOf(movie, movie.copy(id = "movie-two", title = "Second movie fixture"))) }
-            await("More results do not override an explicit tab choice") { label("Movies · 2") != null && label(movie.title) == null }
-            assertTrue(clickable(label("Movies · 2")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
-            await("Movies remains selectable") { label(movie.title) != null }
+            await("One filter row and mixed results appear") { typeNode("Movies") != null && label(movie.title) != null }
+            assertNull("The duplicate boxed result tabs are removed", label("Movies · 1"))
+            assertTrue(clickable(typeNode("Series")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            await("Series scopes the provider results") { label(movie.title) == null }
+            assertTrue(clickable(typeNode("Movies")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            await("Movies remain selectable from the same row") { label(movie.title) != null }
             instrumentation.setInTouchMode(false)
             instrumentation.runOnMainSync { query.get().requestFocus() }
             await("Query accepts D-pad focus") { focused("fixture") }
@@ -71,19 +74,16 @@ class SearchLayoutDeviceTest {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
                 await("Right reaches $target") { focused(target) }
             }
-            val stackedScopes = bounds(label("All")!!).top > bounds(label("fixture")!!).bottom
-            val stackedCategory = bounds(label("All categories")!!).top > bounds(label("All")!!).bottom
-            val path = if (!stackedScopes) listOf("Movies · 2")
-                else if (!stackedCategory) listOf("All", "Movies · 2")
-                else listOf("All", "All categories", "Search provider again", "Movies · 2")
-            for (target in path) {
+            val queryBounds = bounds(label("fixture")!!)
+            val clearBounds = bounds(find(root()) { it.contentDescription?.toString() == "Clear search" }!!)
+            assertTrue("Clear is outside the query field", clearBounds.left > queryBounds.right)
+            for (target in listOf("Search type: Movies", "Search provider again", movie.title)) {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-                await("Down follows the visible layout to $target") { focused(target) }
+                await("Down reaches $target") { focused(target) }
             }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down enters the matching movie") { focused(movie.title) }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Center opens that exact movie") { opened.get()?.id == movie.id }
+            await("Center opens the exact movie") { opened.get()?.id == movie.id }
+            screenshot(host, "underline-search-mixed-results")
         } finally {
             instrumentation.runOnMainSync { host.finish() }
             currentHost = null
@@ -134,8 +134,8 @@ class SearchLayoutDeviceTest {
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Arrow receives focus beside the query") { focused("Search") }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Scope receives focus") { focused("All") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Scope receives focus") { focused("Search type: All") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("History receives focus") { focused("Recent fixture 1") }
             for (index in 2..8) {
@@ -213,7 +213,7 @@ class SearchLayoutDeviceTest {
                         val queryFocus = LocalDiscoverySearchQueryFocus.current
                         SideEffect { query.set(queryFocus) }
                         DiscoverySearchContent(state.value, {},
-                            setType = { state.value = state.value.copy(searchType = it) }, setCategory = {},
+                            setType = { type -> state.value = state.value.copy(searchType = type, searchResults = if (type == SearchContentType.ALL) entries else entries.filter { it.searchResultType == type }) }, setCategory = {},
                             setQuery = { state.value = state.value.copy(searchQuery = it) },
                             search = { searches.incrementAndGet() }, useRecent = {}, deleteRecent = {},
                             openResult = { openedResult.set(it) }, loadMore = {}, toggleFavorite = {},
@@ -235,9 +235,7 @@ class SearchLayoutDeviceTest {
                     android.app.UiAutomation.ROTATION_FREEZE_0 else android.app.UiAutomation.ROTATION_FREEZE_90)
                 await("Search is visible in $name") {
                     host.hasWindowFocus() && host.resources.configuration.orientation == expected &&
-                        body.get() != null && scrollable() != null && find(root()) {
-                            it.text?.contains("Categories 1–3 of 77") == true
-                        } != null
+                        body.get() != null && scrollable() != null && label("Searching provider…") != null
                 }
                 stableBounds()
                 val loading = bounds(scrollable()!!)
@@ -254,7 +252,7 @@ class SearchLayoutDeviceTest {
                 stableBounds()
                 assertEquals("Loading must not push results down", loading.top, bounds(scrollable()!!).top)
                 for (type in globalSearchTypes) {
-                    assertTrue(clickable(label("${type.title} · 60")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                    assertTrue(clickable(typeNode(type.title)!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
                     stableBounds()
                     val count = visibleRecords("${type.title} fixture ")
                     instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream",
@@ -263,15 +261,19 @@ class SearchLayoutDeviceTest {
                         count >= if (name == "landscape") 12 else 24)
                     screenshot(host, "compact-search-$name-${type.name.lowercase()}-records")
                 }
-                assertTrue(clickable(label("Series · 60")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                assertTrue(clickable(typeNode("Series")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 stableBounds()
-                val action = bounds(label("Search provider again")!!)
+                val action = bounds(clickable(label("Search provider again")!!))
                 val firstVisible = find(root()) { it.isVisibleToUser && it.text?.startsWith("Series fixture ") == true }
                     ?.text?.toString()
                 assertNotNull("A result is visible before scrolling", firstVisible)
                 assertTrue("Scroll action is supported", scrollable()!!.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))
                 await("Results scroll without moving controls") {
-                    label(firstVisible!!) == null && bounds(label("Search provider again")!!) == action
+                    val oldRow = label(firstVisible!!)
+                    val viewport = bounds(scrollable()!!)
+                    val scrolledAway = oldRow == null || !oldRow.isVisibleToUser ||
+                        bounds(oldRow).bottom <= viewport.top || bounds(oldRow).top >= viewport.bottom
+                    scrolledAway && bounds(clickable(label("Search provider again")!!)) == action
                 }
                 screenshot(host, "compact-search-$name-scrolled")
                 println("SEARCH_LAYOUT $name resultFraction=$proportion viewport=$loading body=${body.get()}")
@@ -286,12 +288,20 @@ class SearchLayoutDeviceTest {
                 instrumentation.runOnMainSync { query.get().requestFocus() }
                 focused("fixture")
             }
-            for (target in listOf("Clear search", "Search", "All", "Live TV", "Series", "Movies", "All categories")) {
+            for (target in listOf("Clear search", "Search")) {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
                 await("Right moves to $target") { focused(target) }
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider action is reachable beside the query") { focused("Search provider again") }
+            await("Down reaches the selected underline tab") { focused("Search type: Series") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Movies") { focused("Search type: Movies") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Live TV") { focused("Search type: Live TV") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches the category dropdown") { focused("All categories") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Provider action remains reachable") { focused("Search provider again") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Provider action activates exactly once") { searches.get() == 1 }
             assertEquals(1, searches.get())
@@ -301,7 +311,9 @@ class SearchLayoutDeviceTest {
                 await("Right returns to $target") { focused(target) }
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Arrow Down enters result tabs instead of the horizontal filters") { focused("Series · 60") }
+            await("Arrow Down enters the underline filters") { focused("Search type: Series") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Next Down reaches provider action") { focused("Search provider again") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Down enters the first result") { focused(entries.first { it.id == "SERIES-1" }.title) }
             for ((key, index) in listOf(KeyEvent.KEYCODE_DPAD_RIGHT to 2, KeyEvent.KEYCODE_DPAD_DOWN to 4,
@@ -319,6 +331,63 @@ class SearchLayoutDeviceTest {
         }
     }
 
+    @Test fun underlineFiltersNavigateOnPhoneAndTvLayouts() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val layout = mutableStateOf(0)
+        val state = mutableStateOf(NikTvState(searchOpen = true, searchQuery = "fixture", searchType = SearchContentType.ALL,
+            searchUsedServer = true, searchResults = listOf(MediaItem("series", "Series fixture", null, null,
+                searchResultType = SearchContentType.SERIES))))
+        val query = FocusRequester()
+        val opened = AtomicReference<MediaItem>()
+        try {
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme {
+                val configuration = Configuration(LocalConfiguration.current).apply {
+                    screenWidthDp = if (layout.value == 0) 390 else if (layout.value == 1) 960 else 800
+                    screenHeightDp = if (layout.value == 0) 844 else if (layout.value == 1) 540 else 360
+                    smallestScreenWidthDp = if (layout.value == 1) 540 else 390
+                    orientation = if (layout.value == 0) Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE
+                    uiMode = (uiMode and Configuration.UI_MODE_TYPE_MASK.inv()) or
+                        if (layout.value == 1) Configuration.UI_MODE_TYPE_TELEVISION else Configuration.UI_MODE_TYPE_NORMAL
+                }
+                CompositionLocalProvider(LocalConfiguration provides configuration) {
+                    Box(Modifier.width(if (layout.value == 0) 390.dp else if (layout.value == 1) 960.dp else 800.dp).height(if (layout.value == 2) 360.dp else 540.dp)) {
+                        DiscoverySearchContent(state.value, {}, {}, {}, {}, {}, {}, {}, opened::set, {}, {},
+                            queryFocusRequester = query)
+                    }
+                }
+            } } }
+            for (mode in 0..2) {
+                val isPhone = mode == 0
+                instrumentation.runOnMainSync { layout.value = mode; opened.set(null) }
+                await("Configured search appears") { typeNode("All") != null && label("Series fixture") != null }
+                instrumentation.runOnMainSync { query.requestFocus() }
+                await("Configured query focuses") { focused("fixture") }
+                for (target in listOf("Clear search", "Search")) {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("Configured Right reaches $target") { focused(target) }
+                }
+                val path = listOf("Search type: All") + (if (isPhone) listOf("All categories") else emptyList()) +
+                    listOf("Search provider again", "Series fixture")
+                for (target in path) {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                    await("Configured Down reaches $target") { focused(target) }
+                }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Configured result opens") { opened.get()?.id == "series" }
+                screenshot(host, if (mode == 0) "underline-search-phone" else if (mode == 1) "underline-search-tv" else "underline-search-phone-landscape")
+            }
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            instrumentation.setInTouchMode(true)
+            currentHost = null
+        }
+    }
+
     private fun root(): AccessibilityNodeInfo? {
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
         return instrumentation.uiAutomation.rootInActiveWindow
@@ -329,6 +398,7 @@ class SearchLayoutDeviceTest {
         for (index in 0 until node.childCount) find(node.getChild(index), predicate)?.let { return it }
         return null
     }
+    private fun typeNode(title: String) = find(root()) { it.contentDescription?.toString() == "Search type: $title" }
     private fun label(text: String) = find(root()) { it.text?.toString() == text }
     private fun scrollable(): AccessibilityNodeInfo? {
         // The narrow navigation header also has a horizontal scroll container.
