@@ -55,8 +55,8 @@ internal fun DiscoveryMatchScreen(app: NikTvState, close: () -> Unit,
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).safeDrawingPadding()
         .initialFocusEntry(if (candidates.isEmpty()) header else first, remote)) {
         if (phone) DiscoveryPhoneNavigation(surface, header, contentEntry, close, selectSurface, navigate,
-            menu, { menu = it }, profile = app.savedProfile?.name.orEmpty())
-        else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), header, contentEntry,
+            menu, { menu = it }, profile = app.savedProfile?.displayName.orEmpty())
+        else DiscoveryTopNavigation(surface, app.savedProfile?.displayName.orEmpty(), header, contentEntry,
             close, selectSurface, navigate, {}, menu, { menu = it }, null)
         Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 16.dp else 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {

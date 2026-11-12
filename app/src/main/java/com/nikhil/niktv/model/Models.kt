@@ -16,6 +16,7 @@ data class PortalProfile(
     val username: String = "",
     val password: String = ""
 ) {
+    val displayName: String get() = if (portalType == PortalType.STALKER) "Stalker" else "Xtream"
     fun cacheKey(): String = "catalog-v5|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
 }
 

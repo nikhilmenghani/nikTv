@@ -5,7 +5,7 @@ import androidx.compose.runtime.Composable
 
 internal enum class AccountGateBackAction { ROOT, OPEN_PEOPLE, RESUME_CONTENT }
 
-/** A portal chooser is a child of the people chooser, never its return destination. */
+/** Unavailable content returns to people; connection editors retain their own Back handling. */
 internal fun accountGateBackAction(
     peopleVisible: Boolean,
     choosingProfile: Boolean,

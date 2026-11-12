@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.ui.remoteCombinedClickable
-import com.nikhil.niktv.discovery.components.EpisodeMetadataBadge
+import com.nikhil.niktv.ui.EpisodeViewingStatus
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
 internal val LocalSeriesArtworkGlass = staticCompositionLocalOf { false }
@@ -44,13 +44,11 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
         shape = shape, color = (if (focused) Color(0xFF303A49) else Color(0xFF161B23))
             .copy(alpha = if (glass) { if (focused) .78f else .48f } else 1f),
         border = BorderStroke(if (focused) 2.dp else 1.dp,
-            if (focused) Color.White else if (resume) Color(0xFF9B3744) else Color.White.copy(alpha = .12f))) {
+            if (focused) Color.White else Color.White.copy(alpha = .12f))) {
         val image: @Composable (Modifier) -> Unit = { imageModifier ->
             Box(imageModifier.aspectRatio(16f / 9f).clip(shape).background(Color(0xFF222936)), contentAlignment = Alignment.Center) {
                 if (artwork.isNullOrBlank()) Icon(Icons.Default.Movie, null, tint = Color.Gray)
                 else AsyncImage(thumbnailArtworkUrl(artwork, 342), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                if (resume && !listView) EpisodeMetadataBadge("Last watched", highlighted = true,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
                 progress?.takeIf { it > 0 }?.let {
                     LinearProgressIndicator(progress = { it.coerceIn(0f, 1f) }, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
                         color = Color(0xFFE50925), trackColor = Color(0xFF4B4F58), drawStopIndicator = {})
@@ -61,17 +59,13 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
             verticalAlignment = Alignment.CenterVertically) {
             image(Modifier.width(if (compact) 92.dp else 112.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                    Text(title, Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (resume) EpisodeMetadataBadge("Last watched", highlighted = true)
-                }
+                Text(title, Modifier.fillMaxWidth(), color = Color.White, style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(listOf(label, metadata).filter(String::isNotBlank).joinToString(" · "),
                     color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelMedium)
+                EpisodeViewingStatus(remaining, resume)
                 if (!overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),
                     style = MaterialTheme.typography.bodySmall, maxLines = if (compact) 2 else 1, overflow = TextOverflow.Ellipsis)
-                remaining?.let { Text(it, color = if (resume) Color(0xFFFFA0AA) else Color(0xFFB9BDC7),
-                    style = MaterialTheme.typography.labelSmall) }
             }
             Icon(Icons.Default.PlayArrow, null, Modifier.size(24.dp), tint = Color.White)
         } else Column {
@@ -80,9 +74,9 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
                 Text(label, color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 Text(title, color = Color.White, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold,
                     maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(listOfNotNull(metadata.takeIf { it.isNotBlank() }, remaining).joinToString(" · ").ifBlank { " " },
-                    color = if (resume) Color(0xFFFFA0AA) else Color(0xFFB9BDC7),
+                Text(metadata.ifBlank { " " }, color = Color(0xFFB9BDC7),
                     style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                EpisodeViewingStatus(remaining, resume)
             }
         }
     }

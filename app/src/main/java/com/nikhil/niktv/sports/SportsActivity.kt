@@ -81,7 +81,7 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
             }.collectAsStateWithLifecycle(initialValue = emptySet()).value
             val viewers = users.profiles.collectAsStateWithLifecycle(initialValue = emptyList()).value
             val viewer = viewers.firstOrNull { it.id == viewerScope?.profileId }
-            val actions = portals.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
+            val actions = portals.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
                 if (portal.portalType == com.nikhil.niktv.model.PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
                 open = {
                     startActivity(Intent(this, com.nikhil.niktv.MainActivity::class.java)

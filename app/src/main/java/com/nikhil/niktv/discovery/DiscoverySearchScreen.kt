@@ -41,8 +41,8 @@ internal fun DiscoverySearchScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing)) {
             Box(Modifier.fillMaxWidth().onFocusChanged { headerFocused = it.hasFocus }.focusGroup()) {
             if (phone) DiscoveryPhoneNavigation(surface, header, body, back, select, navigate,
-                menu, { menu = it }, profile = state.savedProfile?.name.orEmpty(), searchActive = true)
-            else DiscoveryTopNavigation(surface, state.savedProfile?.name.orEmpty(), header, body,
+                menu, { menu = it }, profile = state.savedProfile?.displayName.orEmpty(), searchActive = true)
+            else DiscoveryTopNavigation(surface, state.savedProfile?.displayName.orEmpty(), header, body,
                 back, select, navigate, {}, menu, { menu = it }, null, searchActive = true)
             }
             // Search owns initial focus. The header only supplies an Up/Down path;

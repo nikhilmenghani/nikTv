@@ -70,7 +70,7 @@ internal fun CatalogProfileSettings(
     var message by remember(id) { mutableStateOf<String?>(null) }
     var selectedCheckpoint by remember(id) { mutableStateOf<CatalogCheckpointFile?>(null) }
     var confirmRefreshAll by remember(id) { mutableStateOf(false) }
-    BackupSettingsActionRow(Icons.Default.AccountCircle, "Portal · ${profile.name}",
+    BackupSettingsActionRow(Icons.Default.AccountCircle, "Portal · ${profile.displayName}",
         "All catalog actions below apply to this portal until you change it.", onClick = { chooseProfile = true })
     if (chooseProfile) AlertDialog(
         onDismissRequest = { chooseProfile = false }, title = { Text("Choose catalog portal") },
@@ -83,7 +83,7 @@ internal fun CatalogProfileSettings(
             }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
         } } }, confirmButton = { NikTvTextActionButton(onClick = { chooseProfile = false }) { Text("Close") } })
     if (confirmRefreshAll) ProjectCardConfirmationDialog(
-        title = "Refresh all ${profile.name} media?",
+        title = "Refresh all ${profile.displayName} media?",
         message = "Refresh all starts again with Live TV and revisits every provider page for Live TV, Movies and Series. Existing records remain available while it runs. Use a media-type Resume action when you only want to continue saved progress.",
         confirmLabel = "Refresh all",
         close = { confirmRefreshAll = false },
@@ -122,7 +122,7 @@ internal fun CatalogProfileSettings(
         SettingsLinkRow(SettingsPage.CATALOG_TOOLS, "Checkpoints & saved database")
     }
     if (CatalogPreferences.CLOUD_BACKUP_AVAILABLE && page == SettingsPage.CATALOG_TOOLS) BackupSettingsActionRow(Icons.Default.CloudDownload, "Restore a catalog checkpoint",
-        "Choose a dated GitHub backup for ${profile.name}. Merges Room listings without replacing favorites or history.",
+        "Choose a dated GitHub backup for ${profile.displayName}. Merges Room listings without replacing favorites or history.",
         enabled = !busy, onClick = {
             busy = true; message = "Loading checkpoints…"
             scope.launch {
@@ -136,7 +136,7 @@ internal fun CatalogProfileSettings(
         })
     message?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall) }
     checkpoints?.takeIf { it.isNotEmpty() }?.let { entries ->
-        AlertDialog(onDismissRequest = { checkpoints = null }, title = { Text("Restore ${profile.name}") },
+        AlertDialog(onDismissRequest = { checkpoints = null }, title = { Text("Restore ${profile.displayName}") },
             text = { LazyColumn(Modifier.heightIn(max = 360.dp)) { items(entries) { entry ->
                 NikTvTextActionButton(onClick = { selectedCheckpoint = entry; checkpoints = null },
                     modifier = Modifier.fillMaxWidth()) {
@@ -146,7 +146,7 @@ internal fun CatalogProfileSettings(
     }
     selectedCheckpoint?.let { entry ->
         AlertDialog(onDismissRequest = { selectedCheckpoint = null }, title = { Text("Merge catalog checkpoint?") },
-            text = { Text("Restore ${profile.name} from ${DateFormat.getDateTimeInstance().format(Date(entry.timestamp))}. Newer local records are retained. Reopen the portal afterward to reload the dashboard.") },
+            text = { Text("Restore ${profile.displayName} from ${DateFormat.getDateTimeInstance().format(Date(entry.timestamp))}. Newer local records are retained. Reopen the portal afterward to reload the dashboard.") },
             confirmButton = { NikTvTextActionButton(onClick = {
                 selectedCheckpoint = null; busy = true; message = "Restoring catalog…"
                 scope.launch {

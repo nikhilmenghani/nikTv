@@ -57,7 +57,7 @@ class AccountGateBackNavigationDeviceTest {
             keyBack()
             await("Second Back reaches the root dispatcher") { rootExits.get() == 1 }
             assertTrue("People must stay the root until Android exits", people.value)
-            assertEquals("Back cannot resume the portal chooser", 0, resumes.get())
+            assertEquals("Back cannot resume unavailable content", 0, resumes.get())
             NavigationAuditEvidence.capture("account-back-people-root")
         } finally { ins.runOnMainSync { activity.finish() } }
     }

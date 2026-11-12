@@ -370,7 +370,7 @@ class CompactSettingsDeviceTest {
                 val profile = remember { PortalProfile("Profile fixture", "https://settings.invalid", "00:11:22:33:44:55") }
                 LaunchedEffect(Unit) { repeat(60) { withFrameNanos { }; if (host.hasWindowFocus() && entries.requestFirst()) return@LaunchedEffect } }
                 MaterialTheme(colorScheme = NikColors) { CompositionLocalProvider(LocalSettingsFocusEntries provides entries) {
-                    ProfileScreen(profile, listOf(profile), true, false, {}, { saves.incrementAndGet() }, {}, {}, {}, {}, {})
+                    PortalConnectionEditor(profile, false, { saves.incrementAndGet() }, {}, {})
                 } }
             } }
             await("Portal name row takes focus") { focused("Portal name") }

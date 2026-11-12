@@ -156,14 +156,14 @@ private fun AccountSyncSettingsRow() {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("Profile sync", style = MaterialTheme.typography.labelLarge)
+            Text("Enabled profile sync", style = MaterialTheme.typography.labelLarge)
             Text(if (sync.syncing) "Syncing in background…" else sync.error ?: if (pending > 0) "Changes saved on this device" else sync.message,
                 style = MaterialTheme.typography.labelSmall, color = Color(0xFF9A9DA7), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         }
         NikTvSecondaryActionButton(onClick = manager::requestManualSync,
             enabled = !sync.syncing && sync.initialized && !sync.reconnectRequired) {
-            Text(if (sync.syncing) "Syncing…" else "Sync now")
+            Text(if (sync.syncing) "Syncing…" else "Sync all enabled")
         }
     }
 }
@@ -585,7 +585,7 @@ internal fun ModernSettingsScreen(
         containerColor = Color(0xFF07080A),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = { Column {
-            CompactSettingsTopBar(if (compactSettingsHeader) null else profile?.name, settingsBack,
+            CompactSettingsTopBar(if (compactSettingsHeader) null else LocalSelectedUserProfile.current?.name, settingsBack,
                 compact = compactSettingsHeader)
             AccountSyncSettingsRow()
         } }
@@ -594,7 +594,13 @@ internal fun ModernSettingsScreen(
         val activeDestination = LocalSettingsDestination.current ?: selectedSettingsDestination
         val activePage = LocalSettingsPage.current
         val pageScroll = settingsScrollStates.getOrPut(activePage) { ScrollState(0) }
-        CompositionLocalProvider(LocalSettingsFocusEntries provides settingsFocusEntries.getOrPut(activePage) { SettingsFocusEntries() }) {
+        val pageFocusEntries = settingsFocusEntries.getOrPut(activePage) { SettingsFocusEntries() }
+        SideEffect {
+            pageFocusEntries.revealTop = {
+                if (pageScroll.value > 0) scope.launch { pageScroll.scrollTo(0) }
+            }
+        }
+        CompositionLocalProvider(LocalSettingsFocusEntries provides pageFocusEntries) {
         Column(
         Modifier
             .fillMaxSize()
@@ -664,7 +670,7 @@ internal fun ModernSettingsScreen(
             DeviceProfileSettings { id -> managedViewerId = id; openSettingsPage(SettingsPage.VIEWER_PORTALS) }
             SettingsSection("Portals & access", page = SettingsPage.PROFILES) {
                 SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "${state.profiles.size} saved")
-                if (profile != null) SettingsLinkRow(SettingsPage.CONNECTION, profile.name)
+                if (profile != null) SettingsLinkRow(SettingsPage.CONNECTION, profile.displayName)
                 SettingsLinkRow(SettingsPage.PARENTAL, if (state.parentalControlsEnabled) "On" else "Off")
                 SettingsLinkRow(SettingsPage.PRIVATE_CONFIGURATION, if (RemoteCredentials.configured(context)) "Configured" else "Set up")
                 SettingsLinkRow(SettingsPage.PAIRING, "Nearby, remote or file")
@@ -750,7 +756,7 @@ internal fun ModernSettingsScreen(
         SettingsSection("Portals") {
             knownProfiles.forEach { entry ->
                 val saved = state.profiles.any { it.cacheKey() == entry.cacheKey() }
-                SettingsControlRow(entry.name,
+                SettingsControlRow(entry.displayName,
                     if (entry.cacheKey() == profile?.cacheKey()) "Active" else if (saved) "Enabled" else "Set up / enable",
                     modifier = if (entry.cacheKey() == managedProfileId) Modifier.focusRequester(settingsPageRequesters.getValue(SettingsPage.PROFILE_DETAILS)) else Modifier,
                     onClick = { managedProfileId = entry.cacheKey(); openSettingsPage(SettingsPage.PROFILE_DETAILS) })
@@ -762,13 +768,13 @@ internal fun ModernSettingsScreen(
             if (managed != null) {
                 val saved = state.profiles.firstOrNull { it.cacheKey() == managed.cacheKey() }
                 val builtIn = preconfiguredProfiles.firstOrNull { it.cacheKey() == managed.cacheKey() }
-                SettingsControlRow(managed.name, managed.portalType.displayName())
+                SettingsControlRow(managed.displayName, managed.portalType.displayName())
                 if (builtIn != null) {
                     val available = builtIn.portalUrl.isNotBlank() && (builtIn.portalType == PortalType.STALKER ||
                         (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
                     SettingsControlRow("Configure connection on this device", checked = saved != null, onToggle = { enabled ->
                         if (available || !enabled) setPreconfiguredProfileEnabled(builtIn, enabled)
-                        else profileSetupExplanation = "Sync private configuration before enabling ${builtIn.name}."
+                        else profileSetupExplanation = "Sync private configuration before enabling ${builtIn.displayName}."
                     })
                 }
                 if (saved != null && saved.cacheKey() != profile?.cacheKey()) SettingsControlRow("Open portal", onClick = { switchProfile(saved) })
@@ -780,7 +786,7 @@ internal fun ModernSettingsScreen(
             SettingsValueRow(
                 Icons.Default.AccountCircle,
                 "Portal",
-                profile.name
+                profile.displayName
             )
             SettingsDivider()
             SettingsValueRow(
@@ -1879,19 +1885,25 @@ private fun ViewerPortalSettings(profileId: String?, portals: List<com.nikhil.ni
                     users.setProfileEnabled(profile.id, checked)
                     if (checked) com.nikhil.niktv.data.AccountSyncManager.get(context).requestManualSync()
                 } })
-            Text("Available portals for ${profile.name}", style = MaterialTheme.typography.titleSmall)
-            Text("Choose the connections this profile can open. Access choices sync with the profile; connection setup stays on each device.",
-                style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Available portals for ${profile.name}", style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold)
+                Text("Choose which portals this profile can open. Access choices sync with the profile.",
+                    style = MaterialTheme.typography.bodySmall, color = SettingsMuted)
+            }
             portals.forEach { portal ->
                 val key = com.nikhil.niktv.data.ProfilePortalAccess.key(portal)
-                SettingsControlRow(portal.name, checked = key !in hidden,
+                SettingsControlRow(portal.displayName, checked = key !in hidden,
                     onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner, key, checked) } })
             }
             SettingsControlRow("Sports", checked = com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hidden,
                 onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
                     com.nikhil.niktv.data.ProfilePortalAccess.SPORTS, checked) } })
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "Shared portal connections")
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            error?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error) }
         } else Text("This profile is no longer available.")
     }
 }

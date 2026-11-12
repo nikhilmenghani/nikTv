@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: PortalProfile?,
     close: () -> Unit, select: (PortalProfile) -> Unit, openChooser: () -> Unit = {},
-    openOffline: () -> Unit = {}, configurePortals: () -> Unit = {}) {
+    openOffline: () -> Unit = {}) {
     val context = LocalContext.current
     val owner = LocalViewingOwner.current
     val scope = rememberCoroutineScope()
@@ -42,7 +42,7 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                     }, modifier = Modifier.fillMaxWidth().then(if (index == selected) Modifier.focusRequester(entry) else Modifier)) {
                         Icon(if (profile.portalType == com.nikhil.niktv.model.PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null)
                         Spacer(Modifier.width(12.dp))
-                        Text(profile.name, Modifier.weight(1f))
+                        Text(profile.displayName, Modifier.weight(1f))
                         if (profile.cacheKey() == current?.cacheKey()) Text("Current")
                     }
                 }

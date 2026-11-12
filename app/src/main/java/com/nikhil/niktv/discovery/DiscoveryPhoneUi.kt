@@ -17,9 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.*
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.*
@@ -31,7 +29,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,7 +37,6 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.transformations
-import com.nikhil.niktv.R
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.ui.remoteCombinedClickable
@@ -146,7 +142,7 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
     val viewerName = viewer?.name ?: profile
     val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
         ?: profile.trim().firstOrNull()?.uppercase() ?: "N"
-    val leadingProfile = surface == DashboardSurface.HOME && !detail && !searchActive
+    val leadingProfile = !detail
     val profileAction: @Composable () -> Unit = {
         DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
             containerColor = viewer?.let { Color(it.color) },
@@ -158,20 +154,7 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (detail) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
-            else if (leadingProfile) profileAction()
-            else Box(Modifier.size(42.dp).drawWithCache {
-                // Keep the transparent logo readable over bright artwork without changing its size.
-                val radius = size.maxDimension * .85f
-                val halo = Brush.radialGradient(
-                    0f to Color.Black.copy(alpha = .9f),
-                    .5f to Color.Black.copy(alpha = .75f),
-                    1f to Color.Transparent,
-                    center = Offset(size.width / 2f, size.height / 2f), radius = radius)
-                onDrawBehind { drawCircle(halo, radius = radius) }
-            }.clip(RoundedCornerShape(8.dp))) {
-                Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.fillMaxSize()
-                    .graphicsLayer { scaleX = 2.4f; scaleY = 2.4f })
-            }
+            else profileAction()
             Spacer(Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,

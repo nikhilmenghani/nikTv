@@ -334,7 +334,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         viewModelScope.launch {
             _state.collect { com.nikhil.niktv.data.CatalogPlaybackActivity.playing = it.nowPlaying != null }
         }
-        prepareProfileChooser()
+        preparePortalConnections()
         viewModelScope.launch {
             var previous = userSyncStore.selectedScope.value
             userSyncStore.selectedScope.collect { selected ->
@@ -344,7 +344,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     viewerJobs.clear()
                     // A portal can exist in several user profiles. Its cache key alone
                     // cannot establish ownership after a person/account changes.
-                    openProfileChooser()
+                    resetPortalSession()
                     profilePreparationJob?.cancel()
                     categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
                     categoryMetadataRefreshJobs.clear()
@@ -496,8 +496,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         return job
     }
 
-    private fun prepareProfileChooser() = launchForViewer launch@ {
-        // A cold app launch always starts at the profile chooser. Authentication is
+    private fun preparePortalConnections() = launchForViewer launch@ {
+        // A cold app launch loads connections without authentication. Authentication is
         // restored only after the viewer deliberately chooses a profile.
         val profiles = store.profiles.first()
         _state.update { it.copy(profiles = profiles, session = null, savedProfile = null,
@@ -513,7 +513,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         searchServerJob?.cancel()
         catalogueTitleIndex = null
         _state.update { it.copy(savedProfile = profile, providerMovieDetails = null) }
-        updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
+        updateProfileLoad(0.08f, "Authenticating ${profile.displayName}…")
         val owns = sessionOwner(profile)
         val ownedStore = store.captureScope()?.let(store::scoped) ?: store
         val session = authenticateProfileForOpening(profile)
@@ -7850,7 +7850,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             it.copy(settingsOpen = true, offlineDownloadsOpen = false, searchOpen = false, favoritesOpen = false, homeOpen = false)
         }
     }
-    fun openSettingsFromProfileChooser(profile: PortalProfile? = null) {
+    fun openAccountSettings(profile: PortalProfile? = null) {
         settingsReturnSurface = null
         _state.update {
             it.copy(savedProfile = profile, settingsOpen = true, profileEditorOpen = false,
@@ -7873,7 +7873,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun closeSettings() {
         if (_state.value.savedProfile?.let { !com.nikhil.niktv.data.ProfilePortalAccess.allowed(getApplication(), it) } == true) {
             settingsReturnSurface = null
-            openProfileChooser()
+            resetPortalSession()
             return
         }
         val origin = settingsReturnSurface
@@ -7913,8 +7913,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
     fun openProfileSwitcher() { _state.update { it.copy(profileSwitcherOpen = true) } }
     fun closeProfileSwitcher() { _state.update { it.copy(profileSwitcherOpen = false) } }
-    /** Return to the same chooser used on launch; keep saved profiles, sessions and libraries intact. */
-    fun openProfileChooser() {
+    /** Clear active content before changing viewers; keep connections and libraries intact. */
+    fun resetPortalSession() {
         closePlayer()
         profilePreparationJob?.cancel()
         searchPreviewJob?.cancel()
@@ -8133,7 +8133,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
     private suspend fun authenticateProfileForOpening(profile: PortalProfile): PortalSession =
         withTimeoutOrNull(20_000L) { authenticatePortal(profile) }
-            ?: throw IllegalStateException("${profile.name} did not finish authentication within 20 seconds. Check the provider connection and try again.")
+            ?: throw IllegalStateException("${profile.displayName} did not finish authentication within 20 seconds. Check the provider connection and try again.")
 
     private suspend fun localFirstSession(profile: PortalProfile): PortalSession {
         val owns = sessionOwner(profile)
@@ -8153,7 +8153,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             }
             return cached.copy(profile = profile)
         }
-        updateProfileLoad(0.12f, "Connecting to ${profile.name}; waiting for provider authentication…")
+        updateProfileLoad(0.12f, "Connecting to ${profile.displayName}; waiting for provider authentication…")
         return authenticateProfileForOpening(profile).also { ownedStore.save(it, owns) }
     }
     fun switchProfile(profile: PortalProfile) {
@@ -8185,10 +8185,10 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         globalSearchPagerKey = null
         catalogueTitleIndex = null
         _state.update { it.copy(savedProfile = profile, providerMovieDetails = null) }
-        updateProfileLoad(0.04f, "Loading ${profile.name}…")
+        updateProfileLoad(0.04f, "Loading ${profile.displayName}…")
         store.activate(profile)
         // Reuse a saved session for local browsing while renewing it in the background.
-        updateProfileLoad(0.08f, "Reading saved session for ${profile.name}…")
+        updateProfileLoad(0.08f, "Reading saved session for ${profile.displayName}…")
         val session = localFirstSession(profile)
         if (portalActivation.get() != activation) throw kotlinx.coroutines.CancellationException("Portal changed")
         rememberPortalForViewer(profile)
@@ -8250,7 +8250,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun openProfileDownloads() {
         viewerJobs.toList().forEach { it.cancel() }
         viewerJobs.clear()
-        openProfileChooser()
+        resetPortalSession()
         openOfflineDownloads()
     }
 
@@ -8730,7 +8730,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 "NikTvWatchedSeries",
                 "Checked ${watched.series.id}: latest=${latest.episodes.size} new=${discovered.size} forced=$force"
             )
-            com.nikhil.niktv.data.NewEpisodeNotifications.post(getApplication(), session.profile.name, discovery)
+            com.nikhil.niktv.data.NewEpisodeNotifications.post(getApplication(), session.profile.displayName, discovery)
             if (index < scoped.lastIndex) delay(1_200L)
         }
         } finally {

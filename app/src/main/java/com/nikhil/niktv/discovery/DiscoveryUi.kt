@@ -892,9 +892,9 @@ private fun DiscoveryPreviewContent(
                 if (phone) DiscoveryPhoneHeader(surface, false, tabRequester, playRequester,
                     back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute,
                     menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null,
-                    profile = app.savedProfile?.name.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
+                    profile = app.savedProfile?.displayName.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
                     categoryPopupChanged = { categoryPopup = it })
-                else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
+                else DiscoveryTopNavigation(surface, app.savedProfile?.displayName.orEmpty(), tabRequester, playRequester,
                     back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute, headerFocus = { restoreNativeSelection = false },
                     menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null,
                     categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = false,
@@ -1124,7 +1124,7 @@ private fun DiscoveryPreviewContent(
                         Box(Modifier.onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) moveRow(0, 1) else false
                         }) {
-                            DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
+                            DiscoveryTopNavigation(surface, app.savedProfile?.displayName.orEmpty(), tabRequester, playRequester,
                                 back = ::closeRoute,
                                 select = ::selectRoute,
                                 navigate = ::navigateRoute, headerFocus = { if (ownsFocusRoute()) { contentFocused = false; alignFocusedRow("navigation", 0) } },
@@ -1145,7 +1145,7 @@ private fun DiscoveryPreviewContent(
                                     DiscoveryPhoneHeader(surface, false, tabRequester, FocusRequester.Default,
                                         back = ::closeRoute, select = { if (it != surface) selectRoute(it) }, navigate = ::navigateRoute,
                                         menu = menu, changeMenu = { menu = it }, customize = null,
-                                        profile = app.savedProfile?.name.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
+                                        profile = app.savedProfile?.displayName.orEmpty(), categoryManagerOpen = app.categoryManagerOpen,
                                         categoryPopupChanged = { categoryPopup = it })
                                 }
                                 if (!phonePortrait) Row(Modifier.padding(horizontal = if (compactLandscape) 16.dp else 24.dp,
@@ -1199,7 +1199,7 @@ private fun DiscoveryPreviewContent(
                                 DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
                                     back = ::closeRoute,
                                     select = { if (it != surface) selectRoute(it) }, navigate = ::navigateRoute,
-                                    menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null, profile = app.savedProfile?.name.orEmpty(),
+                                    menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null, profile = app.savedProfile?.displayName.orEmpty(),
                                     categoryManagerOpen = app.categoryManagerOpen, categoryPopupChanged = { categoryPopup = it })
                             }) else null)
                         state.errors.filterKeys { it == "detail" }.values.forEach { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray, fontSize = 13.sp) }

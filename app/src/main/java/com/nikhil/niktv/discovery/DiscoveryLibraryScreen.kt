@@ -58,8 +58,8 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
         libraryFavoriteHeroes(state.favorites, state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()).isNotEmpty()
     DiscoveryArtworkShell(artworkHero, phone, header = {
         if (phone) DiscoveryPhoneNavigation(navigationSurface, tab, body, back, select, navigate,
-            menu, { menu = it }, library = navigationLibrary, profile = state.savedProfile?.name.orEmpty())
-        else DiscoveryTopNavigation(navigationSurface, state.savedProfile?.name.orEmpty(), tab, body,
+            menu, { menu = it }, library = navigationLibrary, profile = state.savedProfile?.displayName.orEmpty())
+        else DiscoveryTopNavigation(navigationSurface, state.savedProfile?.displayName.orEmpty(), tab, body,
             back, select, navigate, {}, menu, { menu = it }, null, library = navigationLibrary)
     }, content = {
         Box(Modifier.fillMaxSize().focusRequester(body).focusGroup()) { content() }

@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -58,6 +59,8 @@ internal class SettingsFocusEntries {
     private val entries = linkedMapOf<Any, FocusRequester>()
     fun register(key: Any, requester: FocusRequester) { entries[key] = requester }
     fun remove(key: Any) { entries.remove(key) }
+    var revealTop: (() -> Unit)? = null
+    fun focused(key: Any) { if (entries.keys.firstOrNull() == key) revealTop?.invoke() }
     fun requestFirst() = entries.values.firstOrNull()?.let { runCatching { it.requestFocus() }.getOrDefault(false) } ?: false
 }
 internal val LocalSettingsFocusEntries = staticCompositionLocalOf<SettingsFocusEntries?> { null }
@@ -71,7 +74,7 @@ internal fun Modifier.settingsFocusEntry(enabled: Boolean = true): Modifier {
         if (enabled) entries?.register(key, requester)
         onDispose { entries?.remove(key) }
     }
-    return if (enabled) this.focusRequester(requester) else this
+    return if (enabled) this.focusRequester(requester).onFocusChanged { if (it.isFocused) entries?.focused(key) } else this
 }
 
 @Composable

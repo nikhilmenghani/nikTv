@@ -70,7 +70,7 @@ class ProfileDashboardStartupTest {
     }
 
     private suspend fun launchDashboard() {
-        NikTvViewModel::class.java.getDeclaredMethod("prepareProfileChooser")
+        NikTvViewModel::class.java.getDeclaredMethod("preparePortalConnections")
             .apply { isAccessible = true }.invoke(vm)
         vm.state.first { !it.restoring }
     }
@@ -84,7 +84,7 @@ class ProfileDashboardStartupTest {
             .get(vm) as MutableStateFlow<NikTvState>
         state.value = NikTvState(profiles = listOf(profile), savedProfile = profile, session = session,
             profileSwitcherOpen = true, settingsOpen = true, restoring = false)
-        vm.openProfileChooser()
+        vm.resetPortalSession()
         assertNull(vm.state.value.session)
         assertFalse(vm.state.value.profileSwitcherOpen)
         assertFalse(vm.state.value.settingsOpen)
@@ -229,7 +229,7 @@ class ProfileDashboardStartupTest {
 
     @Test fun settingsCanOpenAndCloseWithoutAProfile() = runTest(scheduler) {
         launchDashboard()
-        vm.openSettingsFromProfileChooser()
+        vm.openAccountSettings()
         assertTrue(vm.state.value.settingsOpen)
         vm.closeSettings()
         assertFalse(vm.state.value.settingsOpen)

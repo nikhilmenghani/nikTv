@@ -514,7 +514,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val directPortalScope = rememberCoroutineScope()
     val portalFocusReturn = remember(directPortalOwner) { com.nikhil.niktv.discovery.PortalFocusReturn() }
     val directPortals = accessiblePortals.map { portal ->
-        com.nikhil.niktv.discovery.DirectPortalAction(portal.name,
+        com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
             if (portal.portalType == PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
             selected = portal.cacheKey() == state.savedProfile?.cacheKey(), id = portal.cacheKey(), open = {
                 if (portal.cacheKey() != state.savedProfile?.cacheKey()) vm.switchProfile(portal)
@@ -535,7 +535,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
         if (state.profileSwitcherOpen) ModernProfileSwitchDialog(accessiblePortals, state.savedProfile,
             close = vm::closeProfileSwitcher, select = vm::switchProfile,
             openChooser = { vm.closeProfileSwitcher(); openUserProfiles() },
-            openOffline = vm::openOfflineDownloads, configurePortals = vm::openProfileChooser)
+            openOffline = vm::openOfflineDownloads)
         ParentalPinPrompt(vm)
         Surface(Modifier.fillMaxSize()) {
           if (updateEnforcementEnabled && !(state.session == null && state.settingsOpen) && (checkingForRequiredUpdate || requiredUpdate != null)) {
@@ -668,7 +668,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
 
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.profileLoadProgress != null -> ProfileLoadingScreen(
-                    profileName = state.savedProfile?.name,
+                    profileName = state.savedProfile?.displayName,
                     message = state.profileLoadMessage,
                     progress = state.profileLoadProgress ?: 0f
                 )
@@ -695,7 +695,12 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     setBrowseLayout = vm::setBrowseLayout,
                     openCategoryManager = vm::openCategoryManager
                 )
-                state.session == null && !state.offlineDownloadsOpen -> ProfileScreen(state.savedProfile?.takeIf { it in accessiblePortals }, accessiblePortals, state.profileEditorOpen, state.loading, { openAccount() }, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup, vm::openOfflineDownloads, openUserProfiles = openUserProfiles)
+                state.profileEditorOpen -> PortalConnectionEditor(state.savedProfile, state.loading,
+                    vm::connect, { vm.cancelProfileEditor(); vm.openAccountSettings(state.savedProfile) }, vm::importBackup)
+                state.session == null && !state.offlineDownloadsOpen -> {
+                    LaunchedEffect(Unit) { openUserProfiles() }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                }
                 else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { DiscoveryScreenHost(
                     state = state,
                     selectType = vm::openCatalogType,

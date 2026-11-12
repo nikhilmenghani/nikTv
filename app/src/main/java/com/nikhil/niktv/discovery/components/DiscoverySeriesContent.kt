@@ -1179,12 +1179,10 @@ internal fun ModernEpisodeCard(
         shape = RoundedCornerShape(12.dp),
         color = when {
             focused || episodeActionsExpanded -> Color(0xFF272B33)
-            isCurrentResume -> Color(0xFF1B1E24)
             else -> Color(0xFF14171D)
         },
         border = when {
             focused || episodeActionsExpanded -> BorderStroke(2.dp, Color(0xFFF1F3F5))
-            isCurrentResume -> BorderStroke(1.dp, Color(0xFF6E3036))
             else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
         },
         shadowElevation = if (focused) 8.dp else 0.dp,
@@ -1264,22 +1262,19 @@ internal fun ModernEpisodeCard(
                     epNumber != null -> "EP $epNumber"
                     else -> null
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
                 Text(
                     text = episode.displayTitle(series),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     style = if (mobileLayout) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold, color = Color.White,
                     maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
-                if (isCurrentResume) EpisodeMetadataBadge("Last watched", highlighted = true)
-                }
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     badge?.let { Text(it, color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelSmall) }
                     episode.displayAirDate()?.let { Text(it, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall) }
-                    episodeRemainingLabel(progress)?.let { EpisodeMetadataBadge(it, highlighted = isCurrentResume) }
                 }
+                com.nikhil.niktv.ui.EpisodeViewingStatus(episodeRemainingLabel(progress), isCurrentResume)
                 if (!mobileLayout) episode.episodeAddedAtMillis?.let { added ->
                     Text("Added ${formatEpisodeAddedTime(added)}", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA8ADB7))
                 }
@@ -1377,15 +1372,4 @@ internal fun ModernEpisodeCard(
         dismissButton = { NikTvTextActionButton(onClick = { confirmRemoval = false }) { Text("Keep") } },
         confirmButton = { NikTvPrimaryActionButton(onClick = { confirmRemoval = false; onRemoveDownload() }) { Text("Remove") } }
     )
-}
-
-
-@Composable
-internal fun EpisodeMetadataBadge(text: String, highlighted: Boolean = false, modifier: Modifier = Modifier, muted: Boolean = false) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(5.dp),
-        color = if (highlighted) Color(0xFF3A2226) else Color(0xFF292D35)) {
-        Text(text, Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-            color = if (highlighted) Color(0xFFFFB4BE) else Color(0xFFB9BDC7),
-            style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium)
-    }
 }

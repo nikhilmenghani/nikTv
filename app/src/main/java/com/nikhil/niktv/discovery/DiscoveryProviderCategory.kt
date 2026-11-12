@@ -65,7 +65,7 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
         Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).safeDrawingPadding()) {
             val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
             if (phone) DiscoveryPhoneNavigation(surface, tab, heroPlay, close, selectSurface, navigate, menu, { menu = it })
-            else DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tab, heroPlay,
+            else DiscoveryTopNavigation(surface, app.savedProfile?.displayName.orEmpty(), tab, heroPlay,
                 back = close, select = selectSurface, navigate = navigate, headerFocus = {},
                 menu = menu, changeMenu = { menu = it }, customize = null)
             LazyVerticalGrid(if (phone) GridCells.Adaptive(phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp)
