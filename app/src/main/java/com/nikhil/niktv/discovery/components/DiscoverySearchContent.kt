@@ -828,12 +828,14 @@ private fun SearchQuietControl(
     val isTv = LocalContext.current.isSearchTvLikeDevice(LocalConfiguration.current)
     val shape = RoundedCornerShape(6.dp)
     var focused by remember { mutableStateOf(false) }
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
     Surface(onClick = onClick, color = if (focused) SearchRaised else Color.Transparent,
-        shape = shape, modifier = modifier.height(searchControlHeight())
-            .onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape)) {
+        shape = shape, border = if (focused) BorderStroke(2.dp, LocalRemoteFocusColor.current) else null, modifier = modifier.height(searchControlHeight())
+            .onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape, drawBorder = false)) {
         Row(Modifier.fillMaxHeight().padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center, content = content)
+    }
     }
 }
 
@@ -847,11 +849,12 @@ private fun SearchControl(
 ) {
     val isTv = LocalContext.current.isSearchTvLikeDevice(LocalConfiguration.current)
     val shape = RoundedCornerShape(10.dp)
+    var focused by remember { mutableStateOf(false) }
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides if (isTv) 0.dp else searchControlHeight()) {
         Surface(onClick = onClick,
-            modifier = modifier.height(searchControlHeight()).remoteFocusFrame(shape),
+            modifier = modifier.height(searchControlHeight()).onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape, drawBorder = false),
             shape = shape, color = if (selected) SearchAccent else SearchSurface,
-            border = BorderStroke(1.dp, if (selected) SearchAccent else SearchOutline)) {
+            border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) LocalRemoteFocusColor.current else if (selected) SearchAccent else SearchOutline)) {
             Row(Modifier.fillMaxHeight().padding(contentPadding),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center, content = content)
@@ -973,10 +976,13 @@ private fun SearchScopeButton(type: SearchContentType, selected: Boolean, onClic
     count: Int?, modifier: Modifier = Modifier) {
     val isTv = LocalContext.current.isSearchTvLikeDevice(LocalConfiguration.current)
     val shape = RoundedCornerShape(6.dp)
-    Surface(onClick = onClick, color = Color.Transparent, shape = shape,
-        modifier = modifier.height(searchControlHeight()).remoteFocusFrame(shape)
+    var focused by remember { mutableStateOf(false) }
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+    Surface(onClick = onClick, color = if (focused) SearchRaised else Color.Transparent, shape = shape,
+        border = if (focused) BorderStroke(2.dp, LocalRemoteFocusColor.current) else null,
+        modifier = modifier.widthIn(min = 48.dp).width(IntrinsicSize.Max).height(searchControlHeight()).onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape, drawBorder = false)
             .semantics { this.selected = selected; contentDescription = "Search type: ${type.title}" }) {
-        Column(Modifier.width(IntrinsicSize.Max), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.fillMaxWidth().padding(2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.weight(1f).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(type.title, color = if (selected) Color.White else SearchMuted,
@@ -986,6 +992,7 @@ private fun SearchScopeButton(type: SearchContentType, selected: Boolean, onClic
             }
             Box(Modifier.fillMaxWidth().height(3.dp).background(if (selected) SearchAccent else Color.Transparent))
         }
+    }
     }
 }
 
@@ -1172,7 +1179,7 @@ private fun SearchCategoryPickerContent(
                 .pointerInput(categorySearchEditing, remoteNavigationActive) {
                     if (remoteNavigationActive && !categorySearchEditing) detectTapGestures { activateCategorySearch() }
                 }
-                .remoteFocusFrame(RoundedCornerShape(14.dp)),
+                .remoteFocusFrame(RoundedCornerShape(14.dp), drawBorder = false),
             singleLine = true,
             readOnly = remoteNavigationActive && !categorySearchEditing,
             shape = RoundedCornerShape(14.dp),
@@ -1262,12 +1269,13 @@ private fun SearchCategoryOptionTile(
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(14.dp)
+    var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onSelect,
-        modifier = modifier.fillMaxWidth().heightIn(min = if (isTv) 58.dp else 54.dp).remoteFocusFrame(shape),
+        modifier = modifier.fillMaxWidth().heightIn(min = if (isTv) 58.dp else 54.dp).onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape, drawBorder = false),
         shape = shape,
         color = if (selected) accent.copy(alpha = 0.18f) else SearchSurface,
-        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) accent.copy(alpha = 0.9f) else SearchOutline)
+        border = BorderStroke(if (focused || selected) 2.dp else 1.dp, if (focused) LocalRemoteFocusColor.current else if (selected) accent.copy(alpha = 0.9f) else SearchOutline)
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(if (option.id == "*") Icons.Default.SelectAll else Icons.Default.FolderOpen, null, Modifier.size(20.dp), tint = if (selected) accent else SearchMuted)
@@ -1299,7 +1307,7 @@ private fun SearchRecentRow(
             .onFocusChanged { rowFocused = it.isFocused }
             .semantics(mergeDescendants = true) { focused = rowFocused }
             .focusProperties { right = removeRequester }
-            .remoteFocusFrame(shape)
+            .remoteFocusFrame(shape, drawBorder = false)
             // Do not install the app-wide preview-key click handler on this
             // parent. Preview events reach the row before its focused X child,
             // so DPAD_CENTER used to invoke the recent search instead of the X.
@@ -1311,7 +1319,7 @@ private fun SearchRecentRow(
             ),
         shape = shape,
         color = SearchSurface,
-        border = BorderStroke(1.dp, SearchOutline)
+        border = BorderStroke(if (rowFocused) 2.dp else 1.dp, if (rowFocused) LocalRemoteFocusColor.current else SearchOutline)
     ) {
         Row(
             Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -1568,6 +1576,7 @@ private fun ModernSearchLiveResultRow(
     modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val artworkModel = remember(item.id, item.title, item.logo) {
         artworkRequest(context, item)
@@ -1582,12 +1591,13 @@ private fun ModernSearchLiveResultRow(
             modifier = modifier
                 .fillMaxWidth()
                 .drawBehind { drawLine(SearchOutline, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }
-                .remoteFocusFrame(shape)
+                .onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape, drawBorder = false)
                 .remoteCombinedClickable(
                     onClick = onClick,
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
+            border = if (focused) BorderStroke(2.dp, LocalRemoteFocusColor.current) else null,
             color = Color.Transparent
         ) {
             Row(
@@ -1728,6 +1738,7 @@ private fun ModernSearchMediaResultRow(
     modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val dense = !LocalConfiguration.current.usesPhoneLayout(isTv)
     val artworkModel = remember(item.id, item.title, item.logo) {
@@ -1747,12 +1758,13 @@ private fun ModernSearchMediaResultRow(
             modifier = modifier
                 .fillMaxWidth()
                 .drawBehind { drawLine(SearchOutline, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }
-                .remoteFocusFrame(shape)
+                .onFocusChanged { focused = it.isFocused }.remoteFocusFrame(shape, drawBorder = false)
                 .remoteCombinedClickable(
                     onClick = onClick,
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
+            border = if (focused) BorderStroke(2.dp, LocalRemoteFocusColor.current) else null,
             color = Color.Transparent
         ) {
             Row(

@@ -10,3 +10,5 @@
 - Network requests, sync merges, and storage decoding must not run on the UI thread or block navigation. Show quiet progress and recovery status using the existing visual language.
 
 - Apply shared tablet/TV UI changes to mobile landscape as well, with compact proportions for short windows. Verify the production navigation entry path in portrait and landscape; testing an isolated component alone does not verify that the app opens it.
+
+- Before completing any new or changed screen, validate D-pad focus on the real controls (tabs, buttons, fields, menus and tiles). The focus border must match the visible object's exact bounds, corner radius and shape, with a single outline and no clipping, detached rings, duplicate borders or layout shifts. Check selected and unselected states, short and long labels, first/last items, and return from popups on tablet plus relevant TV/mobile-landscape layouts. Use screenshots to compare focused and unfocused geometry.

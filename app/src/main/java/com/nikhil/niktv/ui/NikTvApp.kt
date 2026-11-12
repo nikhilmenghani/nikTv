@@ -198,7 +198,8 @@ internal val LocalRemoteFocusMargin = staticCompositionLocalOf { 0.dp }
 
 @Composable
 internal fun Modifier.remoteFocusFrame(
-    shape: Shape = LocalRemoteFocusShape.current
+    shape: Shape = LocalRemoteFocusShape.current,
+    drawBorder: Boolean = true
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
@@ -236,7 +237,7 @@ internal fun Modifier.remoteFocusFrame(
             }
         }
         .then(
-            if (focused) {
+            if (focused && drawBorder) {
                 Modifier
                     .border(
                         2.dp,

@@ -1557,7 +1557,7 @@ internal fun ModernSettingsScreen(
                                     downloadActionMessage = it.message
                                 }
                             },
-                            modifier = Modifier.remoteFocusFrame()
+                            modifier = Modifier.remoteFocusFrame(drawBorder = false)
                         ) {
                             Text("Install")
                         }
@@ -1570,7 +1570,7 @@ internal fun ModernSettingsScreen(
                                     downloadActionMessage = it.message
                                 }
                             },
-                            modifier = Modifier.remoteFocusFrame()
+                            modifier = Modifier.remoteFocusFrame(drawBorder = false)
                         ) {
                             Text("Open Downloads")
                         }
@@ -1594,7 +1594,7 @@ internal fun ModernSettingsScreen(
                                 horizontal = 16.dp,
                                 vertical = 8.dp
                             )
-                            .remoteFocusFrame()
+                            .remoteFocusFrame(drawBorder = false)
                     ) {
                         Text("Retry download")
                     }

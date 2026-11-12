@@ -233,7 +233,7 @@ internal fun ProjectCardConfirmationDialog(
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.End) {
                     NikTvSecondaryActionButton(onClick = close, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    NikTvPrimaryActionButton(onClick = confirm, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914))) {
+                    NikTvPrimaryActionButton(onClick = confirm, modifier = Modifier.remoteFocusFrame(drawBorder = false), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914))) {
                         Text(confirmLabel)
                     }
                 }

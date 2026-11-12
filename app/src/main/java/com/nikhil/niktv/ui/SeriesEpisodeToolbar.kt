@@ -134,7 +134,7 @@ internal fun SeriesEpisodeToolbar(
                 }
                 Box(Modifier.padding(start = if (inline) 0.dp else 10.dp).heightIn(min = controlSize), contentAlignment = Alignment.CenterStart) { season() }
             }
-            Box(Modifier.width(searchWidth).height(controlSize).clip(RoundedCornerShape(12.dp))) {
+            Box(Modifier.width(searchWidth).height(controlSize).clip(RoundedCornerShape(if (com.nikhil.niktv.discovery.LocalDetailActionGlass.current) 10.dp else 12.dp))) {
                 if (searchOpen && !compact) Box(Modifier.fillMaxSize().focusRequester(searchRequester)) { searchField() }
                 else EpisodeToolbarIcon(Icons.Default.Search, "Search episodes", searchOpen,
                     Modifier.focusRequester(searchRequester), onSearch)

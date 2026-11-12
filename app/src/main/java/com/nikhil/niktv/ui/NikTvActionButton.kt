@@ -61,10 +61,10 @@ private fun NikTvActionSurface(
     emphasis: NikTvActionEmphasis,
     contentPadding: PaddingValues,
     minHeight: androidx.compose.ui.unit.Dp,
+    shape: Shape,
     content: @Composable RowScope.() -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(12.dp)
 
     /*
      * NIKTV_ACTION_BUTTON_REFERENCE_V2
@@ -199,6 +199,7 @@ internal fun NikTvPrimaryActionButton(
         emphasis = NikTvActionEmphasis.PRIMARY,
         contentPadding = contentPadding,
         minHeight = 48.dp,
+        shape = shape,
         content = content
     )
 }
@@ -225,6 +226,7 @@ internal fun NikTvSecondaryActionButton(
         emphasis = NikTvActionEmphasis.SECONDARY,
         contentPadding = contentPadding,
         minHeight = 48.dp,
+        shape = shape,
         content = content
     )
 }
@@ -251,6 +253,7 @@ internal fun NikTvTextActionButton(
         emphasis = NikTvActionEmphasis.TEXT,
         contentPadding = contentPadding,
         minHeight = 40.dp,
+        shape = shape,
         content = content
     )
 }
