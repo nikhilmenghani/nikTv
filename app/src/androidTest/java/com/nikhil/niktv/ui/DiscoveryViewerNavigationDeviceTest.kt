@@ -238,4 +238,40 @@ class DiscoveryViewerNavigationDeviceTest {
             instrumentation.setInTouchMode(true)
         }
     }
+    @Test fun sportsPhoneHeaderUsesLeadingProfileWithoutBackAction() {
+        val context = instrumentation.targetContext
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val opens = java.util.concurrent.atomic.AtomicInteger()
+        try {
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { host.setContent {
+                val config = android.content.res.Configuration(LocalConfiguration.current).apply {
+                    screenWidthDp = 400; screenHeightDp = 850; smallestScreenWidthDp = 400
+                    orientation = android.content.res.Configuration.ORIENTATION_PORTRAIT
+                    uiMode = android.content.res.Configuration.UI_MODE_TYPE_NORMAL
+                }
+                val profile = remember { FocusRequester() }
+                CompositionLocalProvider(LocalConfiguration provides config,
+                    LocalSelectedUserProfile provides UserProfile("c93b58be-3b8f-4e78-b8da-270dd3ad67aa", "Header fixture", avatar = "F"),
+                    LocalOpenUserProfiles provides { opens.incrementAndGet() }) {
+                    MaterialTheme(colorScheme = NikColors) {
+                        com.nikhil.niktv.sports.SportsHeader("Sports", {}, emptyList(), profile, remember { FocusRequester() }, {})
+                        LaunchedEffect(Unit) { withFrameNanos { }; profile.requestFocus() }
+                    }
+                }
+            } }
+            await("Sports profile is visible") { find("Switch profile: Header fixture") != null }
+            assertNull("Phone Sports has no Back action", find("Back"))
+            val profileBounds = android.graphics.Rect().also { find("Switch profile: Header fixture")!!.getBoundsInScreen(it) }
+            val titleBounds = android.graphics.Rect().also { find("Sports page title")!!.getBoundsInScreen(it) }
+            val optionsBounds = android.graphics.Rect().also { find("Sports options")!!.getBoundsInScreen(it) }
+            assertTrue(profileBounds.centerX() < titleBounds.centerX())
+            assertTrue(titleBounds.centerX() < optionsBounds.centerX())
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("D-pad activates leading profile") { opens.get() == 1 }
+            NavigationAuditEvidence.capture("sports-phone-leading-profile")
+        } finally { instrumentation.runOnMainSync { host.finish() }; instrumentation.setInTouchMode(true) }
+    }
+
 }

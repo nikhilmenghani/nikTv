@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -27,7 +28,12 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     var viewportTop by remember { mutableFloatStateOf(0f) }
     var viewportBounds by remember { mutableStateOf(Rect.Zero) }
     var artwork by remember { mutableStateOf(initialSceneArtwork?.let { MobileGlassSource(it, Rect.Zero) }) }
-    val publish = remember { { value: MobileGlassSource? -> artwork = value } }
+    val artworkBounds = remember { mutableStateOf(Rect.Zero) }
+    val movingBounds = remember { { artworkBounds.value } }
+    val publish = remember { { value: MobileGlassSource? ->
+        artworkBounds.value = value?.bounds ?: Rect.Zero
+        artwork = value?.copy(bounds = Rect.Zero)
+    } }
     Box(Modifier.fillMaxSize().background(if (overlay) Color(0xFF090B10) else Color.Transparent).safeDrawingPadding().onGloballyPositioned {
         viewportTop = it.positionInWindow().y
         viewportBounds = it.boundsInWindow()
@@ -42,14 +48,18 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
                 LocalPublishMobileGlassSource provides publish) { content() }
             // Only the chrome observes artwork publication; row models remain independent.
             CompositionLocalProvider(LocalMobileGlassArtwork provides artwork?.artwork,
-                LocalMobileGlassBounds provides (if (backdropBehindRows) viewportBounds else artwork?.bounds ?: Rect.Zero),
+                LocalMobileGlassBounds provides (if (backdropBehindRows) viewportBounds else Rect.Zero),
+                LocalMobileGlassMovingBounds provides if (backdropBehindRows) null else movingBounds,
                 LocalMobileGlassFit provides (!backdropBehindRows && artwork?.fit == true),
                 LocalMobileGlassTopAligned provides (!backdropBehindRows && artwork?.topAligned == true),
                 LocalMobileGlassFillWidth provides (!backdropBehindRows && artwork?.fillWidth == true)) {
-                Box(Modifier.fillMaxWidth().background(
-                    if (!backdropBehindRows && (if (phone) artwork?.bounds?.bottom?.let { it <= viewportTop + with(density) { inset.toPx() } }
-                        else artwork?.bounds?.top?.let { it < viewportTop - 1f }) == true) Color(0xFF090B10) else Color.Transparent
-                ).onSizeChanged { inset = with(density) { it.height.toDp() } }) { header() }
+                Box(Modifier.fillMaxWidth().drawBehind {
+                    val bounds = artworkBounds.value
+                    if (!backdropBehindRows && !bounds.isEmpty &&
+                        (if (phone) bounds.bottom <= viewportTop + inset.toPx() else bounds.top < viewportTop - 1f)) {
+                        drawRect(Color(0xFF090B10))
+                    }
+                }.onSizeChanged { inset = with(density) { it.height.toDp() } }) { header() }
             }
         } else Column(Modifier.fillMaxSize()) {
             header()

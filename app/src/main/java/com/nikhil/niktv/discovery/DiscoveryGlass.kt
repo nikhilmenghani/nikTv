@@ -62,6 +62,8 @@ internal fun detailActionSize(): androidx.compose.ui.unit.Dp {
 internal val LocalDetailActionGlass = staticCompositionLocalOf { false }
 internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }
 internal val LocalMobileGlassBounds = staticCompositionLocalOf { Rect.Zero }
+// Scrolling changes coordinates, not the header's content or measured layout.
+internal val LocalMobileGlassMovingBounds = staticCompositionLocalOf<(() -> Rect)?> { null }
 internal val LocalMobileGlassArtwork = staticCompositionLocalOf<String?> { null }
 @Composable
 internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focused: Boolean = false,
@@ -107,6 +109,7 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
             // allocating a second full backdrop just to downsample it for blur.
             .size(192, 108).transformations(DiscoveryGlassTransformation()).build()
     })
+    val movingBounds = LocalMobileGlassMovingBounds.current
     val shape = remember { RoundedCornerShape(10.dp) }
     val glassHighlight = remember {
         Brush.verticalGradient(listOf(Color.White.copy(alpha = .12f), Color.Transparent, Color.Black.copy(alpha = .12f)))
@@ -115,10 +118,11 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
         .background(baseColor).border(if (focused) 2.dp else 1.dp,
             if (focused) Color.White else Color(0x777F899B), shape)) {
         Canvas(Modifier.matchParentSize()) {
+            val bounds = movingBounds?.invoke() ?: backdropBounds
             val intrinsic = painter.intrinsicSize
-            val imageRect = discoveryGlassImageRect(backdropBounds, intrinsic, fitArtwork, topAligned, fillWidth)
-            if (imageRect != null) clipRect(backdropBounds.left - position.x, backdropBounds.top - position.y,
-                backdropBounds.right - position.x, backdropBounds.bottom - position.y) {
+            val imageRect = discoveryGlassImageRect(bounds, intrinsic, fitArtwork, topAligned, fillWidth)
+            if (imageRect != null) clipRect(bounds.left - position.x, bounds.top - position.y,
+                bounds.right - position.x, bounds.bottom - position.y) {
                 withTransform({ translate(imageRect.left - position.x, imageRect.top - position.y) }) {
                     with(painter) { draw(Size(imageRect.width, imageRect.height), alpha = artworkOpacity) }
                 }

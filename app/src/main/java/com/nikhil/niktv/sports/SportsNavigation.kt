@@ -109,23 +109,18 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
         }
         return
     }
-    Surface(Modifier.fillMaxWidth().padding(top = if (phone) 8.dp else 10.dp), shape = SportsShape,
-        color = if (phone) Color.Transparent else SportsSurface, contentColor = Color.White) {
-        Row(Modifier.fillMaxWidth().padding(if (phone) 0.dp else 6.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (!phone) Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV",
-                Modifier.size(42.dp).graphicsLayer { scaleX = if (phone) 2.4f else 1.6f; scaleY = if (phone) 2.4f else 1.6f })
-            DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
-                modifier = Modifier.size(48.dp).focusRequester(backFocus), onClick = back)
-            if (phone) Text(title, Modifier.weight(1f).semantics { contentDescription = "Sports page title" },
-                fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-            else navigation(Modifier.weight(1f))
+    Surface(Modifier.fillMaxWidth().padding(top = 8.dp), shape = SportsShape,
+        color = Color.Transparent, contentColor = Color.White) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             viewer?.let { profile ->
                 DiscoveryAction("Switch profile: ${profile.name}", visualLabel = profile.avatar.ifBlank { profile.name.take(1).uppercase() },
                     containerColor = Color(profile.color), horizontalPadding = 0.dp,
-                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: ${profile.name}" },
+                    modifier = Modifier.size(48.dp).focusRequester(backFocus).semantics { contentDescription = "Switch profile: ${profile.name}" },
                     onClick = openProfiles)
             }
+            Text(title, Modifier.weight(1f).semantics { contentDescription = "Sports page title" },
+                fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             options()
         }
     }
