@@ -607,17 +607,17 @@ private fun DiscoveryPreviewContent(
                 }
             }
 
-            if (surface == DashboardSurface.HOME && experiment && (watchProviders.loading || watchProviders.providers.isNotEmpty() || watchProviders.error != null))
-                add(Rail("watch-providers", "Providers", watchProviders.providers.map { provider ->
-                    RailEntry("watch-provider:${provider.id}", provider.name, provider.logo,
-                        open = { chosenWatchProvider = provider })
-                }, viewAll = openWatchProviders))
             if (experiment && genreState.providers.isNotEmpty()) add(Rail("popular-genres", "Popular Genres",
                 genreState.providers.map { genre -> RailEntry("genre:${genreState.series}:${genre.id}", genre.name,
                     genreArtwork["${genreState.series}:${genre.id}"],
                     open = { vm.chosenGenre = genre; vm.genresOpen = true },
                     visible = { genreHolder?.wallpaper(genre.id, genreState.series) }) },
                 viewAll = { vm.chosenGenre = null; vm.genresOpen = true }, hasMore = true))
+            if (surface == DashboardSurface.HOME && experiment && (watchProviders.loading || watchProviders.providers.isNotEmpty() || watchProviders.error != null))
+                add(Rail("watch-providers", "Providers", watchProviders.providers.map { provider ->
+                    RailEntry("watch-provider:${provider.id}", provider.name, provider.logo,
+                        open = { chosenWatchProvider = provider })
+                }, viewAll = openWatchProviders))
 
         } else {
             if (state.collection.isNotEmpty()) add(Rail("collection", state.details?.collection?.title ?: "Collection", state.collection.map { cardEntry(it, "collection") }))
