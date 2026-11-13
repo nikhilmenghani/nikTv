@@ -5700,6 +5700,15 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
     }
 
+    fun cancelSearch() {
+        searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
+        searchServerJob = null
+        _state.update { it.copy(searchLocalLoading = false, searchServerLoading = false,
+            searchHasMore = false, searchProviderMessage = "Search stopped. Retry provider to search again.",
+            searchActivityTitle = null, searchActivityDetail = null, searchActivityProgress = null) }
+    }
+
     fun search(forceServer: Boolean = false) {
         val snapshot = _state.value
         val query = snapshot.searchQuery.trim()
@@ -5847,7 +5856,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             globalSearchPagerKey = key
         }
         val pager = requireNotNull(globalSearchPager)
-        fun current() = _state.value.let {
+        val searchJob = kotlinx.coroutines.currentCoroutineContext()[Job]
+        fun current() = searchJob?.isActive != false && _state.value.let {
             it.searchOpen && it.session?.profile?.cacheKey() == profileKey &&
                 it.searchType == SearchContentType.ALL && it.searchQuery.trim() == query
         }
@@ -5857,15 +5867,17 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             searchActivityTitle = "Loading provider results") }
         try {
             var failures = 0
+            var checkedPages = 0
             do {
             val batch = pager.next(
                 search = { type, category, page ->
-                    _state.update { it.copy(searchActivityDetail = "${type.title} · page $page",
+                    _state.update { it.copy(searchActivityDetail = "${type.title} · $checkedPages pages checked",
                         searchActivityProgress = null) }
                     delay(METADATA_SCAN_REQUEST_DELAY_MS)
                     val result = withAutomaticSessionRetry(session) { activeSession ->
                         searchProviderPage(activeSession, type, query, page, category)
                     }
+                    checkedPages++
                     val previous = store.pagedSearches.first().firstOrNull {
                         it.profileKey == profileKey && it.type == type && it.query.equals(query, true) && it.categoryId == category
                     }

@@ -746,6 +746,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,setSearchType = vm::setSearchType
                     ,setSearchQuery = vm::setSearchQuery
                     ,search = vm::search
+                    ,cancelSearch = vm::cancelSearch
                     ,useRecentSearch = vm::useRecentSearch
                     ,deleteRecentSearch = vm::deleteRecentSearch
                     ,openSearchResult = { item -> if ((item.searchResultType ?: state.searchType) == SearchContentType.MOVIES) vm.openProviderMovieDetails(item) else vm.openSearchResult(item) }

@@ -41,10 +41,35 @@ internal class PortalFocusReturn {
 }
 internal val LocalPortalFocusReturn = staticCompositionLocalOf { PortalFocusReturn() }
 
+/** Reserve exactly the visible portal targets, their gaps and the glass inset. */
+@Composable
+internal fun portalHeaderWidth(): androidx.compose.ui.unit.Dp {
+    val count = LocalDirectPortalActions.current.size
+    if (count <= 1) return 0.dp
+    val size = discoveryHeaderActionSize()
+    return with(androidx.compose.ui.platform.LocalDensity.current) {
+        // Layout rounds each button, gap and inset independently. Reserve their
+        // pixel sum so the last button never loses a pixel to cumulative rounding.
+        (size.roundToPx() * count + 4.dp.roundToPx() * (count - 1) + 5.dp.roundToPx() * 2).toDp()
+    }
+}
+
+@Composable
+internal fun discoveryProfileHeaderWidth(clock: Boolean): androidx.compose.ui.unit.Dp {
+    val portals = portalHeaderWidth()
+    val person = if (clock) (124f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
+        else if (discoveryHeaderActionSize() == 36.dp) 46.dp else 56.dp
+    return portals + (if (portals > 0.dp) 8.dp else 0.dp) + person
+}
+
 @Composable
 internal fun DirectPortalButtons(modifier: Modifier = Modifier, labels: Boolean = false) {
     val focusReturn = LocalPortalFocusReturn.current
     val actions = LocalDirectPortalActions.current
+    LaunchedEffect(actions.map { it.id }) {
+        if (actions.size <= 1 || actions.none { it.id == focusReturn.pendingId }) focusReturn.cancel()
+    }
+    if (actions.size <= 1) return
     val selectedIds = actions.filter { it.selected }.map { it.id }
     val pendingId = focusReturn.pendingId
     val routeOwned = focusReturn.routeOwned
@@ -64,7 +89,7 @@ internal fun DirectPortalButtons(modifier: Modifier = Modifier, labels: Boolean 
     // Dynamic portal names must remain readable. A content-sized strip also
     // keeps every portal reachable when more providers are added later.
     val scroll = rememberScrollState()
-    Row(modifier.horizontalScroll(scroll)
+    Row(modifier.then(if (labels) Modifier.horizontalScroll(scroll) else Modifier)
         .semantics { contentDescription = "Portals" }.onPreviewKeyEvent { event ->
         if (event.nativeKeyEvent.keyCode in listOf(19, 20, 21, 22, 61)) focusReturn.cancel()
         false

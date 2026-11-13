@@ -221,6 +221,7 @@ internal fun DiscoveryScreenHost(
     openGlobalSearch: (() -> Unit)? = null,
     goToSeriesEpisode: ((Int?) -> Unit)? = null,
     cancelEpisodeDestination: () -> Unit = {},
+    cancelSearch: () -> Unit = {},
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -381,6 +382,7 @@ internal fun DiscoveryScreenHost(
                     setCategory = setSearchCategory,
                     setQuery = setSearchQuery,
                     search = search,
+                    cancelSearch = cancelSearch,
                     useRecent = useRecentSearch,
                     deleteRecent = deleteRecentSearch,
                     openResult = openSearchResult,
@@ -592,7 +594,13 @@ internal fun DiscoveryScreenHost(
         Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
             CompositionLocalProvider(LocalPhoneBottomChromeHeight provides if (showPhoneBar) bottomChromeHeight else 0.dp) {
             Column(Modifier.fillMaxSize()
-                .then(if (providersVisible || previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
+                // Downloads and Storage own a bounded scrolling viewport above
+                // both library tabs and the phone dock, rather than behind them.
+                .padding(bottom = if (state.offlineDownloadsOpen && showPhoneBar) bottomChromeHeight else 0.dp)
+                .then(if (state.offlineDownloadsOpen) Modifier.windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                else if (providersVisible || previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) Modifier
+                else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
                 LibraryContent(Modifier.weight(1f).fillMaxWidth())
             }
             }

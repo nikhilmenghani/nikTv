@@ -6,6 +6,9 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material.icons.filled.Tv
@@ -21,6 +24,67 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** Token-free UI fixtures exercise the same phone, tablet and TV composables. */
 class AccountProfilesDeviceTest {
+    @Test fun adaptivePortalSelectorsShrinkAndHideWithoutChangingFocusGeometry() {
+        val count = mutableIntStateOf(3)
+        val selected = mutableStateOf("Xtream")
+        val focus = com.nikhil.niktv.discovery.PortalFocusReturn()
+        fixture({
+            val portals = listOf("Xtream", "Stalker", "Sports").take(count.intValue).map { name ->
+                com.nikhil.niktv.discovery.DirectPortalAction(name, androidx.compose.material.icons.Icons.Default.Tv,
+                    selected = selected.value == name) { selected.value = name }
+            }
+            CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides portals,
+                com.nikhil.niktv.discovery.LocalPortalFocusReturn provides focus) {
+                Column(Modifier.safeDrawingPadding().padding(24.dp)) {
+                    com.nikhil.niktv.discovery.DiscoveryClockProfile("Fixture", Modifier
+                        .width(com.nikhil.niktv.discovery.discoveryProfileHeaderWidth(clock = true)).height(56.dp),
+                        null, androidx.compose.ui.geometry.Rect.Zero, {})
+                    com.nikhil.niktv.discovery.DiscoveryPhoneBottomNavigation(null, {})
+                }
+            }
+        }) { host ->
+            instrumentation.runOnMainSync { host.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            await("Landscape fixture ready") { host.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && host.hasWindowFocus() }
+            Thread.sleep(800) // Wait for Android's rotation animation, not just its configuration.
+            instrumentation.waitForIdleSync()
+            await("Three portals visible") { find("Sports") != null }
+            fun bounds(label: String): android.graphics.Rect {
+                var node = requireNotNull(find(label))
+                // Icon semantics describe visible geometry; clickable ancestors
+                // include Android's expanded minimum touch targets on phones.
+                return android.graphics.Rect().also(node::getBoundsInScreen)
+            }
+            if (!host.resources.configuration.usesShortWideLayout(false)) {
+                await("Clock remains visible at exact fitted width") {
+                    find(android.text.format.DateFormat.getTimeFormat(host).format(java.util.Date())) != null
+                }
+            }
+            val full = bounds("Portals").width()
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { focus.requester("Xtream").requestFocus() }
+            screenshot("adaptive-portals-three-focused.png")
+            instrumentation.runOnMainSync { count.intValue = 2 }
+            await("Third portal removed") { find("Sports") == null }
+            instrumentation.waitForIdleSync()
+            Thread.sleep(150)
+            val first = bounds("Xtream")
+            val second = bounds("Stalker")
+            assertEquals("Two portal icons have equal width", first.width(), second.width())
+            assertEquals("Buttons align vertically", first.top, second.top)
+            assertTrue("Two portals shrink their container", bounds("Portals").width() < full)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Remote activates the adjacent portal") { selected.value == "Stalker" }
+            assertEquals("Focus does not resize the button", second, bounds("Stalker"))
+            screenshot("adaptive-portals-two-focused.png")
+            instrumentation.runOnMainSync { focus.clicked("Xtream"); count.intValue = 1 }
+            await("Single portal removes header selector and phone dock entry") { find("Portals") == null }
+            await("Removed selector clears pending portal focus") { !focus.waiting }
+            assertNotNull("Profile remains reachable", find("Switch profile: Fixture"))
+            assertNotNull("Main navigation remains", find("Home"))
+            screenshot("adaptive-portals-one.png")
+        }
+    }
     @Test fun portalMenuOpensSelectedPortalDirectly() {
         val current = com.nikhil.niktv.model.PortalProfile("Fixture Stalker", "http://fixture.invalid", "fixture")
         val other = current.copy(name = "Fixture Xtream", portalType = com.nikhil.niktv.model.PortalType.XTREAM)

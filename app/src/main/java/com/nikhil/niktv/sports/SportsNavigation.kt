@@ -82,7 +82,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
         val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
         val headerHeight = maxOf(if (shortWide) 54.dp else 56.dp, (24f * androidx.compose.ui.platform.LocalDensity.current.fontScale + 24f).dp)
         BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = if (shortWide) 6.dp else 12.dp)) {
-        val profileWidth = if (shortWide) 214.dp else (160f + 124f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
+        val profileWidth = com.nikhil.niktv.discovery.discoveryProfileHeaderWidth(clock = !shortWide)
         val menuWidth = (maxWidth - profileWidth - 12.dp).coerceAtLeast(0.dp)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             DiscoveryGlassPanel(Modifier.widthIn(max = menuWidth).height(headerHeight), null, androidx.compose.ui.geometry.Rect.Zero) {
@@ -165,7 +165,7 @@ internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
                     }
                 }
             }
-            SportsPortalMenu(Modifier.weight(1f))
+            if (com.nikhil.niktv.discovery.LocalDirectPortalActions.current.size > 1) SportsPortalMenu(Modifier.weight(1f))
         }
     }
 }

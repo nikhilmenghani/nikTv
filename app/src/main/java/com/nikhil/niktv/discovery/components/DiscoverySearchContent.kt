@@ -138,7 +138,8 @@ internal fun DiscoverySearchContent(
     toggleFavorite: (FavoriteItem) -> Unit,
     headerFocusRequester: FocusRequester? = null,
     queryFocusRequester: FocusRequester? = null,
-    headerHasFocus: Boolean = false
+    headerHasFocus: Boolean = false,
+    cancelSearch: () -> Unit = {}
 ) {
     var categoryPickerOpen by rememberSaveable(state.searchType) {
         mutableStateOf(false)
@@ -628,7 +629,7 @@ internal fun DiscoverySearchContent(
                         Modifier.weight(2f), style = MaterialTheme.typography.bodySmall,
                         color = SearchMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                SearchProviderAction(state, { search(true) }, Modifier.height(controlHeight)
+                SearchProviderAction(state, { search(true) }, cancelSearch, Modifier.height(controlHeight)
                         .focusRequester(providerSearchRequester)
                         .onPreviewKeyEvent { event ->
                             if (event.key == Key.DirectionDown && state.searchResults.isNotEmpty()) {
@@ -642,6 +643,13 @@ internal fun DiscoverySearchContent(
                             down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
                         }
                 )
+            }
+            if (!wideControls && (state.searchServerLoading || showLocalSearchProgress)) {
+                SearchActivityCard(
+                    title = state.searchActivityTitle ?: if (state.searchServerLoading) "Searching provider" else "Checking device cache",
+                    detail = state.searchActivityDetail ?: if (state.searchServerLoading) "Waiting for provider results" else "Checking saved results",
+                    progress = state.searchActivityProgress,
+                    providerSearch = state.searchServerLoading)
             }
             if (wideControls) Box(Modifier.fillMaxWidth().height(4.dp)) {
                 if (state.searchServerLoading || showLocalSearchProgress) {
@@ -737,6 +745,7 @@ internal fun DiscoverySearchContent(
                 )
                 Text(
                     when {
+                        state.searchProviderMessage != null -> "Search incomplete"
                         state.searchUsedServer && searchingSpecificCategory ->
                             "No provider matches in $selectedCategoryTitle"
                         state.searchUsedServer ->
@@ -876,13 +885,14 @@ private fun SearchIconControl(
 }
 
 @Composable
-private fun SearchProviderAction(state: NikTvState, search: () -> Unit, modifier: Modifier = Modifier) {
-    SearchQuietControl({ if (!state.searchServerLoading && !state.searchLocalLoading) search() }, modifier) {
-        Icon(Icons.Default.Refresh, null, Modifier.size(16.dp), tint = SearchMuted)
+private fun SearchProviderAction(state: NikTvState, search: () -> Unit, cancel: () -> Unit, modifier: Modifier = Modifier) {
+    val busy = state.searchServerLoading || state.searchLocalLoading
+    SearchQuietControl({ if (busy) cancel() else search() }, modifier) {
+        if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = SearchAccent)
+        else Icon(Icons.Default.Refresh, null, Modifier.size(16.dp), tint = SearchMuted)
         Spacer(Modifier.width(6.dp))
         Text(when {
-            state.searchServerLoading -> "Searching provider…"
-            state.searchLocalLoading -> "Checking cache…"
+            busy -> "Stop search"
             state.searchProviderMessage != null -> "Retry provider"
             state.searchUsedServer -> "Search provider again"
             else -> "Search provider"

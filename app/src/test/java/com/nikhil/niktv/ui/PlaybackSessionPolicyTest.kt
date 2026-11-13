@@ -193,6 +193,12 @@ class PlaybackSessionPolicyTest {
         assertNull(vlcHeaderOptions(mapOf("User-Agent" to "NikTV\r\nHeader: injected")))
     }
 
+    @Test fun exportedHlsDownloadsUseTheirSavedMp4Container() {
+        assertEquals("video/mp4", playbackMimeType("HLS → MP4", "content://media/external/video/media/42"))
+        assertEquals("video/mp4", playbackMimeType(" hls → mp4 ", "file:///downloads/movie.mp4"))
+        assertEquals("application/x-mpegURL", playbackMimeType("HLS", "https://fixture/opaque"))
+    }
+
     @Test fun opaqueManifestsUseKnownFormatWithoutGuessingEveryLiveStream() {
         assertEquals("application/x-mpegURL", playbackMimeType("HLS", "https://fixture/opaque"))
         assertEquals("application/dash+xml", playbackMimeType("DASH", "https://fixture/opaque"))
