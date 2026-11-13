@@ -15,6 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -24,6 +25,9 @@ import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.ui.EpisodeViewingStatus
+import com.nikhil.niktv.ui.usesShortWideLayout
+import com.nikhil.niktv.ui.isTvLikeDevice
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
 internal val LocalSeriesArtworkGlass = staticCompositionLocalOf { false }
@@ -35,7 +39,9 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
     resume: Boolean = false, listView: Boolean = false, overview: String? = null,
     onFocus: () -> Unit = {}, onClick: () -> Unit, onLongClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val compact = LocalConfiguration.current.screenWidthDp < 600
+    val configuration = LocalConfiguration.current
+    val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
+    val compact = configuration.screenWidthDp < 600
     val shape = RoundedCornerShape(10.dp)
     val glass = LocalSeriesArtworkGlass.current
     Surface(modifier.onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
@@ -55,28 +61,34 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
                 }
             }
         }
-        if (listView) Row(Modifier.padding(if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
+        if (listView) Row(Modifier.padding(if (shortWide) 5.dp else if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (shortWide) 8.dp else if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            image(Modifier.width(if (compact) 92.dp else 112.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, Modifier.fillMaxWidth(), color = Color.White, style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            image(Modifier.width(if (shortWide) 64.dp else if (compact) 92.dp else 112.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (shortWide) 2.dp else 4.dp)) {
+                Text(title, Modifier.fillMaxWidth(), color = Color.White, style = if (shortWide) MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp) else MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold, maxLines = if (shortWide) 1 else 2, overflow = TextOverflow.Ellipsis)
                 Text(listOf(label, metadata).filter(String::isNotBlank).joinToString(" · "),
-                    color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelMedium)
-                EpisodeViewingStatus(remaining, resume)
-                if (!overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),
+                    color = Color(0xFFB9BDC7), style = if (shortWide) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 14.sp) else MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                EpisodeViewingStatus(remaining, resume, compact = shortWide)
+                if (!shortWide && !overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),
                     style = MaterialTheme.typography.bodySmall, maxLines = if (compact) 2 else 1, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Default.PlayArrow, null, Modifier.size(24.dp), tint = Color.White)
+            Icon(Icons.Default.PlayArrow, null, Modifier.size(if (shortWide) 18.dp else 24.dp), tint = Color.White)
         } else Column {
             image(Modifier.fillMaxWidth())
-            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(label, color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                Text(title, color = Color.White, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold,
+            Column(Modifier.padding(if (shortWide) 5.dp else 10.dp), verticalArrangement = Arrangement.spacedBy(if (shortWide) 2.dp else 5.dp)) {
+                Text(label, color = Color(0xFFB9BDC7), style = if (shortWide) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp) else MaterialTheme.typography.labelSmall, maxLines = 1)
+                Text(title, color = Color.White, style = if (shortWide) MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp) else MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold,
                     maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(metadata.ifBlank { " " }, color = Color(0xFFB9BDC7),
-                    style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                EpisodeViewingStatus(remaining, resume)
+                    style = if (shortWide) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp) else MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Every card reserves one status line, including unwatched episodes.
+                // A watch/progress update must not change the grid's card geometry.
+                val statusHeight = if (shortWide) (14f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
+                    else with(LocalDensity.current) { MaterialTheme.typography.labelSmall.lineHeight.toDp() }.coerceAtLeast(18.dp)
+                Box(Modifier.fillMaxWidth().height(statusHeight), contentAlignment = Alignment.CenterStart) {
+                    EpisodeViewingStatus(remaining, resume, compact = shortWide, singleLine = true)
+                }
             }
         }
     }

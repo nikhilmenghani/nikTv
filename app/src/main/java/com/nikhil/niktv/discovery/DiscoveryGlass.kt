@@ -16,6 +16,7 @@ import androidx.compose.ui.layout.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import com.nikhil.niktv.ui.isTvLikeDevice
+import com.nikhil.niktv.ui.usesShortWideLayout
 import androidx.compose.ui.unit.dp
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
@@ -46,8 +47,17 @@ internal fun discoveryGlassImageRect(viewport: Rect, image: Size, fit: Boolean =
 }
 
 @Composable
-internal fun detailActionSize() = if (LocalDetailActionGlass.current &&
-    LocalContext.current.isTvLikeDevice(LocalConfiguration.current)) 40.dp else 48.dp
+internal fun discoveryHeaderActionSize() = if (LocalConfiguration.current.usesShortWideLayout(
+    LocalContext.current.isTvLikeDevice(LocalConfiguration.current))) 36.dp else 44.dp
+
+@Composable
+internal fun detailActionSize(): androidx.compose.ui.unit.Dp {
+    val configuration = LocalConfiguration.current
+    val tv = LocalContext.current.isTvLikeDevice(configuration)
+    return if (configuration.usesShortWideLayout(tv)) {
+        if (LocalDetailActionGlass.current) 36.dp else 40.dp
+    } else if (LocalDetailActionGlass.current && tv) 40.dp else 48.dp
+}
 
 internal val LocalDetailActionGlass = staticCompositionLocalOf { false }
 internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }

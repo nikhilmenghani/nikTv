@@ -126,6 +126,10 @@ class ProviderSeriesPhoneViewportDeviceTest {
                 while (pane != null && !pane.isScrollable) pane = pane.parent
                 assertNotNull("Landscape retains an independent episode list", pane)
                 assertTrue("Episodes use most of the landscape viewport", bounds(pane!!).height() >= rect.height() * .45f)
+                val fullRows = (1..24).count { number -> owner("Phone pane episode $number")?.let {
+                    it.isVisibleToUser && rect.contains(bounds(it))
+                } == true }
+                assertTrue("Landscape shows four complete episode rows, actual=$fullRows", fullRows >= 4)
                 NavigationAuditEvidence.capture("provider-phone-landscape-episodes")
                 ins.setInTouchMode(false)
                 focus("Phone pane episode 24")

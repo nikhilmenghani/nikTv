@@ -1567,7 +1567,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             }
         }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
-        val detailActionHeight = if (detail) detailActionSize() else 48.dp
+        val detailActionHeight = if (detail || shortWide) detailActionSize() else 48.dp
         val actions: @Composable () -> Unit = {
             CompositionLocalProvider(LocalCollapsingDiscoveryActions provides false) {
             DiscoveryAction(if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true,
@@ -1843,19 +1843,21 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     val collapsible = LocalCollapsingDiscoveryActions.current && icon != null && !iconOnly
     val headerSizing = LocalDiscoveryHeaderActionSizing.current
     val detailSize = detailActionSize()
-    val contentInset = if (headerSizing) 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
+    val shortWide = LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))
+    val headerSize = discoveryHeaderActionSize()
+    val contentInset = if (headerSizing) if (shortWide) 8.dp else 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
     DiscoveryMobileGlassContainer(focused = focused) {
-    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else 40.dp)
-        .widthIn(min = if (headerSizing) 44.dp else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else 0.dp)
+    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) headerSize else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else if (shortWide) 36.dp else 40.dp)
+        .widthIn(min = if (headerSizing) headerSize else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else 0.dp)
         .then(if (collapsible) Modifier.semantics { contentDescription = label } else Modifier)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() },
         shape = RoundedCornerShape(10.dp), shadowElevation = 0.dp, tonalElevation = 0.dp, color = containerColor ?: if (selected) Accent else if (focused) Color.White
             else if (LocalMobileGlassEnabled.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
         border = if (LocalMobileGlassEnabled.current) null else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
         contentColor = if (focused && !selected && containerColor == null) Color.Black else Color.White) {
-        Row(Modifier.padding(start = contentInset, end = if (headerSizing || iconOnly || collapsible) contentInset else trailingPadding, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.padding(start = contentInset, end = if (headerSizing || iconOnly || collapsible) contentInset else trailingPadding, top = if (shortWide) 6.dp else 8.dp, bottom = if (shortWide) 6.dp else 8.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(if (collapsible) 0.dp else 6.dp, Alignment.CenterHorizontally)) {
-            icon?.let { Icon(it, if (iconOnly && !collapsible) label else null, Modifier.size(20.dp)) }
+            icon?.let { Icon(it, if (iconOnly && !collapsible) label else null, Modifier.size(if (shortWide) 18.dp else 20.dp)) }
             if (collapsible) AnimatedVisibility(focused,
                 enter = expandHorizontally(tween(140), expandFrom = Alignment.Start) + fadeIn(tween(100)),
                 exit = shrinkHorizontally(tween(140), shrinkTowards = Alignment.Start) + fadeOut(tween(100))) {

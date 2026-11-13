@@ -26,6 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -65,6 +67,8 @@ private fun NikTvActionSurface(
     content: @Composable RowScope.() -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
 
     /*
      * NIKTV_ACTION_BUTTON_REFERENCE_V2
@@ -99,7 +103,7 @@ private fun NikTvActionSurface(
     ) {
         Row(
             modifier = Modifier
-                .defaultMinSize(minHeight = minHeight)
+                .defaultMinSize(minHeight = if (shortWide) minHeight.coerceAtMost(40.dp) else minHeight)
                 .padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement =

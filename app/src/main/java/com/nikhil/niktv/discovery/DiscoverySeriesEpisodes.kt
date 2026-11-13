@@ -270,7 +270,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             Box {
             DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
                 listView = listView, overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
-                modifier = (if (listView) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
+                modifier = (if (listView) Modifier.fillMaxWidth() else Modifier.width(if (LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))) 112.dp else 200.dp)).focusRequester(requester)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else {
                         val cursor = episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.takeIf { it >= 0 } ?: index
@@ -314,7 +314,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         // list changes. A lambda keeps the sidebar callback current after loading.
         if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
             .weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(if (LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))) 4.dp else 8.dp)) {
                 if (episodes.isEmpty()) item("episode-status") {
                     Text(if ("season" in state.loading) "Loading episodes…"
                         else if (searchOpen && query.isNotBlank()) "No episodes match your search."

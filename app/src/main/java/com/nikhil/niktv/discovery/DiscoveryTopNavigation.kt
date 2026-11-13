@@ -110,17 +110,16 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     val style = LocalTextStyle.current.merge(TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
     fun textWidth(text: String) = with(density) { measurer.measure(text, style, maxLines = 1).size.width.toDp() }
     val naturalProfile = 160.dp + (124f * density.fontScale.coerceAtLeast(1f)).dp
-    val height = maxOf(if (shortWide) 54.dp else 56.dp, (24f * density.fontScale + 24f).dp)
+    val height = if (shortWide) maxOf(46.dp, (20f * density.fontScale + 22f).dp) else maxOf(56.dp, (24f * density.fontScale + 24f).dp)
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = if (shortWide) 12.dp else 24.dp,
         vertical = if (shortWide) 6.dp else 12.dp)
         .discoveryHeaderFocusEntry(tabRequester)) {
     // Keep all ordinary tabs visible before spending a short phone window on
     // the optional clock. Portals and the person remain separate full targets.
-    val naturalMenu = 202f + (trialSurfaces.map { it.trialTitle().removeSuffix(" 2") } + listOf("Live TV", "My List"))
-        .sumOf { textWidth(it).value.toDouble() + 28.0 }.toFloat()
-    val profileSpace = if (shortWide) {
-        if (maxWidth.value - naturalMenu - 12f >= naturalProfile.value) naturalProfile.value else 214f
-    } else naturalProfile.value.coerceAtMost((maxWidth.value * .4f).coerceAtLeast(234f))
+    val naturalMenu = (if (shortWide) 170f else 202f) + (trialSurfaces.map { it.trialTitle().removeSuffix(" 2") } + listOf("Live TV", "My List"))
+        .sumOf { textWidth(it).value.toDouble() + if (shortWide) 20.0 else 28.0 }.toFloat()
+    val profileSpace = if (shortWide) 180f
+        else naturalProfile.value.coerceAtMost((maxWidth.value * .4f).coerceAtLeast(234f))
     val widths = DiscoveryHeaderWidths((maxWidth.value - profileSpace - 12f).coerceAtLeast(0f), profileSpace)
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
@@ -131,7 +130,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
             CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
             Row(Modifier.fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(discoveryHeaderActionSize()), contentAlignment = Alignment.Center) {
                     Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.fillMaxSize()
                         .graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
                 }
@@ -184,9 +183,10 @@ internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop
     }
     val portalFocusReturn = LocalPortalFocusReturn.current
     BoxWithConstraints(modifier) {
-        val showClock = maxWidth >= 158.dp + (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
-        val portalWidth = 150.dp
-        val personWidth = if (showClock) (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp else 56.dp
+        val shortWide = LocalConfiguration.current.usesShortWideLayout(context.isTvLikeDevice(LocalConfiguration.current))
+        val showClock = !shortWide && maxWidth >= 158.dp + (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
+        val portalWidth = if (shortWide) 126.dp else 150.dp
+        val personWidth = if (showClock) (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp else if (shortWide) 46.dp else 56.dp
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically) {
             DiscoveryGlassPanel(Modifier.width(portalWidth).fillMaxHeight(), backdrop, backdropBounds,
@@ -208,7 +208,7 @@ internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop
                     CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
                         DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
                             containerColor = viewer?.let { Color(it.color) } ?: Color(0xFFE50925), horizontalPadding = 0.dp,
-                            modifier = Modifier.size(44.dp)
+                            modifier = Modifier.size(discoveryHeaderActionSize())
                                 .semantics { contentDescription = "Switch profile: $viewerName" },
                             onClick = { portalFocusReturn.cancel(); openUserProfiles() })
                     }

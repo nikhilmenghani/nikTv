@@ -932,7 +932,7 @@ internal fun DiscoverySeriesContent(
                         refreshingTmdb = singleMetadataRefresh?.let { it.episode == episode.id && it.running } == true,
                         modifier = Modifier
                             .onSizeChanged { if (episode.id == filteredEpisodes.lastOrNull()?.id) lastEpisodeHeightPx = it.height }
-                            .then(if (episodeListView) Modifier.fillMaxWidth() else Modifier.width(if (mobileEpisodeLayout) 170.dp else 200.dp))
+                            .then(if (episodeListView) Modifier.fillMaxWidth() else Modifier.width(if (shortLandscapeEpisodes) 112.dp else if (mobileEpisodeLayout) 170.dp else 200.dp))
                             .focusRequester(remember(landscapeRequesters, episode.id) { landscapeRequesters.getOrPut(episode.id) { FocusRequester() } })
                             .onPreviewKeyEvent { event ->
                                 if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
@@ -959,13 +959,13 @@ internal fun DiscoverySeriesContent(
                 else if (episodeListView) item("episode-row") {
                     Row(Modifier.fillMaxWidth().height(if (mobileEpisodeLayout) phoneEpisodeHeight else wideEpisodeHeight)
                         .episodeViewportFocus()
-                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        .padding(horizontal = if (shortLandscapeEpisodes) 16.dp else if (mobileEpisodeLayout) 14.dp else 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { episodeViewportHeightPx = it.height }) {
                         LazyColumn(Modifier.fillMaxSize().padding(end = 6.dp), state = episodeRowState,
                             contentPadding = PaddingValues(bottom = if (!state.episodeHasMore &&
                                 recentEpisode?.id == filteredEpisodes.lastOrNull()?.id && lastEpisodeHeightPx > 0)
                                 with(density) { (episodeViewportHeightPx - lastEpisodeHeightPx).coerceAtLeast(0).toDp() } else 0.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            verticalArrangement = Arrangement.spacedBy(if (shortLandscapeEpisodes) 4.dp else 8.dp)) {
                             if (filteredEpisodes.isEmpty()) item("episode-status") {
                                 Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
                                     if (state.loading) Column(horizontalAlignment = Alignment.CenterHorizontally,

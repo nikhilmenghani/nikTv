@@ -323,13 +323,16 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         LocalProviderSynopsisActions.current?.invoke()
                         LocalProviderEpisodeControls.current?.invoke()
                     }
-                    progressLabel?.let {
-                        Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    progressLabel?.let { status ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(status, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
+                                modifier = Modifier.width(112.dp).height(2.dp), color = Color(0xFFE50925),
+                                trackColor = Color(0xFF343842), drawStopIndicator = {}) }
+                        }
                     }
-                    progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
-                        modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth().height(2.dp),
-                        color = Color(0xFFE50925), trackColor = Color(0xFF343842), drawStopIndicator = {}) }
                     LocalProviderSynopsisPanel.current?.invoke()
                 }
             }
