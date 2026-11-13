@@ -54,6 +54,7 @@ internal fun SeriesEpisodeToolbar(
     count: String,
     compact: Boolean,
     inline: Boolean = false,
+    withinPanel: Boolean = false,
     newestFirst: Boolean,
     onNewestFirst: (Boolean) -> Unit,
     listView: Boolean,
@@ -129,10 +130,11 @@ internal fun SeriesEpisodeToolbar(
         Row(if (inline) Modifier else Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(if (inline) Modifier else Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                if (!inline) Box(Modifier.width(3.dp).height(48.dp).padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
+                if (!inline && !withinPanel) Box(Modifier.width(3.dp).height(48.dp).padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primary) {}
                 }
-                Box(Modifier.padding(start = if (inline) 0.dp else 10.dp).heightIn(min = controlSize), contentAlignment = Alignment.CenterStart) { season() }
+                Box(Modifier.padding(start = if (inline || withinPanel) 0.dp else 10.dp).heightIn(min = controlSize), contentAlignment = Alignment.CenterStart) { season() }
+                if (withinPanel) Text(count, Modifier.padding(start = 12.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
             }
             Box(Modifier.width(searchWidth).height(controlSize).clip(RoundedCornerShape(if (com.nikhil.niktv.discovery.LocalDetailActionGlass.current) 10.dp else 12.dp))) {
                 if (searchOpen && !compact) Box(Modifier.fillMaxSize().focusRequester(searchRequester)) { searchField() }
@@ -175,7 +177,7 @@ internal fun SeriesEpisodeToolbar(
                 }
             }
         }
-        if (!inline) Text(count, Modifier.padding(start = 13.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
+        if (!inline && !withinPanel) Text(count, Modifier.padding(start = 13.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
         AnimatedVisibility(searchOpen && compact,
             enter = expandVertically(tween(220)) + fadeIn(tween(150)),
             exit = shrinkVertically(tween(220)) + fadeOut(tween(120))) {

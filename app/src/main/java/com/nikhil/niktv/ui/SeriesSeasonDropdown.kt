@@ -1,6 +1,8 @@
 package com.nikhil.niktv.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -8,6 +10,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -25,11 +30,6 @@ internal fun SeriesSeasonDropdown(seasons: List<Int>, selected: Int?, requester:
         withFrameNanos { }
         if (host.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
     } } }
-    LaunchedEffect(expanded) {
-        if (expanded) repeat(12) { withFrameNanos { }
-            if (runCatching { selectedEntry.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-        }
-    }
     Box {
         if (com.nikhil.niktv.discovery.LocalDetailActionGlass.current) {
             CompositionLocalProvider(com.nikhil.niktv.discovery.LocalCollapsingDiscoveryActions provides false) {
@@ -45,10 +45,30 @@ internal fun SeriesSeasonDropdown(seasons: List<Int>, selected: Int?, requester:
         }
         DropdownMenu(expanded, { expanded = false; restore() }, modifier = Modifier.width(220.dp),
             containerColor = Color.Transparent, tonalElevation = 0.dp, shadowElevation = 0.dp) {
+            // The popup owns a different window. Requesting from the parent can
+            // succeed before its initial focus pass, which then selects item one.
+            val inputMode = LocalInputModeManager.current
+            val revealSelected = remember { BringIntoViewRequester() }
+            var selectedFocused by remember { mutableStateOf(false) }
+            LaunchedEffect(selected, seasons) {
+                inputMode.requestInputMode(InputMode.Keyboard)
+                repeat(2) { withFrameNanos { } }
+                revealSelected.bringIntoView()
+                var stableFrames = 0
+                repeat(30) {
+                    withFrameNanos { }
+                    if (selectedFocused) stableFrames++ else {
+                        stableFrames = 0
+                        runCatching { selectedEntry.requestFocus() }
+                    }
+                    if (stableFrames >= 4) return@LaunchedEffect
+                }
+            }
             if (seasons.isNotEmpty() || selected != null) EpisodeSortMenuGroup(scrollable = true) {
                 (seasons + listOfNotNull(selected)).distinct().sorted().forEach { season ->
                     EpisodeSortMenuItem("Season $season", Icons.Default.Tv, selected = season == selected,
-                        modifier = if (season == selected) Modifier.focusRequester(selectedEntry) else Modifier) {
+                        modifier = if (season == selected) Modifier.focusRequester(selectedEntry)
+                            .bringIntoViewRequester(revealSelected).onFocusChanged { selectedFocused = it.hasFocus } else Modifier) {
                         expanded = false
                         runCatching { requester.requestFocus() }
                         choose(season)

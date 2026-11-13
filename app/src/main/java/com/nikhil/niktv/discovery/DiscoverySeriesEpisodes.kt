@@ -189,7 +189,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 loadSeason(season)
             }) },
             count = seriesEpisodeCountLabel(episodes.size, false, searchOpen && query.isNotBlank()),
-            compact = !wide, inline = header != null, newestFirst = newest, onNewestFirst = {
+            compact = !wide, inline = header != null && !wide, withinPanel = wide, newestFirst = newest, onNewestFirst = {
                 newest = it; rememberEpisode(null)
             },
             listView = listView, onListView = { listView = it }, searchOpen = searchOpen,
@@ -215,7 +215,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                     modifier = Modifier.focusRequester(searchInput).onFocusChanged { searchInputFocused = it.isFocused },
                     options = KeyboardOptions(imeAction = ImeAction.Search),
                     actions = KeyboardActions(onSearch = { searchEditing = false; keyboard?.hide() }))
-            }, modifier = Modifier.then(if (header != null) Modifier else Modifier.padding(horizontal = 24.dp, vertical = 12.dp)).onPreviewKeyEvent { event ->
+            }, modifier = Modifier.then(if (header != null || wide) Modifier else Modifier.padding(horizontal = 24.dp, vertical = 12.dp)).onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                     Key.DirectionUp -> {
                         searchEditing = false
@@ -234,7 +234,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 }
             })
         }
-        if (header != null) header(toolbar) else toolbar()
+        val episodeBody: @Composable ColumnScope.() -> Unit = {
         state.errors["season"]?.let { message ->
             DiscoveryAction(message, modifier = Modifier.focusRequester(retrySeason).onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
@@ -312,7 +312,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         if (chosen != null && "season" !in state.loading) counts[chosen] = "${state.episodes.size} episodes"
         // Local function references compare equal even when their captured episode
         // list changes. A lambda keeps the sidebar callback current after loading.
-        if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+        if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = if (wide) 0.dp else 24.dp)
             .weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(if (LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))) 4.dp else 8.dp)) {
                 if (episodes.isEmpty()) item("episode-status") {
@@ -322,8 +322,21 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 }
                 itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode) }
             }
-        } else if (!listView) LazyRow(modifier = Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        } else if (!listView) LazyRow(modifier = Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(horizontal = if (wide) 0.dp else 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode) }
+        }
+        }
+        if (wide) {
+            header?.invoke({})
+            val short = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
+            SeriesEpisodePanel(Modifier.weight(1f).fillMaxWidth()
+                .padding(start = if (short) 16.dp else 24.dp, end = if (short) 16.dp else 24.dp,
+                    bottom = if (short) 8.dp else 16.dp), compact = short, toolbar = toolbar) {
+                Column(Modifier.fillMaxSize(), content = episodeBody)
+            }
+        } else {
+            if (header != null) header(toolbar) else toolbar()
+            episodeBody()
         }
     }
 }

@@ -214,12 +214,12 @@ internal fun DiscoverySeriesContent(
     var contentHeightPx by remember { mutableIntStateOf(0) }
     var heroHeightPx by remember { mutableIntStateOf(0) }
     var episodeViewportHeightPx by remember { mutableIntStateOf(0) }
+    var panelViewportHeightPx by remember { mutableIntStateOf(0) }
     var lastEpisodeHeightPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val phoneEpisodeHeight = with(density) { (contentHeightPx - heroHeightPx - toolbarHeightPx).toDp() }
         .coerceAtLeast(96.dp)
-    val wideEpisodeHeight = with(density) { (contentHeightPx - toolbarHeightPx - if (tabletEpisodeOverlay) heroHeightPx else 0).toDp() }
-        .minus(if (shortLandscapeEpisodes) 8.dp else if (tabletEpisodeOverlay) 32.dp else 24.dp).coerceAtLeast(if (tabletEpisodeOverlay) 96.dp else 260.dp)
+    val wideEpisodeHeight = with(density) { panelViewportHeightPx.toDp() }.coerceAtLeast(96.dp)
     val layoutRequester = remember(series.id) { FocusRequester() }
 
     val episodeRowState = key(profile, series.id, state.selectedSeriesSeason) { rememberLazyListState() }
@@ -528,9 +528,9 @@ internal fun DiscoverySeriesContent(
         val target = when (from) {
             SeriesDetailFocus.TOP -> if (delta > 0) SeriesDetailFocus.PLAY else null
             SeriesDetailFocus.PLAY, SeriesDetailFocus.INFO, SeriesDetailFocus.TOOLS ->
-                if (delta > 0) SeriesDetailFocus.EPISODES else SeriesDetailFocus.TOP
-            SeriesDetailFocus.SORT -> if (delta < 0) SeriesDetailFocus.TOP else SeriesDetailFocus.EPISODES
-            SeriesDetailFocus.SEASONS -> if (delta < 0) SeriesDetailFocus.TOP else SeriesDetailFocus.EPISODES
+                if (delta > 0) SeriesDetailFocus.SEASONS else SeriesDetailFocus.TOP
+            SeriesDetailFocus.SORT -> if (delta < 0) SeriesDetailFocus.PLAY else SeriesDetailFocus.EPISODES
+            SeriesDetailFocus.SEASONS -> if (delta < 0) SeriesDetailFocus.PLAY else SeriesDetailFocus.EPISODES
             SeriesDetailFocus.EPISODES -> if (delta < 0) SeriesDetailFocus.SORT else null
         }
         target?.let { requestWideFocus(it, if (it == SeriesDetailFocus.PLAY) lastHeroControl else null) }
@@ -706,12 +706,12 @@ internal fun DiscoverySeriesContent(
                     }
                 }
             }, layout = { hero, castRow, supplementary, focusCast, focusRelated ->
-        val inlineEpisodeControls = !mobileEpisodeLayout
             val controls: @Composable () -> Unit = {
                 Column(
                     modifier = Modifier
-                        .then(if (inlineEpisodeControls) Modifier else Modifier.fillMaxWidth().background(Color(0xFF090B10).copy(alpha = if (tabletEpisodeOverlay) .16f else 1f)).onSizeChanged { toolbarHeightPx = it.height }
-                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else if (shortLandscapeEpisodes) 0.dp else 24.dp, vertical = if (shortLandscapeEpisodes) 0.dp else 10.dp)),
+                        .fillMaxWidth().onSizeChanged { toolbarHeightPx = it.height }
+                        .then(if (mobileEpisodeLayout) Modifier.background(Color(0xFF090B10))
+                            .padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     SeriesEpisodeToolbar(
@@ -727,7 +727,7 @@ internal fun DiscoverySeriesContent(
                                 }, refresh = refreshCatalog)
                         },
                         count = seriesEpisodeCountLabel(filteredEpisodes.size, state.episodeHasMore, activeSearchQuery.isNotBlank()),
-                        compact = mobileEpisodeLayout, inline = inlineEpisodeControls,
+                        compact = mobileEpisodeLayout, withinPanel = !mobileEpisodeLayout,
                         newestFirst = episodeSortDescending, onNewestFirst = {
                             episodeSortDescending = it
                             focusedEpisodeId = null
@@ -825,7 +825,7 @@ internal fun DiscoverySeriesContent(
                             when (expandedPanel) {
                                 SeriesDetailPanel.CAST -> detailScope.launch { repeat(20) { withFrameNanos { }; if (focusCast?.invoke() == true) return@launch } }
                                 SeriesDetailPanel.RELATED -> detailScope.launch { repeat(20) { withFrameNanos { }; if (focusRelated?.invoke() == true) return@launch } }
-                                else -> focusLandscapeEpisode()
+                                else -> if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.SEASONS) else focusLandscapeEpisode()
                             }
                             true
                         }
@@ -854,25 +854,28 @@ internal fun DiscoverySeriesContent(
                     }
                 }
         }
+        val seriesHero: @Composable () -> Unit = {
+            CompositionLocalProvider(
+                com.nikhil.niktv.discovery.LocalProviderSynopsisActions provides detailsTools,
+                com.nikhil.niktv.discovery.LocalProviderEpisodeControls provides null,
+                com.nikhil.niktv.discovery.LocalProviderSynopsisPanel provides detailsPanel
+            ) { Box(Modifier.onSizeChanged { heroHeightPx = it.height }) { hero() } }
+        }
         val seriesContent: @Composable () -> Unit = {
         LazyColumn(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
-                .onSizeChanged { contentHeightPx = it.height },
+            Modifier.fillMaxSize().then(if (mobileEpisodeLayout) Modifier.statusBarsPadding().navigationBarsPadding().imePadding()
+                .onSizeChanged { contentHeightPx = it.height } else Modifier.onSizeChanged { panelViewportHeightPx = it.height }),
             state = episodeListState,
-            userScrollEnabled = (!mobileEpisodeLayout && !tabletEpisodeOverlay) || expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED,
-            contentPadding = PaddingValues(bottom = if (mobileEpisodeLayout) 0.dp else 24.dp)
+            userScrollEnabled = mobileEpisodeLayout && (expandedPanel == SeriesDetailPanel.CAST || expandedPanel == SeriesDetailPanel.RELATED),
+            contentPadding = PaddingValues(0.dp)
         ) {
             item("series-hero") {
-                CompositionLocalProvider(
-                    com.nikhil.niktv.discovery.LocalProviderSynopsisActions provides detailsTools,
-                    com.nikhil.niktv.discovery.LocalProviderEpisodeControls provides if (inlineEpisodeControls) controls else null,
-                    com.nikhil.niktv.discovery.LocalProviderSynopsisPanel provides detailsPanel
-                ) { Box(Modifier.onSizeChanged { heroHeightPx = it.height }) { hero() } }
+                if (mobileEpisodeLayout) seriesHero()
             }
 
 
             if (mobileEpisodeLayout) stickyHeader("series-controls") { controls() }
-            else item("series-controls") { if (!inlineEpisodeControls) controls() }
+            else item("series-controls") { /* Stable slot for episode focus/pagination indices. */ }
 
             item("series-inline-details") {
                 // Retain the slot so saved episode and pagination indices stay stable.
@@ -959,7 +962,7 @@ internal fun DiscoverySeriesContent(
                 else if (episodeListView) item("episode-row") {
                     Row(Modifier.fillMaxWidth().height(if (mobileEpisodeLayout) phoneEpisodeHeight else wideEpisodeHeight)
                         .episodeViewportFocus()
-                        .padding(horizontal = if (shortLandscapeEpisodes) 16.dp else if (mobileEpisodeLayout) 14.dp else 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 0.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged { episodeViewportHeightPx = it.height }) {
                         LazyColumn(Modifier.fillMaxSize().padding(end = 6.dp), state = episodeRowState,
                             contentPadding = PaddingValues(bottom = if (!state.episodeHasMore &&
@@ -1042,7 +1045,15 @@ internal fun DiscoverySeriesContent(
         }
         }
         if (mobileEpisodeLayout) seriesContent()
-        else com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(wideFocusCoordinator, seriesContent)
+        else Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
+            .onSizeChanged { contentHeightPx = it.height }) {
+            seriesHero()
+            SeriesEpisodePanel(Modifier.weight(1f).fillMaxWidth()
+                .padding(start = if (shortLandscapeEpisodes) 16.dp else 24.dp,
+                    end = if (shortLandscapeEpisodes) 16.dp else 24.dp,
+                    bottom = if (shortLandscapeEpisodes) 8.dp else 16.dp),
+                compact = shortLandscapeEpisodes, toolbar = controls, episodes = seriesContent)
+        }
         })
 
     }
