@@ -10,6 +10,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.KSerializer
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 internal data class DiscoveryCacheEntry(val savedAt: Long, val payload: String) {
@@ -20,6 +22,37 @@ internal class DiscoveryCache(private val directory: File, private val now: () -
     private val maxBytes: Long = 10L * 1024 * 1024) {
     private val mutex get() = diskMutex
     private val json = Json { ignoreUnknownKeys = true }
+    private var artworkIndex: Pair<Long, List<DiscoveryCard>>? = null
+
+    /** Legacy history can lack a TMDB ID. Reuse only an unambiguous exact public
+     * title/type match. Build the bounded disk index off-thread, once per cache
+     * directory change; scrolling and focus never initiate network lookups. */
+    suspend fun findArtwork(title: String, series: Boolean): DiscoveryCard? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val stamp = directory.lastModified()
+            val cards = artworkIndex?.takeIf { it.first == stamp }?.second ?: buildList {
+                var bytes = 0L
+                directory.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
+                    bytes += file.length()
+                    if (bytes <= maxBytes) runCatching {
+                        val entry = json.decodeFromString<DiscoveryCacheEntry>(file.readText())
+                        val payload = json.parseToJsonElement(entry.payload)
+                        val values = when (payload) {
+                            is JsonArray -> payload.toList()
+                            is JsonObject -> listOf(payload["card"] ?: payload)
+                            else -> emptyList()
+                        }
+                        values.forEach { value ->
+                            runCatching { json.decodeFromJsonElement(DiscoveryCard.serializer(), value) }.getOrNull()
+                                ?.takeIf { it.id > 0 && !it.adult && it.poster?.startsWith("https://image.tmdb.org/") == true }?.let(::add)
+                        }
+                    }
+                }
+            }.also { artworkIndex = stamp to it }
+            cards.filter { it.series == series && it.title.trim().equals(title.trim(), true) }
+                .distinctBy { it.key }.singleOrNull()
+        }
+    }
     private class Flight(val mutex: Mutex = Mutex(), var users: Int = 0)
     private val loads get() = sharedLoads
     suspend fun <T> load(key: String, ttl: Long, serializer: KSerializer<T>, stale: (T) -> Unit = {}, network: suspend () -> T): T {

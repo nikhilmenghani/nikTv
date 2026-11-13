@@ -467,7 +467,34 @@ private fun DiscoveryPreviewContent(
     val providerRailModels = remember(profile, surface, windowedProviderPreview, progressLookup, scrollVariant.tileLimit) {
         linkedMapOf<String, Pair<List<Any?>, Rail>>()
     }
-    val rails = remember(profile, surface, state.detail?.key, state.feeds, state.feedHasMore, state.sections,
+    // Continue Watching can contain old/broken provider covers even after the
+    // detail page has resolved TMDB artwork. Reuse that local presentation;
+    // never start metadata matching or provider requests while building a rail.
+    val continueArtworkCache = remember(context) { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")) }
+    val continueArtwork by produceState<Map<String, String>>(emptyMap(), profile, app.recentlyPlayed,
+        surface, scrollVariant.tileLimit, activityCollection, app.selectedSeries?.id, state.detail?.key) {
+        val cache = continueArtworkCache
+        val recents = app.recentlyPlayed.filter { it.profileKey == profile &&
+            it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) &&
+            (surface == DashboardSurface.HOME || it.kind == if (surface == DashboardSurface.MOVIES) FavoriteKind.MOVIE else FavoriteKind.SERIES) }
+            .filterNot { it.media.isAdult }.distinctRecentContent()
+            .take(if (activityCollection == "continue") Int.MAX_VALUE else scrollVariant.tileLimit)
+        value = withContext(Dispatchers.IO) { buildMap {
+            recents.forEach { recent ->
+                val media = (recent.series ?: recent.media).let { item ->
+                    item.copy(externalTmdbId = item.externalTmdbId ?: recent.lastPlayed?.externalTmdbId)
+                }
+                val card = libraryCachedPresentation(cache, LibraryEntry(media, recent.kind))?.takeIf { it.id > 0 }
+                    ?: if (media.logo.isNullOrBlank()) cache.findArtwork(
+                        if (recent.kind == FavoriteKind.SERIES) providerSeriesTmdbTitle(media.title) else providerTmdbTitle(media.title),
+                        recent.kind == FavoriteKind.SERIES) else null
+                (card?.poster?.takeIf(String::isNotBlank) ?: card?.backdrop?.takeIf(String::isNotBlank))?.let {
+                    put("$profile:${recent.contentIdentity()}", it)
+                }
+            }
+        } }
+    }
+    val rails = remember(profile, surface, state.detail?.key, state.feeds, state.feedHasMore, state.sections, continueArtwork,
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
         app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection,
@@ -480,7 +507,8 @@ private fun DiscoveryPreviewContent(
             val recents = allRecents.take(if (activityCollection == "continue") Int.MAX_VALUE else scrollVariant.tileLimit)
             if (recents.isNotEmpty()) add(Rail("continue", "Continue Watching", recents.map { recent ->
                 val progress = progressLookup?.recent(recent)
-                RailEntry("continue:${recent.contentIdentity()}", providerDisplayTitle(recent.media.title, if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES), recent.media.logo,
+                RailEntry("continue:${recent.contentIdentity()}", providerDisplayTitle(recent.media.title, if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES),
+                    continueArtwork["$profile:${recent.contentIdentity()}"] ?: recent.media.logo,
                     providerMedia = recent.series ?: recent.media,
                     providerType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                     source = recent.discoveryPlaybackSource(),

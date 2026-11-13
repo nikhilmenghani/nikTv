@@ -10,6 +10,22 @@ import org.junit.rules.TemporaryFolder
 
 class DiscoveryCacheTest {
     @get:Rule val temp = TemporaryFolder()
+    @Test fun missingHistoryArtworkUsesUniqueCachedTitleAndType() = runBlocking {
+        val cache = DiscoveryCache(temp.newFolder())
+        cache.write("public-match", """[{"id":42,"series":false,"title":"Primetime","poster":"https://image.tmdb.org/t/p/w342/poster.jpg"}]""")
+        assertEquals(42, cache.findArtwork("primetime", false)?.id)
+        assertNull(cache.findArtwork("Primetime", true))
+        assertNull(cache.findArtwork("Prime", false))
+    }
+    @Test fun cachedArtworkDoesNotGuessBetweenSameTitleMoviesAndRefreshesAfterWrite() = runBlocking {
+        val cache = DiscoveryCache(temp.newFolder())
+        val poster = "https://image.tmdb.org/t/p/w342/poster.jpg"
+        cache.write("old", """[{"id":1,"series":false,"title":"Remake","poster":"$poster"}]""")
+        assertEquals(1, cache.findArtwork("Remake", false)?.id)
+        Thread.sleep(5)
+        cache.write("new", """[{"id":2,"series":false,"title":"Remake","poster":"$poster"}]""")
+        assertNull(cache.findArtwork("Remake", false))
+    }
     @Test fun expiryAndClockRollbackAreNotFresh() {
         val e = DiscoveryCacheEntry(1000, "payload")
         assertTrue(e.fresh(1000, 6000)); assertTrue(e.fresh(6999, 6000))
