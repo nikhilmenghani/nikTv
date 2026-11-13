@@ -319,6 +319,35 @@ class UserSyncStoreTest {
         assertFalse(synced.single().payload.contains("MOVIES:5"))
     }
 
+    @Test fun knownPortalIdentityDoesNotWaitForUnrelatedProfileEdits(): Unit = runBlocking {
+        val portal = PortalProfile("Playback fixture", "https://playback.invalid", "local-mac")
+        val identity = users.registerPortal("101", portal)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val edit = launch(Dispatchers.IO) {
+            users.withEditLock { entered.complete(Unit); release.await() }
+        }
+        entered.await()
+        try {
+            assertEquals(identity, withTimeout(2_000L) { users.registerPortal("101", portal) })
+        } finally {
+            release.complete(Unit)
+            edit.join()
+        }
+        assertEquals(listOf(LocalPortalMapping("101", portal.cacheKey(), identity)), users.dao.mappings("101"))
+    }
+
+    @Test fun concurrentPortalRegistrationStillCreatesOneIdentityAndReadsRemapping(): Unit = runBlocking {
+        val portal = PortalProfile("Playback fixture", "https://playback.invalid", "local-mac")
+        val identities = coroutineScope { List(4) { async(Dispatchers.IO) { users.registerPortal("101", portal) } }.awaitAll() }
+        assertEquals(1, identities.distinct().size)
+        assertEquals(1, users.dao.mappings("101").size)
+        val mapped = java.util.UUID.randomUUID().toString()
+        users.mapPortal(UserScope("101", "viewer"), mapped, portal)
+        assertEquals(mapped, users.registerPortal("101", portal))
+        assertNotEquals(mapped, users.registerPortal("202", portal))
+    }
+
     @Test fun newlyCreatedPersonStartsEmptyAcrossEveryViewingCollectionAndLocalOfflineState(): Unit = runBlocking {
         users.selectAccount("101"); users.initializeDefaults("101")
         val portal = PortalProfile("Shared provider", "https://provider.invalid", "device-local-mac")

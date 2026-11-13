@@ -1572,7 +1572,8 @@ fun PlayerScreen(
         pictureEditorVisible,
         playerOptionsOpen,
         programmeGuideOpen,
-        moreOptionsOpen
+        moreOptionsOpen,
+        watching.awaiting
     ) {
         val canAutoHide =
             controlsVisible &&
@@ -1584,6 +1585,7 @@ fun PlayerScreen(
                 && !playerOptionsOpen
                 && !programmeGuideOpen
                 && !moreOptionsOpen
+                && !watching.awaiting
 
         if (
             canAutoHide &&
@@ -1608,7 +1610,7 @@ fun PlayerScreen(
                 suppressNextEmbeddedPlayerFocusHandoff = true
                 playerViewRef?.requestFocus()
             } else {
-                coroutineScope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
+                coroutineScope.launch { delay(80L); if (!watching.awaiting) runCatching { videoSurfaceFocusRequester.requestFocus() } }
             }
         }
     }
@@ -1623,7 +1625,8 @@ fun PlayerScreen(
     LaunchedEffect(
         controlsVisible,
         media.progressKey,
-        embeddedMode
+        embeddedMode,
+        watching.awaiting
     ) {
         if (
             !embeddedMode &&
@@ -1631,19 +1634,20 @@ fun PlayerScreen(
             !playerOptionsOpen && returnControlFocus == null &&
             !restorePlayerSwitchFocus &&
             playbackError == null &&
-            !startupTimedOut
+            !startupTimedOut &&
+            !watching.awaiting
         ) {
             delay(80L)
 
-            if (!currentPlayerOptionsOpen && returnControlFocus == null) {
+            if (!currentPlayerOptionsOpen && returnControlFocus == null && !watching.awaiting) {
                 runCatching { playPauseFocusRequester.requestFocus() }
             }
         }
     }
-    LaunchedEffect(playbackError, startupTimedOut, media.progressKey) {
-        if ((playbackError != null || startupTimedOut) && !currentPlayerOptionsOpen) {
+    LaunchedEffect(playbackError, startupTimedOut, media.progressKey, watching.awaiting) {
+        if ((playbackError != null || startupTimedOut) && !currentPlayerOptionsOpen && !watching.awaiting) {
             delay(120L)
-            if (!currentPlayerOptionsOpen) runCatching { errorRetryFocusRequester.requestFocus() }
+            if (!currentPlayerOptionsOpen && !watching.awaiting) runCatching { errorRetryFocusRequester.requestFocus() }
         }
     }
     fun showControlsAndFocusPlayPause() {
@@ -1681,7 +1685,8 @@ fun PlayerScreen(
         embeddedMode,
         inPictureInPicture,
         introAvailable,
-        media.progressKey
+        media.progressKey,
+        watching.awaiting
     ) {
         if (
             !embeddedMode &&
@@ -1689,7 +1694,8 @@ fun PlayerScreen(
             !queueVisible &&
             !pictureEditorVisible &&
             !playerOptionsOpen &&
-            !inPictureInPicture
+            !inPictureInPicture &&
+            !watching.awaiting
         ) {
             delay(40L)
             runCatching { (if (introAvailable && directionalInput) skipIntroFocusRequester else videoSurfaceFocusRequester).requestFocus() }
@@ -2597,7 +2603,7 @@ PlayerChromeIconButton(
                     ) {
                         if (seekable) {
                             PlaybackProgressBar(
-                                mediaKey = media.progressKey,
+                                mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
                                 active = controlsVisible || (!focusMode && !embeddedMode),
                                 position = position,
                                 duration = duration,
@@ -2884,6 +2890,11 @@ PlayerChromeIconButton(
             playbackRequested = true
             onPlaybackIntentChanged(true)
             if (advance) { advancing = true; currentOnPlayNext() }
+            else if (playbackError != null || startupTimedOut || player.playerError != null) {
+                // A buffered request can fail while the question has paused playback.
+                // Resuming an errored player cannot reopen its expired source.
+                currentStreamRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
+            }
             else {
                 player.play()
             }
@@ -3983,7 +3994,7 @@ internal fun PlayerMoreOptionsDialog(
 /**
  * MODERN_PLAYER_CHROME_V48
  * Slim full-width scrubber with time readouts above the rail. D-pad Left/Right
- * keeps the existing delayed seek-preview behavior; touch drag still seeks.
+ * batches quick D-pad previews; leaving or hiding the rail commits its final target.
  */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -3998,19 +4009,45 @@ internal fun PlaybackProgressBar(
 ) {
     val safeDuration = duration.coerceAtLeast(0L)
     var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
+    var pendingSeek by remember(mediaKey) { mutableStateOf<Long?>(null) }
     var revision by remember(mediaKey) { mutableIntStateOf(0) }
+    var commitRevision by remember(mediaKey) { mutableIntStateOf(0) }
     var directionHeld by remember(mediaKey) { mutableStateOf(false) }
     val holdAcceleration = remember(mediaKey) { SeekHoldAcceleration() }
     var dragging by remember(mediaKey) { mutableStateOf(false) }
     val seek by rememberUpdatedState(onSeek)
-    LaunchedEffect(mediaKey, revision, directionHeld, dragging, active) {
-        if (!active) { preview = null; directionHeld = false; dragging = false; holdAcceleration.reset(); return@LaunchedEffect }
-        val target = preview ?: return@LaunchedEffect
-        if (directionHeld || dragging) return@LaunchedEffect
-        delay(450L)
+    val currentMediaKey by rememberUpdatedState(mediaKey)
+    fun commitPendingSeek() {
+        val target = pendingSeek ?: return
+        pendingSeek = null
+        commitRevision++
         seek(target.coerceIn(0L, safeDuration))
+    }
+    DisposableEffect(mediaKey) {
+        val ownedSeek = onSeek
+        onDispose {
+            // A hidden controls overlay still owes the user's final seek. A
+            // different episode/retry must never inherit the old cursor target.
+            if (currentMediaKey == mediaKey) pendingSeek?.let { target ->
+                pendingSeek = null
+                runCatching { ownedSeek(target) }
+            }
+        }
+    }
+    LaunchedEffect(mediaKey, revision, directionHeld, dragging, active) {
+        if (!active) {
+            commitPendingSeek()
+            preview = null; directionHeld = false; dragging = false; holdAcceleration.reset()
+            return@LaunchedEffect
+        }
+        if (pendingSeek == null || directionHeld || dragging) return@LaunchedEffect
+        delay(450L)
+        commitPendingSeek()
+    }
+    LaunchedEffect(mediaKey, commitRevision) {
+        if (commitRevision == 0) return@LaunchedEffect
         delay(1_000L)
-        preview = null
+        if (pendingSeek == null) preview = null
     }
     val safePosition = (preview ?: position).coerceIn(0L, safeDuration)
     val fraction = if (safeDuration > 0L) safePosition.toFloat() / safeDuration else 0f
@@ -4023,6 +4060,10 @@ internal fun PlaybackProgressBar(
             .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
             .onPreviewKeyEvent { event ->
                 if (!active) return@onPreviewKeyEvent true
+                if (event.key in listOf(ComposeKey.DirectionCenter, ComposeKey.Enter, ComposeKey.NumPadEnter)) {
+                    if (event.type == ComposeKeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) commitPendingSeek()
+                    return@onPreviewKeyEvent true
+                }
                 val direction = when (event.key) {
                     ComposeKey.DirectionLeft, ComposeKey.MediaRewind -> -1
                     ComposeKey.DirectionRight, ComposeKey.MediaFastForward -> 1
@@ -4033,6 +4074,7 @@ internal fun PlaybackProgressBar(
                         event.nativeKeyEvent.repeatCount > 0, safeDuration)
                     directionHeld = true
                     preview = seekPreviewPosition(preview ?: position, direction, safeDuration, step)
+                    pendingSeek = preview
                     revision++
                 } else if (event.type == ComposeKeyEventType.KeyUp) {
                     holdAcceleration.release(direction)
@@ -4041,7 +4083,11 @@ internal fun PlaybackProgressBar(
                 }
                 true
             }
-            .onFocusChanged { if (!it.hasFocus) { directionHeld = false; holdAcceleration.reset() } }
+            .onFocusChanged { if (!it.hasFocus) {
+                directionHeld = false
+                holdAcceleration.reset()
+                commitPendingSeek()
+            } }
             .focusProperties { canFocus = active }
             .focusable(),
         verticalArrangement = Arrangement.Center
@@ -4066,9 +4112,10 @@ internal fun PlaybackProgressBar(
                 directionHeld = false
                 dragging = true
                 preview = (it.toDouble() * safeDuration).toLong().coerceIn(0L, safeDuration)
+                pendingSeek = preview
                 revision++
             },
-            onValueChangeFinished = { dragging = false; revision++ },
+            onValueChangeFinished = { dragging = false; revision++; commitPendingSeek() },
             enabled = active && safeDuration > 0L,
             valueRange = 0f..1f,
             modifier = Modifier.fillMaxWidth().height(if (compact) 20.dp else 28.dp)

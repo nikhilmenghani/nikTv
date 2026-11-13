@@ -504,7 +504,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             profileEditorOpen = false, restoring = false) }
     }
 
-    fun connect(profile: PortalProfile) = connectOwned(profile, beginPortalActivation())
+    fun connect(profile: PortalProfile) = connectOwned(profile, beginPortalActivation(profile))
     private fun connectOwned(profile: PortalProfile, activation: Long) = task {
         check(com.nikhil.niktv.data.ProfilePortalAccess.allowed(getApplication(), profile)) { "This portal is disabled for this profile." }
         portal.prioritizePlayback()
@@ -6811,7 +6811,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         directFullscreen: Boolean = false,
         requestId: Long,
         reauthenticate: Boolean = false,
-        queueFilter: PlaybackQueueFilter? = null
+        queueFilter: PlaybackQueueFilter? = null,
+        resetDecoderSession: Boolean = false
     ) = latestPlaybackRequest.run(requestId) {
         val userScope = store.captureScope()
         if (navigationCursor.pendingRequest != requestId) navigationCursor.select(requestId,
@@ -6842,11 +6843,13 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     if (latestPlaybackRequest.isCurrent(requestId)) _state.update { it.copy(reauthenticating = false) }
                 }
                 resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, requestId, queueFilter, userScope)
+                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, requestId, queueFilter, userScope,
+                    resetDecoderSession)
             } else {
                 withAutomaticSessionRetry(session, playbackRequestId = requestId) { activeSession ->
                     resolvePlayback(item, type, series, episodes, forceFreshUrl || activeSession.token != session.token,
-                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter, userScope)
+                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter, userScope,
+                        resetDecoderSession)
                 }
             }
         } catch (container: com.nikhil.niktv.data.PortalVodSeriesContainerException) {
@@ -6878,7 +6881,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         session: PortalSession,
         requestId: Long,
         queueFilter: PlaybackQueueFilter?,
-        userScope: UserScope?
+        userScope: UserScope?,
+        resetDecoderSession: Boolean
     ) {
         val ownsPortal = sessionOwner(session.profile)
         val remoteTarget = if (lanPlaybackDelegate.isInitialized()) lanPlayback.state.value.target else null
@@ -6890,12 +6894,14 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl, it.downloadId) } }
         // Browse tiles and loaded pages already contain the provider command.
         // Do not search the provider again before every play; create_link is
-        // the validation step for Stalker. Only rebuild the item after an
-        // authorization/playback failure or when the command is absent.
+        // the validation step for Stalker. Xtream builds its URL from the stream
+        // ID/current credentials even if a restored queue has no embedded command.
+        // Only rebuild metadata after a failure or when Stalker's command is absent.
         var item = if (forceFreshUrl) {
             portal.refreshPlaybackItem(session, requestedItem, type, series)
         } else {
-            requestedItem.takeIf { offlineUrl != null || !it.command.isNullOrBlank() }
+            requestedItem.takeIf { offlineUrl != null || !it.command.isNullOrBlank() ||
+                (session.profile.portalType == PortalType.XTREAM && it.id.isNotBlank()) }
                 ?: portal.refreshPlaybackItem(session, requestedItem, type, series)
         }
         // Xtream URLs are cheaply built from current credentials. Stalker links are session-bound.
@@ -7120,10 +7126,10 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     authorizationRetryCount = authorizationRetryCount,
                     playWhenReady = if (forceFreshUrl) paginationSnapshot.nowPlaying?.playWhenReady ?: true else true,
                     decoderSessionId = paginationSnapshot.nowPlaying?.takeIf {
-                        forceFreshUrl && it.media.id == item.id && it.catalogType == type
+                        forceFreshUrl && !resetDecoderSession && it.media.id == item.id && it.catalogType == type
                     }?.decoderSessionId ?: java.util.UUID.randomUUID().toString(),
                     decoderRecoveryCount = paginationSnapshot.nowPlaying?.takeIf {
-                        forceFreshUrl && it.media.id == item.id && it.catalogType == type
+                        forceFreshUrl && !resetDecoderSession && it.media.id == item.id && it.catalogType == type
                     }?.decoderRecoveryCount ?: 0,
             directFullscreen = directFullscreen,
             offlinePlayback = offlineUrl != null,
@@ -7226,7 +7232,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
     private val portalActivation = java.util.concurrent.atomic.AtomicLong()
     private var portalRenewalJob: Job? = null
-    private fun beginPortalActivation(): Long {
+    private fun beginPortalActivation(profile: PortalProfile): Long {
         val activation = portalActivation.incrementAndGet()
         portalRenewalJob?.cancel()
         manualReauthenticationGeneration++
@@ -7234,6 +7240,15 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         manualReauthenticationJob = null
         _state.update { it.copy(reauthenticating = false) }
         cancelPendingPlayback()
+        val snapshot = _state.value
+        val targetKey = profile.cacheKey()
+        if (snapshot.session?.profile?.cacheKey() != targetKey ||
+            snapshot.nowPlaying?.profileKey?.takeIf { it.isNotBlank() }?.let { it != targetKey } == true) {
+            // A player/queue belongs to its original portal. Dispose it before
+            // asynchronous activation can replace the session underneath it;
+            // late Retry/Next callbacks must not resolve old IDs on the new portal.
+            closePlayer()
+        }
         return activation
     }
 
@@ -7734,7 +7749,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     resumePositionOverride = positionMillis.coerceAtLeast(0L),
                     reauthenticate = reauthenticate,
                     directFullscreen = playing.directFullscreen,
-                    requestId = requestId
+                    requestId = requestId,
+                    resetDecoderSession = true
                 )
             }
                 .onFailure { error ->
@@ -8162,7 +8178,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             return
         }
         val destination = PortalSwitchDestination.capture(_state.value)
-        switchProfileOwned(profile, beginPortalActivation(), destination)
+        switchProfileOwned(profile, beginPortalActivation(profile), destination)
     }
     private fun switchProfileOwned(profile: PortalProfile, activation: Long, destination: PortalSwitchDestination) = task {
         movieStructureJob?.cancel()

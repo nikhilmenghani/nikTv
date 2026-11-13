@@ -221,6 +221,7 @@ internal fun VlcPlayerScreen(
     val currentPlaybackAttempt by rememberUpdatedState(media.playbackAttemptId)
     DisposableEffect(sourceStill) { onDispose { sourceStill.close() } }
     var error by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<String?>(null) }
+    val watching = rememberWatchingCheck(media)
     var focusMode by remember { mutableStateOf(startFullscreen) }
     var controlsVisible by remember(media.progressKey) {
         mutableStateOf(
@@ -369,10 +370,10 @@ internal fun VlcPlayerScreen(
     val playNextNowRequester = remember(media.progressKey) { FocusRequester() }
     val errorRetryRequester = remember(media.progressKey) { FocusRequester() }
     val errorPlayerRequester = remember(media.progressKey) { FocusRequester() }
-    LaunchedEffect(error, media.progressKey) {
-        if (error != null && !currentPlayerOptionsOpen) {
+    LaunchedEffect(error, media.progressKey, watching.awaiting) {
+        if (error != null && !currentPlayerOptionsOpen && !watching.awaiting) {
             delay(120L)
-            if (!currentPlayerOptionsOpen) runCatching { errorRetryRequester.requestFocus() }
+            if (!currentPlayerOptionsOpen && !watching.awaiting) runCatching { errorRetryRequester.requestFocus() }
         }
     }
     val progressRequester = remember(media.progressKey) { FocusRequester() }
@@ -588,7 +589,6 @@ internal fun VlcPlayerScreen(
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isSeekable }
     val introAvailable = introSecondsRemaining != null
-    val watching = rememberWatchingCheck(media)
     WatchPlayback(watching, isPlaying = { player.isPlaying }, pause = {
         if (playbackRequested || player.isPlaying) focus.request(false)
     })
@@ -700,7 +700,7 @@ internal fun VlcPlayerScreen(
             controlsFocused = false
         }
     }
-    LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible, playerOptionsOpen, programmeGuideOpen, moreOptionsOpen) {
+    LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible, playerOptionsOpen, programmeGuideOpen, moreOptionsOpen, watching.awaiting) {
         if (
             controlsVisible &&
             playing &&
@@ -710,6 +710,7 @@ internal fun VlcPlayerScreen(
             !playerOptionsOpen &&
             !programmeGuideOpen &&
             !moreOptionsOpen &&
+            !watching.awaiting &&
             controlsTimeoutSeconds != PLAYER_CONTROLS_TIMEOUT_INFINITE
         ) {
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
@@ -719,20 +720,21 @@ internal fun VlcPlayerScreen(
                 suppressNextEmbeddedPlayerFocusHandoff = true
                 videoView?.requestFocus()
             } else {
-                scope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
+                scope.launch { delay(80L); if (!watching.awaiting) runCatching { videoSurfaceFocusRequester.requestFocus() } }
             }
         }
     }
-    LaunchedEffect(controlsVisible, embeddedMode, media.progressKey) {
+    LaunchedEffect(controlsVisible, embeddedMode, media.progressKey, watching.awaiting) {
         if (
             controlsVisible &&
             !embeddedMode &&
             !playerOptionsOpen && returnControlFocus == null &&
             !focusPlayerSwitchOnEnter &&
-            error == null
+            error == null &&
+            !watching.awaiting
         ) {
             delay(80)
-            if (!currentPlayerOptionsOpen && returnControlFocus == null) {
+            if (!currentPlayerOptionsOpen && returnControlFocus == null && !watching.awaiting) {
                 runCatching { playRequester.requestFocus() }
             }
         }
@@ -753,7 +755,8 @@ internal fun VlcPlayerScreen(
         embeddedMode,
         inPictureInPicture,
         introAvailable,
-        media.progressKey
+        media.progressKey,
+        watching.awaiting
     ) {
         if (
             !embeddedMode &&
@@ -761,7 +764,8 @@ internal fun VlcPlayerScreen(
             !queueVisible &&
             !pictureEditorVisible &&
             !playerOptionsOpen &&
-            !inPictureInPicture
+            !inPictureInPicture &&
+            !watching.awaiting
         ) {
             delay(40L)
             runCatching { (if (introAvailable && directionalInput) skipIntroRequester else videoSurfaceFocusRequester).requestFocus() }
@@ -1942,7 +1946,7 @@ PlayerChromeIconButton(
                     ) {
                         if (seekable) {
                             PlaybackProgressBar(
-                                mediaKey = media.progressKey,
+                                mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
                                 active = controlsVisible || (!focusMode && !embeddedMode),
                                 position = position,
                                 duration = duration,
@@ -2229,7 +2233,10 @@ PlayerChromeIconButton(
             onPlaybackIntentChanged(true)
             if (advance) { advancing = true; currentPlayNext() }
             else {
-                focus.request(true)
+                // VLC can defer a failed buffered request until its paused input
+                // resumes, without publishing an error. Reopen once on this explicit
+                // Continue action instead of resuming a potentially expired input.
+                currentRetry(maxOf(pendingInitialResumePosition, nativeClockPosition, player.time, 0L))
             }
         }, onStop = {
             watching.confirm()

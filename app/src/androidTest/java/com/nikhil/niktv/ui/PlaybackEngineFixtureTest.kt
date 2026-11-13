@@ -86,7 +86,8 @@ class PlaybackEngineFixtureTest {
         val paths = Collections.synchronizedList(mutableListOf<String>())
         val current = AtomicInteger()
         val peak = AtomicInteger()
-        var requiredHeaders: Map<String, String> = emptyMap()
+        @Volatile var requiredHeaders: Map<String, String> = emptyMap()
+        @Volatile var beforeResponse: ((String) -> Unit)? = null
         val rejected = AtomicInteger()
         var missingOnce: String? = null
         val missing = AtomicInteger()
@@ -118,6 +119,7 @@ class PlaybackEngineFixtureTest {
                     if (line.isBlank()) break
                     headers[line.substringBefore(':').lowercase()] = line.substringAfter(':').trim()
                 }
+                beforeResponse?.invoke(path)
                 fun reply(status: String, body: ByteArray, type: String = "application/octet-stream", extra: String = "") {
                     val out = client.getOutputStream()
                     out.write("HTTP/1.1 $status\r\nContent-Length: ${body.size}\r\nContent-Type: $type\r\nConnection: close\r\n$extra\r\n".toByteArray())

@@ -29,6 +29,12 @@ internal class MpvPlayerAdapter(
     startPosition: Long,
     @androidx.annotation.VisibleForTesting private val liveStartPosition: String = "0"
 ) : SimpleBasePlayer(Looper.getMainLooper()) {
+    private companion object {
+        // Accessed only on MpvNativePlaybackWorker. Compose can prepare a
+        // replacement before it queues the retiring player's release, while
+        // AndroidView keeps the same Surface. EGL permits only one owner.
+        val surfaceOwners = java.util.IdentityHashMap<Surface, MpvPlayerAdapter>()
+    }
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val released = AtomicBoolean()
@@ -226,7 +232,7 @@ internal class MpvPlayerAdapter(
             .setDurationUs(if (duration == C.TIME_UNSET) C.TIME_UNSET else duration * 1000)
             .apply { if (live) setLiveConfiguration(MediaItem.LiveConfiguration.Builder().build()) }
             .build()
-        return State.Builder().setAvailableCommands(commands)
+        val currentState = State.Builder().setAvailableCommands(commands)
             .setPlaylist(listOf(item)).setCurrentMediaItemIndex(0)
             .setPlaybackState(state).setPlayerError(error)
             .setPlayWhenReady(requested, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
@@ -239,6 +245,10 @@ internal class MpvPlayerAdapter(
             .setTrackSelectionParameters(selection).setPlaybackParameters(parameters)
             .setVolume(volumeValue).setRepeatMode(repeat)
             .setSeekBackIncrementMs(10_000L).setSeekForwardIncrementMs(10_000L).build()
+        // invalidateState may defer this read while a native command future is
+        // pending. Consume the one-time frame event only when Media3 reads it.
+        firstFrame = false
+        return currentState
     }
 
     override fun handlePrepare(): ListenableFuture<*> {
@@ -306,7 +316,7 @@ internal class MpvPlayerAdapter(
                 android.util.Log.i("NikTvMpv", "Stopping retiring native stream")
                 runCatching { it.command(arrayOf("stop")) }
                 android.util.Log.i("NikTvMpv", "Retiring native stream stopped; detaching output")
-                runCatching { it.detachSurface() }
+                runCatching { detach(it) }
                 android.util.Log.i("NikTvMpv", "Destroying retiring native handle")
                 it.destroy()
             }
@@ -319,8 +329,11 @@ internal class MpvPlayerAdapter(
     }
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
         if (live) return Futures.immediateVoidFuture()
-        position = positionMs.takeUnless { it == C.TIME_UNSET }?.coerceAtLeast(0L) ?: 0L
-        return enqueue { it.command(arrayOf("seek", (position / 1000.0).toString(), "absolute+exact")) }
+        val target = positionMs.takeUnless { it == C.TIME_UNSET }?.coerceAtLeast(0L) ?: 0L
+        position = target
+        // Native time-pos events can arrive before this worker command runs.
+        // They must not replace the user's requested destination in the queue.
+        return enqueue { it.command(arrayOf("seek", (target / 1000.0).toString(), "absolute+exact")) }
     }
     override fun handleSetMediaItems(mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
         require(mediaItems.size == 1) { "NikTV owns the playback queue" }
@@ -408,8 +421,13 @@ internal class MpvPlayerAdapter(
     private fun attachNative(engine: MPVLib, surface: Surface) {
         if (nativeSurface === surface) return
         detach(engine)
+        surfaceOwners[surface]?.takeIf { it !== this }?.let { previous ->
+            previous.attachedSurface = null
+            previous.mpv?.let { previous.detach(it) }
+        }
         engine.attachSurface(surface)
         nativeSurface = surface
+        surfaceOwners[surface] = this
         surfaceSize?.let { engine.setPropertyString("android-surface-size", it) }
         engine.setPropertyString("vo", "gpu")
         engine.setPropertyString("force-window", "yes")
@@ -438,10 +456,14 @@ internal class MpvPlayerAdapter(
         android.util.Log.i("NikTvMpv", "Stream opened after video surface became ready")
     }
     private fun detach(engine: MPVLib) {
-        if (nativeSurface == null) return
-        engine.setPropertyString("vo", "null")
-        engine.detachSurface()
-        nativeSurface = null
+        val surface = nativeSurface ?: return
+        try {
+            engine.setPropertyString("vo", "null")
+            engine.detachSurface()
+        } finally {
+            nativeSurface = null
+            if (surfaceOwners[surface] === this) surfaceOwners.remove(surface)
+        }
     }
     private fun startHealthSamples() {
         MpvNativePlaybackWorker.scope.launch {
@@ -496,7 +518,6 @@ internal class MpvPlayerAdapter(
     }
     private fun publish() {
         if (!released.get()) invalidateState()
-        firstFrame = false
     }
     @androidx.annotation.VisibleForTesting
     internal suspend fun diagnosticFrameDrops(): Int? = kotlinx.coroutines.withContext(MpvNativePlaybackWorker.dispatcher) {

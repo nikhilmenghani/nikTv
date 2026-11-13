@@ -82,6 +82,7 @@ interface UserSyncDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putPreference(value: UserLocalPreference)
     @Query("DELETE FROM user_local_preferences WHERE accountId=:accountId AND profileId=:profileId AND name=:name") suspend fun deletePreference(accountId: String, profileId: String, name: String)
     @Query("SELECT * FROM portal_mappings WHERE accountId=:accountId") suspend fun mappings(accountId: String): List<LocalPortalMapping>
+    @Query("SELECT portalId FROM portal_mappings WHERE accountId=:accountId AND localKey=:localKey LIMIT 1") suspend fun portalId(accountId: String, localKey: String): String?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putMapping(value: LocalPortalMapping)
 }
 
@@ -354,24 +355,32 @@ class UserSyncStore private constructor(private val context: Context) {
         dao.enqueue(SyncOutbox(record.mutationId, owner.accountId, json.encodeToString(record)))
     }
 
-    suspend fun registerPortal(accountId: String, profile: PortalProfile): String = withEditLock { db.withTransaction {
+    suspend fun registerPortal(accountId: String, profile: PortalProfile): String {
         val key = profile.cacheKey()
-        dao.mappings(accountId).firstOrNull { it.localKey == key }?.portalId ?: run {
-            // Only built-in remotely provisioned slots have a universal identity. Editable names,
-            // usernames, MACs and URLs never determine a shared portal identity.
-            val configured = when (profile.portalType.name) {
-                "STALKER" -> RemoteCredentials.get("NIKTV_DEFAULT_PORTAL_URL").ifBlank { RemoteCredentials.get("NIKTV_DEFAULT_PORTAL") }
-                else -> RemoteCredentials.get("NIKTV_XTREAM_PORTAL_URL")
+        // Playback asks for this identity on every episode. An existing mapping is
+        // read-only: avoid queuing behind profile/sync edits and rebuilding the
+        // complete preferences cache before the next stream can start.
+        dao.portalId(accountId, key)?.let { return it }
+        return withEditLock {
+            db.withTransaction {
+                dao.portalId(accountId, key) ?: run {
+                    // Only built-in remotely provisioned slots have a universal identity. Editable names,
+                    // usernames, MACs and URLs never determine a shared portal identity.
+                    val configured = when (profile.portalType.name) {
+                        "STALKER" -> RemoteCredentials.get("NIKTV_DEFAULT_PORTAL_URL").ifBlank { RemoteCredentials.get("NIKTV_DEFAULT_PORTAL") }
+                        else -> RemoteCredentials.get("NIKTV_XTREAM_PORTAL_URL")
+                    }
+                    val builtin = configured.isNotBlank() && profile.portalUrl.trimEnd('/') == configured.trimEnd('/')
+                    val id = if (builtin) stableUuid("niktv:$accountId:portal:${profile.portalType}") else UUID.randomUUID().toString()
+                    dao.putMapping(LocalPortalMapping(accountId, key, id))
+                    val records = dao.records(accountId)
+                    records.filter { it.profileId.isNotBlank() && (it.payload.contains("portal:$id") || it.recordId.contains("portal:$id")) }
+                        .map { it.profileId }.distinct().forEach { rebuildPreferences(UserScope(accountId, it), records) }
+                    id
+                }
             }
-            val builtin = configured.isNotBlank() && profile.portalUrl.trimEnd('/') == configured.trimEnd('/')
-            val id = if (builtin) stableUuid("niktv:$accountId:portal:${profile.portalType}") else UUID.randomUUID().toString()
-            dao.putMapping(LocalPortalMapping(accountId, key, id))
-            val records = dao.records(accountId)
-            records.filter { it.profileId.isNotBlank() && (it.payload.contains("portal:$id") || it.recordId.contains("portal:$id")) }
-                .map { it.profileId }.distinct().forEach { rebuildPreferences(UserScope(accountId, it), records) }
-            id
         }
-    } }
+    }
     suspend fun associatePortal(owner: UserScope, profile: PortalProfile) {
         val portalId = registerPortal(owner.accountId, profile)
         db.withTransaction {
