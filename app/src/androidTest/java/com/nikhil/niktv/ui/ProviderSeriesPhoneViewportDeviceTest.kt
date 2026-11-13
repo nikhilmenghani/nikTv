@@ -130,6 +130,10 @@ class ProviderSeriesPhoneViewportDeviceTest {
                     it.isVisibleToUser && rect.contains(bounds(it))
                 } == true }
                 assertTrue("Landscape shows four complete episode rows, actual=$fullRows", fullRows >= 4)
+                val playBounds = bounds(checkNotNull(owner("Play latest")))
+                val seasonBounds = bounds(checkNotNull(owner("Season 1")))
+                assertTrue("Episode controls use the right side of landscape", seasonBounds.centerX() > rect.centerX())
+                assertTrue("Media and episode controls share a row", kotlin.math.abs(playBounds.centerY() - seasonBounds.centerY()) < 8 * density)
                 NavigationAuditEvidence.capture("provider-phone-landscape-episodes")
                 ins.setInTouchMode(false)
                 focus("Phone pane episode 24")

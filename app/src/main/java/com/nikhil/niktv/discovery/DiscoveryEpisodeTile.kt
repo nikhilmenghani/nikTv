@@ -67,7 +67,8 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (shortWide) 2.dp else 4.dp)) {
                 Text(title, Modifier.fillMaxWidth(), color = Color.White, style = if (shortWide) MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp) else MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold, maxLines = if (shortWide) 1 else 2, overflow = TextOverflow.Ellipsis)
-                Text(listOf(label, metadata).filter(String::isNotBlank).joinToString(" · "),
+                Text(listOfNotNull(label.takeIf(String::isNotBlank), metadata.takeIf(String::isNotBlank),
+                    overview?.takeIf { shortWide && it.isNotBlank() }).joinToString(" · "),
                     color = Color(0xFFB9BDC7), style = if (shortWide) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 14.sp) else MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 EpisodeViewingStatus(remaining, resume, compact = shortWide)
                 if (!shortWide && !overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),

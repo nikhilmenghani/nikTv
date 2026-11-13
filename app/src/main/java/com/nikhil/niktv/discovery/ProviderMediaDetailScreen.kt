@@ -291,10 +291,11 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     }
     val hero: @Composable () -> Unit = {
         if (shortLandscapeSeries) {
-            CompositionLocalProvider(LocalMobileGlassEnabled provides true,
+            CompositionLocalProvider(LocalMobileGlassEnabled provides false,
                 LocalDiscoveryHeaderActionSizing provides true, LocalCollapsingDiscoveryActions provides false) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.fillMaxWidth().heightIn(min = (configuration.screenHeightDp * .34f).dp.coerceIn(112.dp, 140.dp))
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
@@ -308,19 +309,23 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         }
                         tools()
                     }
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).onKeyEvent { event ->
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth().onKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                             Key.DirectionDown -> { down(); true }
                             Key.DirectionUp -> { if (heroUp != null) heroUp() else runCatching { backRequester.requestFocus() }; true }
                             else -> false
                         }
-                    }, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        DiscoveryAction(if (playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true, enabled = playEnabled,
-                            modifier = Modifier.focusRequester(playRequester), onClick = play)
-                        DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
-                            if (isFavorite) Icons.Default.Check else Icons.Default.Add, iconOnly = true, onClick = favorite)
-                        DiscoveryTrailerAction(metadata.card, iconOnly = true)
-                        LocalProviderSynopsisActions.current?.invoke()
+                    }, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            DiscoveryAction(if (playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true, enabled = playEnabled,
+                                modifier = Modifier.focusRequester(playRequester), onClick = play)
+                            DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
+                                if (isFavorite) Icons.Default.Check else Icons.Default.Add, iconOnly = true, onClick = favorite)
+                            DiscoveryTrailerAction(metadata.card, iconOnly = true)
+                            LocalProviderSynopsisActions.current?.invoke()
+                        }
                         LocalProviderEpisodeControls.current?.invoke()
                     }
                     progressLabel?.let { status ->
@@ -510,20 +515,22 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             }
         }
     }
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(if (shortLandscapeSeries) Modifier.clipToBounds() else Modifier)) {
     if (tabletSeriesOverlay) {
         DiscoveryBackdropArtwork(metadata.card.backdrop ?: metadata.card.poster, reduceMotion,
             Alignment.TopCenter, shaded = false, fillWidth = true)
         Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
             0f to Color(0x99090B10), .55f to Color(0x33090B10), 1f to Color.Transparent)))
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(
-            0f to Color(0x55090B10), .65f to Color(0x22090B10), 1f to Color(0xBB090B10))))
+            0f to Color(0x55090B10),
+            (if (shortLandscapeSeries) .32f else .65f) to Color(if (shortLandscapeSeries) 0x66090B10 else 0x22090B10),
+            1f to Color(if (shortLandscapeSeries) 0xFF090B10 else 0xBB090B10))))
     }
     CompositionLocalProvider(LocalMobileGlassEnabled provides true,
         LocalDetailActionGlass provides true,
         LocalProviderMoreInfo provides metadata.card.overview?.takeIf(String::isNotBlank)?.let { { compactInfoOpen = true } },
         LocalProviderInfoFocus provides synopsisRequester,
-        LocalSeriesArtworkGlass provides tabletSeriesOverlay) {
+        LocalSeriesArtworkGlass provides (tabletSeriesOverlay && !shortLandscapeSeries)) {
     layout(hero, castRow, supplementary,
         if (people.isEmpty()) null else ({ runCatching { castEntry.requestFocus() }.getOrDefault(false) }),
         if (type != CatalogType.SERIES && related.isEmpty()) null else ({ runCatching { relatedEntry.requestFocus() }.getOrDefault(false) }))

@@ -711,7 +711,7 @@ internal fun DiscoverySeriesContent(
                 Column(
                     modifier = Modifier
                         .then(if (inlineEpisodeControls) Modifier else Modifier.fillMaxWidth().background(Color(0xFF090B10).copy(alpha = if (tabletEpisodeOverlay) .16f else 1f)).onSizeChanged { toolbarHeightPx = it.height }
-                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp, vertical = 10.dp)),
+                        .padding(horizontal = if (mobileEpisodeLayout) 14.dp else if (shortLandscapeEpisodes) 0.dp else 24.dp, vertical = if (shortLandscapeEpisodes) 0.dp else 10.dp)),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     SeriesEpisodeToolbar(
