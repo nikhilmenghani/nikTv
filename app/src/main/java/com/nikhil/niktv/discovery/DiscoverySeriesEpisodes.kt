@@ -112,15 +112,21 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     DisposableEffect(card.key, chosen, episodes, listView) {
         onDispose { entryJob?.cancel() }
     }
+    val searchInputMode = LocalInputModeManager.current
     fun closeSearch() {
+        searchInputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+        runCatching { toolbarSearch.requestFocus() }
         searchOpen = false; searchEditing = false; keyboard?.hide()
-        scope.launch { withFrameNanos { }; runCatching { toolbarSearch.requestFocus() } }
     }
     BackHandler(searchOpen, ::closeSearch)
+    SeriesSearchKeyboardDismiss(searchOpen && searchEditing, ::closeSearch)
     LaunchedEffect(searchOpen) {
         if (searchOpen) repeat(12) {
             withFrameNanos { }
-            if (runCatching { searchInput.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            if (runCatching { searchInput.requestFocus() }.getOrDefault(false)) {
+                if (searchEditing) { withFrameNanos { }; keyboard?.show() }
+                return@LaunchedEffect
+            }
         }
     }
     fun focusEpisode(index: Int): Boolean {
@@ -193,7 +199,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 newest = it; rememberEpisode(null)
             },
             listView = listView, onListView = { listView = it }, searchOpen = searchOpen,
-            onSearch = { if (searchOpen) closeSearch() else searchOpen = true },
+            onSearch = { if (searchOpen) closeSearch() else { searchEditing = true; searchOpen = true } },
             searchRequester = toolbarSearch, sortRequester = sort, layoutRequester = layout,
             onSortApplied = { enterEpisodes(fromStart = true) },
             onGoToEpisode = { number ->

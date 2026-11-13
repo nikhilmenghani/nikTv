@@ -263,17 +263,17 @@ internal fun DiscoverySeriesContent(
     val moreRequester = remember(series.id) { FocusRequester() }
     var episodeMove by remember { mutableStateOf<Job?>(null) }
 
+    val searchInputMode = LocalInputModeManager.current
     fun closeEpisodeSearch() {
+        searchInputMode.requestInputMode(InputMode.Keyboard)
+        runCatching { toolbarRequester.requestFocus() }
         episodeTextEditing = false
         expandedPanel = null
         keyboardController?.hide()
-        focusManager.clearFocus()
-        if (remoteNavigationActive) detailScope.launch {
-            withFrameNanos { }; runCatching { toolbarRequester.requestFocus() }
-        }
     }
 
     BackHandler(enabled = expandedPanel == SeriesDetailPanel.SEARCH) { closeEpisodeSearch() }
+    SeriesSearchKeyboardDismiss(expandedPanel == SeriesDetailPanel.SEARCH && episodeTextEditing, ::closeEpisodeSearch)
     BackHandler(enabled = mobileEpisodeLayout && expandedPanel in listOf(SeriesDetailPanel.CAST, SeriesDetailPanel.RELATED)) {
         expandedPanel = null
     }
@@ -308,7 +308,10 @@ internal fun DiscoverySeriesContent(
             episodeListState.scrollToItem(seriesDetailFocusSlot(SeriesDetailFocus.SORT))
             repeat(12) {
                 withFrameNanos { }
-                if (runCatching { episodeSearchRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                if (runCatching { episodeSearchRequester.requestFocus() }.getOrDefault(false)) {
+                    if (episodeTextEditing) { withFrameNanos { }; keyboardController?.show() }
+                    return@LaunchedEffect
+                }
             }
         }
     }
@@ -741,7 +744,7 @@ internal fun DiscoverySeriesContent(
                             initialEpisodeFocusComplete = true
                             handledPlaybackReturnFocusId = entryPlaybackReturnFocusId
                             if (expandedPanel == SeriesDetailPanel.SEARCH) closeEpisodeSearch()
-                            else expandedPanel = SeriesDetailPanel.SEARCH
+                            else { episodeTextEditing = true; expandedPanel = SeriesDetailPanel.SEARCH }
                         },
                         searchRequester = toolbarRequester, sortRequester = sortRequester, layoutRequester = layoutRequester,
                         onSortApplied = {

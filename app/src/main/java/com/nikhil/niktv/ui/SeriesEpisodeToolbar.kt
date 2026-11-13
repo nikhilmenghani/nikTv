@@ -124,7 +124,7 @@ internal fun SeriesEpisodeToolbar(
         if (value != listView) { beforeAction(); restoreLayoutFocus = true; onListView(value) }
     }
     val controlSize = com.nikhil.niktv.discovery.detailActionSize()
-    val searchWidth by animateDpAsState(if (searchOpen && !compact) 220.dp else controlSize,
+    val searchWidth by animateDpAsState(if (searchOpen && !compact) 220.dp + controlSize + 8.dp else controlSize,
         tween(220, easing = FastOutSlowInEasing), label = "episodeSearchWidth")
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(if (inline) Modifier else Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -137,9 +137,13 @@ internal fun SeriesEpisodeToolbar(
                 if (withinPanel) Text(count, Modifier.padding(start = 12.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
             }
             Box(Modifier.width(searchWidth).height(controlSize).clip(RoundedCornerShape(if (com.nikhil.niktv.discovery.LocalDetailActionGlass.current) 10.dp else 12.dp))) {
-                if (searchOpen && !compact) Box(Modifier.fillMaxSize().focusRequester(searchRequester)) { searchField() }
-                else EpisodeToolbarIcon(Icons.Default.Search, "Search episodes", searchOpen,
-                    Modifier.focusRequester(searchRequester), onSearch)
+                if (searchOpen && !compact) Box(Modifier.fillMaxSize().padding(end = controlSize + 8.dp)) { searchField() }
+                // Keep this focus target mounted while the editor opens/closes.
+                // Removing the focused editor must never fall back to page Back.
+                Box(Modifier.align(Alignment.CenterEnd)) {
+                    EpisodeToolbarIcon(Icons.Default.Search, "Search episodes", searchOpen,
+                        Modifier.focusRequester(searchRequester), onSearch)
+                }
             }
             Box {
                 EpisodeToolbarIcon(Icons.AutoMirrored.Filled.Sort,

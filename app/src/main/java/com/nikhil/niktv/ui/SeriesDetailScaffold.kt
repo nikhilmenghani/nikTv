@@ -6,6 +6,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -36,5 +37,19 @@ internal fun SeriesEpisodePanel(
             HorizontalDivider(color = Color.White.copy(alpha = .08f))
             Box(Modifier.weight(1f).fillMaxWidth().padding(8.dp)) { episodes() }
         }
+    }
+}
+
+/** IME consumes the first Back; collapse its search field on that same dismissal. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SeriesSearchKeyboardDismiss(editing: Boolean, close: () -> Unit) {
+    val visible = WindowInsets.isImeVisible
+    var shown by remember { mutableStateOf(false) }
+    val currentClose by rememberUpdatedState(close)
+    LaunchedEffect(editing, visible) {
+        if (!editing) shown = false
+        else if (visible) shown = true
+        else if (shown) { shown = false; currentClose() }
     }
 }
