@@ -27,7 +27,7 @@ internal val LocalDiscoveryLibraryOptions = staticCompositionLocalOf<DiscoveryLi
 @Composable
 internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLibraryDestination,
     back: () -> Unit, select: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
-    presentation: DiscoveryCard? = null, content: @Composable () -> Unit) {
+    presentation: DiscoveryCard? = null, focusNavigationOnEntry: Boolean = true, content: @Composable () -> Unit) {
     val configuration = LocalConfiguration.current
     val tv = LocalContext.current.isTvLikeDevice(configuration)
     val phone = usesDiscoveryPhoneLayout(configuration, tv)
@@ -42,7 +42,7 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
     var menu by remember(destination) { mutableStateOf(false) }
     val remote = tv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     LaunchedEffect(destination, remote, trialCollection) {
-        if (remote && !trialCollection && state.modernIptvCategory == null) repeat(8) {
+        if (focusNavigationOnEntry && remote && !trialCollection && state.modernIptvCategory == null) repeat(8) {
             withFrameNanos { }
             if (runCatching { tab.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }

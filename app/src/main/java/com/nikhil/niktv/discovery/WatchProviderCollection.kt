@@ -27,11 +27,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 internal fun WatchProviderCollection(provider: WatchProvider, region: String, series: Boolean,
     row: WatchProviderRow, load: (Boolean) -> Unit, refresh: () -> Unit, close: () -> Unit,
     metadataActive: Boolean, open: (DiscoveryCard, FocusRequester) -> Unit,
-    focusRegistry: MutableMap<String, FocusRequester>? = null, cancel: () -> Unit = {}, controls: (@Composable () -> Unit)? = null) {
+    focusRegistry: MutableMap<String, FocusRequester>? = null, cancel: () -> Unit = {}, controls: (@Composable () -> Unit)? = null,
+    refreshLabel: String = "Refresh provider titles") {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val phone = usesDiscoveryPhoneLayout(configuration, context.isTvLikeDevice(configuration))
     val remote = context.isTvLikeDevice(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val host = LocalView.current
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     var query by rememberSaveable { mutableStateOf("") }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -75,10 +77,11 @@ internal fun WatchProviderCollection(provider: WatchProvider, region: String, se
             focusNew = false
         }
     }
-    LaunchedEffect(row.cards.isNotEmpty(), metadataActive) {
+    LaunchedEffect(row.cards.isNotEmpty(), metadataActive, remote) {
         if (!entered && metadataActive && row.cards.isNotEmpty()) {
-            grid.scrollToItem(0); entered = true
-            if (remote) repeat(30) { withFrameNanos { }; if (runCatching { requesters[row.cards.first().key]?.requestFocus() ?: false }.getOrDefault(false)) return@LaunchedEffect }
+            grid.scrollToItem(0)
+            if (!remote) entered = true
+            else repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { requesters[row.cards.first().key]?.requestFocus() ?: false }.getOrDefault(false)) { entered = true; return@LaunchedEffect } }
         }
     }
     BackHandler(onBack = close)
@@ -94,7 +97,7 @@ internal fun WatchProviderCollection(provider: WatchProvider, region: String, se
                 }
                 controls?.invoke()
                 DiscoveryCollectionSearch(query, { query = it }, compact = phone, onActivate = { entered = true })
-                DiscoveryAction("Refresh provider titles", Icons.Default.Refresh, iconOnly = true) {
+                DiscoveryAction(refreshLabel, Icons.Default.Refresh, iconOnly = true) {
                     coordinator.cancel(); entered = false; selected = null; autoCount = -1; refresh()
                 }
             }

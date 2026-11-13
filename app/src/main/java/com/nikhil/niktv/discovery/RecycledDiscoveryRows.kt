@@ -908,6 +908,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     }
     private inner class CardHolder : ViewHolder(FrameLayout(context).apply {
         isFocusable = true; isFocusableInTouchMode = false
+        if (android.os.Build.VERSION.SDK_INT >= 26) defaultFocusHighlightEnabled = false
         layoutParams = LayoutParams(if (polishedCaptions) px(posterGeometry.width) else dp(104), LayoutParams.MATCH_PARENT).apply { marginEnd = dp(12) }
         setPadding(dp(4), dp(4), dp(4), dp(4)); isSoundEffectsEnabled = false
     }) {
@@ -1055,6 +1056,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             val replacement = row != rowId || identity != item.id || artwork != item.artwork
             if (replacement) { cancel(); itemView.scaleX = 1f; itemView.scaleY = 1f }
             row = rowId; identity = item.id; artwork = item.artwork; itemView.tag = "$row:$identity"
+            item.onVisible?.invoke()
             frame(itemView.isFocused)
             title.text = item.title
             subtitle.text = if (polishedCaptions) item.subtitle else listOfNotNull(item.source?.label, item.subtitle.takeIf(String::isNotBlank)).joinToString(" · ")

@@ -16,6 +16,30 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
     companion object { private val slots = Semaphore(2) }
     private val json = Json { ignoreUnknownKeys = true }
     val configured get() = tmdb.configured
+    suspend fun genres(series: Boolean, refresh: Boolean = false): List<WatchProvider> =
+        cached("genre-catalog-v1:$series", if (refresh) 0L else DiscoveryCache.DETAIL_TTL, ListSerializer(WatchProvider.serializer())) {
+            val root = tmdb.discoveryJson("/genre/${if (series) "tv" else "movie"}/list")
+            val order = listOf(35, 28, 18, 27, 10749, 12, 878, 53, 16, 80, 14, 9648, 99, 10751)
+            root["genres"]?.jsonArray.orEmpty().mapNotNull { value ->
+                val obj = value.jsonObject
+                val id = obj["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+                obj.string("name")?.let { WatchProvider(id, it) }
+            }.distinctBy { it.id }.sortedBy { order.indexOf(it.id).takeIf { index -> index >= 0 } ?: 100 + it.id }
+        }
+    suspend fun genreWallpaper(series: Boolean, genre: Int): String? =
+        cached("genre-poster-v1:$series:$genre", 12 * 60 * 60_000L,
+            kotlinx.serialization.serializer<String?>()) {
+            val (path, query) = genreTitleRequest(series, genre, 1, wallpaper = true)
+            genrePoster(tmdb.discoveryJson(path, query), genre)
+        }
+    suspend fun genreTitles(series: Boolean, genre: Int, page: Int, stale: (WatchProviderPage) -> Unit,
+        refresh: Boolean): WatchProviderPage = cached("genre-titles-v1:$series:$genre:$page",
+        if (refresh) 0L else DiscoveryCache.FEED_TTL, WatchProviderPage.serializer(), stale) {
+            val (path, query) = genreTitleRequest(series, genre, page)
+            val root = tmdb.discoveryJson(path, query)
+            WatchProviderPage(cards(root, series), root["page"]?.jsonPrimitive?.intOrNull ?: page,
+                (root["total_pages"]?.jsonPrimitive?.intOrNull ?: page).coerceAtMost(500))
+        }
     private suspend fun <T> cached(key: String, ttl: Long, serializer: kotlinx.serialization.KSerializer<T>,
         stale: (T) -> Unit = {}, load: suspend () -> T): T {
         return cache.load(key, ttl, serializer, stale) { slots.withPermit { load() } }

@@ -3,6 +3,8 @@ package com.nikhil.niktv.discovery
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -29,6 +31,8 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val jobs = mutableMapOf<String, Job>()
     private val stack = mutableListOf<DiscoveryCard>()
     private var landingNavigationId: Long? = null
+    var genresOpen by androidx.compose.runtime.mutableStateOf(false)
+    var chosenGenre by androidx.compose.runtime.mutableStateOf<WatchProvider?>(null)
 
     /** Explicit top-level navigation clears every nested detail, even on the selected tab.
      * Recomposition and Back returning from Search retain the current detail instead. */
@@ -48,6 +52,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     fun bind(profile: String, surface: DashboardSurface, originalSections: List<TmdbHomeSection>?, experiment: Boolean = false) {
         if (_state.value.profile == profile && _state.value.surface == surface && boundExperiment == experiment) return
         boundExperiment = experiment
+        genresOpen = false; chosenGenre = null
         jobs.values.forEach { it.cancel() }; jobs.clear(); stack.clear()
         focusGeneration.next(); preparedPresentation = null; completedFocusKey = null
         screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()

@@ -43,7 +43,8 @@ internal fun parseWatchProviders(root: JsonObject): List<WatchProvider> = root["
 
 /** Only composed provider rows ask for metadata. Cancelled/obsolete work cannot publish across regions. */
 internal class WatchProvidersModel(private val scope: CoroutineScope, private val source: WatchProvidersSource,
-    region: String = "IN", private val retainedRows: Int = 12, initialSeries: Boolean = false) {
+    region: String = "IN", private val retainedRows: Int = 12, initialSeries: Boolean = false,
+    private val catalogueLabel: String = "providers") {
     private val mutable = MutableStateFlow(WatchProvidersState(region = region, series = initialSeries))
     val state = mutable.asStateFlow()
     private var generation = 0
@@ -66,7 +67,7 @@ internal class WatchProvidersModel(private val scope: CoroutineScope, private va
                 val regions = runCatching { source.regions() }.getOrElse { if (it is CancellationException) throw it; emptyList() }
                 if (epoch == generation) mutable.update { it.copy(regions = regions) }
             } catch (c: CancellationException) { throw c }
-              catch (_: Exception) { if (epoch == generation) mutable.update { it.copy(loading = false, error = "Could not load providers. Retry when connected.") } }
+              catch (_: Exception) { if (epoch == generation) mutable.update { it.copy(loading = false, error = "Could not load $catalogueLabel. Retry when connected.") } }
         }
     }
     fun resume() {

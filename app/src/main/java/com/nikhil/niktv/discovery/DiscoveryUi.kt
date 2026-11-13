@@ -80,7 +80,7 @@ internal data class RailEntry(val key: String, val title: String, val artwork: S
     val subtitle: String = "", val progress: Float? = null, val open: () -> Unit,
     val matchCount: Int? = null, val providerMedia: MediaItem? = null, val providerType: CatalogType? = null,
     val popup: (@Composable (Boolean, () -> Unit, () -> Boolean) -> Unit)? = null,
-    val source: DiscoveryTileSource? = null) {
+    val source: DiscoveryTileSource? = null, val visible: (() -> Unit)? = null) {
     val displaySource get() = source ?: if (card != null) DiscoveryTileSource.TMDB else providerMedia?.discoveryCatalogSource()
 }
 internal data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
@@ -452,6 +452,9 @@ private fun DiscoveryPreviewContent(
     val watchProviders = homeWatchProviders(profile, experiment && surface == DashboardSurface.HOME && state.detail == null)
     val openWatchProviders = LocalOpenWatchProviders.current
     var chosenWatchProvider by rememberSaveable(profile, stateSaver = WatchProviderSaver) { mutableStateOf<WatchProvider?>(null) }
+    val genreHolder = homePopularGenres(profile, surface, experiment && state.detail == null)
+    val genreState = genreHolder?.model?.state?.collectAsState()?.value ?: WatchProvidersState(loading = false)
+    val genreArtwork = genreHolder?.artwork?.collectAsState()?.value.orEmpty()
     LaunchedEffect(vm, app.discoveryNavigationId, honorLandingNavigation) {
         if (honorLandingNavigation && vm.enterLanding(app.discoveryNavigationId)) {
             // Menu tabs are destinations, not Back operations. A retained Home
@@ -498,7 +501,7 @@ private fun DiscoveryPreviewContent(
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
         app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection,
-        watchProviders.providers, watchProviders.loading, watchProviders.error) { buildList {
+        watchProviders.providers, watchProviders.loading, watchProviders.error, genreState.providers, genreArtwork) { buildList {
         val detail = state.detail
         if (detail == null) {
             val allRecents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
@@ -609,6 +612,12 @@ private fun DiscoveryPreviewContent(
                     RailEntry("watch-provider:${provider.id}", provider.name, provider.logo,
                         open = { chosenWatchProvider = provider })
                 }, viewAll = openWatchProviders))
+            if (experiment && genreState.providers.isNotEmpty()) add(Rail("popular-genres", "Popular Genres",
+                genreState.providers.map { genre -> RailEntry("genre:${genreState.series}:${genre.id}", genre.name,
+                    genreArtwork["${genreState.series}:${genre.id}"],
+                    open = { vm.chosenGenre = genre; vm.genresOpen = true },
+                    visible = { genreHolder?.wallpaper(genre.id, genreState.series) }) },
+                viewAll = { vm.chosenGenre = null; vm.genresOpen = true }, hasMore = true))
 
         } else {
             if (state.collection.isNotEmpty()) add(Rail("collection", state.details?.collection?.title ?: "Collection", state.collection.map { cardEntry(it, "collection") }))
@@ -716,6 +725,14 @@ private fun DiscoveryPreviewContent(
             }
         } },
         confirmButton = { NikTvSecondaryActionButton(::closeExperimentSettings) { Text("Close") } })
+    if (vm.genresOpen) androidx.compose.ui.window.Dialog(onDismissRequest = { vm.genresOpen = false },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        WatchProvidersScreen(app, back = { vm.genresOpen = false },
+            select = { vm.genresOpen = false; actions.selectSurface(it) },
+            navigate = { vm.genresOpen = false; actions.navigate(it) }, playCard = currentPlayCard,
+            detailVisibilityChanged = actions.detailVisibilityChanged, initialProvider = vm.chosenGenre,
+            genres = true, initialSeries = genreState.series)
+    }
     chosenWatchProvider?.let { provider ->
         WatchProvidersScreen(app, back = { chosenWatchProvider = null },
             select = { chosenWatchProvider = null; actions.selectSurface(it) },
@@ -891,7 +908,8 @@ private fun DiscoveryPreviewContent(
             NativeDiscoveryRow(row.key, row.title, row.entries.map { entry -> NativeDiscoveryItem(
                 entry.key, entry.title, entry.subtitle,
                 entry.artwork, { restoreNativeSelection = true; entry.open() }, entry.popup?.let { { restoreNativeSelection = true; nativePopup = entry; nativePopupOpen = true } }, entry.progress.takeIf { scrollVariant.progressIndicators },
-                source = entry.displaySource.takeIf { scrollVariant.sourceCaptions }, fitArtwork = row.key == "watch-providers") },
+                source = entry.displaySource.takeIf { scrollVariant.sourceCaptions }, fitArtwork = row.key == "watch-providers",
+                onVisible = entry.visible) },
                 actionLabel = if (recycled && row.key !in setOf("continue", "episodes")) "Remove ${row.title}" else null,
                 action = if (!recycled || row.key in setOf("continue", "episodes")) null else ({
                     if (row.recommendation != null && actions.dismissRecommendation != null) actions.dismissRecommendation(row.recommendation)
@@ -1751,6 +1769,7 @@ internal fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requeste
                         onDispose { popupChanged(false) }
                     }
                     Box {
+                        if (entry.visible != null) LaunchedEffect(entry.key) { entry.visible.invoke() }
                         if (phone) DiscoveryPhoneMediaCard(entry.title, entry.artwork, entry.subtitle, tileWidth,
                             wide = phoneWide, modifier = Modifier.focusRequester(requester), progress = entry.progress, matchCount = entry.matchCount, source = entry.displaySource,
                             onClick = entry.open, onLongClick = entry.popup?.let { { popupOpen = true } },

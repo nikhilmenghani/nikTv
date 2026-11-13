@@ -40,6 +40,7 @@ internal data class NativeDiscoveryItem(
     val onClick: () -> Unit, val onLongClick: (() -> Unit)? = null, val progress: Float? = null,
     val source: DiscoveryTileSource? = null,
     val fitArtwork: Boolean = false,
+    val onVisible: (() -> Unit)? = null,
 )
 internal data class NativeDiscoveryRow(val id: String, val title: String, val items: List<NativeDiscoveryItem>, val isHero: Boolean = false,
     val actionLabel: String? = null, val action: (() -> Unit)? = null, val viewAll: (() -> Unit)? = null,
