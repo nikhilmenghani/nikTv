@@ -5,6 +5,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -20,6 +23,16 @@ internal fun SeriesDetailScaffold(header: @Composable () -> Unit, episodes: @Com
     }
 }
 
+@Composable
+internal fun SeriesEpisodePagingError(message: String, retry: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(message, Modifier.weight(1f), color = Color(0xFFD0D3DC), style = MaterialTheme.typography.labelSmall,
+            maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        NikTvTextActionButton(onClick = retry) { Text("Retry") }
+    }
+}
+
 /** The toolbar stays fixed while the episode viewport scrolls inside one surface. */
 @Composable
 internal fun SeriesEpisodePanel(
@@ -28,10 +41,10 @@ internal fun SeriesEpisodePanel(
     toolbar: @Composable () -> Unit,
     episodes: @Composable () -> Unit,
 ) {
-    Surface(modifier, shape = RoundedCornerShape(14.dp), color = Color(0xEB111720),
+    Surface(modifier, shape = RoundedCornerShape(14.dp), color = Color(0x44111720),
         border = BorderStroke(1.dp, Color.White.copy(alpha = .10f))) {
         Column(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (compact) 6.dp else 10.dp)) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
                 toolbar()
             }
             HorizontalDivider(color = Color.White.copy(alpha = .08f))

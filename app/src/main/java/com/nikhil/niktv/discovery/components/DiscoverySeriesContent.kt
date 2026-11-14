@@ -209,6 +209,9 @@ internal fun DiscoverySeriesContent(
     val tabletEpisodeOverlay = !mobileEpisodeLayout
     val shortLandscapeEpisodes = episodeConfiguration.usesShortWideLayout(episodeIsTv)
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
+    val gridColumns = seriesEpisodeGridColumns(shortLandscapeEpisodes)
+    val viewportColumns = if (!mobileEpisodeLayout && !episodeListView) gridColumns else 1
+    var pendingLayoutEpisode by remember(series.id) { mutableStateOf<Int?>(null) }
     // Episodes always own their scroll state; phones keep the compact header in view.
     val verticalEpisodeLayout = false
     var contentHeightPx by remember { mutableIntStateOf(0) }
@@ -222,11 +225,13 @@ internal fun DiscoverySeriesContent(
     val wideEpisodeHeight = with(density) { panelViewportHeightPx.toDp() }.coerceAtLeast(96.dp)
     val layoutRequester = remember(series.id) { FocusRequester() }
 
-    val episodeRowState = key(profile, series.id, state.selectedSeriesSeason) { rememberLazyListState() }
-    LaunchedEffect(episodeListView, state.selectedSeriesSeason) {
+    val episodeRowState = rememberSeriesEpisodeViewport("$profile:${series.id}:${state.selectedSeriesSeason}", viewportColumns)
+    LaunchedEffect(pendingLayoutEpisode, viewportColumns) {
+        val firstEpisode = pendingLayoutEpisode ?: return@LaunchedEffect
         withFrameNanos { }
-        if (!verticalEpisodeLayout && entryPlaybackReturnFocusId == null)
-            episodeRowState.scrollToItem(episodeRowState.firstVisibleItemIndex, 0)
+        episodeRowState.scrollToItem(seriesEpisodeViewportIndex(firstEpisode, viewportColumns), 0)
+        withFrameNanos { }
+        pendingLayoutEpisode = null
     }
     var episodeScrollReset by remember(series.id) { mutableIntStateOf(0) }
     LaunchedEffect(episodeScrollReset) {
@@ -427,11 +432,11 @@ internal fun DiscoverySeriesContent(
         val viewport = episodeListState.layoutInfo
         val parentVisible = viewport.visibleItemsInfo.any { it.index == verticalIndex }
         val innerViewport = episodeRowState.layoutInfo
-        val innerItem = innerViewport.visibleItemsInfo.firstOrNull { it.index == index }
+        val innerItem = innerViewport.visibleItemsInfo.firstOrNull { it.index == seriesEpisodeViewportIndex(index, viewportColumns) }
         val innerVisible = verticalEpisodeLayout || (innerItem != null && innerItem.offset >= innerViewport.viewportStartOffset &&
             innerItem.offset + innerItem.size <= innerViewport.viewportEndOffset)
         navigationTrace?.invoke("provider-episode-enter remembered=$focusedEpisodeId target=$targetId innerVisible=$innerVisible parent=$revealParent")
-        if (!forceReveal && (!revealParent || parentVisible) && innerVisible) {
+        if ((!revealParent || parentVisible) && innerVisible) {
             val accepted = runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)
             navigationTrace?.invoke("provider-episode-focus target=$targetId accepted=$accepted")
             if (accepted) return
@@ -444,11 +449,11 @@ internal fun DiscoverySeriesContent(
             else if (!mobileEpisodeLayout && !tabletEpisodeOverlay && revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
                 visible.offset + visible.size > viewport.viewportEndOffset))
                 episodeListState.scrollToItem(verticalIndex)
-            if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) episodeRowState.scrollToItem(
-                if (exactId != null) seriesEpisodeResumeAnchor(index, filteredEpisodes.size) else index)
+            if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) episodeRowState.scrollToItem(seriesEpisodeViewportIndex(
+                if (exactId != null) seriesEpisodeResumeAnchor(index, filteredEpisodes.size) else index, viewportColumns))
             if (exactId != null && index == filteredEpisodes.lastIndex) {
                 repeat(2) { withFrameNanos { } }
-                episodeRowState.scrollToItem(index)
+                episodeRowState.scrollToItem(seriesEpisodeViewportIndex(index, viewportColumns))
             }
             repeat(20) { withFrameNanos { }
                 if (runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)) return@launch
@@ -593,10 +598,10 @@ internal fun DiscoverySeriesContent(
             }
             is SeriesEpisodeEntryFocus.Episode -> {
                 val listIndex = seriesEpisodeVerticalIndex(target.index, !verticalEpisodeLayout)
-                if (!verticalEpisodeLayout) episodeRowState.scrollToItem(seriesEpisodeResumeAnchor(target.index, episodeIds.size))
+                if (!verticalEpisodeLayout) episodeRowState.scrollToItem(seriesEpisodeViewportIndex(seriesEpisodeResumeAnchor(target.index, episodeIds.size), viewportColumns))
                 if (!verticalEpisodeLayout && target.index == episodeIds.lastIndex) {
                     repeat(2) { withFrameNanos { } }
-                    episodeRowState.scrollToItem(target.index)
+                    episodeRowState.scrollToItem(seriesEpisodeViewportIndex(target.index, viewportColumns))
                 }
                 if (!mobileEpisodeLayout && episodeListState.layoutInfo.visibleItemsInfo.none { it.index == listIndex }) {
                     episodeListState.scrollToItem(listIndex, -toolbarHeightPx)
@@ -625,13 +630,15 @@ internal fun DiscoverySeriesContent(
     }
 
     val currentLoadMore by rememberUpdatedState(loadMoreEpisodes)
-    LaunchedEffect(series.id, selectedSeason, filteredEpisodes.size, state.episodeHasMore, state.episodeLoadingMore, destination, state.loading, activeSearchQuery, verticalEpisodeLayout) {
-        if (state.episodeLoadingMore || destination?.running == true || state.loading || !state.episodeHasMore || activeSearchQuery.isNotBlank()) return@LaunchedEffect
+    LaunchedEffect(series.id, selectedSeason, filteredEpisodes.size, state.episodeHasMore, state.episodeLoadingMore, destination, state.loading, activeSearchQuery, verticalEpisodeLayout, viewportColumns, pendingLayoutEpisode, state.episodePagingError) {
+        if (pendingLayoutEpisode != null || state.episodePagingError?.let { it.profile == profile && it.series == series.id && it.season == selectedSeason } == true ||
+            state.episodeLoadingMore || destination?.running == true || state.loading || !state.episodeHasMore || activeSearchQuery.isNotBlank()) return@LaunchedEffect
         snapshotFlow {
             if (verticalEpisodeLayout) shouldLoadMoreSeriesEpisodes(filteredEpisodes.size,
                 episodeListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1, state.episodeHasMore,
                 state.loading, activeSearchQuery, episodeListState.isScrollInProgress || episodeListState.firstVisibleItemIndex > 1)
-            else shouldLoadMoreLandscapeEpisodes(filteredEpisodes.size, episodeRowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+            else shouldLoadMoreLandscapeEpisodes(filteredEpisodes.size,
+                seriesEpisodeLastVisible(episodeRowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1, viewportColumns, filteredEpisodes.size),
                 state.episodeHasMore, state.loading, activeSearchQuery, episodeRowState.isScrollInProgress ||
                     episodeRowState.firstVisibleItemIndex > 0 || focusedEpisodeId != null)
         }
@@ -735,7 +742,12 @@ internal fun DiscoverySeriesContent(
                             episodeSortDescending = it
                             focusedEpisodeId = null
                         },
-                        listView = episodeListView, onListView = { episodeListView = it },
+                        listView = episodeListView, onListView = {
+                            // Capture before changing layout: LazyColumn may already re-anchor
+                            // its shared episode keys when the new content is measured.
+                            pendingLayoutEpisode = episodeRowState.firstVisibleItemIndex * viewportColumns
+                            episodeListView = it
+                        },
                         searchOpen = expandedPanel == SeriesDetailPanel.SEARCH,
                         onSearch = {
                             // Explicit interaction supersedes an unfinished automatic entry restore.
@@ -882,6 +894,14 @@ internal fun DiscoverySeriesContent(
 
             item("series-inline-details") {
                 // Retain the slot so saved episode and pagination indices stay stable.
+                if (mobileEpisodeLayout) state.episodePagingError?.takeIf {
+                    it.profile == profile && it.series == series.id && it.season == selectedSeason
+                }?.let { failure ->
+                    SeriesEpisodePagingError(failure.message) {
+                        runCatching { sortRequester.requestFocus() }
+                        loadMoreEpisodes()
+                    }
+                }
             }
 
             if (state.items.isEmpty() && state.loading && !(episodeListView && !mobileEpisodeLayout)) {
@@ -916,7 +936,7 @@ internal fun DiscoverySeriesContent(
                     }
                 }
             } else {
-                val episodeCard: @Composable (MediaItem) -> Unit = { episode ->
+                val episodeCard: @Composable (MediaItem, Modifier) -> Unit = { episode, cell ->
                     val progress = progressByEpisode[episode.id]
                     val isRecent = recentEpisode?.id == episode.id
 
@@ -936,12 +956,27 @@ internal fun DiscoverySeriesContent(
                         onRemoveDownload = { removeOfflineDownload(episode, CatalogType.SERIES) },
                         refreshTmdb = { refreshEpisodeTmdb(episode) },
                         refreshingTmdb = singleMetadataRefresh?.let { it.episode == episode.id && it.running } == true,
-                        modifier = Modifier
+                        modifier = cell
                             .onSizeChanged { if (episode.id == filteredEpisodes.lastOrNull()?.id) lastEpisodeHeightPx = it.height }
-                            .then(if (episodeListView) Modifier.fillMaxWidth() else Modifier.width(if (shortLandscapeEpisodes) 112.dp else if (mobileEpisodeLayout) 170.dp else 200.dp))
+                            .then(if (episodeListView || !mobileEpisodeLayout) Modifier.fillMaxWidth() else Modifier.width(170.dp))
                             .focusRequester(remember(landscapeRequesters, episode.id) { landscapeRequesters.getOrPut(episode.id) { FocusRequester() } })
                             .onPreviewKeyEvent { event ->
-                                if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
+                                if (!mobileEpisodeLayout && !episodeListView && event.type == KeyEventType.KeyDown) {
+                                    val index = filteredEpisodes.indexOfFirst { it.id == episode.id }
+                                    val target = when (event.key) {
+                                        Key.DirectionLeft -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dx = -1)
+                                        Key.DirectionRight -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dx = 1)
+                                        Key.DirectionUp -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dy = -1)
+                                        Key.DirectionDown -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dy = 1)
+                                        Key.Menu -> null
+                                        else -> -1
+                                    }
+                                    when {
+                                        target == -1 -> false
+                                        target == null -> { requestWideFocus(if (event.key == Key.DirectionLeft && availableSeasons.isNotEmpty()) SeriesDetailFocus.SEASONS else SeriesDetailFocus.SORT); true }
+                                        else -> { requestEpisodeFocus(revealParent = false, exactId = filteredEpisodes[target].id); true }
+                                    }
+                                } else if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                     Key.DirectionUp -> if (episode.id == filteredEpisodes.firstOrNull()?.id) { requestWideFocus(SeriesDetailFocus.SORT); true } else false
                                     Key.DirectionLeft -> if (availableSeasons.isNotEmpty()) runCatching { seasonButtonRequester.requestFocus() }.getOrDefault(false) else false
                                     else -> false
@@ -961,7 +996,7 @@ internal fun DiscoverySeriesContent(
                             )
                     )
                 }
-                if (verticalEpisodeLayout) items(filteredEpisodes, key = { it.id }) { episodeCard(it) }
+                if (verticalEpisodeLayout) items(filteredEpisodes, key = { it.id }) { episodeCard(it, Modifier) }
                 else if (episodeListView) item("episode-row") {
                     Row(Modifier.fillMaxWidth().height(if (mobileEpisodeLayout) phoneEpisodeHeight else wideEpisodeHeight)
                         .episodeViewportFocus()
@@ -982,7 +1017,7 @@ internal fun DiscoverySeriesContent(
                                         else "No episodes matching “${activeSearchQuery.trim()}”", color = Color.LightGray)
                                 }
                             }
-                            items(filteredEpisodes, key = { it.id }) { episodeCard(it) }
+                            items(filteredEpisodes, key = { it.id }) { episodeCard(it, Modifier) }
                             if ((state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) item("episodes-load-more") {
                                 NikTvSecondaryActionButton(loadMoreEpisodes, Modifier.fillMaxWidth().focusRequester(moreRequester)) {
                                     Text(if (state.episodeLoadingMore) "Loading episodes…" else "Load more episodes")
@@ -992,6 +1027,15 @@ internal fun DiscoverySeriesContent(
                         SeriesEpisodeScrollIndicator(episodeRowState, Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                         }
                     }
+                } else if (!mobileEpisodeLayout) item("episode-row") {
+                    SeriesEpisodeGrid(filteredEpisodes, gridColumns, episodeRowState, key = { it.id },
+                        modifier = Modifier.fillMaxWidth().height(wideEpisodeHeight).episodeViewportFocus(),
+                        tail = if ((state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) ({
+                            NikTvSecondaryActionButton(loadMoreEpisodes, Modifier.fillMaxWidth().focusRequester(moreRequester)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { focusLandscapeEpisode(); true } else false
+                                }) { Text(if (state.episodeLoadingMore) "Loading episodes…" else "Load more episodes") }
+                        }) else null) { _, episode, cell -> episodeCard(episode, cell) }
                 } else item("episode-row") {
                     LazyRow(state = episodeRowState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -1006,7 +1050,7 @@ internal fun DiscoverySeriesContent(
                                 else -> false
                             }
                         }) {
-                            items(filteredEpisodes, key = { it.id }) { episodeCard(it) }
+                            items(filteredEpisodes, key = { it.id }) { episodeCard(it, Modifier) }
                             if ((state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) item("episodes-load-more") {
                                 Box(Modifier.width(200.dp).heightIn(min = 200.dp), contentAlignment = Alignment.Center) {
                                     NikTvSecondaryActionButton(onClick = loadMoreEpisodes,
@@ -1055,7 +1099,19 @@ internal fun DiscoverySeriesContent(
                 .padding(start = if (shortLandscapeEpisodes) 16.dp else 24.dp,
                     end = if (shortLandscapeEpisodes) 16.dp else 24.dp,
                     bottom = if (shortLandscapeEpisodes) 8.dp else 16.dp),
-                compact = shortLandscapeEpisodes, toolbar = controls, episodes = seriesContent)
+                compact = shortLandscapeEpisodes, toolbar = controls, episodes = {
+                    Column(Modifier.fillMaxSize()) {
+                        state.episodePagingError?.takeIf { it.profile == profile && it.series == series.id && it.season == selectedSeason }?.let {
+                            SeriesEpisodePagingError(it.message) {
+                                // The retry row can disappear after success. Move to its
+                                // surviving toolbar target before clearing the error.
+                                runCatching { sortRequester.requestFocus() }
+                                loadMoreEpisodes()
+                            }
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) { seriesContent() }
+                    }
+                })
         }
         })
 

@@ -8,6 +8,8 @@ import kotlinx.coroutines.ensureActive
 
 internal data class EpisodeBrowseKey(val profile: String, val series: String, val season: Int?)
 
+data class EpisodePagingError(val profile: String, val series: String, val season: Int?, val message: String)
+
 /** A partial head refresh is not an authoritative replacement of cached later pages. */
 internal fun EpisodeSeasonResult.retainLoadedEpisodes(
     previous: EpisodeSeasonCache?, profile: String, series: String, previousEpisodes: List<MediaItem>

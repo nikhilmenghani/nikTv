@@ -44,13 +44,16 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     val seasons = state.details?.seasons.orEmpty()
     val chosen = state.season ?: discoveryInitialSeriesSeason(state.details, startSeason, lastWatched?.first)
     var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
+    val shortWindow = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
+    val gridColumns = seriesEpisodeGridColumns(shortWindow)
+    val viewportColumns = if (wide && !listView) gridColumns else 1
+    var pendingLayoutEpisode by remember(card.key) { mutableStateOf<Int?>(null) }
     var newest by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
     LaunchedEffect(newest) { onNewestFirstChanged(newest) }
     var searchOpen by rememberSaveable(state.profile, card.key) { mutableStateOf(false) }
     var query by rememberSaveable(state.profile, card.key) { mutableStateOf("") }
     // A season change must not reuse another season's episode key or viewport.
     var focusedBySeason by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, String>()) }
-    var viewportsBySeason by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, List<Int>>()) }
     var positionedResumes by rememberSaveable(state.profile, card.key) { mutableStateOf(mapOf<Int, String>()) }
     var pendingEpisodeEntry by rememberSaveable(state.profile, card.key) { mutableStateOf<String?>(null) }
     var interacted by remember(card.key) { mutableStateOf(false) }
@@ -78,24 +81,12 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         }
     }
     val requesters = remember(card.key) { mutableMapOf<String, FocusRequester>() }
-    val episodeState = key(card.key, chosen) {
-        val viewport = chosen?.let(viewportsBySeason::get)
-        rememberLazyListState(viewport?.getOrNull(0) ?: 0, viewport?.getOrNull(1) ?: 0)
-    }
-    var previousListView by remember { mutableStateOf(listView) }
-    LaunchedEffect(listView) {
-        if (previousListView != listView) {
-            previousListView = listView
-            withFrameNanos { }
-            episodeState.scrollToItem(episodeState.firstVisibleItemIndex, 0)
-        }
-    }
-    LaunchedEffect(chosen, episodeState) {
-        val season = chosen ?: return@LaunchedEffect
-        snapshotFlow { Triple(episodeState.isScrollInProgress, episodeState.firstVisibleItemIndex, episodeState.firstVisibleItemScrollOffset) }
-            .distinctUntilChanged().collect { (moving, index, offset) ->
-                if (!moving) viewportsBySeason = viewportsBySeason + (season to listOf(index, offset))
-            }
+    val episodeState = rememberSeriesEpisodeViewport("${state.profile}:${card.key}:$chosen", viewportColumns)
+    LaunchedEffect(pendingLayoutEpisode, viewportColumns) {
+        val firstEpisode = pendingLayoutEpisode ?: return@LaunchedEffect
+        withFrameNanos { }
+        episodeState.scrollToItem(seriesEpisodeViewportIndex(firstEpisode, viewportColumns), 0)
+        pendingLayoutEpisode = null
     }
     var scrollReset by remember { mutableIntStateOf(0) }
     LaunchedEffect(scrollReset) {
@@ -137,12 +128,13 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         rememberEpisode(targetKey)
         entryJob?.cancel()
         val viewport = episodeState.layoutInfo
-        val visible = viewport.visibleItemsInfo.firstOrNull { it.index == index }
+        val rowIndex = seriesEpisodeViewportIndex(index, viewportColumns)
+        val visible = viewport.visibleItemsInfo.firstOrNull { it.index == rowIndex }
         val fullyVisible = visible != null && visible.offset >= viewport.viewportStartOffset &&
             visible.offset + visible.size <= viewport.viewportEndOffset
         if (fullyVisible && runCatching { requesters[targetKey]?.requestFocus() == true }.getOrDefault(false)) return true
         entryJob = scope.launch {
-            episodeState.scrollToItem(index)
+            episodeState.scrollToItem(rowIndex)
             repeat(20) {
                 withFrameNanos { }
                 if (runCatching { requesters[targetKey]?.requestFocus() == true }.getOrDefault(false)) return@launch
@@ -161,7 +153,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             val identity = "${lastWatched.first}:${lastWatched.second}"
             val index = episodes.indexOfFirst { it.number == lastWatched.second }
             if (index >= 0 && positionedResumes[lastWatched.first] != identity) {
-                if (!interacted) episodeState.scrollToItem((index - 1).coerceAtLeast(0))
+                if (!interacted) episodeState.scrollToItem(seriesEpisodeViewportIndex((index - 1).coerceAtLeast(0), viewportColumns))
                 if (!interacted || focusedEpisode() == null) rememberEpisode(identity)
                 positionedResumes = positionedResumes + (lastWatched.first to identity)
             }
@@ -198,7 +190,10 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             compact = !wide, inline = header != null && !wide, withinPanel = wide, newestFirst = newest, onNewestFirst = {
                 newest = it; rememberEpisode(null)
             },
-            listView = listView, onListView = { listView = it }, searchOpen = searchOpen,
+            listView = listView, onListView = {
+                pendingLayoutEpisode = episodeState.firstVisibleItemIndex * viewportColumns
+                listView = it
+            }, searchOpen = searchOpen,
             onSearch = { if (searchOpen) closeSearch() else { searchEditing = true; searchOpen = true } },
             searchRequester = toolbarSearch, sortRequester = sort, layoutRequester = layout,
             onSortApplied = { enterEpisodes(fromStart = true) },
@@ -259,7 +254,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         if (!listView && episodes.isEmpty() && "season" !in state.loading) Text(
             if (searchOpen && query.isNotBlank()) "No episodes match your search." else "No episodes are available for this season.",
             Modifier.padding(24.dp))
-        val tile: @Composable (Int, DiscoveryEpisode) -> Unit = { index, episode ->
+        val tile: @Composable (Int, DiscoveryEpisode, Modifier) -> Unit = { index, episode, cell ->
             val identity = "${episode.season}:${episode.number}"
             val requester = remember(identity) { requesters.getOrPut(identity) { FocusRequester() } }
             var options by remember { mutableStateOf(false) }
@@ -276,11 +271,23 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             Box {
             DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
                 listView = listView, overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
-                modifier = (if (listView) Modifier.fillMaxWidth() else Modifier.width(if (LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))) 112.dp else 200.dp)).focusRequester(requester)
+                modifier = (if (listView || wide) cell.fillMaxWidth() else cell.width(200.dp)).focusRequester(requester)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else {
                         val cursor = episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.takeIf { it >= 0 } ?: index
-                        when (event.key) {
+                        if (wide && !listView) {
+                            val target = when (event.key) {
+                                Key.DirectionLeft -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dx = -1)
+                                Key.DirectionRight -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dx = 1)
+                                Key.DirectionUp -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dy = -1)
+                                Key.DirectionDown -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dy = 1)
+                                Key.Menu -> null
+                                else -> -1
+                            }
+                            if (target == -1) false
+                            else if (target == null) runCatching { (if (event.key == Key.DirectionLeft && seasons.isNotEmpty()) seasonEntry else sort).requestFocus() }.getOrDefault(false)
+                            else { focusEpisode(target); true }
+                        } else when (event.key) {
                             Key.DirectionLeft -> if (listView && seasons.isNotEmpty()) runCatching { seasonEntry.requestFocus() }.getOrDefault(false)
                                 else if (!listView) { focusEpisode(cursor - 1); true } else false
                             Key.DirectionRight -> if (!listView) { focusEpisode(cursor + 1); true } else false
@@ -326,10 +333,12 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                         else if (searchOpen && query.isNotBlank()) "No episodes match your search."
                         else "No episodes are available for this season.", Modifier.padding(16.dp))
                 }
-                itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode) }
+                itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode, Modifier) }
             }
-        } else if (!listView) LazyRow(modifier = Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(horizontal = if (wide) 0.dp else 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode) }
+        } else if (wide) SeriesEpisodeGrid(episodes, gridColumns, episodeState,
+            key = { "${it.season}:${it.number}" }, modifier = Modifier.weight(1f).fillMaxWidth(), content = tile)
+        else if (!listView) LazyRow(modifier = Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode, Modifier) }
         }
         }
         if (wide) {

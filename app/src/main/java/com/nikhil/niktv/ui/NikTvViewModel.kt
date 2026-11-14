@@ -195,6 +195,7 @@ data class NikTvState(
     ,val episodePage: Int = 1
     ,val episodeHasMore: Boolean = false
     ,val episodeLoadingMore: Boolean = false
+    ,val episodePagingError: EpisodePagingError? = null
     ,val episodeDestination: EpisodeDestinationState? = null
     ,val playbackQueueScope: String? = null
     ,val playbackQueuePage: Int = 1
@@ -3233,7 +3234,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 seriesSeasonEpisodeCountsKey = "${cache.profileKey}|${cache.seriesId}",
                 episodePage = cache.page,
                 episodeHasMore = cache.hasMore,
-                episodeLoadingMore = false
+                episodeLoadingMore = false,
+                episodePagingError = null
             )
         }
     }
@@ -3884,7 +3886,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val key = snapshot.episodeBrowseKey() ?: return
         val series = snapshot.selectedSeries ?: return
         if (!snapshot.episodeHasMore || snapshot.episodeLoadingMore || snapshot.episodeDestination?.running == true) return
-        _state.update { it.copy(episodeLoadingMore = true) }
+        _state.update { it.copy(episodeLoadingMore = true, episodePagingError = null) }
         episodePageJob = launchForViewer launch@ {
             try {
                 val cache = episodePageMutex.withLock {
@@ -3904,7 +3906,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (_state.value.episodeBrowseKey() == key) _state.update { it.copy(error = error.message ?: "Could not load more episodes") }
+                if (_state.value.episodeBrowseKey() == key) _state.update { it.copy(episodePagingError =
+                    EpisodePagingError(key.profile, key.series, key.season, error.message ?: "Could not load more episodes")) }
             } finally {
                 if (_state.value.episodeBrowseKey() == key) _state.update { it.copy(episodeLoadingMore = false) }
             }

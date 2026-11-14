@@ -162,4 +162,24 @@ class EpisodeDestinationViewModelTest {
         await { !vm.state.value.episodeLoadingMore }
         assertEquals(40, vm.state.value.items.size)
     }
+
+    @Test fun repeatedScrollPageKeepsEpisodesAndShowsInlineRetryRatherThanGlobalError() {
+        vm.episodePageLookup = { _, _, _, page, _ ->
+            EpisodeSeasonResult((481..500).map(::episode), listOf(1), 1, page, true)
+        }
+        vm.loadMoreEpisodes()
+        await { !vm.state.value.episodeLoadingMore }
+        assertNull(vm.state.value.error)
+        assertTrue(vm.state.value.episodePagingError!!.message.contains("repeated"))
+        assertEquals(1, vm.state.value.episodePage)
+        assertTrue(vm.state.value.episodeHasMore)
+        assertEquals(20, vm.state.value.items.size)
+        vm.episodePageLookup = { _, _, _, page, _ ->
+            EpisodeSeasonResult((461..480).map(::episode), listOf(1), 1, page, true)
+        }
+        vm.loadMoreEpisodes()
+        await { !vm.state.value.episodeLoadingMore }
+        assertNull(vm.state.value.episodePagingError)
+        assertEquals(40, vm.state.value.items.size)
+    }
 }
