@@ -40,7 +40,9 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
     onFocus: () -> Unit = {}, onClick: () -> Unit, onLongClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
-    val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
+    val television = LocalContext.current.isTvLikeDevice(configuration)
+    val shortWide = configuration.usesShortWideLayout(television)
+    val compactTvList = compactList && television
     val compact = configuration.screenWidthDp < 600
     val shape = RoundedCornerShape(10.dp)
     val glass = LocalSeriesArtworkGlass.current
@@ -64,10 +66,10 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
         }
         if (listView) Row(Modifier.padding(if (shortWide || compactList) 5.dp else if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (shortWide || compactList) 8.dp else if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            image(Modifier.width(if (shortWide) 64.dp else if (compactList) 104.dp else if (compact) 92.dp else 112.dp))
+            image(Modifier.width(if (shortWide) 64.dp else if (compactTvList) 88.dp else if (compactList) 104.dp else if (compact) 92.dp else 112.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (shortWide || compactList) 2.dp else 4.dp)) {
                 Text(title, Modifier.fillMaxWidth(), color = Color.White, style = if (shortWide || compactList) MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 14.sp) else MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold, maxLines = if (shortWide) 1 else 2, overflow = TextOverflow.Ellipsis)
+                    fontWeight = FontWeight.SemiBold, maxLines = if (shortWide || compactTvList) 1 else 2, overflow = TextOverflow.Ellipsis)
                 Text(listOfNotNull(label.takeIf(String::isNotBlank), metadata.takeIf(String::isNotBlank),
                     overview?.takeIf { shortWide && it.isNotBlank() }).joinToString(" · "),
                     color = Color(0xFFB9BDC7), style = if (shortWide || compactList) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp) else MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)

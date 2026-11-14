@@ -9,6 +9,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 
@@ -39,10 +41,15 @@ internal fun <T> SeriesEpisodeGrid(
 ) {
     val rows = remember(items, columns) { items.chunked(columns) }
     BoxWithConstraints(modifier) {
-    val rowHeight = visibleRows?.let { ((maxHeight - 8.dp - 10.dp * (it - 1)) / it)
-        .coerceAtLeast(68.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)) }
-    LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(4.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val compactTv = visibleRows != null && LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
+    val minimumRowHeight = if (compactTv) 60.dp else 68.dp
+    val gap = if (compactTv) 6.dp else 10.dp
+    val verticalInset = if (compactTv) 2.dp else 4.dp
+    val rowHeight = visibleRows?.let { ((maxHeight - verticalInset * 2 - gap * (it - 1)) / it)
+        .coerceAtLeast(minimumRowHeight * LocalDensity.current.fontScale.coerceAtLeast(1f)) }
+    StableTileFocusViewport {
+    LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(horizontal = 4.dp, vertical = verticalInset),
+        verticalArrangement = Arrangement.spacedBy(gap)) {
         itemsIndexed(rows, key = { _, row -> key(row.first()) }) { rowIndex, row ->
             Row(Modifier.fillMaxWidth().then(if (rowHeight != null) Modifier.height(rowHeight) else Modifier), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEachIndexed { column, item ->
@@ -55,10 +62,28 @@ internal fun <T> SeriesEpisodeGrid(
         if (tail != null) item("episode-grid-tail") { tail() }
     }
     }
+    }
 }
 
+/** Ordinary D-pad moves reveal only the necessary row, never re-anchor it at the top. */
+internal suspend fun LazyListState.revealSeriesEpisodeRow(target: Int) {
+    val viewport = layoutInfo
+    val first = viewport.visibleItemsInfo.firstOrNull() ?: return scrollToItem(target)
+    val fullRows = viewport.visibleItemsInfo.filter {
+        it.offset >= viewport.viewportStartOffset + viewport.beforeContentPadding &&
+            it.offset + it.size <= viewport.viewportEndOffset - viewport.afterContentPadding
+    }
+    val count = fullRows.size.coerceAtLeast(1)
+    if (fullRows.any { it.index == target }) return
+    val anchor = seriesEpisodeRevealAnchor(target, first.index, count)
+    scrollToItem(anchor)
+}
+
+internal fun seriesEpisodeRevealAnchor(target: Int, first: Int, visibleRows: Int): Int =
+    if (target < first) target.coerceAtLeast(0) else (target - visibleRows.coerceAtLeast(1) + 1).coerceAtLeast(first)
+
 internal fun seriesEpisodeListColumns(smallestWidth: Int, width: Int, television: Boolean) =
-    if (!television && smallestWidth >= 600 && width >= 840) 2 else 1
+    if (width >= 840 && (television || smallestWidth >= 600)) 2 else 1
 
 internal fun seriesEpisodeGridColumns(shortWindow: Boolean) = if (shortWindow) 6 else 5
 internal fun seriesEpisodeViewportIndex(index: Int, columns: Int) = index.coerceAtLeast(0) / columns.coerceAtLeast(1)
@@ -71,6 +96,6 @@ internal fun seriesEpisodeGridMove(index: Int, count: Int, columns: Int, dx: Int
     if (dy < 0) return (index - columns).takeIf { it >= 0 }
     if (dy > 0) return if ((index / columns + 1) * columns >= count) index else minOf(index + columns, count - 1)
     if (dx < 0) return if (index % columns == 0) null else index - 1
-    if (dx > 0) return if (index % columns == columns - 1 || index == count - 1) index else index + 1
+    if (dx > 0) return if (index % columns == columns - 1 || index == count - 1) null else index + 1
     return index
 }

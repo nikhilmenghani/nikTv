@@ -21,6 +21,18 @@ internal fun providerDetailFallback(item: MediaItem, type: CatalogType) = Discov
 internal fun providerTmdbSeed(item: MediaItem, type: CatalogType): DiscoveryCard? =
     item.externalTmdbId?.takeIf { it > 0 }?.let { DiscoveryCard(it, type == CatalogType.SERIES, "") }
 
+/** Reuse a confirmed/exact cached public cover; browsing never starts matching requests. */
+internal suspend fun cachedProviderArtwork(cache: DiscoveryCache, item: MediaItem, type: CatalogType): String? {
+    if (type == CatalogType.LIVE_TV) return null
+    val series = type == CatalogType.SERIES
+    val kind = if (series) FavoriteKind.SERIES else FavoriteKind.MOVIE
+    fun publicCover(card: DiscoveryCard?): String? = card?.takeIf { it.id > 0 && it.series == series }
+        ?.let { listOfNotNull(it.poster, it.backdrop).firstOrNull { url -> url.startsWith("https://image.tmdb.org/") } }
+    publicCover(libraryCachedPresentation(cache, LibraryEntry(item, kind)))?.let { return it }
+    val title = if (series) providerSeriesTmdbTitle(item.title) else providerTmdbTitle(item.title)
+    return publicCover(cache.findArtwork(title, series))
+}
+
 internal fun providerCategoryQueueFilter(category: Category, items: List<MediaItem>, index: Int, query: String): PlaybackQueueFilter =
     PlaybackQueueFilter(query.trim(), pinnedIds = if (query.isBlank()) null else emptyList(),
         selectedOrdinal = items.take(index).count { it.id == items[index].id }, contextId = category.id)

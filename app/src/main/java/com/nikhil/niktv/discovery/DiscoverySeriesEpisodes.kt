@@ -136,7 +136,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             visible.offset + visible.size <= viewport.viewportEndOffset
         if (fullyVisible && runCatching { requesters[targetKey]?.requestFocus() == true }.getOrDefault(false)) return true
         entryJob = scope.launch {
-            episodeState.scrollToItem(rowIndex)
+            episodeState.revealSeriesEpisodeRow(rowIndex)
             repeat(20) {
                 withFrameNanos { }
                 if (runCatching { requesters[targetKey]?.requestFocus() == true }.getOrDefault(false)) return@launch
@@ -350,7 +350,10 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             val short = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
             SeriesEpisodePanel(Modifier.weight(1f).fillMaxWidth()
                 .padding(start = if (short) 16.dp else 24.dp, end = if (short) 16.dp else 24.dp,
-                    bottom = if (short) 8.dp else 16.dp), compact = short, toolbar = toolbar) {
+                    bottom = if (short) 8.dp else 16.dp), compact = short,
+                loading = "season" in state.loading || lastWatched?.takeIf { it.first == chosen }?.let {
+                    positionedResumes[it.first] != "${it.first}:${it.second}" } == true,
+                loadingColumns = viewportColumns, toolbar = toolbar) {
                 Column(Modifier.fillMaxSize(), content = episodeBody)
             }
         } else {

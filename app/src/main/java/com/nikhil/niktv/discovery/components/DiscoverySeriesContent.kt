@@ -421,7 +421,7 @@ internal fun DiscoverySeriesContent(
         else state.items.minWithOrNull(chronologicalEpisodeOrder)
     var pendingWatchedJump by remember(profile, series.id) { mutableStateOf<MediaItem?>(null) }
 
-    fun requestEpisodeFocus(revealParent: Boolean, fromStart: Boolean = false, exactId: String? = null) {
+    fun requestEpisodeFocus(revealParent: Boolean, fromStart: Boolean = false, exactId: String? = null, directional: Boolean = false) {
         if (filteredEpisodes.isEmpty()) return
         val index = if (exactId != null) filteredEpisodes.indexOfFirst { it.id == exactId }.takeIf { it >= 0 } ?: return
             else if (fromStart) 0 else filteredEpisodes.indexOfFirst { it.id == focusedEpisodeId }.coerceAtLeast(0)
@@ -451,9 +451,12 @@ internal fun DiscoverySeriesContent(
             else if (!mobileEpisodeLayout && !tabletEpisodeOverlay && revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
                 visible.offset + visible.size > viewport.viewportEndOffset))
                 episodeListState.scrollToItem(verticalIndex)
-            if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) episodeRowState.scrollToItem(seriesEpisodeViewportIndex(
-                if (exactId != null) seriesEpisodeResumeAnchor(index, filteredEpisodes.size) else index, viewportColumns))
-            if (exactId != null && index == filteredEpisodes.lastIndex) {
+            if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) {
+                if (directional) episodeRowState.revealSeriesEpisodeRow(seriesEpisodeViewportIndex(index, viewportColumns))
+                else episodeRowState.scrollToItem(seriesEpisodeViewportIndex(
+                    if (exactId != null) seriesEpisodeResumeAnchor(index, filteredEpisodes.size) else index, viewportColumns))
+            }
+            if (!directional && exactId != null && index == filteredEpisodes.lastIndex) {
                 repeat(2) { withFrameNanos { } }
                 episodeRowState.scrollToItem(seriesEpisodeViewportIndex(index, viewportColumns))
             }
@@ -678,12 +681,14 @@ internal fun DiscoverySeriesContent(
             play = { primaryEpisodeToPlay?.let(play) ?: refreshCatalog() }, close = closeSeries,
             favorite = { toggleFavorite(series) }, isFavorite = isFavorite,
             openTmdbMovie = openTmdbMovie, openTmdbSeries = openTmdbSeries,
-            playLabel = if (primaryEpisodeToPlay == null && state.loading) "Loading episodes…" else if (primaryEpisodeToPlay == null) "Retry IPTV episodes" else if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}" else if (episodeSortDescending) "Play latest" else "Start series",
+            playLabel = if (!mobileEpisodeLayout && (primaryEpisodeToPlay != null || state.loading)) {
+                if (recentEpisode != null || watchedEntryEpisode != null) "Resume" else if (episodeSortDescending) "Play latest" else "Start series"
+            } else if (primaryEpisodeToPlay == null && state.loading) "Loading episodes…" else if (primaryEpisodeToPlay == null) "Retry IPTV episodes" else if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}" else if (episodeSortDescending) "Play latest" else "Start series",
             playEnabled = primaryEpisodeToPlay != null || !state.loading,
-            progressLabel = recentEpisode?.let { episode ->
+            progressLabel = (recentEpisode ?: watchedEntryEpisode)?.let { episode ->
                 listOfNotNull(episode.actionEpisodeLabel(), episodeRemainingLabel(progressByEpisode[episode.id])).joinToString(" · ")
             },
-            progressFraction = recentEpisode?.let { progressByEpisode[it.id] }?.takeIf { it.durationMillis > 0 }?.let {
+            progressFraction = (recentEpisode ?: watchedEntryEpisode)?.let { progressByEpisode[it.id] }?.takeIf { it.durationMillis > 0 }?.let {
                 (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f)
             },
             castUp = { if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.TOOLS, castButtonRequester) else runCatching { castButtonRequester.requestFocus() } },
@@ -983,8 +988,9 @@ internal fun DiscoverySeriesContent(
                                     }
                                     when {
                                         target == -1 -> false
+                                        target == index -> true
                                         target == null -> { requestWideFocus(if (event.key == Key.DirectionLeft && availableSeasons.isNotEmpty()) SeriesDetailFocus.SEASONS else SeriesDetailFocus.SORT); true }
-                                        else -> { requestEpisodeFocus(revealParent = false, exactId = filteredEpisodes[target].id); true }
+                                        else -> { requestEpisodeFocus(revealParent = false, exactId = filteredEpisodes[target].id, directional = true); true }
                                     }
                                 } else if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                     Key.DirectionUp -> if (episode.id == filteredEpisodes.firstOrNull()?.id) { requestWideFocus(SeriesDetailFocus.SORT); true } else false
@@ -1113,7 +1119,8 @@ internal fun DiscoverySeriesContent(
                 .padding(start = if (shortLandscapeEpisodes) 16.dp else 24.dp,
                     end = if (shortLandscapeEpisodes) 16.dp else 24.dp,
                     bottom = if (shortLandscapeEpisodes) 8.dp else 16.dp),
-                compact = shortLandscapeEpisodes, toolbar = controls, episodes = {
+                compact = shortLandscapeEpisodes, loading = (state.loading && state.items.isEmpty()) || pendingPlaybackReturnId != null,
+                loadingColumns = viewportColumns, toolbar = controls, episodes = {
                     Column(Modifier.fillMaxSize()) {
                         state.episodePagingError?.takeIf { it.profile == profile && it.series == series.id && it.season == selectedSeason }?.let {
                             SeriesEpisodePagingError(it.message) {

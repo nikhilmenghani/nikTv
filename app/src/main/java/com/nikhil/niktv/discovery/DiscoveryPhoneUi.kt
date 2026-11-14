@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -282,14 +283,15 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         DiscoveryMobileGlassContainer(if (detail && !compactMovieActions) Modifier.weight(1f).fillMaxHeight() else Modifier) {
                         Surface(onClick = if (openDetails) info else play, enabled = card != null && (openDetails || playEnabled), shape = RoundedCornerShape(10.dp),
                             color = if (detail && !compactMovieActions) Color.Transparent else Color(0xFFE50925), contentColor = Color.White,
-                            modifier = Modifier.then(if (detail && !compactMovieActions) Modifier.fillMaxSize() else Modifier.widthIn(min = 120.dp))
+                            modifier = Modifier.then(if (!detail) Modifier.width(discoveryPrimaryActionWidth(phone = true))
+                                else if (!compactMovieActions) Modifier.fillMaxSize() else Modifier.widthIn(min = 120.dp))
                                 .heightIn(min = 48.dp).focusRequester(playRequester)
                                 .then(if (openDetails) Modifier.focusRequester(infoRequester) else Modifier)
                                 .onFocusChanged { if (it.isFocused) onFocus() }) {
                             Row(Modifier.padding(start = if (compactMovieActions) 16.dp else if (compactDetail) 6.dp else 18.dp,
                                 end = if (compactMovieActions) 22.dp else if (compactDetail) 6.dp else 18.dp, top = 12.dp, bottom = 12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(if (compactDetail) 4.dp else 6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(if (openDetails) Icons.Default.OpenInNew else Icons.Default.PlayArrow, null, Modifier.size(if (compactDetail) 18.dp else 24.dp))
+                                Icon(if (openDetails) Icons.AutoMirrored.Filled.ArrowForward else Icons.Default.PlayArrow, null, Modifier.size(if (compactDetail) 18.dp else 24.dp))
                                 Text(if (openDetails) "Open" else if (compactDetail && playLabel.startsWith("Resume ")) "Resume" else if (compactDetail) playLabel.replace("Episode ", "E") else playLabel,
                                     fontWeight = FontWeight.Bold, fontSize = if (compactDetail) 13.sp else 15.sp,
                                     modifier = Modifier.weight(1f, fill = false),

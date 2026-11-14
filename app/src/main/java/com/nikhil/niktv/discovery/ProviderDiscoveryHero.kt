@@ -120,8 +120,12 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     }
     val fallback = remember(selected, type) { selected?.let { providerDetailFallback(it.item, type).copy(poster = it.artwork) } }
     var cached by remember(selected?.item?.id) { mutableStateOf<DiscoveryCard?>(null) }
+    var presentationReady by remember(selected?.item) { mutableStateOf(false) }
     LaunchedEffect(selected?.item, display.active) {
-        if (display.active) cached = selected?.item?.let { readProviderHeroMetadata(cache, it, type) }
+        if (display.active) {
+            cached = selected?.item?.let { readProviderHeroMetadata(cache, it, type) }
+            presentationReady = true
+        }
     }
     val card = cached ?: fallback
     val seriesResume = remember(profile, type, selected?.item, display.seriesRecents, display.progress) {
@@ -144,7 +148,11 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     val framed = homeFrame && landscape && !phone
     val inset = LocalHeroNavigationInset.current
     val publishGlass = LocalPublishMobileGlassSource.current
-    val headerArtwork = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, 1280)
+    // Resolve the local presentation before painting: showing the provider poster
+    // first and then its cached backdrop visibly changes the hero's crop/scale.
+    // Metadata/actions remain immediate; this read never starts a network lookup.
+    val picture = (card?.backdrop ?: card?.poster).takeIf { presentationReady }
+    val headerArtwork = thumbnailArtworkUrl(picture, 1280)
     var heroGlassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val baseHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), framed, context.isTvLikeDevice(configuration))
     Box((if (portraitPhone) Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp) else Modifier.fillMaxWidth()).clipToBounds().onGloballyPositioned {
@@ -152,8 +160,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
         if (!portraitPhone) publishGlass(MobileGlassSource(headerArtwork.takeIf { display.artwork }, it.boundsInWindow(), topAligned = framed, fillWidth = framed))
     }.then(if (landscape && !phone)
         Modifier.height(trialHeroFrameHeight(baseHeight, density.fontScale).dp + inset) else Modifier)) {
-        if (display.artwork && !portraitPhone && !sceneArtwork) key(selectedId, card?.backdrop ?: card?.poster) {
-            val picture = card?.backdrop ?: card?.poster
+        if (display.artwork && !portraitPhone && !sceneArtwork) key(selectedId, picture) {
             val request = remember(picture) { ImageRequest.Builder(context).data(thumbnailArtworkUrl(picture, 1280))
                 .size(1280, 720).transformations(DiscoveryBackdropTransformation(verticalShade = false)).crossfade(false).build() }
             var ready by remember { mutableStateOf(false) }
@@ -170,7 +177,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
             LocalMobileGlassBounds provides (if (sceneArtwork) LocalDiscoverySceneBounds.current else heroGlassBounds),
             LocalMobileGlassTopAligned provides (framed && !sceneArtwork),
             LocalMobileGlassFillWidth provides (framed && !sceneArtwork)) {
-        DiscoveryHero(card?.let { if (portraitPhone && display.artwork) it else it.copy(backdrop = null, poster = null) },
+        DiscoveryHero(card?.let { if (portraitPhone && display.artwork && presentationReady) it else it.copy(backdrop = null, poster = null) },
             rank = null, height = if (portraitPhone) phoneDiscoveryHeroHeight() - inset else baseHeight.dp + inset, landscape = landscape, compact = true, detail = false,
             contentInset = if (landscape && !phone && !sceneArtwork) 18.dp else 0.dp,
             loading = selected == null && providerHeroWaiting(profile, type, categories, provider, poolPrepared),

@@ -56,7 +56,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
         DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true,
-            onClick = { change(true) })
+            focusHint = false, onClick = { change(true) })
         DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
@@ -113,8 +113,9 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                     Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.fillMaxSize()
                         .graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
                 }
-                DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
+                DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false, onClick = back)
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive, horizontalPadding = 10.dp,
+                    focusHint = false,
                     modifier = if (searchActive) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                     onFocus = headerFocus) { navigate("Search") }
                 StableTileFocusViewport {

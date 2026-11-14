@@ -41,6 +41,7 @@ class DiscoveryNavigationDeviceTest {
         val play = FocusRequester()
         val info = FocusRequester()
         val categories = FocusRequester()
+        val heroCount = androidx.compose.runtime.mutableIntStateOf(1)
         val actions = java.util.concurrent.CopyOnWriteArrayList<String>()
         try {
             instrumentation.setInTouchMode(false)
@@ -54,13 +55,14 @@ class DiscoveryNavigationDeviceTest {
                     DiscoveryHero(DiscoveryCard(123, false, "Fixture hero", date = "2020-01-01"), null,
                         height = 280.dp, landscape = true, compact = false, detail = false, loading = false,
                         inList = false, playRequester = play, infoRequester = info, play = { actions.add("Play") }, add = {}, info = {},
-                        onFocus = {}, onDown = {}, previous = {}, next = {}, carousel = true, index = 0, count = 10,
+                        onFocus = {}, onDown = {}, previous = {}, next = {}, carousel = true, index = 0, count = heroCount.intValue,
                         categoryActions = {
                             DiscoveryAction("IPTV categories", androidx.compose.material.icons.Icons.Default.Tune) {}
                             DiscoveryAction("TMDB categories", androidx.compose.material.icons.Icons.Default.AutoAwesome,
                                 modifier = Modifier.focusRequester(categories)) { actions.add("TMDB categories") }
                         })
                     androidx.compose.material3.Text("Media rows begin here")
+                    DiscoveryAction("Underlying media tile") {}
                 }
             } } } }
             await("Hero actions are attached") { host.hasWindowFocus() && text("TMDB categories") != null }
@@ -79,18 +81,90 @@ class DiscoveryNavigationDeviceTest {
             val rowTop = rect("Media rows begin here").top
             instrumentation.runOnMainSync { categories.requestFocus() }
             await("Focused categories retain their D-pad identity") { focused("TMDB categories") }
+            assertNull("A single title has no previous arrow", text("Previous featured title"))
+            assertNull("A single title has no next arrow", text("Next featured title"))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertTrue("Right at the final hero action cannot fall into media", focused("TMDB categories"))
             assertEquals("TV icon stays fixed while focused", collapsed, settledWidth("TMDB categories"))
             assertEquals("Label expansion must not shift media rows", rowTop, rect("Media rows begin here").top)
             instrumentation.runOnMainSync { play.requestFocus() }
             await("Play can receive focus directly") { focused("Play") }
             assertEquals("Unfocused categories collapse again", collapsed, settledWidth("TMDB categories"))
             assertEquals(rowTop, rect("Media rows begin here").top)
+            instrumentation.runOnMainSync { heroCount.intValue = 2 }
+            await("Two titles expose the carousel") { text("Next featured title") != null }
             repeat(2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT) }
             await("Right traverses collapsed controls to the trailer") { focused("Watch trailer") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Left returns to My List without focus jumps") { focused("My List") }
+            val automation = instrumentation.uiAutomation
+            automation.serviceInfo = automation.serviceInfo.apply {
+                flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
+            fun hintVisible(label: String): Boolean {
+                fun hasText(node: AccessibilityNodeInfo?): Boolean {
+                    if (node == null) return false
+                    if (node.text?.toString() == label) return true
+                    return (0 until node.childCount).any { hasText(node.getChild(it)) }
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache()
+                return automation.windows.any { hasText(it.root) }
+            }
+            repeat(3) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                Thread.sleep(100)
+                assertFalse("Quick navigation suppresses trailer hints", hintVisible("Watch trailer"))
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                Thread.sleep(100)
+                assertFalse("Quick navigation suppresses My List hints", hintVisible("My List"))
+            }
+            Thread.sleep(400)
+            assertFalse("Help waits for settled focus", hintVisible("My List"))
+            await("Settled focus shows its glass help") { hintVisible("My List") }
+            assertTrue("Help never takes focus", focused("My List"))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Navigation immediately leaves the hint's origin") { focused("Watch trailer") }
+            assertFalse("Old hint is removed with focus loss", hintVisible("My List"))
             assertEquals(rowTop, rect("Media rows begin here").top)
             assertTrue("Focus and expansion alone must not play or open categories", actions.isEmpty())
+        } finally { instrumentation.runOnMainSync { host.finish() }; fixtureHost = null }
+    }
+    @Test fun seriesHeroReservesLateMetadataAndSynopsisSpace() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        fixtureHost = host
+        val card = androidx.compose.runtime.mutableStateOf(DiscoveryCard(123, true, "Fixture series"))
+        try {
+            instrumentation.runOnMainSync { host.setContent {
+                val config = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).apply {
+                    uiMode = (uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK.inv()) or
+                        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+                }
+                androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides config) {
+                    MaterialTheme { Column {
+                        DiscoveryHero(card.value, null, 160.dp, landscape = true, compact = true, detail = true,
+                            loading = false, inList = false, playRequester = FocusRequester(), infoRequester = FocusRequester(),
+                            play = {}, add = {}, info = {}, onFocus = {}, onDown = {}, previous = {}, next = {},
+                            carousel = false, index = 0, count = 1, stableSeriesHero = true)
+                        androidx.compose.material3.Text("Episode panel anchor")
+                    } }
+                }
+            } }
+            await("Series hero initial frame") { text("Episode panel anchor") != null }
+            fun panelTop() = Rect().also { text("Episode panel anchor")!!.getBoundsInScreen(it) }.top
+            val originalTop = panelTop()
+            instrumentation.runOnMainSync {
+                card.value = card.value.copy(title = "Loaded fixture series", date = "2020-01-01", runtime = 22,
+                    genres = listOf("Drama", "Comedy", "Family"), rating = 8.5, certification = "TV-14",
+                    overview = "A long synopsis arriving after the initial hero frame. ".repeat(12))
+            }
+            await("Late series metadata is displayed") { text("Loaded fixture series") != null }
+            assertEquals("Metadata and synopsis cannot push episodes down", originalTop, panelTop())
+            instrumentation.runOnMainSync { card.value = DiscoveryCard(123, true, "Fallback fixture series") }
+            await("Fallback series metadata is displayed") { text("Fallback fixture series") != null }
+            assertEquals("Missing metadata cannot collapse the panel upward", originalTop, panelTop())
         } finally { instrumentation.runOnMainSync { host.finish() }; fixtureHost = null }
     }
     @Test fun televisionLandingSkipsFocusedMetadataAndKeepsExplicitActionIdentity() = verifyTelevisionOpen(false)
@@ -207,6 +281,19 @@ class DiscoveryNavigationDeviceTest {
             assertEquals(listOf(1, 2), detailIds.toList())
             instrumentation.runOnMainSync { selectedSurface.value = DashboardSurface.MOVIES; navigationId.longValue++ }
             await("Movies destination owns the IPTV collection") { focused("Movies") && text(provider.title) != null }
+            if (recycled) {
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Movies hero receives focus") { focused("Play") }
+                repeat(4) { key(KeyEvent.KEYCODE_DPAD_RIGHT) }
+                await("Right traverses movie actions to IPTV categories") { focused("IPTV categories") }
+                assertNull("Single-item provider hero hides next arrow", text("Next featured title"))
+                repeat(2) { key(KeyEvent.KEYCODE_DPAD_RIGHT) }
+                assertTrue("Right stays in the hero instead of selecting an IPTV tile", focused("IPTV categories"))
+                key(KeyEvent.KEYCODE_DPAD_LEFT)
+                await("Left from categories returns to Info") { focused("Info") }
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Only Down enters the IPTV rail") { focused(provider.title) }
+            }
             repeat(5) {
                 if (!focused(provider.title)) { key(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(80) }
             }

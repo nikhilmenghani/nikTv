@@ -62,6 +62,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
     @Composable fun options() {
             Box {
                 DiscoveryAction("Sports options", Icons.Default.MoreHoriz, iconOnly = true,
+                    focusHint = false,
                     selected = actions.any { it.label == "Categories" && it.selected },
                     modifier = Modifier.size(if (phone) 48.dp else 44.dp).focusRequester(menuFocus), onClick = { expanded = true })
                 DropdownMenu(expanded, { close() }, containerColor = SportsSurface,
@@ -95,6 +96,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
                                 Modifier.fillMaxSize().graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
                         }
                         DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
+                            focusHint = false,
                             modifier = Modifier.focusRequester(backFocus), onClick = back)
                         navigation(Modifier.weight(1f, fill = false))
                         options()

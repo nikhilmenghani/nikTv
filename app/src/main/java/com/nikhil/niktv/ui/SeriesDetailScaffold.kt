@@ -15,6 +15,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.graphicsLayer
 
 /** Allows the shared artwork host to anchor its fade to the actual episode panel. */
 internal val LocalSeriesEpisodePanelTop = staticCompositionLocalOf<((Float) -> Unit)?> { null }
@@ -43,10 +46,13 @@ internal fun SeriesEpisodePagingError(message: String, retry: () -> Unit) {
 internal fun SeriesEpisodePanel(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    loading: Boolean = false,
+    loadingColumns: Int = 2,
     toolbar: @Composable () -> Unit,
     episodes: @Composable () -> Unit,
 ) {
     val reportTop = LocalSeriesEpisodePanelTop.current
+    val television = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
     Surface(modifier.then(if (reportTop != null) Modifier.onGloballyPositioned {
         reportTop(it.positionInWindow().y)
     } else Modifier), shape = RoundedCornerShape(14.dp), color = Color(0x44111720),
@@ -56,7 +62,26 @@ internal fun SeriesEpisodePanel(
                 toolbar()
             }
             HorizontalDivider(color = Color.White.copy(alpha = .08f))
-            Box(Modifier.weight(1f).fillMaxWidth().padding(8.dp)) { episodes() }
+            Box(Modifier.weight(1f).fillMaxWidth().padding(start = 8.dp, end = 8.dp,
+                top = if (television) 4.dp else 8.dp, bottom = 8.dp)) {
+                Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (loading) 0f else 1f }) { episodes() }
+                if (loading) Column(Modifier.fillMaxSize().padding(4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(3) {
+                        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            repeat(loadingColumns.coerceIn(1, 6)) {
+                                Surface(Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xBB161B23), border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
+                                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.Center) {
+                                        Surface(Modifier.fillMaxWidth(.7f).height(10.dp), color = Color.White.copy(alpha = .10f), shape = RoundedCornerShape(4.dp)) {}
+                                        Spacer(Modifier.height(8.dp))
+                                        Surface(Modifier.fillMaxWidth(.45f).height(7.dp), color = Color.White.copy(alpha = .06f), shape = RoundedCornerShape(4.dp)) {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -242,6 +242,15 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val tabletSeriesOverlay = wideSeries
     var artworkHostTop by remember(item.id, type) { mutableFloatStateOf(0f) }
     var episodePanelTop by remember(item.id, type) { mutableStateOf<Float?>(null) }
+    var seriesArtwork by remember(item.id, type) { mutableStateOf<String?>(null) }
+    LaunchedEffect(metadata.card.backdrop, metadata.card.poster, loading, wideSeries) {
+        if (wideSeries && seriesArtwork == null) {
+            // A provider portrait is a fallback, not an intermediate wide hero.
+            // Keep the first resolved framing for this visit instead of zooming
+            // from the provider poster to a newly loaded landscape backdrop.
+            seriesArtwork = metadata.card.backdrop ?: metadata.card.poster.takeIf { !loading }
+        }
+    }
     val artworkHeight = detailDiscoveryHeroHeight(phone, television)
     val heroHeight = if (compactSeries && phone)
         (configuration.screenHeightDp * .30f).dp.coerceAtLeast(220.dp)
@@ -270,6 +279,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             },
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
+                    focusHint = false,
                     modifier = Modifier.focusRequester(backRequester), onClick = close)
                 Spacer(Modifier.weight(1f))
                 if (phone) {
@@ -303,6 +313,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
+                            focusHint = false,
                             modifier = Modifier.focusRequester(backRequester), onClick = close)
                         Column(Modifier.weight(1f)) {
                             Text(metadata.card.title, color = Color.White, style = MaterialTheme.typography.titleMedium,
@@ -407,14 +418,18 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             Column {
             if (!phone) toolbar()
             DiscoveryHero(metadata.card, null, heroHeight, landscape,
-                compact = shortWide || (context.isTvLikeDevice(configuration) && configuration.screenHeightDp < 480), detail = true, loading = false,
+                compact = shortWide || (television && (wideSeries || configuration.screenHeightDp < 480)), detail = true, loading = false,
+                stableSeriesHero = wideSeries,
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},
                 onDown = { if (type == CatalogType.SERIES) down() else if (related.isNotEmpty()) focus(relatedEntry) else if (people.isNotEmpty()) focus(castEntry) else down() },
                 onUp = { if (wideSeries) { if (heroUp != null) { heroUp(); true } else runCatching { backRequester.requestFocus() }.getOrDefault(false) } else false },
                 previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
-                portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = true, compactDetail = true,
+                portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = !wideSeries, compactDetail = true,
                 categoryActions = ({
+                    if (wideSeries) DiscoveryAction("Description", Icons.Default.Info,
+                        iconOnly = true, enabled = !metadata.card.overview.isNullOrBlank(),
+                        modifier = Modifier.focusRequester(synopsisRequester)) { compactInfoOpen = true }
                     val extraActions = LocalProviderSynopsisActions.current
                     if (extraActions != null) extraActions()
                     else DetailMoreActions(cast = if (people.isNotEmpty()) ({ focus(castEntry) }) else null,
@@ -524,7 +539,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             artworkHostTop = it.positionInWindow().y
         } else Modifier)) {
     if (tabletSeriesOverlay) {
-        DiscoveryBackdropArtwork(metadata.card.backdrop ?: metadata.card.poster, reduceMotion,
+        DiscoveryBackdropArtwork(seriesArtwork, reduceMotion,
             Alignment.TopCenter, viewportShade = true, fillWidth = true)
         BoxWithConstraints(Modifier.matchParentSize()) {
             // Match the visible artwork bounds: on a 16:10 tablet the image
@@ -540,7 +555,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         LocalSeriesEpisodePanelTop provides if (tabletSeriesOverlay) ({ top: Float -> episodePanelTop = top }) else null,
         LocalDetailActionGlass provides true,
         LocalProviderMoreInfo provides metadata.card.overview?.takeIf(String::isNotBlank)?.let { { compactInfoOpen = true } },
-        LocalProviderInfoFocus provides synopsisRequester,
+        LocalProviderInfoFocus provides if (wideSeries) null else synopsisRequester,
         LocalSeriesArtworkGlass provides (tabletSeriesOverlay && !shortLandscapeSeries)) {
     layout(hero, castRow, supplementary,
         if (people.isEmpty()) null else ({ runCatching { castEntry.requestFocus() }.getOrDefault(false) }),

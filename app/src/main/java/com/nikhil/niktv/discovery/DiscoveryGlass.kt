@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.usesShortWideLayout
@@ -58,6 +59,10 @@ internal fun detailActionSize(): androidx.compose.ui.unit.Dp {
         if (LocalDetailActionGlass.current) 36.dp else 40.dp
     } else if (LocalDetailActionGlass.current && tv) 40.dp else 48.dp
 }
+
+@Composable
+internal fun discoveryPrimaryActionWidth(phone: Boolean = false): androidx.compose.ui.unit.Dp =
+    ((if (phone) 120f else 112f) * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
 
 internal val LocalDetailActionGlass = staticCompositionLocalOf { false }
 internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }

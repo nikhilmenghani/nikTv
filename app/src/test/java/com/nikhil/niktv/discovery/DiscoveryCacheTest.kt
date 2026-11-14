@@ -10,6 +10,16 @@ import org.junit.rules.TemporaryFolder
 
 class DiscoveryCacheTest {
     @get:Rule val temp = TemporaryFolder()
+    @Test fun providerRowsRecoverOnlyExactCachedArtworkOfTheRightType() = runBlocking {
+        val cache = DiscoveryCache(temp.newFolder())
+        val poster = "https://image.tmdb.org/t/p/w342/friends.jpg"
+        cache.write("public-series", """[{"id":1668,"series":true,"title":"Friends","poster":"$poster"}]""")
+        val item = com.nikhil.niktv.model.MediaItem("provider-id", "Friends", "https://old-images.invalid/images/cover.jpg", null)
+        assertEquals(poster, cachedProviderArtwork(cache, item, com.nikhil.niktv.model.CatalogType.SERIES))
+        assertNull(cachedProviderArtwork(cache, item, com.nikhil.niktv.model.CatalogType.MOVIES))
+        assertNull(cachedProviderArtwork(cache, item.copy(title = "Unmatched title"), com.nikhil.niktv.model.CatalogType.SERIES))
+        assertEquals("https://old-images.invalid/images/cover.jpg", item.logo)
+    }
     @Test fun missingHistoryArtworkUsesUniqueCachedTitleAndType() = runBlocking {
         val cache = DiscoveryCache(temp.newFolder())
         cache.write("public-match", """[{"id":42,"series":false,"title":"Primetime","poster":"https://image.tmdb.org/t/p/w342/poster.jpg"}]""")
