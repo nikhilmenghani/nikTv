@@ -1,0 +1,15 @@
+# Tablet two-column series list — 2026-11-14
+
+Approved mockup implemented for IPTV and TMDB series. List view uses two columns with three equal-height rows in tablet windows at least 840dp wide (smallest width at least 600dp, excluding televisions). Narrow tablet windows, phones and TV keep their existing list treatment. The established hero, title, metadata, Resume/actions and artwork remain unchanged.
+
+The list reuses the shared virtualized episode viewport and card controls. Compact list cards retain thumbnails, episode metadata, progress and last-watched status; long descriptions remain in the episode menu. Taller accessibility text can increase minimum row height. Episode coordinates are translated using two columns for resume, scrolling and pagination. D-pad Right/Left follows columns; Up/Down follows rows; edges return to the toolbar. TMDB cell wrappers own the row weight so both columns get equal space.
+
+An entry-focus race was found during device checking: switching from touch to D-pad could schedule a late Resume focus request after the user had already reached an episode. Explicit directional input now cancels initialization priority in both series routes. This is handled by the existing focus lifecycle, without restoration timers.
+
+Validation: dev assembly passed. Six grid/list policy tests, seven episode paging/retry tests and six entry-focus policy tests passed in targeted runs. Tablet Season 49 rendered all six cards without changing hero positions. D-pad entry, Right/Down and long-press menu return were checked; focus returned to E4864 after dismissing its menu. A 24-second entry recording and one-second sampled contact sheet were inspected; these samples are not proof of absence of a one-frame flash. Focused and unfocused screenshots show the outline matching the rounded card bounds. No Fire TV actions or phone installs for this change.
+
+During the first focus check, an unexpected Resume destination followed by a long-press input briefly started playback; playback was exited, and that episode's watched status was updated. The final entry-focus correction was subsequently installed and checked without starting playback.
+
+Installed dev build on tablet, preserving setup. Evidence outside Git: `D:/workspace/niktv-playback-tests/tablet-two-column-list.png`, `tablet-two-column-list-final.png`, `tablet-two-column-dpad.mp4`, `tablet-two-column-dpad-sheet.png`, and the targeted build logs. Changes are uncommitted pending user review.
+
+Follow-up: series artwork now uses a softer variant of Home's `DiscoveryHeroShade` with broader, lower-opacity top/side fades and a gradual bottom blend; Home's existing fade remains unchanged. The feather covers all four edges and follows the visible image height, so a 16:9 backdrop ends smoothly on a 16:10 tablet. This shared wide-series path covers IPTV/TMDB on tablet, TV and mobile landscape. Hero/control geometry is unchanged. Dev assembly passed and tablet screenshot comparison checked the fade (`series-soft-fade.png`); no additional navigation suite was run for this visual-only change.

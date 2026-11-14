@@ -518,13 +518,12 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     Box(Modifier.fillMaxSize().then(if (shortLandscapeSeries) Modifier.clipToBounds() else Modifier)) {
     if (tabletSeriesOverlay) {
         DiscoveryBackdropArtwork(metadata.card.backdrop ?: metadata.card.poster, reduceMotion,
-            Alignment.TopCenter, shaded = false, fillWidth = true)
-        Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
-            0f to Color(0x99090B10), .55f to Color(0x33090B10), 1f to Color.Transparent)))
-        Box(Modifier.matchParentSize().background(Brush.verticalGradient(
-            0f to Color(0x55090B10),
-            (if (shortLandscapeSeries) .32f else .65f) to Color(if (shortLandscapeSeries) 0x66090B10 else 0x22090B10),
-            1f to Color(if (shortLandscapeSeries) 0xFF090B10 else 0xBB090B10))))
+            Alignment.TopCenter, viewportShade = true, fillWidth = true)
+        BoxWithConstraints(Modifier.matchParentSize()) {
+            // Match the visible artwork bounds: on a 16:10 tablet the image
+            // ends before the viewport, so its bottom edge must already be black.
+            DiscoveryHeroShade(Modifier.fillMaxWidth().height(minOf(maxHeight, maxWidth * 9f / 16f)), softEdges = true)
+        }
     }
     CompositionLocalProvider(LocalMobileGlassEnabled provides true,
         LocalDetailActionGlass provides true,

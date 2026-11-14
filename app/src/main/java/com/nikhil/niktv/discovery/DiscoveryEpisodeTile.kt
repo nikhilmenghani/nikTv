@@ -36,7 +36,7 @@ internal val LocalSeriesArtworkGlass = staticCompositionLocalOf { false }
 @Composable
 internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String, metadata: String,
     modifier: Modifier = Modifier, progress: Float? = null, remaining: String? = null,
-    resume: Boolean = false, listView: Boolean = false, overview: String? = null,
+    resume: Boolean = false, listView: Boolean = false, overview: String? = null, compactList: Boolean = false,
     onFocus: () -> Unit = {}, onClick: () -> Unit, onLongClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
@@ -44,7 +44,8 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
     val compact = configuration.screenWidthDp < 600
     val shape = RoundedCornerShape(10.dp)
     val glass = LocalSeriesArtworkGlass.current
-    Surface(modifier.onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+    Surface(modifier.then(if (compactList) Modifier.fillMaxHeight() else Modifier)
+        .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
         .remoteCombinedClickable(onClick = onClick, onLongClick = onLongClick,
             interactionSource = remember { MutableInteractionSource() }, showIndication = false),
         shape = shape, color = (if (focused) Color(0xFF303A49) else Color(0xFF161B23))
@@ -61,17 +62,17 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
                 }
             }
         }
-        if (listView) Row(Modifier.padding(if (shortWide) 5.dp else if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (shortWide) 8.dp else if (compact) 10.dp else 12.dp),
+        if (listView) Row(Modifier.padding(if (shortWide || compactList) 5.dp else if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (shortWide || compactList) 8.dp else if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            image(Modifier.width(if (shortWide) 64.dp else if (compact) 92.dp else 112.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (shortWide) 2.dp else 4.dp)) {
-                Text(title, Modifier.fillMaxWidth(), color = Color.White, style = if (shortWide) MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp) else MaterialTheme.typography.titleSmall,
+            image(Modifier.width(if (shortWide) 64.dp else if (compactList) 104.dp else if (compact) 92.dp else 112.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (shortWide || compactList) 2.dp else 4.dp)) {
+                Text(title, Modifier.fillMaxWidth(), color = Color.White, style = if (shortWide || compactList) MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 14.sp) else MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold, maxLines = if (shortWide) 1 else 2, overflow = TextOverflow.Ellipsis)
                 Text(listOfNotNull(label.takeIf(String::isNotBlank), metadata.takeIf(String::isNotBlank),
                     overview?.takeIf { shortWide && it.isNotBlank() }).joinToString(" · "),
-                    color = Color(0xFFB9BDC7), style = if (shortWide) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 14.sp) else MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                EpisodeViewingStatus(remaining, resume, compact = shortWide)
-                if (!shortWide && !overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),
+                    color = Color(0xFFB9BDC7), style = if (shortWide || compactList) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp) else MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                EpisodeViewingStatus(remaining, resume, compact = shortWide, singleLine = compactList)
+                if (!shortWide && !compactList && !overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),
                     style = MaterialTheme.typography.bodySmall, maxLines = if (compact) 2 else 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Default.PlayArrow, null, Modifier.size(if (shortWide) 18.dp else 24.dp), tint = Color.White)

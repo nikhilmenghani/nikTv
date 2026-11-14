@@ -210,7 +210,9 @@ internal fun DiscoverySeriesContent(
     val shortLandscapeEpisodes = episodeConfiguration.usesShortWideLayout(episodeIsTv)
     var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
     val gridColumns = seriesEpisodeGridColumns(shortLandscapeEpisodes)
-    val viewportColumns = if (!mobileEpisodeLayout && !episodeListView) gridColumns else 1
+    val listColumns = seriesEpisodeListColumns(episodeConfiguration.smallestScreenWidthDp, episodeConfiguration.screenWidthDp, episodeIsTv)
+    val twoColumnList = episodeListView && listColumns == 2
+    val viewportColumns = if (twoColumnList) listColumns else if (!mobileEpisodeLayout && !episodeListView) gridColumns else 1
     var pendingLayoutEpisode by remember(series.id) { mutableStateOf<Int?>(null) }
     // Episodes always own their scroll state; phones keep the compact header in view.
     val verticalEpisodeLayout = false
@@ -558,7 +560,7 @@ internal fun DiscoverySeriesContent(
         initialEntryPending = !initialEpisodeFocusComplete
     )
 
-    LaunchedEffect(remoteNavigationActive, series.id, episodeIds, state.loading, entryPlaybackReturnFocusId) {
+    LaunchedEffect(remoteNavigationActive, series.id, episodeIds, state.loading, entryPlaybackReturnFocusId, initialEpisodeFocusComplete, handledPlaybackReturnFocusId) {
         if (requestedSeasonFocus != null) return@LaunchedEffect
         if (!remoteNavigationActive && pendingPlaybackReturnId == null) return@LaunchedEffect
         if (pendingPlaybackReturnId == null && !initialEpisodeFocusComplete) {
@@ -568,6 +570,7 @@ internal fun DiscoverySeriesContent(
             }
             repeat(12) {
                 withFrameNanos { }
+                if (initialEpisodeFocusComplete) return@LaunchedEffect
                 if (runCatching { (if (primaryEpisodeToPlay == null) heroActionRequesters[0] else detailPlayRequester).requestFocus() }.getOrDefault(false)) {
                     initialEpisodeFocusComplete = true
                     return@LaunchedEffect
@@ -655,7 +658,13 @@ internal fun DiscoverySeriesContent(
             .focusRequester(episodeFocusParkingRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.key in listOf(
-                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) episodeMove?.cancel()
+                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
+                    episodeMove?.cancel()
+                    // Explicit navigation owns focus from this point. The first
+                    // touch-to-D-pad switch must not run a late Resume entry request.
+                    initialEpisodeFocusComplete = true
+                    handledPlaybackReturnFocusId = entryPlaybackReturnFocusId
+                }
                 // Hold the entry cursor inside this screen while there is no episode
                 // to select. Back continues through the normal navigation handler.
                 remoteNavigationActive && pendingPlaybackReturnId != null && entryFocusTarget == SeriesEpisodeEntryFocus.Loading &&
@@ -947,6 +956,7 @@ internal fun DiscoverySeriesContent(
                         isCurrentResume = isRecent,
                         landscapePoster = !episodeListView,
                         wideList = episodeListView && !mobileEpisodeLayout,
+                        compactList = twoColumnList,
                         onClick = { play(episode) },
                         offlineDownload = state.offlineDownloads.firstOrNull { download ->
                             download.catalogType == CatalogType.SERIES && download.media.id == episode.id
@@ -961,13 +971,13 @@ internal fun DiscoverySeriesContent(
                             .then(if (episodeListView || !mobileEpisodeLayout) Modifier.fillMaxWidth() else Modifier.width(170.dp))
                             .focusRequester(remember(landscapeRequesters, episode.id) { landscapeRequesters.getOrPut(episode.id) { FocusRequester() } })
                             .onPreviewKeyEvent { event ->
-                                if (!mobileEpisodeLayout && !episodeListView && event.type == KeyEventType.KeyDown) {
+                                if (viewportColumns > 1 && event.type == KeyEventType.KeyDown) {
                                     val index = filteredEpisodes.indexOfFirst { it.id == episode.id }
                                     val target = when (event.key) {
-                                        Key.DirectionLeft -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dx = -1)
-                                        Key.DirectionRight -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dx = 1)
-                                        Key.DirectionUp -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dy = -1)
-                                        Key.DirectionDown -> seriesEpisodeGridMove(index, filteredEpisodes.size, gridColumns, dy = 1)
+                                        Key.DirectionLeft -> seriesEpisodeGridMove(index, filteredEpisodes.size, viewportColumns, dx = -1)
+                                        Key.DirectionRight -> seriesEpisodeGridMove(index, filteredEpisodes.size, viewportColumns, dx = 1)
+                                        Key.DirectionUp -> seriesEpisodeGridMove(index, filteredEpisodes.size, viewportColumns, dy = -1)
+                                        Key.DirectionDown -> seriesEpisodeGridMove(index, filteredEpisodes.size, viewportColumns, dy = 1)
                                         Key.Menu -> null
                                         else -> -1
                                     }
@@ -997,7 +1007,7 @@ internal fun DiscoverySeriesContent(
                     )
                 }
                 if (verticalEpisodeLayout) items(filteredEpisodes, key = { it.id }) { episodeCard(it, Modifier) }
-                else if (episodeListView) item("episode-row") {
+                else if (episodeListView && !twoColumnList) item("episode-row") {
                     Row(Modifier.fillMaxWidth().height(if (mobileEpisodeLayout) phoneEpisodeHeight else wideEpisodeHeight)
                         .episodeViewportFocus()
                         .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 0.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -1028,8 +1038,12 @@ internal fun DiscoverySeriesContent(
                         }
                     }
                 } else if (!mobileEpisodeLayout) item("episode-row") {
-                    SeriesEpisodeGrid(filteredEpisodes, gridColumns, episodeRowState, key = { it.id },
+                    if (filteredEpisodes.isEmpty()) Box(Modifier.fillMaxWidth().height(wideEpisodeHeight), contentAlignment = Alignment.Center) {
+                        Text(if (state.loading) "Loading episodes…" else if (activeSearchQuery.isBlank()) "No episodes found for this series."
+                            else "No episodes matching “${activeSearchQuery.trim()}”", color = Color.LightGray)
+                    } else SeriesEpisodeGrid(filteredEpisodes, viewportColumns, episodeRowState, key = { it.id },
                         modifier = Modifier.fillMaxWidth().height(wideEpisodeHeight).episodeViewportFocus(),
+                        visibleRows = if (twoColumnList) 3 else null,
                         tail = if ((state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) ({
                             NikTvSecondaryActionButton(loadMoreEpisodes, Modifier.fillMaxWidth().focusRequester(moreRequester)
                                 .onPreviewKeyEvent { event ->
@@ -1167,6 +1181,7 @@ internal fun ModernEpisodeCard(
     onRemoveDownload: () -> Unit,
     landscapePoster: Boolean = false,
     wideList: Boolean = false,
+    compactList: Boolean = false,
     refreshTmdb: (() -> Unit)? = null,
     refreshingTmdb: Boolean = false,
     modifier: Modifier = Modifier
@@ -1243,7 +1258,7 @@ internal fun ModernEpisodeCard(
             (episode.episodeNumber ?: episode.title.episodeNumberFromTitle())?.let { "E$it" }).joinToString(" · "),
         metadata = episode.displayAirDate().orEmpty(), progress = progressFraction,
         remaining = episodeRemainingLabel(progress), resume = isCurrentResume,
-        listView = wideList, overview = episodeDescription,
+        listView = wideList, compactList = compactList, overview = episodeDescription,
         modifier = Modifier.fillMaxWidth().focusRequester(episodeFocusRequester),
         onClick = onClick, onLongClick = { retainEpisodeFocus(); episodeActionsExpanded = true })
     else Surface(

@@ -46,7 +46,9 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
     val shortWindow = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
     val gridColumns = seriesEpisodeGridColumns(shortWindow)
-    val viewportColumns = if (wide && !listView) gridColumns else 1
+    val listColumns = seriesEpisodeListColumns(configuration.smallestScreenWidthDp, configuration.screenWidthDp, context.isTvLikeDevice(configuration))
+    val twoColumnList = listView && listColumns == 2
+    val viewportColumns = if (twoColumnList) listColumns else if (wide && !listView) gridColumns else 1
     var pendingLayoutEpisode by remember(card.key) { mutableStateOf<Int?>(null) }
     var newest by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
     LaunchedEffect(newest) { onNewestFirstChanged(newest) }
@@ -251,7 +253,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             }
         }
         if ("season" in state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 24.dp))
-        if (!listView && episodes.isEmpty() && "season" !in state.loading) Text(
+        if ((!listView || twoColumnList) && episodes.isEmpty() && "season" !in state.loading) Text(
             if (searchOpen && query.isNotBlank()) "No episodes match your search." else "No episodes are available for this season.",
             Modifier.padding(24.dp))
         val tile: @Composable (Int, DiscoveryEpisode, Modifier) -> Unit = { index, episode, cell ->
@@ -268,19 +270,19 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                     repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
                 }
             }
-            Box {
+            Box(cell) {
             DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
-                listView = listView, overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
-                modifier = (if (listView || wide) cell.fillMaxWidth() else cell.width(200.dp)).focusRequester(requester)
+                listView = listView, compactList = twoColumnList, overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
+                modifier = (if (listView || wide) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else {
                         val cursor = episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.takeIf { it >= 0 } ?: index
-                        if (wide && !listView) {
+                        if (viewportColumns > 1) {
                             val target = when (event.key) {
-                                Key.DirectionLeft -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dx = -1)
-                                Key.DirectionRight -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dx = 1)
-                                Key.DirectionUp -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dy = -1)
-                                Key.DirectionDown -> seriesEpisodeGridMove(cursor, episodes.size, gridColumns, dy = 1)
+                                Key.DirectionLeft -> seriesEpisodeGridMove(cursor, episodes.size, viewportColumns, dx = -1)
+                                Key.DirectionRight -> seriesEpisodeGridMove(cursor, episodes.size, viewportColumns, dx = 1)
+                                Key.DirectionUp -> seriesEpisodeGridMove(cursor, episodes.size, viewportColumns, dy = -1)
+                                Key.DirectionDown -> seriesEpisodeGridMove(cursor, episodes.size, viewportColumns, dy = 1)
                                 Key.Menu -> null
                                 else -> -1
                             }
@@ -325,7 +327,9 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         if (chosen != null && "season" !in state.loading) counts[chosen] = "${state.episodes.size} episodes"
         // Local function references compare equal even when their captured episode
         // list changes. A lambda keeps the sidebar callback current after loading.
-        if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = if (wide) 0.dp else 24.dp)
+        if (twoColumnList) SeriesEpisodeGrid(episodes, listColumns, episodeState,
+            key = { "${it.season}:${it.number}" }, modifier = Modifier.weight(1f).fillMaxWidth(), visibleRows = 3, content = tile)
+        else if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = if (wide) 0.dp else 24.dp)
             .weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(if (LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))) 4.dp else 8.dp)) {
                 if (episodes.isEmpty()) item("episode-status") {

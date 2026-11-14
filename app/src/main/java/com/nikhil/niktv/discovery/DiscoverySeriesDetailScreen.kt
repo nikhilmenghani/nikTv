@@ -117,17 +117,23 @@ internal fun DiscoverySeriesDetailScreen(
             next?.let(loadSeason)
         }
     }
-    LaunchedEffect(card.key, primary != null) {
+    LaunchedEffect(card.key, primary != null, initialFocusDone) {
         if (initialFocusDone || primary == null) return@LaunchedEffect
         repeat(20) {
             withFrameNanos { }
+            if (initialFocusDone) return@LaunchedEffect
             if (runCatching { playFocus.requestFocus() }.getOrDefault(false)) {
                 initialFocusDone = true
                 return@LaunchedEffect
             }
         }
     }
-    Box(Modifier.fillMaxSize().background(Color(0xFF090B10)).statusBarsPadding().navigationBarsPadding().imePadding()) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF090B10)).statusBarsPadding().navigationBarsPadding().imePadding()
+        .onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown && event.key in listOf(
+                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) initialFocusDone = true
+            false
+        }) {
         val episodePane: @Composable ((@Composable (@Composable () -> Unit) -> Unit)?) -> Unit = { header ->
             DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
                 { automaticSeason = null; initialFocusDone = true; loadSeason(it) }, play, download,
