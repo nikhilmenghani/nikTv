@@ -40,53 +40,32 @@ import com.nikhil.niktv.ui.StableTileFocusViewport
 import com.nikhil.niktv.ui.usesShortWideLayout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import com.nikhil.niktv.sports.openSports
 import java.util.Date
 
 @Composable
 internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     surface: DashboardSurface, navigate: (String) -> Unit, customize: (() -> Unit)?,
     categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
-    val context = LocalContext.current
     val openLanPlayback = com.nikhil.niktv.ui.LocalOpenLanPlayback.current
     val configure = LocalConfigureProviderDiscovery.current
-    val experimentSettings = LocalDiscoveryExperimentSettings.current
     val isExperiment = LocalDiscoveryExperiment.current
-    val trialOptionsFocus = remember { FocusRequester() }
     val options = LocalDiscoveryLibraryOptions.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val phone = usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
-    val suggestedArtwork by rememberSuggestedArtwork()
     var categoryTrigger by remember { mutableIntStateOf(0) }
     if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
         DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true,
-            modifier = if (isExperiment) Modifier.focusRequester(trialOptionsFocus) else Modifier) { change(true) }
+            onClick = { change(true) })
         DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
-            if (isExperiment) NikDropdownMenuItem(text = { Text("${surface.trialTitle()} display options") },
-                onClick = { change(false); experimentSettings { runCatching { trialOptionsFocus.requestFocus() }.getOrDefault(false) } })
-            NikDropdownMenuItem(text = { Text("Previous Home") },
-                onClick = { change(false); navigate("Previous Home") })
-            if (surface == DashboardSurface.MOVIES) NikDropdownMenuItem(text = { Text("Previous Movies") },
-                onClick = { change(false); navigate("Previous Movies") })
-            if (surface == DashboardSurface.SERIES) NikDropdownMenuItem(text = { Text("Previous Series") },
-                onClick = { change(false); navigate("Previous Series") })
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
             if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); categoryTrigger++ })
             customize?.let { action -> NikDropdownMenuItem(text = { Text("TMDB categories") },
                 onClick = { change(false); action() }) }
-            if (customize != null) NikDropdownMenuItem(
-                text = { Text("Suggested artwork: ${if (suggestedArtwork) "On" else "Off"}") },
-                leadingIcon = { Icon(if (suggestedArtwork) Icons.Default.Image else Icons.Default.HideImage, null) },
-                onClick = { DiscoveryArtworkPreference.setEnabled(context, !suggestedArtwork); change(false) })
-            if (LocalDirectPortalActions.current.any { it.name == "Sports" })
-                NikDropdownMenuItem(text = { Text("Sports") }, onClick = { change(false); context.openSports() })
             NikDropdownMenuItem(text = { Text("Play on NikTV") }, onClick = { change(false); openLanPlayback() })
-            listOf("Offline", "Settings").forEach { label ->
-                NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); navigate(label) })
-            }
+            NikDropdownMenuItem(text = { Text("Settings") }, onClick = { change(false); navigate("Settings") })
         }
     }
 }

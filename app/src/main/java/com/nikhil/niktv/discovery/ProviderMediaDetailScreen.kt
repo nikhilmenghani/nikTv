@@ -24,6 +24,8 @@ import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.dp
@@ -238,6 +240,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val wideSeries = seriesDetail && (configuration.smallestScreenWidthDp >= 600 || television ||
         configuration.screenWidthDp > configuration.screenHeightDp)
     val tabletSeriesOverlay = wideSeries
+    var artworkHostTop by remember(item.id, type) { mutableFloatStateOf(0f) }
+    var episodePanelTop by remember(item.id, type) { mutableStateOf<Float?>(null) }
     val artworkHeight = detailDiscoveryHeroHeight(phone, television)
     val heroHeight = if (compactSeries && phone)
         (configuration.screenHeightDp * .30f).dp.coerceAtLeast(220.dp)
@@ -515,17 +519,25 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             }
         }
     }
-    Box(Modifier.fillMaxSize().then(if (shortLandscapeSeries) Modifier.clipToBounds() else Modifier)) {
+    Box(Modifier.fillMaxSize().then(if (shortLandscapeSeries) Modifier.clipToBounds() else Modifier)
+        .then(if (tabletSeriesOverlay) Modifier.onGloballyPositioned {
+            artworkHostTop = it.positionInWindow().y
+        } else Modifier)) {
     if (tabletSeriesOverlay) {
         DiscoveryBackdropArtwork(metadata.card.backdrop ?: metadata.card.poster, reduceMotion,
             Alignment.TopCenter, viewportShade = true, fillWidth = true)
         BoxWithConstraints(Modifier.matchParentSize()) {
             // Match the visible artwork bounds: on a 16:10 tablet the image
             // ends before the viewport, so its bottom edge must already be black.
-            DiscoveryHeroShade(Modifier.fillMaxWidth().height(minOf(maxHeight, maxWidth * 9f / 16f)), softEdges = true)
+            val imageHeight = minOf(maxHeight, maxWidth * 9f / 16f)
+            val imageHeightPx = with(LocalDensity.current) { imageHeight.toPx() }
+            val fadeStart = episodePanelTop?.let { (it - artworkHostTop) / imageHeightPx.coerceAtLeast(1f) } ?: .60f
+            DiscoveryHeroShade(Modifier.fillMaxWidth().height(imageHeight), softEdges = true,
+                bottomFadeStart = fadeStart)
         }
     }
     CompositionLocalProvider(LocalMobileGlassEnabled provides true,
+        LocalSeriesEpisodePanelTop provides if (tabletSeriesOverlay) ({ top: Float -> episodePanelTop = top }) else null,
         LocalDetailActionGlass provides true,
         LocalProviderMoreInfo provides metadata.card.overview?.takeIf(String::isNotBlank)?.let { { compactInfoOpen = true } },
         LocalProviderInfoFocus provides synopsisRequester,

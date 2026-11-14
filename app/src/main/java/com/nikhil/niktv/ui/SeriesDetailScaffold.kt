@@ -12,7 +12,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.dp
+
+/** Allows the shared artwork host to anchor its fade to the actual episode panel. */
+internal val LocalSeriesEpisodePanelTop = staticCompositionLocalOf<((Float) -> Unit)?> { null }
 
 /** Fixed hero and toolbar geometry; only the supplied episode viewport scrolls. */
 @Composable
@@ -41,7 +46,10 @@ internal fun SeriesEpisodePanel(
     toolbar: @Composable () -> Unit,
     episodes: @Composable () -> Unit,
 ) {
-    Surface(modifier, shape = RoundedCornerShape(14.dp), color = Color(0x44111720),
+    val reportTop = LocalSeriesEpisodePanelTop.current
+    Surface(modifier.then(if (reportTop != null) Modifier.onGloballyPositioned {
+        reportTop(it.positionInWindow().y)
+    } else Modifier), shape = RoundedCornerShape(14.dp), color = Color(0x44111720),
         border = BorderStroke(1.dp, Color.White.copy(alpha = .10f))) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
