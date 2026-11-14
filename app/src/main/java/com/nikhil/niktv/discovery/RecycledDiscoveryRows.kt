@@ -31,8 +31,6 @@ import coil3.request.*
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.ui.isTvLikeDevice
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 private const val HERO_ROW = "__discovery_hero__"
 private const val ROW_ALL = "__row_all__"
@@ -305,7 +303,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     var onVisible: (String) -> Unit = {}
     var onPopupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}
     private val work = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val images = Semaphore(2)
+    private val images = DiscoveryTileArtworkLoader()
     private var visibleJob: Job? = null
     private var warmed = false
     private var lastInputAt = 0L
@@ -1073,17 +1071,19 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
             image.scaleType = if (item.fitArtwork) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_CROP
             val logoPadding = if (item.fitArtwork) dp(12) else 0
             image.setPadding(logoPadding, logoPadding, logoPadding, if (item.fitArtwork) dp(48) else 0)
-            item.artwork?.let { url -> imageJob = work.launch { images.withPermit {
+            item.artwork?.let { url -> imageJob = work.launch {
                 try {
                     val w = if (polishedCaptions) px(posterGeometry.width - 8f) else dp(104)
                     val h = if (polishedCaptions) px(posterGeometry.posterHeight) else dp(147)
-                    val result = withContext(Dispatchers.IO) { context.imageLoader.execute(ImageRequest.Builder(context).data(thumbnailArtworkUrl(url, w)).size(w,h).build()) }
+                    val result = images.load(url) {
+                        withContext(Dispatchers.IO) { context.imageLoader.execute(ImageRequest.Builder(context).data(thumbnailArtworkUrl(url, w)).size(w,h).build()) }
+                    }
                     ensureActive(); image.background = null
                     if (result is SuccessResult) image.setImageDrawable(result.image.asDrawable(resources))
                 } catch (c: CancellationException) { throw c } catch (_: Exception) {
                     if (isActive && row == rowId && identity == item.id && artwork == url) image.background = null
                 }
-            } } }
+            } }
         }
     }
     fun release() { epoch++; focusHost = null; work.cancel(); adapter = null; pool.clear(); recycledViewPool.clear() }
