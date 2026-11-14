@@ -43,6 +43,14 @@ private suspend fun readLibraryCachedPresentation(cache: DiscoveryCache, entry: 
     val id = entry.media.externalTmdbId ?: entry.media.id.takeIf { entry.favorite?.source == FavoriteSource.TMDB }
         ?.substringAfterLast(':')?.toIntOrNull()
     val json = Json { ignoreUnknownKeys = true }
+    val profile = entry.favorite?.profileKey ?: entry.recent?.profileKey
+    if (!profile.isNullOrBlank()) {
+        cache.read("provider-confirmed-v1:$profile:${entry.type.name}:${entry.media.id}:${entry.media.title}")?.let { saved ->
+            runCatching { json.decodeFromString(DiscoveryCard.serializer(), saved.payload) }.getOrNull()
+                ?.takeIf { it.id > 0 && it.series == (entry.type == CatalogType.SERIES) }
+                ?.let { return it }
+        }
+    }
     if (id != null && id > 0) {
         cache.read("detail-v4:${if (entry.type == CatalogType.SERIES) "tv" else "movie"}:$id")?.let {
             runCatching { json.decodeFromString(DiscoveryDetails.serializer(), it.payload).card }.getOrNull()?.let { return it }
@@ -346,11 +354,18 @@ internal fun LibrarySavedPoster(entry: LibraryEntry, state: NikTvState, width: D
     val reduceMotion = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val configuration = LocalConfiguration.current
     val phone = usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
+    val context = LocalContext.current
+    val cache = LocalLibraryArtworkCache.current ?: remember(context) { DiscoveryCache(File(context.cacheDir, "discovery_preview")) }
+    val cachedArtwork by produceState<String?>(null, entry.media, entry.type, sensitive) {
+        value = null
+        if (!sensitive && !entry.live) value = cachedProviderArtwork(cache, entry.media, entry.type)
+    }
+    val artwork = if (sensitive) null else cachedArtwork ?: entry.media.logo
     if (phone && !entry.live) DiscoveryHomeStyleMediaCard(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type),
-        if (sensitive) null else entry.media.logo, entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
+        artwork, entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
         progress = progress, open = open, hold = { menu = true }, focus = focus,
         source = entry.recent?.discoveryPlaybackSource() ?: entry.media.discoveryCatalogSource())
-    else DiscoveryPosterTile(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type), if (sensitive) null else entry.media.logo,
+    else DiscoveryPosterTile(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type), artwork,
         entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
         reduceMotion = reduceMotion, aspect = if (entry.live) 16f / 9f else 2f / 3f, focusVerticalInset = focusInset, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus,
         source = entry.recent?.discoveryPlaybackSource() ?: entry.media.discoveryCatalogSource())

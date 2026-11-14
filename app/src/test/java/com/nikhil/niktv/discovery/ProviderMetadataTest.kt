@@ -8,6 +8,20 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class ProviderMetadataTest {
+    @org.junit.Test fun confirmedArtworkUpdatesOnlyTheExactSavedProviderTarget() {
+        val media = com.nikhil.niktv.model.MediaItem("provider-42", "Master Of The Universe (English)", null, "original-playback-command")
+        val favorite = com.nikhil.niktv.model.FavoriteItem(com.nikhil.niktv.model.FavoriteKind.MOVIE, media, profileKey = "portal-one")
+        val other = favorite.copy(profileKey = "portal-two")
+        val series = favorite.copy(kind = com.nikhil.niktv.model.FavoriteKind.SERIES)
+        val card = DiscoveryCard(454639, false, "Masters of the Universe", poster = "https://image.tmdb.org/t/p/w342/movie.jpg")
+        val result = confirmedProviderFavorites(listOf(favorite, other, series), "portal-one", media, com.nikhil.niktv.model.CatalogType.MOVIES, card)
+        org.junit.Assert.assertEquals(card.poster, result.first().media.logo)
+        org.junit.Assert.assertEquals(card.id, result.first().media.externalTmdbId)
+        org.junit.Assert.assertEquals(media.command, result.first().media.command)
+        org.junit.Assert.assertEquals(media.id, result.first().media.id)
+        org.junit.Assert.assertEquals(favorite.source, result.first().source)
+        org.junit.Assert.assertEquals(listOf(other, series), result.drop(1))
+    }
     @get:Rule val temporary = TemporaryFolder()
     private fun movie(title: String = "Movie (2020)", id: Int? = null) =
         MediaItem("private-provider-id", title, null, "private-provider-stream-secret", externalTmdbId = id)

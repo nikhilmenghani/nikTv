@@ -647,6 +647,8 @@ object AppUpdates {
     fun notifyAvailable(context: Context, update: UpdateInfo) {
         ensureInitialized(context)
         if (!isUpdateForCurrentChannel(update) || !isNewer(update.version, BuildConfig.VERSION_NAME)) return
+        // In-app discovery must work even when Android/Fire OS hides notifications.
+        persistPendingUpdate(update)
         if (!notificationsAllowed(context)) return
         val intent = Intent(context, UpdateActionReceiver::class.java)
             .setAction(UpdateActionReceiver.DOWNLOAD_AND_INSTALL)
@@ -1188,8 +1190,11 @@ internal fun downloadFailureMessage(reason: Int): String = when (reason) {
 class UpdateCheckWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = try {
+        AppUpdates.initialize(applicationContext)
         AppUpdates.check()?.let { AppUpdates.notifyAvailable(applicationContext, it) }
         Result.success()
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
     } catch (exception: Exception) {
         Log.w("UpdateCheckWorker", "Update check failed; WorkManager will retry", exception)
         Result.retry()

@@ -21,6 +21,18 @@ internal fun providerDetailFallback(item: MediaItem, type: CatalogType) = Discov
 internal fun providerTmdbSeed(item: MediaItem, type: CatalogType): DiscoveryCard? =
     item.externalTmdbId?.takeIf { it > 0 }?.let { DiscoveryCard(it, type == CatalogType.SERIES, "") }
 
+/** Apply an explicit metadata choice without converting the saved provider playback target. */
+internal fun confirmedProviderFavorites(favorites: List<FavoriteItem>, profile: String, item: MediaItem,
+    type: CatalogType, card: DiscoveryCard): List<FavoriteItem> {
+    require(type in setOf(CatalogType.MOVIES, CatalogType.SERIES) && card.id > 0 && card.series == (type == CatalogType.SERIES))
+    val kind = if (card.series) FavoriteKind.SERIES else FavoriteKind.MOVIE
+    return favorites.map { favorite ->
+        if (favorite.profileKey != profile || favorite.kind != kind || favorite.media.id != item.id || favorite.media.title != item.title) favorite
+        else favorite.copy(media = favorite.media.copy(externalTmdbId = card.id,
+            logo = card.poster ?: favorite.media.logo, description = card.overview ?: favorite.media.description))
+    }
+}
+
 /** Reuse a confirmed/exact cached public cover; browsing never starts matching requests. */
 internal suspend fun cachedProviderArtwork(cache: DiscoveryCache, item: MediaItem, type: CatalogType): String? {
     if (type == CatalogType.LIVE_TV) return null

@@ -4741,6 +4741,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val matches = (tmdbAvailability.read(profile, type).entries[card.id]?.matches.orEmpty() + enriched).distinctBy { it.id }
         tmdbAvailability.save(profile, type, card.id, TmdbAvailabilityEntry(System.currentTimeMillis(), matches, TMDB_MATCHING_VERSION))
         if (store.captureScope() != owner) return
+        val saved = allFavorites
+        val updated = com.nikhil.niktv.discovery.confirmedProviderFavorites(saved, profile, item, type, card)
+        if (updated != saved) {
+            allFavorites = updated
+            store.saveFavorites(updated, owner)
+        }
         _state.update { current ->
             if (current.session?.profile?.cacheKey() != profile) current else {
                 fun enrich(items: List<MediaItem>) = items.map { if (it.id == item.id && it.title == item.title) enriched else it }

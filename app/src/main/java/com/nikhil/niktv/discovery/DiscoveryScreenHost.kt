@@ -592,11 +592,11 @@ internal fun DiscoveryScreenHost(
         var bottomChromeHeight by remember { mutableStateOf(0.dp) }
         val chromeDensity = androidx.compose.ui.platform.LocalDensity.current
         Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
-            CompositionLocalProvider(LocalPhoneBottomChromeHeight provides if (showPhoneBar) bottomChromeHeight else 0.dp) {
+            CompositionLocalProvider(LocalPhoneBottomChromeHeight provides if (showPhoneBar && !state.favoritesOpen) bottomChromeHeight else 0.dp) {
             Column(Modifier.fillMaxSize()
                 // Downloads and Storage own a bounded scrolling viewport above
                 // both library tabs and the phone dock, rather than behind them.
-                .padding(bottom = if (state.offlineDownloadsOpen && showPhoneBar) bottomChromeHeight else 0.dp)
+                .padding(bottom = if ((state.offlineDownloadsOpen || state.favoritesOpen) && showPhoneBar) bottomChromeHeight else 0.dp)
                 .then(if (state.offlineDownloadsOpen) Modifier.windowInsetsPadding(
                     WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                 else if (providersVisible || previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) Modifier

@@ -21,6 +21,23 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserSyncStoreTest {
+    @Test fun publicArtworkAndConfirmedIdentitySurviveSyncWithoutProviderUrls(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val portal = PortalProfile("Artwork fixture", "https://provider.invalid", "")
+        users.associatePortal(owner, portal)
+        val public = "https://image.tmdb.org/t/p/w342/public-poster.jpg"
+        val urls = listOf(public, "$public?token=private-token", "https://image.tmdb.org.evil.invalid/t/p/w342/poster.jpg")
+        val favorites = urls.mapIndexed { index, url -> FavoriteItem(FavoriteKind.MOVIE,
+            MediaItem("$index", "Masters of the Universe (2026)", url, "https://provider.invalid/private-stream", externalTmdbId = 454639),
+            profileKey = portal.cacheKey()) }
+        ProfileStore(context, memoryPreferences()).saveFavorites(favorites)
+        val wire = users.snapshot("101").filter { it.collection == "favorites" }.map { it.payload }
+        assertTrue(wire.any { public in it })
+        assertTrue(wire.all { "454639" in it && "(2026)" in it })
+        assertFalse(wire.any { "private-token" in it || "evil.invalid" in it || "private-stream" in it })
+    }
     private val context get() = RuntimeEnvironment.getApplication()
     private val users get() = UserSyncStore.get(context)
 

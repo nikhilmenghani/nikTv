@@ -22,6 +22,7 @@ internal enum class DiscoveryLibraryDestination { LIVE_TV, MY_LIST, PROVIDERS }
 
 internal class DiscoveryLibraryOptions(val live: Boolean)
 internal val LocalDiscoveryLibraryOptions = staticCompositionLocalOf<DiscoveryLibraryOptions?> { null }
+internal val LocalLibraryArtworkCache = staticCompositionLocalOf<DiscoveryCache?> { null }
 
 /** Reuse the catalogue/queue owners; only navigation chrome belongs to discovery. */
 @Composable
@@ -29,7 +30,9 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
     back: () -> Unit, select: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
     presentation: DiscoveryCard? = null, focusNavigationOnEntry: Boolean = true, content: @Composable () -> Unit) {
     val configuration = LocalConfiguration.current
-    val tv = LocalContext.current.isTvLikeDevice(configuration)
+    val context = LocalContext.current
+    val artworkCache = remember(context) { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")) }
+    val tv = context.isTvLikeDevice(configuration)
     val phone = usesDiscoveryPhoneLayout(configuration, tv)
     val trialCollection = state.discoveryExperiment && state.discoverySurface != null && state.modernTmdbSection != null
     val navigationSurface = if (trialCollection) requireNotNull(state.discoverySurface) else DashboardSurface.HOME
@@ -50,13 +53,15 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
     Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
     if (destination == DiscoveryLibraryDestination.LIVE_TV) DiscoveryBackdrop(presentation, android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f)
     CompositionLocalProvider(LocalDiscoveryExperiment provides (LocalDiscoveryExperiment.current || trialCollection),
+        LocalLibraryArtworkCache provides artworkCache,
         LocalLibraryTab provides tab, LocalDiscoveryLibraryOptions provides options, LocalMobileGlassArtwork provides glassSource?.artwork,
         LocalMobileGlassBounds provides (glassSource?.bounds ?: androidx.compose.ui.geometry.Rect.Zero),
         LocalMobileGlassFit provides (glassSource?.fit ?: false), LocalMobileGlassTopAligned provides (glassSource?.topAligned ?: false),
         LocalMobileGlassFillWidth provides (glassSource?.fillWidth ?: false), LocalPublishMobileGlassSource provides publishGlass) {
     val artworkHero = !trialCollection && destination == DiscoveryLibraryDestination.MY_LIST &&
         libraryFavoriteHeroes(state.favorites, state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()).isNotEmpty()
-    DiscoveryArtworkShell(artworkHero, phone, header = {
+    DiscoveryArtworkShell(artworkHero, phone, backdropBehindRows = artworkHero && !phone,
+        clearFailedArtwork = true, header = {
         if (phone) DiscoveryPhoneNavigation(navigationSurface, tab, body, back, select, navigate,
             menu, { menu = it }, library = navigationLibrary, profile = state.savedProfile?.displayName.orEmpty())
         else DiscoveryTopNavigation(navigationSurface, state.savedProfile?.displayName.orEmpty(), tab, body,

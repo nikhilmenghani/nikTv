@@ -96,6 +96,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.compose.SubcomposeAsyncImage
@@ -438,7 +441,6 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
     val startupUpdateCheckEnabled by AppUpdates.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
-    var discoveredUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var checkingForRequiredUpdate by remember { mutableStateOf(
         updateEnforcementEnabled &&
             startupUpdateCheckEnabled &&
@@ -483,18 +485,23 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val clipboard = remember(appContext) {
         appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
-    LaunchedEffect(updateEnforcementEnabled) {
-        if (
-            updateEnforcementEnabled &&
-            startupUpdateCheckEnabled &&
-            pendingUpdate == null &&
-            updateDownloadState.updateInfoOrNull() == null
-        ) {
-            discoveredUpdate = runCatching { AppUpdates.check() }.getOrNull()
+    val updateLifecycle = LocalLifecycleOwner.current.lifecycle
+    val updateAlreadyKnown = pendingUpdate != null || updateDownloadState.updateInfoOrNull() != null
+    val playbackActive = state.nowPlaying != null
+    LaunchedEffect(updateLifecycle, startupUpdateCheckEnabled, playbackActive, updateAlreadyKnown) {
+        if (!startupUpdateCheckEnabled || playbackActive || updateAlreadyKnown) {
+            checkingForRequiredUpdate = false
+            return@LaunchedEffect
         }
-        checkingForRequiredUpdate = false
+        updateLifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            com.nikhil.niktv.update.automaticUpdateChecks(
+                check = { AppUpdates.check() },
+                available = { AppUpdates.notifyAvailable(appContext, it) },
+                attemptFinished = { checkingForRequiredUpdate = false },
+                failed = { android.util.Log.w("AppUpdates", "Foreground update check failed; retrying in one minute", it) })
+        }
     }
-    val requiredUpdate = discoveredUpdate ?: pendingUpdate ?: updateDownloadState.updateInfoOrNull()
+    val requiredUpdate = pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     val directPortalOwner = LocalViewingOwner.current
     val hiddenPortals by remember(directPortalOwner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(appContext, directPortalOwner) }
@@ -527,7 +534,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
             openOffline = vm::openOfflineDownloads)
         ParentalPinPrompt(vm)
         Surface(Modifier.fillMaxSize()) {
-          if (updateEnforcementEnabled && !(state.session == null && state.settingsOpen) && (checkingForRequiredUpdate || requiredUpdate != null)) {
+          if (updateEnforcementEnabled && !playbackActive && !(state.session == null && state.settingsOpen) && (checkingForRequiredUpdate || requiredUpdate != null)) {
             MandatoryNikTvUpdateScreen(
                 checking = checkingForRequiredUpdate,
                 update = requiredUpdate,

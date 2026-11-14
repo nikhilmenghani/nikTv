@@ -147,6 +147,8 @@ class LibraryStorageNavigationAuditDeviceTest {
                 }
             } } } }
             await("My List hero is ready") { control(root(), "Open") != null }
+            assertNull("Home-style Open replaces duplicate Info", control(root(), "Info"))
+            assertNull("Trailer belongs on the detail page", control(root(), "Watch trailer"))
             focus("Open")
             NavigationAuditEvidence.capture("my-list-hero-focus")
             focus(if (phone) "Remove from My List" else "In My List")
@@ -165,10 +167,7 @@ class LibraryStorageNavigationAuditDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Right enters second saved movie") { isFocused("Saved movie 2") }
             if (phone) {
-                key(KeyEvent.KEYCODE_DPAD_RIGHT)
-                await("Home-style View all tile is reachable") { isFocused("View all Saved movies") }
-                key(KeyEvent.KEYCODE_DPAD_LEFT)
-                await("View all returns to the saved movie") { isFocused("Saved movie 2") }
+                assertNull("A fully visible collection needs no empty View all page", control(root(), "View all Saved movies"))
             }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Down enters the saved series row") { isFocused("Saved series 1") || isFocused("Saved series 2") }
@@ -186,18 +185,6 @@ class LibraryStorageNavigationAuditDeviceTest {
             focus("Saved movie 1"); key(KeyEvent.KEYCODE_DPAD_UP)
             await("First saved row Up restores the hero") { isFocused("Open") }
             NavigationAuditEvidence.capture("my-list-returned-hero-focus")
-            if (phone) {
-                key(KeyEvent.KEYCODE_DPAD_DOWN)
-                focus("View all Saved movies")
-                key(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("View all opens the saved movie collection") { browsing.value == FavoriteKind.MOVIE && control(root(), "Saved movie 2") != null }
-                focus("Saved movie 2")
-                NavigationAuditEvidence.capture("my-list-view-all-media-tile-focus")
-                key(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("Full collection opens the selected movie") { opened.get()?.media?.id == "movie-2" }
-                key(KeyEvent.KEYCODE_BACK)
-                await("Back returns to the My List rails") { browsing.value == null && control(root(), "Saved series 1") != null }
-            }
             key(KeyEvent.KEYCODE_BACK)
             await("Back leaves My List") { closed.value }
             assertEquals(0, removals.get())

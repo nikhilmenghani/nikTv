@@ -60,7 +60,7 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
     val cache = remember(context) { DiscoveryCache(File(context.cacheDir, "discovery_preview")) }
     val entry = favorite?.let { LibraryEntry(it.media, it.kind, favorite = it) }
     val identity = "$profile:${favorite?.key}"
-    val cached by produceState<Pair<String, DiscoveryCard?>?>(null, identity) {
+    val cached by produceState<Pair<String, DiscoveryCard?>?>(null, identity, entry?.media) {
         value = null
         if (entry != null) value = identity to libraryCachedPresentation(cache, entry)
     }
@@ -98,7 +98,21 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
     val wideHeroHeight = trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), true,
         context.isTvLikeDevice(configuration)), LocalDensity.current.fontScale).dp + navigationInset
     val publishGlass = LocalPublishMobileGlassSource.current
-    val headerArtwork = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, 1280)
+    // Resolve cached presentation before painting a temporary provider crop.
+    // The backdrop retains its prepared image while the next selection loads.
+    val headerArtwork = thumbnailArtworkUrl((card?.backdrop ?: card?.poster)
+        .takeIf { cached?.first == identity }, 1280)
+    var preparedArtwork by remember(profile) { mutableStateOf<String?>(null) }
+    var failedArtwork by remember(profile) { mutableStateOf<String?>(null) }
+    SideEffect { if (headerArtwork != null) preparedArtwork = headerArtwork }
+    val displayedArtwork = (headerArtwork ?: preparedArtwork).takeUnless { it == failedArtwork }
+    val sceneArtwork = LocalDiscoverySceneArtwork.current
+    val sceneBounds = LocalDiscoverySceneBounds.current
+    var heroBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    LaunchedEffect(displayedArtwork, heroBounds, sceneArtwork, sceneBounds, phone) {
+        if (!phone) publishGlass(MobileGlassSource(displayedArtwork,
+            if (sceneArtwork) sceneBounds else heroBounds, topAligned = !sceneArtwork, fillWidth = !sceneArtwork))
+    }
     val localPlay = remember { FocusRequester() }
     val localInfo = remember { FocusRequester() }
     val play = playRequester ?: localPlay
@@ -109,7 +123,7 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         else details(requireNotNull(entry).type, favorite.media, listOf(favorite.media))
     }
     // Home's recycled feed reserves a 10dp top gutter before this same hero.
-    Box(Modifier.padding(top = if (phone) 10.dp else 0.dp).then(if (phone) Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp) else Modifier.fillMaxWidth().height(wideHeroHeight)).onGloballyPositioned { if (!phone) publishGlass(MobileGlassSource(headerArtwork, it.boundsInWindow(), topAligned = true, fillWidth = true)) }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
+    Box(Modifier.padding(top = if (phone) 10.dp else 0.dp).then(if (phone) Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp) else Modifier.fillMaxWidth().height(wideHeroHeight)).onGloballyPositioned { heroBounds = it.boundsInWindow() }.onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             touching = true
@@ -117,9 +131,10 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         }
     }) {
         if (!phone) {
-            // Artwork belongs to this scrolling header, never behind the saved rows.
-            Box(Modifier.matchParentSize().clipToBounds()) {
-                DiscoveryBackdropArtwork(headerArtwork, reduced, Alignment.TopCenter, viewportShade = true, fillWidth = true)
+            // Wide My List shares Home's full-viewport backdrop behind its tiles.
+            if (!sceneArtwork) Box(Modifier.matchParentSize().clipToBounds()) {
+                DiscoveryBackdropArtwork(displayedArtwork, reduced, Alignment.TopCenter, viewportShade = true, fillWidth = true,
+                    onFailure = { failedArtwork = it })
                 DiscoveryHeroShade(Modifier.fillMaxSize())
             }
             DiscoveryHero(card, null, wideHeroHeight,
@@ -128,13 +143,13 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
                 play = { open(favorite) }, add = { removal = favorite }, info = openInfo,
                 onFocus = {}, onDown = onDown, onUp = onUp,
                 previous = { move(-1) }, next = { move(1) }, carousel = favorites.size > 1,
-                index = index, count = favorites.size, playLabel = "Open")
-        } else DiscoveryPhoneHero(card, null, phoneDiscoveryHeroHeight(), false, false, true, play, info,
+                index = index, count = favorites.size, playLabel = "Open", openDetails = true)
+        } else DiscoveryPhoneHero(card?.copy(backdrop = displayedArtwork, poster = null), null, phoneDiscoveryHeroHeight(), false, false, true, play, info,
             play = { open(favorite) }, add = { removal = favorite }, info = openInfo,
             previous = { move(-1) }, next = { move(1) }, carousel = favorites.size > 1,
             index = index, count = favorites.size, playLabel = "Open", playEnabled = true,
             reduceMotion = reduced, onFocus = {}, onDown = onDown,
-            header = null)
+            header = null, openDetails = true)
     }
     removal?.let { pending -> LibraryRemoveDialog(pending, { removal = null }, {
         removal = null

@@ -28,6 +28,7 @@ internal val LocalDiscoverySceneBounds = staticCompositionLocalOf { Rect.Zero }
 internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     backdropBehindRows: Boolean = false, reduceMotion: Boolean = false, initialSceneArtwork: String? = null,
     artworkIdentity: Pair<String, DashboardSurface>? = null,
+    clearFailedArtwork: Boolean = false,
     header: @Composable () -> Unit, content: @Composable () -> Unit) {
     val density = LocalDensity.current
     var inset by remember(phone) { mutableStateOf(if (phone) 64.dp else 80.dp) }
@@ -36,13 +37,15 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     val prepared = remember(artworkIdentity) { artworkIdentity?.let { identity -> preparedScenes[identity]
         ?: preparedScenes.entries.lastOrNull { it.key.first == identity.first }?.value } }
     var published by remember(artworkIdentity) { mutableStateOf(false) }
+    var failedArtwork by remember(artworkIdentity) { mutableStateOf<String?>(null) }
     var artwork by remember(artworkIdentity) { mutableStateOf((prepared ?: initialSceneArtwork)?.let { MobileGlassSource(it, Rect.Zero) }) }
     val artworkBounds = remember { mutableStateOf(Rect.Zero) }
     val movingBounds = remember { { artworkBounds.value } }
     val publish = remember(artworkIdentity, backdropBehindRows) { { value: MobileGlassSource? ->
         artworkBounds.value = value?.bounds ?: Rect.Zero
         if (!value?.artwork.isNullOrBlank()) published = true
-        if (!backdropBehindRows || !value?.artwork.isNullOrBlank()) artwork = value?.copy(bounds = Rect.Zero)
+        if (clearFailedArtwork && value?.artwork == failedArtwork && failedArtwork != null) artwork = null
+        else if (!backdropBehindRows || !value?.artwork.isNullOrBlank()) artwork = value?.copy(bounds = Rect.Zero)
     } }
     Box(Modifier.fillMaxSize().background(if (overlay) Color(0xFF090B10) else Color.Transparent).safeDrawingPadding().onGloballyPositioned {
         viewportTop = it.positionInWindow().y
@@ -57,6 +60,8 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
                     preparedScenes[artworkIdentity] = url
                     while (preparedScenes.size > 12) preparedScenes.remove(preparedScenes.keys.first())
                 }
+            }, onFailure = { url ->
+                if (clearFailedArtwork) { failedArtwork = url; artwork = null }
             })
             CompositionLocalProvider(LocalHeroNavigationInset provides inset,
                 LocalDiscoverySceneArtwork provides backdropBehindRows,

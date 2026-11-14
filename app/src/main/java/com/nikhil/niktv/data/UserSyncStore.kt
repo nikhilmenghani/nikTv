@@ -609,11 +609,18 @@ class UserSyncStore private constructor(private val context: Context) {
         is JsonArray -> JsonArray(value.map { portable(it, maps) })
         is JsonObject -> JsonObject(value.filterKeys { it !in SECRET_FIELDS }.mapValues { (name, item) ->
             if (name in IDENTITY_FIELDS && item is JsonPrimitive && item.isString) JsonPrimitive(portableText(item.content, maps))
+            else if (name == "logo" && portablePublicArtwork(item)) item
             else if (name in URL_FIELDS) JsonNull else portable(item, maps)
         })
         is JsonPrimitive -> if (value.isString && (value.content.contains("://") || Regex("(?i)(token=|password=|mac=)").containsMatchIn(value.content))) JsonNull else value
         else -> value
     }
+    private fun portablePublicArtwork(value: JsonElement): Boolean = runCatching {
+        val uri = java.net.URI((value as? JsonPrimitive)?.contentOrNull ?: return false)
+        uri.scheme == "https" && uri.host == "image.tmdb.org" && uri.port == -1 &&
+            uri.userInfo == null && uri.query == null && uri.fragment == null &&
+            Regex("^/t/p/(?:original|w[0-9]+|h[0-9]+)/[A-Za-z0-9_.-]+\\.(?:jpg|jpeg|png|webp)$").matches(uri.path.orEmpty())
+    }.getOrDefault(false)
     private fun restoreLocalText(value: String, maps: List<LocalPortalMapping>): String {
         var result = value
         maps.forEach { result = result.replace("portal:${it.portalId}", it.localKey) }

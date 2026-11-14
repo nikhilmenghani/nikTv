@@ -1528,7 +1528,7 @@ internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alig
 @Composable
 internal fun DiscoveryBackdropArtwork(requested: String?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center,
     shaded: Boolean = true, viewportShade: Boolean = false, fillWidth: Boolean = false,
-    onPrepared: (String) -> Unit = {}) {
+    onPrepared: (String) -> Unit = {}, onFailure: (String) -> Unit = {}) {
     val context = LocalContext.current
     var ready by remember { mutableStateOf(requested) }
     val currentRequest by rememberUpdatedState(requested)
@@ -1538,14 +1538,16 @@ internal fun DiscoveryBackdropArtwork(requested: String?, reduceMotion: Boolean,
                 .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
             AsyncImage(request, null, if (fillWidth) Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).aspectRatio(16f / 9f) else Modifier.fillMaxSize(),
                 contentScale = if (fillWidth) ContentScale.FillWidth else ContentScale.Crop, alignment = alignment,
-                onSuccess = { if (url != null) onPrepared(url) })
+                onSuccess = { if (url != null) onPrepared(url) },
+                onError = { if (url != null && currentRequest == url) onFailure(url) })
         }
         // Hidden decode layer promotes only the latest successfully prepared backdrop.
         if (requested != null && requested != ready) {
             val request = remember(context, requested, shaded, viewportShade) { ImageRequest.Builder(context).data(requested).size(1280, 720)
                 .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
             AsyncImage(request, null,
-                Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) ready = requested })
+                Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) ready = requested },
+                onError = { if (currentRequest == requested) onFailure(requested) })
         }
         LaunchedEffect(requested) { if (requested == null) ready = null }
     }
