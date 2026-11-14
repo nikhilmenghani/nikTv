@@ -10,6 +10,7 @@ import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.remember
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.foundation.layout.*
@@ -145,7 +146,7 @@ class DiscoveryNavigationDeviceTest {
                 androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides config) {
                     MaterialTheme { Column {
                         DiscoveryHero(card.value, null, 160.dp, landscape = true, compact = true, detail = true,
-                            loading = false, inList = false, playRequester = FocusRequester(), infoRequester = FocusRequester(),
+                            loading = false, inList = false, playRequester = remember { FocusRequester() }, infoRequester = remember { FocusRequester() },
                             play = {}, add = {}, info = {}, onFocus = {}, onDown = {}, previous = {}, next = {},
                             carousel = false, index = 0, count = 1, stableSeriesHero = true)
                         androidx.compose.material3.Text("Episode panel anchor")
