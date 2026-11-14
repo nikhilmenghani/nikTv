@@ -32,7 +32,7 @@ import org.junit.runners.MethodSorters
 // Run full screen entry before the warm visible-tile microbenchmark.
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class DiscoveryNavigationDeviceTest {
-    @Test fun heroActionsExpandOnlyTheFocusedLabelWithoutMovingTheRowVertically() {
+    @Test fun televisionHeroActionsShowHintsWithoutResizing() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
         val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
@@ -44,7 +44,12 @@ class DiscoveryNavigationDeviceTest {
         val actions = java.util.concurrent.CopyOnWriteArrayList<String>()
         try {
             instrumentation.setInTouchMode(false)
-            instrumentation.runOnMainSync { host.setContent { MaterialTheme {
+            instrumentation.runOnMainSync { host.setContent {
+                val config = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).apply {
+                    uiMode = (uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK.inv()) or
+                        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+                }
+                androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides config) { MaterialTheme {
                 Column {
                     DiscoveryHero(DiscoveryCard(123, false, "Fixture hero", date = "2020-01-01"), null,
                         height = 280.dp, landscape = true, compact = false, detail = false, loading = false,
@@ -57,7 +62,7 @@ class DiscoveryNavigationDeviceTest {
                         })
                     androidx.compose.material3.Text("Media rows begin here")
                 }
-            } } }
+            } } } }
             await("Hero actions are attached") { host.hasWindowFocus() && text("TMDB categories") != null }
             fun rect(label: String) = Rect().also { text(label)!!.getBoundsInScreen(it) }
             fun settledWidth(label: String): Int {
@@ -74,7 +79,7 @@ class DiscoveryNavigationDeviceTest {
             val rowTop = rect("Media rows begin here").top
             instrumentation.runOnMainSync { categories.requestFocus() }
             await("Focused categories retain their D-pad identity") { focused("TMDB categories") }
-            assertTrue("Focused label expands", settledWidth("TMDB categories") > collapsed + 30)
+            assertEquals("TV icon stays fixed while focused", collapsed, settledWidth("TMDB categories"))
             assertEquals("Label expansion must not shift media rows", rowTop, rect("Media rows begin here").top)
             instrumentation.runOnMainSync { play.requestFocus() }
             await("Play can receive focus directly") { focused("Play") }
@@ -88,7 +93,9 @@ class DiscoveryNavigationDeviceTest {
             assertTrue("Focus and expansion alone must not play or open categories", actions.isEmpty())
         } finally { instrumentation.runOnMainSync { host.finish() }; fixtureHost = null }
     }
-    @Test fun televisionLandingSkipsFocusedMetadataAndKeepsExplicitActionIdentity() {
+    @Test fun televisionLandingSkipsFocusedMetadataAndKeepsExplicitActionIdentity() = verifyTelevisionOpen(false)
+    @Test fun recycledHomeOpenBackRestoresTheActualHeroAndDpadRows() = verifyTelevisionOpen(true)
+    private fun verifyTelevisionOpen(recycled: Boolean) {
         wakeDisplay()
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
@@ -157,14 +164,17 @@ class DiscoveryNavigationDeviceTest {
                             tmdbSectionsBySurface = mapOf(DashboardSurface.HOME to emptyList()),
                             discoverySurface = selectedSurface.value, discoveryNavigationId = navigationId.longValue),
                             selectedSurface.value, { selectedSurface.value = it; navigationId.longValue++ }, {}, {}, { playedIds += it.id }, { _, _, _ -> }, {}, { _, _ -> },
-                            { favoriteIds += it.media.id }, {}, {}, {}, { _, _ -> }, { _, _ -> }, vm)
+                            { favoriteIds += it.media.id }, {}, {}, {}, { _, _ -> }, { _, _ -> }, vm, experiment = recycled)
                     } }
                 }
             }
             await("TV entry stays in active header") { focused("Home") }
             await("TV hero feed is ready") { text("Fixture hero one") != null }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("TV hero Play") { focused("Play") }
+            await("TV hero Open") { focused("Open") }
+            assertNull("Home keeps trailers on details", text("Watch trailer"))
+            assertNull("Home has no redundant Info shortcut", text("Info"))
+            assertNull("Home categories are configured from settings", text("TMDB categories"))
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("TV movie rail") { focused("Fixture hero one") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -173,22 +183,19 @@ class DiscoveryNavigationDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Series row returns to the movie row") { focused("Fixture hero one") }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Movie row returns to hero Play") { focused("Play") }
-            key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Hero Play keeps its current identity") { playedIds.singleOrNull() == 1 }
+            await("Movie row returns to hero Open") { focused("Open") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Hero My List") { focused("My List") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Hero favorite keeps its own TMDB identity") { favoriteIds.singleOrNull() == "tmdb-movie:1" }
-            key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Hero Watch trailer is reachable after My List") { focused("Watch trailer") }
-            key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Hero Info is reachable") { focused("Info") }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Open remains reachable beside My List") { focused("Open") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Explicit hero Info loads real details for the hero") { vm.state.value.details?.card?.id == 1 && vm.state.value.detail?.id == 1 }
+            await("Open loads real details without playing") { vm.state.value.details?.card?.id == 1 && vm.state.value.detail?.id == 1 }
+            assertTrue(playedIds.isEmpty())
             assertEquals(listOf(1), detailIds.toList())
             key(KeyEvent.KEYCODE_BACK)
-            await("Detail Back restores originating hero Info") { focused("Info") && vm.state.value.detail == null }
+            await("Detail Back restores originating Open") { focused("Open") && vm.state.value.detail == null }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Returning to movie rail retains its item") { focused("Fixture hero one") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -218,9 +225,10 @@ class DiscoveryNavigationDeviceTest {
             instrumentation.runOnMainSync { selectedSurface.value = DashboardSurface.HOME; navigationId.longValue++ }
             await("Returning from IPTV Movies reaches the Home header") { focused("Home") && vm.state.value.surface == DashboardSurface.HOME }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Home hero Play is restored after provider focus") { focused("Play") }
+            await("Home hero Open is restored after provider focus") { focused("Open") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Provider focus cannot replace the Home hero playback identity") { playedIds.toList() == listOf(1, 1) }
+            await("Provider focus cannot replace the Home details identity") { vm.state.value.detail?.id == 1 }
+            assertTrue("Home Open never plays media", playedIds.isEmpty())
         } finally {
             instrumentation.runOnMainSync { if (vmReady) vm.pause(); host.finish() }
         }
@@ -558,18 +566,12 @@ class DiscoveryNavigationDeviceTest {
                 }
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down reaches Play") { focused("Play") }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Right reaches My List") { focused("My List") }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Right reaches Watch trailer") { focused("Watch trailer") }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Right reaches Info") { focused("Info") }
+            await("Down reaches Open") { focused("Open") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Info opens full detail page") { text("My List") != null && text("Info") == null }
+            await("Open shows full detail page") { text("My List") != null && text("Open") == null }
             assertEquals(0, plays); assertEquals(0, favorites)
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-            await("Back restores originating Info control") { focused("Info") }
+            await("Back restores originating Open control") { focused("Open") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Down enters the first ranked row") { focused("Fixture title 1") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -585,7 +587,7 @@ class DiscoveryNavigationDeviceTest {
             await("Up restores the movie row's selected item") { focused("Fixture title 2") }
             if (motionOnly) {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
-                await("Return to hero") { focused("Play") }
+                await("Return to hero") { focused("Open") }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
                 await("Return to active menu") { focused("Home") }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -630,7 +632,7 @@ class DiscoveryNavigationDeviceTest {
             // Reset counters after the deliberate actions, then retain accidental-touch guards.
             plays = 0; favorites = 0
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
-            await("Up from the first row restores hero Play") { focused("Play") }
+            await("Up from the first row restores hero Open") { focused("Open") }
             // Fire TV has no touch surface. Touch behavior is exercised on touchscreen devices.
             if (!context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)) return
             tap("Next featured title")
@@ -639,15 +641,15 @@ class DiscoveryNavigationDeviceTest {
             swipeHero()
             await("Touch swipe pages the hero") { text("3 / 10") != null }
             assertEquals(0, plays); assertEquals(0, favorites)
-            tap("Info")
-            await("Touch Info also opens detail") { text("Info") == null && text("My List") != null }
+            tap("Open")
+            await("Touch Open also opens detail") { text("Open") == null && text("My List") != null }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-            await("Touch detail returns to landing") { text("Info") != null }
+            await("Touch detail returns to landing") { text("Open") != null }
             // Touch does not promise keyboard focus, and the tablet header
             // scrolls above the hero. Deliberately re-enter remote input and
             // navigate to the header before testing its touch destinations.
             instrumentation.setInTouchMode(false)
-            await("Remote input restores the hero Info origin after touch") { focused("Info") }
+            await("Remote input restores the hero Open origin after touch") { focused("Open") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
             await("Up from hero reaches the visible Home navigation") {
                 focused("Home") && fullTabLabelVisible("Home") && fullTabLabelVisible("Movies")
@@ -709,7 +711,7 @@ class DiscoveryNavigationDeviceTest {
             }
             await("Actions fixture entry") { focused("Home") && text("Feed title") != null }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Actions hero") { focused("Play") }
+            await("Actions hero") { focused("Open") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Continue Watching entry") { focused("Recent movie") }
             holdCenter()

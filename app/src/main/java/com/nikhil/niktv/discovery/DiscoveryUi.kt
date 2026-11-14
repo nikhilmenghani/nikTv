@@ -301,17 +301,6 @@ private fun DiscoveryPreviewContent(
     }
     val localScope = rememberCoroutineScope()
     var configure by remember { mutableStateOf(false) }
-    val tmdbCategoriesRequester = remember { FocusRequester() }
-    var restoreTmdbCategories by remember { mutableStateOf(false) }
-    LaunchedEffect(configure) {
-        if (!configure && restoreTmdbCategories) {
-            restoreTmdbCategories = false
-            repeat(30) {
-                withFrameNanos { }
-                if (hostView.hasWindowFocus() && runCatching { tmdbCategoriesRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-            }
-        }
-    }
     var menu by remember { mutableStateOf(false) }
     var categoryPopup by remember { mutableStateOf(false) }
     var actor by remember(profile, surface) { mutableStateOf<DiscoveryPerson?>(null) }
@@ -853,11 +842,11 @@ private fun DiscoveryPreviewContent(
                     playRequester = heroPlayRequester, infoRequester = heroInfoRequester,
                     play = { heroCard?.let { focused("play"); currentPlayCard(it) } },
                     add = { heroCard?.let { currentToggleFavorite(favorite(it)) } },
-                    info = { heroCard?.let { focused("info"); currentDetails(it, "trial-hero:${it.key}") } },
+                    info = { heroCard?.let { focused("play"); currentDetails(it, "trial-hero:${it.key}") } },
                     onFocus = { focused("play"); restoreNativeSelection = true }, onDown = down, onUp = { up(); true },
                     previous = { vm.rotate(-1) }, next = { vm.rotate(1) },
                     carousel = state.heroes.size > 1, index = heroState.heroIndex, count = heroState.heroes.size,
-                    portraitPhone = phonePortrait)
+                    portraitPhone = phonePortrait, openDetails = true)
         }
             }
         }) else if (scrollVariant.heroLayout && providerCatalog != null) ({ focused, down, up ->
@@ -960,10 +949,10 @@ private fun DiscoveryPreviewContent(
                         repeat(12) {
                             withFrameNanos { }
                             // The phone bottom bar also participates in Android focus search.
-                            // Restore the committed Series card itself on detail return;
+                            // Restore the committed control itself on every detail return;
                             // focusing only the Compose/native bridge leaves the next arrow
                             // free to enter that bar. Fresh menu entry still belongs to its tab.
-                            if (!menuEntry && providerCatalog == CatalogType.SERIES && restoreNativeSelection) {
+                            if (!menuEntry && restoreNativeSelection && recycled) {
                                 if (nativeFocusRestorer.restore()) return@LaunchedEffect
                             } else {
                                 val target = if (menuEntry) tabRequester else playRequester
@@ -985,7 +974,7 @@ private fun DiscoveryPreviewContent(
                             (trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeHeroFraming, television), fontScale).dp + LocalHeroNavigationInset.current).roundToPx()
                         } else null,
                         hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
-                            runCatching { (if (id == "info") heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
+                            runCatching { (if (id == "info" && surface != DashboardSurface.HOME) heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
                         })
                     else NativeDiscoveryRows(nativeRows, Modifier.fillMaxSize(), playRequester,
                         up = { runCatching { tabRequester.requestFocus() } }, animateFocus = scrollVariant.animateNativeFocus)
@@ -1232,14 +1221,13 @@ private fun DiscoveryPreviewContent(
                             onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }, onDown = { moveRow(positions.hero, 1) }, onUp = { moveRow(positions.hero, -1) },
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
                             index = state.heroIndex, count = state.heroes.size,
-                            categoryActions = if (state.detail == null && !phone) ({
+                            categoryActions = if (state.detail == null && !phone && surface != DashboardSurface.HOME) ({
                                 key(profile, surface) {
                                 if (surface != DashboardSurface.HOME) DiscoveryCategoryAccess(surface, app.categoryManagerOpen, modifier = if (phone) Modifier.widthIn(min = 144.dp) else Modifier, popupChanged = { categoryPopup = it },
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } })
-                                if (surface == DashboardSurface.HOME) DiscoveryAction("TMDB categories", Icons.Default.AutoAwesome, modifier = Modifier.then(if (phone) Modifier.widthIn(min = 144.dp) else Modifier).focusRequester(tmdbCategoriesRequester),
-                                    onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }) { restoreTmdbCategories = true; configure = true }
                                 }
                             }) else null,
+                            openDetails = surface == DashboardSurface.HOME && state.detail == null,
                             portraitPhone = phonePortrait,
                             phoneHeader = if (phonePortrait && state.detail == null) ({
                                 DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
@@ -1550,14 +1538,16 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     phoneHeader: (@Composable () -> Unit)? = null, portraitPhone: Boolean = false,
     showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false },
     categoryActions: (@Composable () -> Unit)? = null, trailerMedia: MediaItem? = null,
-    emptyTitle: String = "Discover something to watch", contentInset: Dp = 0.dp) {
+    emptyTitle: String = "Discover something to watch", contentInset: Dp = 0.dp,
+    openDetails: Boolean = false) {
     if (portraitPhone) {
         val context = LocalContext.current
         val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         DiscoveryPhoneHero(card, rank, if (detail) height.coerceAtLeast(if (compactDetail) 280.dp else 480.dp) else phoneDiscoveryHeroHeight(), detail, loading, inList,
             playRequester, infoRequester, play, add, info, previous, next, carousel, index, count,
             playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail, categoryActions,
-            shadeArtworkBounds = compactDetail, trailerMedia = trailerMedia, emptyTitle = emptyTitle)
+            shadeArtworkBounds = compactDetail, trailerMedia = trailerMedia, emptyTitle = emptyTitle,
+            openDetails = openDetails)
         return
     }
     var drag by remember { mutableFloatStateOf(0f) }
@@ -1616,14 +1606,17 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         val detailActionHeight = if (detail || shortWide) detailActionSize() else 48.dp
         val actions: @Composable () -> Unit = {
             CompositionLocalProvider(LocalCollapsingDiscoveryActions provides false) {
-            DiscoveryAction(if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true,
+            DiscoveryAction(if (openDetails) "Open" else if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel,
+                if (openDetails) Icons.Default.OpenInNew else Icons.Default.PlayArrow, selected = true,
                 horizontalPadding = 16.dp, trailingPadding = 22.dp,
-                modifier = Modifier.heightIn(min = detailActionHeight).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
+                modifier = Modifier.heightIn(min = detailActionHeight).focusRequester(playRequester)
+                    .then(if (openDetails) Modifier.focusRequester(infoRequester) else Modifier),
+                enabled = card != null && (openDetails || playEnabled), onFocus = onFocus, onClick = if (openDetails) info else play)
             }
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
                 iconOnly = true, modifier = Modifier.widthIn(min = detailActionHeight).heightIn(min = detailActionHeight), enabled = card != null, onFocus = onFocus, onClick = add)
-            DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, modifier = Modifier.widthIn(min = detailActionHeight).heightIn(min = detailActionHeight), mediaOverride = trailerMedia)
-            if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
+            if (!openDetails) DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, modifier = Modifier.widthIn(min = detailActionHeight).heightIn(min = detailActionHeight), mediaOverride = trailerMedia)
+            if (!detail && !openDetails) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.heightIn(min = detailActionHeight).widthIn(min = detailActionHeight).focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()
             // Keep carousel arrows compact and its counter width reserved while feeds load.
@@ -1888,11 +1881,19 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     onFocus: () -> Unit = {}, containerColor: Color? = null, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val collapsible = LocalCollapsingDiscoveryActions.current && icon != null && !iconOnly
+    val television = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
+    val hintEligible = television && icon != null && (iconOnly || collapsible)
+    var showHint by remember { mutableStateOf(false) }
+    LaunchedEffect(focused, hintEligible) {
+        showHint = false
+        if (focused && hintEligible) { delay(300); showHint = true }
+    }
     val headerSizing = LocalDiscoveryHeaderActionSizing.current
     val detailSize = detailActionSize()
     val shortWide = LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))
     val headerSize = discoveryHeaderActionSize()
     val contentInset = if (headerSizing) if (shortWide) 8.dp else 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
+    Box {
     DiscoveryMobileGlassContainer(focused = focused) {
     Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) headerSize else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else if (shortWide) 36.dp else 40.dp)
         .widthIn(min = if (headerSizing) headerSize else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else 0.dp)
@@ -1905,16 +1906,49 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
         Row(Modifier.padding(start = contentInset, end = if (headerSizing || iconOnly || collapsible) contentInset else trailingPadding, top = if (shortWide) 6.dp else 8.dp, bottom = if (shortWide) 6.dp else 8.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(if (collapsible) 0.dp else 6.dp, Alignment.CenterHorizontally)) {
             icon?.let { Icon(it, if (iconOnly && !collapsible) label else null, Modifier.size(if (shortWide) 18.dp else 20.dp)) }
-            if (collapsible) AnimatedVisibility(focused,
+            if (collapsible && !television) AnimatedVisibility(focused,
                 enter = expandHorizontally(tween(140), expandFrom = Alignment.Start) + fadeIn(tween(100)),
                 exit = shrinkHorizontally(tween(140), shrinkTowards = Alignment.Start) + fadeOut(tween(100))) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Spacer(Modifier.width(6.dp))
                     Text(visualLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
-            } else if (!iconOnly) Text(visualLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else if (!iconOnly && !(television && collapsible)) Text(visualLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
+    }
+    if (showHint) DiscoveryActionHint(label)
+    }
+}
+
+/** Non-focusable caption: D-pad hints never resize the action or own navigation. */
+@Composable
+private fun DiscoveryActionHint(label: String) {
+    val density = LocalDensity.current
+    val position = remember(density) {
+        val gap = with(density) { 6.dp.roundToPx() }
+        val margin = with(density) { 12.dp.roundToPx() }
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(anchorBounds: IntRect, windowSize: androidx.compose.ui.unit.IntSize,
+                layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                popupContentSize: androidx.compose.ui.unit.IntSize): androidx.compose.ui.unit.IntOffset {
+                val x = (anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2)
+                    .coerceIn(margin, (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin))
+                val below = anchorBounds.bottom + gap
+                val y = if (below + popupContentSize.height <= windowSize.height - margin) below
+                    else (anchorBounds.top - gap - popupContentSize.height).coerceAtLeast(margin)
+                return androidx.compose.ui.unit.IntOffset(x, y)
+            }
+        }
+    }
+    androidx.compose.ui.window.Popup(position,
+        properties = androidx.compose.ui.window.PopupProperties(focusable = false,
+            dismissOnBackPress = false, dismissOnClickOutside = false)) {
+        Surface(shape = RoundedCornerShape(8.dp), color = Color(0xF0181C24),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = .18f))) {
+            Text(label, Modifier.widthIn(max = 240.dp).padding(horizontal = 10.dp, vertical = 6.dp),
+                color = Color.White, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 

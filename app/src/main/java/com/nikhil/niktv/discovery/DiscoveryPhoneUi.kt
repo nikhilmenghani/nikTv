@@ -185,7 +185,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     showSynopsis: Boolean = true, compactDetail: Boolean = false, categoryActions: (@Composable () -> Unit)? = null, showListAction: Boolean = true,
     artworkAlignment: Alignment = Alignment.Center, shadeArtworkBounds: Boolean = false, leftAligned: Boolean = false,
     supportingTitle: Boolean = false, fitArtwork: Boolean = false, trailerMedia: com.nikhil.niktv.model.MediaItem? = null,
-    emptyTitle: String = "Discover something to watch") {
+    emptyTitle: String = "Discover something to watch", openDetails: Boolean = false) {
     val context = LocalContext.current
     val navigationInset = LocalHeroNavigationInset.current
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
@@ -280,15 +280,17 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         if (!detail && !showListAction && supportingTitle) Spacer(Modifier.size(48.dp))
                         val compactMovieActions = detail && card?.series == false
                         DiscoveryMobileGlassContainer(if (detail && !compactMovieActions) Modifier.weight(1f).fillMaxHeight() else Modifier) {
-                        Surface(onClick = play, enabled = card != null && playEnabled, shape = RoundedCornerShape(10.dp),
+                        Surface(onClick = if (openDetails) info else play, enabled = card != null && (openDetails || playEnabled), shape = RoundedCornerShape(10.dp),
                             color = if (detail && !compactMovieActions) Color.Transparent else Color(0xFFE50925), contentColor = Color.White,
                             modifier = Modifier.then(if (detail && !compactMovieActions) Modifier.fillMaxSize() else Modifier.widthIn(min = 120.dp))
-                                .heightIn(min = 48.dp).focusRequester(playRequester).onFocusChanged { if (it.isFocused) onFocus() }) {
+                                .heightIn(min = 48.dp).focusRequester(playRequester)
+                                .then(if (openDetails) Modifier.focusRequester(infoRequester) else Modifier)
+                                .onFocusChanged { if (it.isFocused) onFocus() }) {
                             Row(Modifier.padding(start = if (compactMovieActions) 16.dp else if (compactDetail) 6.dp else 18.dp,
                                 end = if (compactMovieActions) 22.dp else if (compactDetail) 6.dp else 18.dp, top = 12.dp, bottom = 12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(if (compactDetail) 4.dp else 6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.PlayArrow, null, Modifier.size(if (compactDetail) 18.dp else 24.dp))
-                                Text(if (compactDetail && playLabel.startsWith("Resume ")) "Resume" else if (compactDetail) playLabel.replace("Episode ", "E") else playLabel,
+                                Icon(if (openDetails) Icons.Default.OpenInNew else Icons.Default.PlayArrow, null, Modifier.size(if (compactDetail) 18.dp else 24.dp))
+                                Text(if (openDetails) "Open" else if (compactDetail && playLabel.startsWith("Resume ")) "Resume" else if (compactDetail) playLabel.replace("Episode ", "E") else playLabel,
                                     fontWeight = FontWeight.Bold, fontSize = if (compactDetail) 13.sp else 15.sp,
                                     modifier = Modifier.weight(1f, fill = false),
                                     maxLines = if (compactDetail) 1 else 2, overflow = TextOverflow.Ellipsis)
@@ -305,9 +307,9 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         if (detail) Box(Modifier.size(48.dp)) {
                             DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, compactLabel = compactDetail,
                                 modifier = Modifier.fillMaxSize().heightIn(min = 48.dp), mediaOverride = trailerMedia)
-                        } else DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, mediaOverride = trailerMedia)
+                        } else if (!openDetails) DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, mediaOverride = trailerMedia)
                         if (detail && compactDetail) LocalProviderSynopsisActions.current?.invoke()
-                        if (!detail) PhoneHeroIcon("Info", Icons.Default.Info, card != null, info,
+                        if (!detail && !openDetails) PhoneHeroIcon("Info", Icons.Default.Info, card != null, info,
                             Modifier.focusRequester(infoRequester).onFocusChanged { if (it.isFocused) onFocus() })
                     }
                     categoryActions?.let { actions ->
