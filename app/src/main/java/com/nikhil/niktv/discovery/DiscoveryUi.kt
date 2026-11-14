@@ -1944,10 +1944,10 @@ private fun DiscoveryActionHint(label: String) {
     androidx.compose.ui.window.Popup(position,
         properties = androidx.compose.ui.window.PopupProperties(focusable = false,
             dismissOnBackPress = false, dismissOnClickOutside = false)) {
-        Surface(shape = RoundedCornerShape(8.dp), color = Color(0xF0181C24),
+        Surface(shape = RoundedCornerShape(6.dp), color = Color(0xF0181C24),
             border = BorderStroke(1.dp, Color.White.copy(alpha = .18f))) {
-            Text(label, Modifier.widthIn(max = 240.dp).padding(horizontal = 10.dp, vertical = 6.dp),
-                color = Color.White, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(label, Modifier.widthIn(max = 200.dp).padding(horizontal = 8.dp, vertical = 4.dp),
+                color = Color.White, fontSize = 10.sp, lineHeight = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

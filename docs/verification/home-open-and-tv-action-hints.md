@@ -12,6 +12,6 @@ Real Fire TV: installed dev build preserving setup. Open showed VisionQuest seri
 
 Evidence outside Git: `D:/workspace/niktv-playback-tests/firetv-home-open-current.png`, `firetv-home-open-detail-ready.png`, `firetv-home-open-return.png`, `firetv-home-open-return-down.png`, `firetv-home-open-hint.png`, `home-open-targeted-device-tests.log`, `home-open-tooltip-build.log` and `home-open-regression-build.log`.
 
-Previous completed menu/fade work was committed separately as `a4e9dab3`. Home Open and TV hints are included in release 0.6.13.
+Previous completed menu/fade work was committed separately as `a4e9dab3`. Home Open and TV hints are included in release 0.6.14. The unpublished 0.6.13 build was cancelled to include the requested compact hints: 10sp text, 13sp line height, 8dp horizontal/4dp vertical padding and 6dp corners.
 
 Poco: installed NikTV Dev preserving setup, checked the simplified hero in portrait and landscape, and used touch Open/Back in both orientations. Details retained Play and Watch trailer; Home retained Open. Restored automatic rotation to its original setting. The updated dev build is also installed on tablet after the isolated tests. Mobile evidence: `poco-home-open-current.png` and `poco-home-open-landscape.png` in the same evidence directory.
