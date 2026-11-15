@@ -76,7 +76,7 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
             Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(label, color = Color(0xFFCED2DA), fontSize = 10.sp, lineHeight = 12.sp, maxLines = 1)
-                Text(title, color = Color.White, fontSize = 12.sp, lineHeight = 15.sp,
+                Text(title, color = Color.White, fontSize = 10.sp, lineHeight = 12.sp,
                     fontWeight = FontWeight.SemiBold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(metadata.ifBlank { " " }, color = Color(0xFFB9BDC7), fontSize = 10.sp,
                     lineHeight = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
