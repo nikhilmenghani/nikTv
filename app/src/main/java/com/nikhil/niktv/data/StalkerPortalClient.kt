@@ -465,7 +465,12 @@ class StalkerPortalClient(private val context: Context) {
                 "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
                 "hd" to "0", "ended" to "0", "p" to "1"
             ))).payload().arrayFromData().mapNotNull { it as? JsonObject }
-            listOf(details.firstOrNull()?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd)
+            // Some portals ignore the episode filter and return several files.
+            // Their first row is not necessarily the selected episode. Retain
+            // single-detail compatibility (the detail can have its own file ID).
+            val detail = details.firstOrNull { it.string("id") == item.portalEpisodeId }
+                ?: details.singleOrNull()
+            listOf(detail?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd)
         } else if (type == CatalogType.MOVIES) {
             val root = vodRoot(session, item)
             if (portalVodHasEpisodes(root)) throw PortalVodSeriesContainerException()
@@ -1005,6 +1010,10 @@ class StalkerPortalClient(private val context: Context) {
         onWait = onProviderWait
     ) {
         onRequestStarted()
+        if (com.nikhil.niktv.BuildConfig.DEBUG && params["action"] in setOf("get_ordered_list", "create_link")) {
+            android.util.Log.i("NikTvTransition", "portal_request action=${params["action"]} " +
+                "episodeDetail=${params["episode_id"]?.let { it.isNotBlank() && it != "0" } == true}")
+        }
         // create_link is the immediate continuation of a user-selected playback
         // lookup. Keep the rolling request budget, but do not add a full second
         // of artificial latency after the preceding episode/movie detail call.

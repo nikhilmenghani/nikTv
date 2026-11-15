@@ -827,6 +827,7 @@ fun PlayerScreen(
                 setLoadErrorHandlingPolicy(LiveSegmentLoadErrorPolicy { playbackHasBeenReady })
         })
         builder.build().apply {
+            if (com.nikhil.niktv.BuildConfig.DEBUG && com.nikhil.niktv.BuildConfig.PLAYBACK_SYNC_DIAGNOSTICS) volume = 0f
             // HLS supplies its own hold-back/segment timing. A fixed six-second
             // offset puts long-segment streams too close to unfinished media.
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
@@ -3084,7 +3085,7 @@ PlayerChromeIconButton(
         }
         val failure = playbackError ?: if (startupTimedOut) "The stream did not start within 25 seconds." else null
         if (failure != null) {
-            val restartSession = restartSessionForPlaybackFailure(playbackFailureCode, decoderFailurePending, startupTimedOut)
+            val restartSession = retryWithoutRefreshingSource(playbackFailureCode, decoderFailurePending, startupTimedOut)
             Surface(
                 Modifier.align(Alignment.Center).padding(24.dp).widthIn(max = 560.dp),
                 shape = RoundedCornerShape(20.dp),

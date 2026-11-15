@@ -81,7 +81,10 @@ internal class VlcPlaybackSession private constructor(
             val lib = pool.acquire(options)
             try {
                 android.util.Log.i("NikTvPlayback", "VLC engine id=${System.identityHashCode(lib)}; fresh stream player")
-                return VlcPlaybackSession(lib, MediaPlayer(lib), options).also {
+                val player = MediaPlayer(lib).apply {
+                    if (com.nikhil.niktv.BuildConfig.DEBUG && com.nikhil.niktv.BuildConfig.PLAYBACK_SYNC_DIAGNOSTICS) volume = 0
+                }
+                return VlcPlaybackSession(lib, player, options).also {
                     android.util.Log.i("NikTvPlayback", "VLC creation elapsedMs=${SystemClock.elapsedRealtime() - started}")
                 }
             } catch (failure: Throwable) {

@@ -120,6 +120,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "LOCAL_GITHUB_TOKEN", "\"\"")
+        buildConfigField("boolean", "PLAYBACK_SYNC_DIAGNOSTICS", "false")
         listOf("NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION").forEach {
             buildConfigField("String", it, "\"\"")
         }
@@ -152,6 +153,10 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            // Explicit device-test mode: enable real sync and mute native playback.
+            // Ordinary Dev and release builds keep their existing behavior.
+            buildConfigField("boolean", "PLAYBACK_SYNC_DIAGNOSTICS",
+                (providers.gradleProperty("playbackSyncDiagnostics").orNull == "true").toString())
             // Same package/signature/data for repeatable on-device performance tests.
             // Opt in explicitly; ordinary development builds stay debuggable.
             isDebuggable = !providers.gradleProperty("performanceBuild")

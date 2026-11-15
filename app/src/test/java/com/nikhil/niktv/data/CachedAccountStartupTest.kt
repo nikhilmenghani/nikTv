@@ -161,6 +161,9 @@ class CachedAccountStartupTest {
         assertFalse(automaticAccountSyncEnabled("com.nikhil.niktv.debug"))
         assertFalse(automaticAccountSyncEnabled("com.nikhil.niktv.regression"))
         assertFalse(automaticAccountSyncEnabled("other.package"))
+        assertTrue(automaticAccountSyncEnabled("com.nikhil.niktv.debug", diagnosticOptIn = true))
+        assertFalse(automaticAccountSyncEnabled("com.nikhil.niktv.regression", diagnosticOptIn = true))
+        assertFalse(automaticAccountSyncEnabled("other.package", diagnosticOptIn = true))
     }
 
     @Test fun debugLaunchAndViewingTriggersCannotQueueASync() = runBlocking {

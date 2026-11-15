@@ -143,7 +143,10 @@ class AccountSyncManager private constructor(context: Context) {
     fun requestPlaybackSync(scope: UserScope): Job? = requestAutomaticSync(scope.accountId)
 
     private fun requestAutomaticSync(accountId: String? = null): Job? =
-        if (automaticAccountSyncEnabled()) requestAccountSync(accountId) else null
+        if (automaticAccountSyncEnabled()) {
+            if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.i("NikTvSyncTiming", "automatic_requested")
+            requestAccountSync(accountId)
+        } else null
 
     private fun requestAccountSync(expectedAccountId: String? = null): Job? {
         val capturedAccountId = prefs.getString("accountId", null)
@@ -179,6 +182,8 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     private suspend fun runSavedSync(accountId: String, token: String) {
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.i("NikTvSyncTiming", "network_sync_started")
         try {
             val until = prefs.getLong("retryAfter:$accountId", 0)
             if (until > System.currentTimeMillis()) throw SyncFailure("GitHub requested a pause. Changes are saved locally and will retry automatically.", retryable = true, retryAfterMillis = until - System.currentTimeMillis())
@@ -192,6 +197,10 @@ class AccountSyncManager private constructor(context: Context) {
             successful(identity)
         } catch (cancelled: CancellationException) { interrupted(); throw cancelled }
         catch (error: Exception) { failed(error) }
+        finally {
+            if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.i("NikTvSyncTiming",
+                "network_sync_finished elapsedMs=${android.os.SystemClock.elapsedRealtime() - startedAt}")
+        }
     }
 
     private suspend fun syncCaptured(transport: GitHubSyncTransport, repository: SyncRepository, accountId: String) {
@@ -339,8 +348,9 @@ class AccountSyncWorker(context: Context, parameters: WorkerParameters) : Corout
 }
 
 /** Distribution identity also excludes performance Dev builds, whose debugger flag is disabled. */
-internal fun automaticAccountSyncEnabled(applicationId: String = com.nikhil.niktv.BuildConfig.APPLICATION_ID): Boolean =
-    applicationId == "com.nikhil.niktv"
+internal fun automaticAccountSyncEnabled(applicationId: String = com.nikhil.niktv.BuildConfig.APPLICATION_ID,
+    diagnosticOptIn: Boolean = com.nikhil.niktv.BuildConfig.DEBUG && com.nikhil.niktv.BuildConfig.PLAYBACK_SYNC_DIAGNOSTICS): Boolean =
+    applicationId == "com.nikhil.niktv" || (diagnosticOptIn && applicationId == "com.nikhil.niktv.debug")
 
 internal fun allowsScheduledSync(reason: String): Boolean = reason == "retry"
 

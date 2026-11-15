@@ -491,7 +491,9 @@ internal fun VlcPlayerScreen(
     val focus = remember(player) {
         VlcAudioFocus(context,
             play = { play -> preparedSession.command { if (play) it.play() else it.pause() } },
-            volume = { gain -> preparedSession.command { it.volume = (gain * 100).toInt() } },
+            volume = { gain -> preparedSession.command {
+                it.volume = if (com.nikhil.niktv.BuildConfig.DEBUG && com.nikhil.niktv.BuildConfig.PLAYBACK_SYNC_DIAGNOSTICS) 0 else (gain * 100).toInt()
+            } },
             intentChanged = { playbackRequested = it; onPlaybackIntentChanged(it) })
     }
     DisposableEffect(focus) { onDispose { focus.close() } }
@@ -828,6 +830,7 @@ internal fun VlcPlayerScreen(
                     buffering = event.buffering < 100f && !player.isPlaying
                 }
                 MediaPlayer.Event.Playing -> {
+                    if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.i("NikTvTransition", "vlc_playing")
                     error = null
                     if (media.catalogType != CatalogType.LIVE_TV) player.setRate(currentPlaybackSpeed)
                     if (!focus.shouldPlay) preparedSession.command { it.pause() }
@@ -850,6 +853,7 @@ internal fun VlcPlayerScreen(
                     buffering = false
                 }
                 MediaPlayer.Event.EndReached -> {
+                    if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.i("NikTvTransition", "vlc_ended")
                     streamTerminated = true
                     playing = false
                     val endedEarly = !streamWasPlaying || (player.length > 0L && player.time.coerceAtLeast(0L) < player.length - 2_000L)

@@ -202,6 +202,11 @@ class ProfileStore @JvmOverloads constructor(
     val playbackProgress: Flow<List<PlaybackProgress>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[progressKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
     })
+    /** Fresh resume data without constructing the complete account/profile preferences flow. */
+    suspend fun playbackProgressSnapshot(scope: UserScope): List<PlaybackProgress> = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        users.dao.preferenceValue(scope.accountId, scope.profileId, progressKey.name)
+            ?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
+    }
     val playbackUrls: Flow<List<PlaybackUrl>> = this@ProfileStore.preferences.data.decodedProfilePreference(select = { it[playbackUrlsKey] }, decode = { raw ->
         raw?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
     })

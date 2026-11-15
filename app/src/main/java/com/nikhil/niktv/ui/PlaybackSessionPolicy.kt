@@ -3,9 +3,10 @@ package com.nikhil.niktv.ui
 internal const val MAX_DECODER_RECOVERIES = 3
 internal fun allowDecoderRecovery(attempts: Int): Boolean = attempts < MAX_DECODER_RECOVERIES
 
-/** A connection failure needs a new player/connection, not another catalogue lookup. */
-internal fun restartSessionForPlaybackFailure(errorCode: Int?, decoderFailure: Boolean, startupTimedOut: Boolean): Boolean =
-    decoderFailure || startupTimedOut || errorCode in setOf(
+/** Only a decoder failure can reuse the resolved URL. Network/startup failures
+ * need provider Retry, which refreshes the source and resets the decoder too. */
+internal fun retryWithoutRefreshingSource(errorCode: Int?, decoderFailure: Boolean, startupTimedOut: Boolean): Boolean =
+    decoderFailure && !startupTimedOut && errorCode !in setOf(
         androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
         androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
 

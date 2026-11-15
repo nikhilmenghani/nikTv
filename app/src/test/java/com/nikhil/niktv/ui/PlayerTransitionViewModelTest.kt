@@ -35,6 +35,8 @@ class PlayerTransitionViewModelTest {
     private lateinit var worker: Thread
     private val requests = Collections.synchronizedList(mutableListOf<String>())
     private lateinit var root: String
+    @Volatile private var responseOverride: ((String) -> String)? = null
+    @Volatile private var rejectExpiredLink = false
     private val series = MediaItem("show", "Fixture series", null, null)
 
     @Before fun setup() {
@@ -47,16 +49,18 @@ class PlayerTransitionViewModelTest {
                     val reader = it.getInputStream().bufferedReader()
                     val request = reader.readLine().orEmpty()
                     requests += URLDecoder.decode(request, "UTF-8")
-                    while (!reader.readLine().isNullOrEmpty()) { }
-                    val body = when {
+                    val headers = generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
+                    val rejected = rejectExpiredLink && "action=create_link" in request &&
+                        headers.any { it.equals("Authorization: Bearer old-token", ignoreCase = true) }
+                    val body = (responseOverride?.invoke(URLDecoder.decode(request, "UTF-8")) ?: when {
                         "action=get_series_info" in request -> """{"episodes":{"1":[
                             {"id":"1","title":"Episode 1","episode_num":1,"container_extension":"mkv"},
                             {"id":"2","title":"Episode 2","episode_num":2,"container_extension":"mkv"}]}}"""
                         "action=create_link" in request -> """{"js":{"cmd":"ffmpeg https://media.invalid/fresh.m3u8"}}"""
                         else -> """{"js":{"data":[{"id":"file2"}]}}"""
-                    }.toByteArray()
+                    }).toByteArray()
                     it.getOutputStream().apply {
-                        write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                        write("HTTP/1.1 ${if (rejected) "401 Unauthorized" else "200 OK"}\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
                         write(body); flush()
                     }
                 }
@@ -134,6 +138,105 @@ class PlayerTransitionViewModelTest {
         assertTrue(requests.first(), "season_id=season1" in requests.first())
         assertTrue(requests.last(), "action=create_link" in requests.last())
         assertTrue(requests.last(), "series=2" in requests.last())
+        assertNull(mutable.value.error)
+    }
+
+    @Test fun expiredNextEpisodeLinkRefreshesSessionWithoutRetryingCatalogueWithTheRejectedToken() {
+        start(PortalType.STALKER)
+        rejectExpiredLink = true
+        responseOverride = { request -> when {
+            "action=create_link" in request -> """{"js":{"cmd":"ffmpeg https://media.invalid/new-session.m3u8"}}"""
+            "episode_id=provider2" in request -> """{"js":{"data":[{"id":"file2"}]}}"""
+            else -> """{"js":{"data":[{"id":"provider2","is_episode":true,"series_number":2,
+                "season_number":1,"name":"Episode 2","cmd":"/media/file_2.mpg"}],"total_items":1}}"""
+        } }
+        var authentications = 0
+        vm.authenticatePortal = { authentications++; mutable.value.session!!.copy(token = "fresh-token") }
+        vm.playNextEpisode()
+        await { mutable.value.nowPlaying?.media?.episodeNumber == 2 }
+        assertEquals(1, authentications)
+        assertEquals("2", mutable.value.nowPlaying?.media?.id)
+        assertEquals("https://media.invalid/new-session.m3u8", mutable.value.nowPlaying?.url)
+        assertEquals(4, requests.size) // detail + denied link, then detail + fresh link
+        assertTrue(requests.filter { "action=get_ordered_list" in it }.all { "episode_id=provider2" in it })
+        assertNull(mutable.value.error)
+    }
+
+    @Test fun recentEpisodeUsesTheCachedProviderRecordInsteadOfItsSavedCommand() {
+        checkRecentProviderRecord(FavoriteKind.EPISODE)
+    }
+
+    @Test fun recentSeriesUsesTheCachedProviderRecordAndPreservesResumePosition() {
+        checkRecentProviderRecord(FavoriteKind.SERIES)
+    }
+
+    private fun checkRecentProviderRecord(kind: FavoriteKind) {
+        val playing = start(PortalType.STALKER)
+        val current = playing.episodeQueue.last()
+        val container = series.copy(command = "/media/container.mpg")
+        val saved = current.copy(command = "https://expired.invalid/old-episode", portalEpisodeId = "old-file")
+        val cache = EpisodeSeasonCache(playing.profileKey, series.id, 1, listOf(1),
+            playing.episodeQueue, iptvEpisodes = playing.episodeQueue)
+        NikTvViewModel::class.java.getDeclaredField("episodeSeasonCaches").apply { isAccessible = true }
+            .set(vm, listOf(cache))
+        mutable.value = mutable.value.copy(nowPlaying = null,
+            playbackProgress = listOf(PlaybackProgress(providerProgressKey(playing.profileKey, current,
+                CatalogType.SERIES, container), 32_000, 600_000)))
+        vm.openRecent(if (kind == FavoriteKind.EPISODE)
+            RecentItem(kind, saved, series = container, profileKey = playing.profileKey)
+        else RecentItem(kind, container, lastPlayed = saved, profileKey = playing.profileKey))
+        await { mutable.value.nowPlaying != null }
+        val resumed = requireNotNull(mutable.value.nowPlaying)
+        assertEquals(current.command, resumed.media.command)
+        assertEquals(current.portalEpisodeId, resumed.media.portalEpisodeId)
+        assertEquals(32_000L, resumed.resumePositionMillis)
+        assertEquals(2, requests.size)
+        assertTrue(requests.first(), "episode_id=provider2" in requests.first())
+        assertNull(mutable.value.error)
+    }
+
+    @Test fun stalkerRetryReplacesSavedProviderMetadataAndResetsThePlayerAtTheRequestedPosition() {
+        val failed = start(PortalType.STALKER)
+        responseOverride = { request -> if ("action=create_link" in request)
+            """{"js":{"cmd":"ffmpeg https://media.invalid/rebuilt.m3u8"}}"""
+            else """{"js":{"data":[{"id":"new-file","is_episode":true,"series_number":1,
+                "season_number":1,"name":"Episode 1","cmd":"/media/file_new-file.mpg"}],"total_items":1}}"""
+        }
+        vm.retryPlayback(32_000L, failed)
+        await { mutable.value.nowPlaying?.playbackAttemptId != failed.playbackAttemptId }
+        val retried = requireNotNull(mutable.value.nowPlaying)
+        assertEquals("https://media.invalid/rebuilt.m3u8", retried.url)
+        assertEquals("new-file", retried.media.portalEpisodeId)
+        assertEquals(32_000L, retried.resumePositionMillis)
+        assertNotEquals(failed.decoderSessionId, retried.decoderSessionId)
+        assertEquals(0, retried.decoderRecoveryCount)
+        assertEquals(3, requests.size) // season metadata, selected file detail, create_link
+        assertTrue(requests.last(), "cmd=/media/file_new-file.mpg" in requests.last())
+        assertNull(mutable.value.error)
+    }
+
+    @Test fun recentEpisodeOutsideTheCachedPageRefreshesTheSelectedEpisodeInsteadOfUsingItsSavedUrl() {
+        val playing = start(PortalType.STALKER)
+        val container = series.copy(command = "/media/container.mpg")
+        val saved = playing.episodeQueue.last().copy(id = "show:1:2", command = "https://expired.invalid/old")
+        val cache = EpisodeSeasonCache(playing.profileKey, series.id, 1, listOf(1),
+            listOf(playing.media), hasMore = true, iptvEpisodes = listOf(playing.media))
+        NikTvViewModel::class.java.getDeclaredField("episodeSeasonCaches").apply { isAccessible = true }
+            .set(vm, listOf(cache))
+        responseOverride = { request -> if ("action=create_link" in request)
+            """{"js":{"cmd":"ffmpeg https://media.invalid/rebuilt.m3u8"}}"""
+            else """{"js":{"data":[{"id":"current-file","is_episode":true,"series_number":2,
+                "season_number":1,"name":"Episode 2","cmd":"/media/file_current-file.mpg"}],"total_items":1}}"""
+        }
+        mutable.value = mutable.value.copy(nowPlaying = null,
+            playbackProgress = listOf(PlaybackProgress(providerProgressKey(playing.profileKey, saved,
+                CatalogType.SERIES, container), 32_000, 600_000)))
+        vm.openRecent(RecentItem(FavoriteKind.EPISODE, saved, series = container, profileKey = playing.profileKey))
+        await { mutable.value.nowPlaying != null }
+        assertEquals("current-file", mutable.value.nowPlaying?.media?.portalEpisodeId)
+        assertEquals("/media/file_current-file.mpg", mutable.value.nowPlaying?.media?.command)
+        assertEquals(32_000L, mutable.value.nowPlaying?.resumePositionMillis)
+        assertEquals(3, requests.size)
         assertNull(mutable.value.error)
     }
 

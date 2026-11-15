@@ -77,6 +77,7 @@ interface UserSyncDao {
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE accountId = :accountId") fun observePendingCount(accountId: String): Flow<Int>
     @Query("DELETE FROM sync_outbox WHERE accountId = :accountId AND mutationId IN (:ids)") suspend fun acknowledge(accountId: String, ids: List<String>)
     @Query("SELECT * FROM user_local_preferences WHERE accountId=:accountId AND profileId=:profileId") suspend fun preferences(accountId: String, profileId: String): List<UserLocalPreference>
+    @Query("SELECT value FROM user_local_preferences WHERE accountId=:accountId AND profileId=:profileId AND name=:name") suspend fun preferenceValue(accountId: String, profileId: String, name: String): String?
     @Query("SELECT * FROM user_local_preferences WHERE accountId=:accountId") suspend fun allPreferences(accountId: String): List<UserLocalPreference>
     @Query("SELECT * FROM user_local_preferences WHERE accountId=:accountId AND profileId=:profileId") fun observePreferences(accountId: String, profileId: String): Flow<List<UserLocalPreference>>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putPreference(value: UserLocalPreference)
@@ -635,6 +636,10 @@ class UserSyncStore private constructor(private val context: Context) {
         else -> value
     }
     private fun mergeLocalMediaMetadata(remote: JsonElement, local: JsonElement?): JsonElement = when {
+        // A history record is keyed by series, but its nested lastPlayed changes
+        // episodes. Never combine that new identity with the old local command,
+        // headers or DRM after the portable snapshot stripped those fields.
+        remote is JsonObject && local is JsonObject && mediaIdentityChanged(remote, local) -> remote
         remote is JsonObject && local is JsonObject -> JsonObject((remote.keys + local.keys.filter { it in SECRET_FIELDS }).associateWith { name ->
             val incoming = remote[name]
             val cached = local[name]
@@ -645,6 +650,14 @@ class UserSyncStore private constructor(private val context: Context) {
             }
         })
         else -> remote
+    }
+    private fun mediaIdentityChanged(remote: JsonObject, local: JsonObject): Boolean {
+        if (remote["id"] !is JsonPrimitive || local["id"] !is JsonPrimitive) return false
+        return listOf("id", "seasonNumber", "episodeNumber", "portalSeasonId", "portalEpisodeId").any { name ->
+            val incoming = (remote[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            val cached = (local[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            incoming != null && cached != null && incoming != cached
+        }
     }
     private fun collection(name: String): String = when (name) {
         "favorites" -> "favorites"; "recently_played" -> "history"; "playback_progress" -> "progress"; "watched_series" -> "series"; else -> "preferences"

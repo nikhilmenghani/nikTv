@@ -17,12 +17,13 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DecoderRestartViewModelTest {
-    @Test fun connectionFailuresAndStartupTimeoutOfferFullSessionRestart() {
-        assertTrue(restartSessionForPlaybackFailure(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, false, false))
-        assertTrue(restartSessionForPlaybackFailure(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT, false, false))
-        assertTrue(restartSessionForPlaybackFailure(null, false, true))
-        assertTrue(restartSessionForPlaybackFailure(null, true, false))
-        assertFalse(restartSessionForPlaybackFailure(androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, false, false))
+    @Test fun networkAndStartupFailuresRefreshSourceInsteadOfReusingFailedUrl() {
+        assertFalse(retryWithoutRefreshingSource(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, false, false))
+        assertFalse(retryWithoutRefreshingSource(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT, false, false))
+        assertFalse(retryWithoutRefreshingSource(null, false, true))
+        assertTrue(retryWithoutRefreshingSource(null, true, false))
+        assertFalse(retryWithoutRefreshingSource(androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, false, false))
+        assertFalse(retryWithoutRefreshingSource(null, true, true))
     }
     private val scheduler = TestCoroutineScheduler()
     private lateinit var vm: NikTvViewModel

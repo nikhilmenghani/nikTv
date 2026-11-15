@@ -6868,7 +6868,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     resetDecoderSession)
             } else {
                 withAutomaticSessionRetry(session, playbackRequestId = requestId) { activeSession ->
-                    resolvePlayback(item, type, series, episodes, forceFreshUrl || activeSession.token != session.token,
+                    // A renewed token requires a fresh create_link, which playableUrl
+                    // always performs. Loaded episode identities do not expire with it.
+                    resolvePlayback(item, type, series, episodes, forceFreshUrl,
                         authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter, userScope,
                         resetDecoderSession)
                 }
@@ -6908,7 +6910,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val ownsPortal = sessionOwner(session.profile)
         val remoteTarget = if (lanPlaybackDelegate.isInitialized()) lanPlayback.state.value.target else null
         val playbackStartedAt = SystemClock.elapsedRealtime()
+        if (com.nikhil.niktv.BuildConfig.DEBUG) Log.i("NikTvTransition", "preparation_started freshMetadata=$forceFreshUrl commandPresent=${!requestedItem.command.isNullOrBlank()}")
         val logicalPortalId = userScope?.let { userSyncStore.registerPortal(it.accountId, session.profile) }.orEmpty()
+        val identityResolvedAt = SystemClock.elapsedRealtime()
         val offlineEntry = _state.value.offlineDownloads
             .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${requestedItem.id}" }
         val offlineUrl = withContext(Dispatchers.IO) { offlineEntry
@@ -6918,13 +6922,14 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         // the validation step for Stalker. Xtream builds its URL from the stream
         // ID/current credentials even if a restored queue has no embedded command.
         // Only rebuild metadata after a failure or when Stalker's command is absent.
-        var item = if (forceFreshUrl) {
+        var item = if (offlineUrl != null) requestedItem else if (forceFreshUrl) {
             portal.refreshPlaybackItem(session, requestedItem, type, series)
         } else {
             requestedItem.takeIf { offlineUrl != null || !it.command.isNullOrBlank() ||
                 (session.profile.portalType == PortalType.XTREAM && it.id.isNotBlank()) }
                 ?: portal.refreshPlaybackItem(session, requestedItem, type, series)
         }
+        val metadataResolvedAt = SystemClock.elapsedRealtime()
         // Xtream URLs are cheaply built from current credentials. Stalker links are session-bound.
         // Offline downloads never require a provider request, even when provider-first is selected.
         val url = offlineUrl ?: try {
@@ -6932,10 +6937,13 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (container: com.nikhil.niktv.data.PortalVodSeriesContainerException) { throw container }
         catch (failure: Exception) {
-            if (forceFreshUrl) throw failure
+            // Retrying catalogue calls with the same rejected token cannot repair
+            // authorization and hides the original failure behind another lookup.
+            if (forceFreshUrl || failure.isAuthenticationFailure()) throw failure
             item = portal.refreshPlaybackItem(session, item, type, series)
             portal.playableUrl(session, item, type)
         }
+        val linkResolvedAt = SystemClock.elapsedRealtime()
         Log.i(
             "NikTvPlayback",
             "Resolved ${type.name} item=${item.id} in ${SystemClock.elapsedRealtime() - playbackStartedAt}ms"
@@ -6989,11 +6997,22 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
         // Use a profile-scoped, content-based key so resume survives session/token refreshes.
         val progressKey = progressKeyFor(session.profile, item, type, series)
+        val requestedProgressKey = progressKeyFor(session.profile, requestedItem, type, series)
         val legacyProgressKey = legacyProgressKeyFor(item, type)
         val previousProgressKey = legacyPortalProgressKeyFor(session.profile, item, type, series)
         // Keep backward compatibility with already-saved progress entries.
-        val refreshedProgress = userScope?.let { store.scoped(it).playbackProgress.first() } ?: _state.value.playbackProgress
+        val queueBuiltAt = SystemClock.elapsedRealtime()
+        val refreshedProgress = userScope?.let { store.playbackProgressSnapshot(it) } ?: _state.value.playbackProgress
+        val progressReadAt = SystemClock.elapsedRealtime()
+        if (com.nikhil.niktv.BuildConfig.DEBUG || progressReadAt - playbackStartedAt >= 3_000L) {
+            // Release keeps warnings. No title, URL, token or provider credentials.
+            Log.w("NikTvPlayback", "Slow playback preparation type=${type.name} " +
+                "totalMs=${progressReadAt - playbackStartedAt} identityMs=${identityResolvedAt - playbackStartedAt} " +
+                "metadataMs=${metadataResolvedAt - identityResolvedAt} linkMs=${linkResolvedAt - metadataResolvedAt} " +
+                "queueMs=${queueBuiltAt - linkResolvedAt} progressMs=${progressReadAt - queueBuiltAt}")
+        }
         val saved = refreshedProgress.firstOrNull { it.key == progressKey }
+            ?: refreshedProgress.firstOrNull { it.key == requestedProgressKey }
             ?: refreshedProgress
                 .asSequence()
                 .filter { it.key == legacyProgressKey || it.key == previousProgressKey }
@@ -7173,6 +7192,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             )
         }
         val committedIds = _state.value.nowPlaying?.let(::playbackNavigationQueue).orEmpty().map { it.id }
+        if (com.nikhil.niktv.BuildConfig.DEBUG) Log.i("NikTvTransition", "player_committed totalMs=${SystemClock.elapsedRealtime() - playbackStartedAt}")
         if (queueFilter != null) navigationCursor.select(requestId, committedIds, item.id,
             committedIds.withIndex().filter { it.value == item.id }
                 .getOrNull(queueFilter.selectedOrdinal)?.index)
@@ -7319,6 +7339,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             }
         } catch (firstError: Throwable) {
             if (firstError is kotlinx.coroutines.CancellationException) throw firstError
+            if (com.nikhil.niktv.BuildConfig.DEBUG && playbackRequestId != null) Log.i("NikTvTransition",
+                "provider_attempt_failed authentication=${firstError.isAuthenticationFailure()} error=${firstError.javaClass.simpleName}")
             val snapshot = _state.value
             if (!snapshot.automaticReauthentication ||
                 activeSession.profile.portalType != PortalType.STALKER ||
@@ -7330,6 +7352,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             if (owns() && (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId)))
                 _state.update { it.copy(reauthenticating = true) }
             val refreshed = try {
+                if (com.nikhil.niktv.BuildConfig.DEBUG && playbackRequestId != null) Log.i("NikTvTransition", "reauthentication_started")
                 sessionRefreshMutex.withLock {
                     _state.value.session
                         ?.takeIf {
@@ -7339,6 +7362,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                         ?: refreshSession(activeSession.profile)
                 }
             } finally {
+                if (com.nikhil.niktv.BuildConfig.DEBUG && playbackRequestId != null) Log.i("NikTvTransition", "reauthentication_finished")
                 if (owns() && (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId)))
                     _state.update { it.copy(reauthenticating = false) }
             }
@@ -7368,7 +7392,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val ownedStore = scope?.let(store::scoped) ?: store
         val profile = playing.profileKey
         viewModelScope.launch {
+            val progressStartedAt = SystemClock.elapsedRealtime()
             progressSaveMutex.withLock {
+                val progressLockAt = SystemClock.elapsedRealtime()
                 if (scope != null) userSyncStore.rememberPrivateViewing(scope, RecentItem(
                     when (playing.catalogType) {
                         CatalogType.MOVIES -> FavoriteKind.MOVIE
@@ -7383,6 +7409,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 val updated = (listOf(sample) + current.filterNot { it.key == key }).take(MAX_PROGRESS_ITEMS)
                 // Persist the mutation/outbox first. Work scheduling cannot be the durability boundary.
                 ownedStore.savePlaybackProgress(updated, scope)
+                if (com.nikhil.niktv.BuildConfig.DEBUG) Log.i("NikTvTransition",
+                    "progress_saved action=${sample.action} waitMs=${progressLockAt - progressStartedAt} " +
+                        "saveMs=${SystemClock.elapsedRealtime() - progressLockAt}")
                 if (scope == store.captureScope()) _state.update { it.copy(playbackProgress = updated) }
                 if (com.nikhil.niktv.data.meaningfulViewing(positionMillis, durationMillis)) {
                     ownedStore.saveRecommendationProgress(sample, scope)
@@ -7503,6 +7532,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     }
 
     fun playNextEpisode() {
+        if (com.nikhil.niktv.BuildConfig.DEBUG) Log.i("NikTvTransition", "next_requested")
         val snapshot = _state.value
         val playing = snapshot.nowPlaying ?: return
         playing.alternateSource?.let { source ->
@@ -8638,23 +8668,30 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             FavoriteKind.MOVIE -> play(recent.media, CatalogType.MOVIES)
             FavoriteKind.EPISODE -> playbackTask(requestId) {
                 val session = requireNotNull(_state.value.session)
-                val episodes = recent.series?.let { series ->
-                    runCatching { recentEpisodeQueue(session, series, recent.media.seasonNumber) }
-                        .getOrDefault(emptyList())
-                }.orEmpty().ifEmpty { listOf(recent.media) }
-                playInternal(recent.media, CatalogType.SERIES, recent.series, episodes, requestId = requestId)
+                val series = recent.series?.let { resolveSeriesContainer(session, it) }
+                val episodes = if (series != null) try {
+                    recentEpisodeQueue(session, series, recent.media.seasonNumber)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { emptyList() } else emptyList()
+                val currentEpisode = episodes.firstOrNull { it.id == recent.media.id }
+                playInternal(currentEpisode ?: recent.media, CatalogType.SERIES, series,
+                    episodes.ifEmpty { listOf(recent.media) },
+                    forceFreshUrl = currentEpisode == null && series != null, requestId = requestId)
             }
             FavoriteKind.SERIES -> playbackTask(requestId) {
                 val session = requireNotNull(_state.value.session)
                 val savedEpisode = recent.lastPlayed
-                val episodes = savedEpisode?.let { episode ->
-                    runCatching { recentEpisodeQueue(session, recent.media, episode.seasonNumber) }
-                        .getOrDefault(emptyList())
-                }.orEmpty().ifEmpty { listOfNotNull(savedEpisode) }
-                val resumeEpisode = savedEpisode?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
-                if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes, requestId = requestId)
+                val series = if (savedEpisode != null) resolveSeriesContainer(session, recent.media) else recent.media
+                val episodes = if (savedEpisode != null) try {
+                    recentEpisodeQueue(session, series, savedEpisode.seasonNumber)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { emptyList() } else emptyList()
+                val currentEpisode = savedEpisode?.let { saved -> episodes.firstOrNull { it.id == saved.id } }
+                val resumeEpisode = currentEpisode ?: savedEpisode
+                if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, series,
+                    episodes.ifEmpty { listOf(resumeEpisode) }, forceFreshUrl = currentEpisode == null, requestId = requestId)
                 else {
-                    _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, playbackReturnFocusId = null, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = episodes) }
+                    _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = series, playbackReturnFocusId = null, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = episodes) }
                 }
             }
         }

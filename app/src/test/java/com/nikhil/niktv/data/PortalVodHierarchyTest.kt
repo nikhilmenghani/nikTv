@@ -17,6 +17,31 @@ import kotlin.concurrent.thread
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class PortalVodHierarchyTest {
+    @Test fun episodeLinkUsesTheRequestedFileWhenTheDetailResponseContainsOtherEpisodesFirst() {
+        fixture({ request -> if ("action=create_link" in request)
+            """{"js":{"cmd":"ffmpeg https://media.invalid/selected.mp4"}}"""
+            else """{"js":{"data":[{"id":"other"},{"id":"selected"}]}}"""
+        }) { client, session, requests ->
+            val episode = MediaItem("show:1:2", "Episode 2", null, "/media/file_selected.mpg",
+                seasonNumber = 1, episodeNumber = 2, portalSeasonId = "season1", portalEpisodeId = "selected")
+            client.playableUrl(session, episode, CatalogType.SERIES)
+            assertTrue(requests.last(), java.net.URLDecoder.decode(requests.last(), "UTF-8")
+                .contains("cmd=/media/file_selected.mpg"))
+            assertEquals(2, requests.size)
+        }
+    }
+    @Test fun ambiguousEpisodeDetailsDoNotReplaceTheSelectedCommandWithAnUnrelatedFile() {
+        fixture({ request -> if ("action=create_link" in request)
+            """{"js":{"cmd":"ffmpeg https://media.invalid/selected.mp4"}}"""
+            else """{"js":{"data":[{"id":"other"},{"id":"another"}]}}"""
+        }) { client, session, requests ->
+            val episode = MediaItem("show:1:2", "Episode 2", null, "/media/file_selected.mpg",
+                seasonNumber = 1, episodeNumber = 2, portalSeasonId = "season1", portalEpisodeId = "selected")
+            client.playableUrl(session, episode, CatalogType.SERIES)
+            assertTrue(requests.last(), java.net.URLDecoder.decode(requests.last(), "UTF-8")
+                .contains("cmd=/media/file_selected.mpg"))
+        }
+    }
     private val container = MediaItem("movie", "Fixture event", null, "placeholder", portalCategoryId = "sports")
     private fun fixture(body: (String) -> String, test: suspend (StalkerPortalClient, PortalSession, List<String>) -> Unit) {
         val requests = Collections.synchronizedList(mutableListOf<String>())

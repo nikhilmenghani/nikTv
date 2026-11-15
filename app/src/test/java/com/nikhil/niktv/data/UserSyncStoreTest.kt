@@ -21,6 +21,51 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserSyncStoreTest {
+    @Test fun playbackSnapshotReadsFreshSyncedProgressForItsCapturedViewerOnly(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val store = ProfileStore(context, memoryPreferences())
+        store.savePlaybackProgress(listOf(PlaybackProgress("fixture-progress", 32_000, 600_000)))
+        assertEquals(32_000L, store.playbackProgressSnapshot(owner).single().positionMillis)
+        val progress = users.snapshot("101").single { it.collection == "progress" }
+        users.acknowledge("101", users.pending("101").map { it.mutationId })
+        users.merge("101", listOf(progress.copy(payload = progress.payload.replace("32000", "42000"),
+            revision = progress.revision + 1, deviceId = "other-device", mutationId = "later-progress")))
+        val other = users.createProfile("Other viewer")
+        users.selectProfile(other.id)
+        assertTrue(store.playbackProgressSnapshot(UserScope("101", other.id)).isEmpty())
+        assertEquals(42_000L, store.playbackProgressSnapshot(owner).single().positionMillis)
+    }
+    @Test fun syncedEpisodeAdvanceDoesNotInheritThePreviousEpisodesPlaybackCommand(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val portal = PortalProfile("Fixture", "https://provider.invalid", "")
+        users.associatePortal(owner, portal)
+        val store = ProfileStore(context, memoryPreferences())
+        val series = MediaItem("series", "Fixture series", null, "/media/container.mpg")
+        val first = MediaItem("series:1:1", "Episode 1", null, "/media/file_first.mpg",
+            seasonNumber = 1, episodeNumber = 1, portalSeasonId = "season", portalEpisodeId = "first")
+        store.saveRecentlyPlayed(listOf(RecentItem(FavoriteKind.SERIES, series,
+            lastPlayed = first, profileKey = portal.cacheKey())))
+        val history = users.snapshot("101").single { it.collection == "history" }
+        users.acknowledge("101", users.pending("101").map { it.mutationId })
+        // Reimport the same identity: local commands remain usable and stay off the wire.
+        users.merge("101", listOf(history.copy(revision = history.revision + 1,
+            deviceId = "other", mutationId = "same-episode")))
+        assertEquals(first.command, store.recentlyPlayed.first().single().lastPlayed?.command)
+        val nextPayload = history.payload.replace("series:1:1", "series:1:2")
+            .replace("Episode 1", "Episode 2").replace("\"episodeNumber\":1", "\"episodeNumber\":2")
+            .replace("\"portalEpisodeId\":\"first\"", "\"portalEpisodeId\":\"second\"")
+        users.merge("101", listOf(history.copy(payload = nextPayload, revision = history.revision + 2,
+            deviceId = "other", mutationId = "next-episode")))
+        val restored = store.recentlyPlayed.first().single()
+        assertEquals("series:1:2", restored.lastPlayed?.id)
+        assertEquals("second", restored.lastPlayed?.portalEpisodeId)
+        assertNull(restored.lastPlayed?.command)
+        assertEquals(series.command, restored.media.command)
+    }
     @Test fun publicArtworkAndConfirmedIdentitySurviveSyncWithoutProviderUrls(): Unit = runBlocking {
         users.selectAccount("101"); users.initializeDefaults("101")
         val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
