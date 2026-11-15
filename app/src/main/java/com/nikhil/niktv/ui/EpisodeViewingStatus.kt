@@ -18,16 +18,18 @@ import androidx.compose.ui.unit.sp
 
 /** One quiet, non-interactive status below episode metadata on every layout. */
 @Composable
-internal fun EpisodeViewingStatus(remaining: String?, lastWatched: Boolean, compact: Boolean = false, singleLine: Boolean = false) {
+internal fun EpisodeViewingStatus(remaining: String?, lastWatched: Boolean, compact: Boolean = false, singleLine: Boolean = false,
+    stacked: Boolean = false) {
     if (!lastWatched && remaining == null) return
     val watched = remaining == "Watched"
     val color = if (lastWatched && !watched) Color(0xFFFFA0AA) else Color(0xFFB9BDC7)
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = if (stacked) Alignment.Top else Alignment.CenterVertically) {
         val icon = if (watched) Icons.Default.Check else if (lastWatched) Icons.Default.History else null
         icon?.let { Icon(it, contentDescription = null, modifier = Modifier.size(14.dp), tint = color) }
-        Text(if (compact) remaining ?: "Last watched"
+        Text(if (stacked) listOfNotNull("Last watched".takeIf { lastWatched }, remaining).joinToString("\n")
+            else if (compact) remaining ?: "Last watched"
             else listOfNotNull("Last watched".takeIf { lastWatched }, remaining).joinToString(" · "),
             color = color, style = if (compact) MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp) else MaterialTheme.typography.labelSmall,
-            maxLines = if (compact || singleLine) 1 else Int.MAX_VALUE, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            maxLines = if (stacked) 2 else if (compact || singleLine) 1 else Int.MAX_VALUE, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }

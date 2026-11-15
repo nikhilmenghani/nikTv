@@ -254,7 +254,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val artworkHeight = detailDiscoveryHeroHeight(phone, television)
     val heroHeight = if (compactSeries && phone)
         (configuration.screenHeightDp * .30f).dp.coerceAtLeast(220.dp)
-        else if (tabletSeriesOverlay) 160.dp else artworkHeight
+        else if (tabletSeriesOverlay) (configuration.screenHeightDp * .40f).dp else artworkHeight
     var compactInfoOpen by remember(item.id) { mutableStateOf(false) }
     val compactInfoRequester = remember(item.id) { FocusRequester() }
     if (compactInfoOpen) FullDescriptionDialog(metadata.card.title,
@@ -420,6 +420,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
             DiscoveryHero(metadata.card, null, heroHeight, landscape,
                 compact = shortWide || (television && (wideSeries || configuration.screenHeightDp < 480)), detail = true, loading = false,
                 stableSeriesHero = wideSeries,
+                trailingActions = if (wideSeries) LocalProviderEpisodeControls.current else null,
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},
                 onDown = { if (type == CatalogType.SERIES) down() else if (related.isNotEmpty()) focus(relatedEntry) else if (people.isNotEmpty()) focus(castEntry) else down() },
@@ -434,7 +435,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                     if (extraActions != null) extraActions()
                     else DetailMoreActions(cast = if (people.isNotEmpty()) ({ focus(castEntry) }) else null,
                         related = if (related.isNotEmpty()) ({ focus(relatedEntry) }) else null)
-                    LocalProviderEpisodeControls.current?.invoke()
+                    if (!wideSeries) LocalProviderEpisodeControls.current?.invoke()
                 }))
             progressLabel?.let {
                 Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 20.dp else 32.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {

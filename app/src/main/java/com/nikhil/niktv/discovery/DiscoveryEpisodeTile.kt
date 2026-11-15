@@ -14,6 +14,7 @@ import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
@@ -37,6 +38,7 @@ internal val LocalSeriesArtworkGlass = staticCompositionLocalOf { false }
 internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String, metadata: String,
     modifier: Modifier = Modifier, progress: Float? = null, remaining: String? = null,
     resume: Boolean = false, listView: Boolean = false, overview: String? = null, compactList: Boolean = false,
+    portrait: Boolean = false,
     onFocus: () -> Unit = {}, onClick: () -> Unit, onLongClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
@@ -64,7 +66,30 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
                 }
             }
         }
-        if (listView) Row(Modifier.padding(if (shortWide || compactList) 5.dp else if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (shortWide || compactList) 8.dp else if (compact) 10.dp else 12.dp),
+        if (portrait) Box(Modifier.fillMaxSize()) {
+            if (!artwork.isNullOrBlank()) AsyncImage(thumbnailArtworkUrl(artwork, 342), null,
+                Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else Icon(Icons.Default.Movie, null, Modifier.align(Alignment.Center), tint = Color.Gray)
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                0f to Color.Transparent, .25f to Color(0x22090B10), .6f to Color(0xE6090B10), 1f to Color(0xFF090B10))))
+            val scale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, color = Color(0xFFCED2DA), fontSize = 10.sp, lineHeight = 12.sp, maxLines = 1)
+                Text(title, color = Color.White, fontSize = 12.sp, lineHeight = 15.sp,
+                    fontWeight = FontWeight.SemiBold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(metadata.ifBlank { " " }, color = Color(0xFFB9BDC7), fontSize = 10.sp,
+                    lineHeight = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(Modifier.fillMaxWidth().height(30.dp * scale)) {
+                    EpisodeViewingStatus(remaining, resume, compact = true, stacked = true)
+                }
+            }
+            progress?.takeIf { it > 0 }?.let {
+                LinearProgressIndicator(progress = { it.coerceIn(0f, 1f) },
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
+                    color = Color(0xFFE50925), trackColor = Color(0xFF4B4F58), drawStopIndicator = {})
+            }
+        } else if (listView) Row(Modifier.padding(if (shortWide || compactList) 5.dp else if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (shortWide || compactList) 8.dp else if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
             image(Modifier.width(if (shortWide) 64.dp else if (compactTvList) 88.dp else if (compactList) 104.dp else if (compact) 92.dp else 112.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (shortWide || compactList) 2.dp else 4.dp)) {

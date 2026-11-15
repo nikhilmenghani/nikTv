@@ -55,6 +55,7 @@ internal fun SeriesEpisodeToolbar(
     compact: Boolean,
     inline: Boolean = false,
     withinPanel: Boolean = false,
+    posterRowLayout: Boolean = false,
     newestFirst: Boolean,
     onNewestFirst: (Boolean) -> Unit,
     listView: Boolean,
@@ -171,7 +172,7 @@ internal fun SeriesEpisodeToolbar(
                     run {
                         Spacer(Modifier.height(6.dp))
                         EpisodeSortMenuGroup {
-                        listOf(true to "List view", false to "Grid view").forEach { (list, label) ->
+                        listOf(true to "List view", false to if (posterRowLayout) "Poster row" else "Grid view").forEach { (list, label) ->
                             EpisodeSortMenuItem(label, if (list) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
                                 selected = listView == list,
                                 onClick = { selectLayout(list); dismissSort() })
@@ -353,6 +354,7 @@ internal fun SeriesSeasonSidebar(seasons: List<Int>, selected: Int?, counts: Map
 }
 
 /** A real 44dp input, rather than shrinking Material's 56dp text-field decoration. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, close: () -> Unit,
     modifier: Modifier = Modifier, readOnly: Boolean = false,
@@ -364,6 +366,14 @@ internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, c
     Surface(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp), color = Color(0xFF171B23),
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58))) {
         BasicTextField(value, change, modifier.fillMaxSize().onFocusChanged { focused = it.hasFocus; editorFocused = it.isFocused }
+            // Fire TV's floating keyboard need not publish IME insets. Consume
+            // its Back sequence before the IME can move focus to another control.
+            .onPreInterceptKeyBeforeSoftKeyboard { event ->
+                if (editorFocused && event.key == Key.Back) {
+                    if (event.type == KeyEventType.KeyUp) close()
+                    true
+                } else false
+            }
             .onPreviewKeyEvent {
                 if (readOnly && editorFocused && activate != null && it.type == KeyEventType.KeyUp &&
                     it.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) { activate(); true } else false

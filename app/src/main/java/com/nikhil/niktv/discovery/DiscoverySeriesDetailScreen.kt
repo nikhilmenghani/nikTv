@@ -56,6 +56,7 @@ internal fun DiscoverySeriesDetailScreen(
     var hasCast by remember(card.key) { mutableStateOf(false) }
     var lastHeroControl by remember(card.key) { mutableStateOf<FocusRequester?>(null) }
     var navigationMove by remember(card.key) { mutableStateOf<Job?>(null) }
+    val episodeEntry = remember(card.key) { arrayOfNulls<() -> Unit>(1) }
     DisposableEffect(card.key) { onDispose { navigationMove?.cancel() } }
     fun focusHeader(requester: FocusRequester) {
         navigationMove?.cancel()
@@ -65,6 +66,7 @@ internal fun DiscoverySeriesDetailScreen(
     }
     fun focusEpisodes() {
         navigationMove?.cancel()
+        if (!phone) episodeEntry[0]?.let { it(); return }
         navigationMove = scope.launch {
             repeat(20) { withFrameNanos { }; if (runCatching { episodesFocus.requestFocus() }.getOrDefault(false)) return@launch }
         }
@@ -138,13 +140,15 @@ internal fun DiscoverySeriesDetailScreen(
             DiscoverySeriesEpisodes(state, app.seriesStartSeason, episodesFocus,
                 { automaticSeason = null; initialFocusDone = true; loadSeason(it) }, play, download,
                 onFocus = {}, up = {
-                    val origin = lastHeroControl?.takeUnless {
-                        it == infoFocus && !hasSynopsis || it == castFocus && !hasCast
-                    } ?: if (primary != null) playFocus else backFocus
-                    focusHeader(origin)
-                    true
+                    if (!phone) { focusHeader(backFocus); true } else {
+                        val origin = lastHeroControl?.takeUnless {
+                            it == infoFocus && !hasSynopsis || it == castFocus && !hasCast
+                        } ?: if (primary != null) playFocus else backFocus
+                        focusHeader(origin)
+                        true
+                    }
                 }, down = { false }, modifier = Modifier.fillMaxSize(), lastWatched = lastWatched, loadInitialSeason = false,
-                onNewestFirstChanged = { newestFirst = it }, header = header)
+                onNewestFirstChanged = { newestFirst = it }, onEpisodeEntry = { episodeEntry[0] = it }, header = header)
         }
         ProviderDetailHeader(card.media, CatalogType.SERIES, app,
             play = { primary?.let { play(card, it.first, it.second) } },

@@ -42,12 +42,23 @@ class SharedSeriesControlsDeviceTest {
     private fun await(message: String, check: () -> Boolean) {
         val end = SystemClock.uptimeMillis() + 8_000
         while (SystemClock.uptimeMillis() < end) { if (check()) return; Thread.sleep(50) }
+        val focus = root()?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        println("Fixture failure: $message; focusText=${focus?.text}; focusDescription=${focus?.contentDescription}")
+        val screenshot = ins.uiAutomation.takeScreenshot()
+        try { java.io.File(ins.targetContext.externalCacheDir, "series-poster-row-failure.png").outputStream().use {
+            screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        } } finally { screenshot.recycle() }
         fail(message)
     }
     private fun key(value: Int) = ins.sendKeyDownUpSync(value)
+    private fun cardBounds(title: String): android.graphics.Rect {
+        var node = find(title)
+        while (node != null && !node.isClickable) node = node.parent
+        return android.graphics.Rect().also { requireNotNull(node).getBoundsInScreen(it) }
+    }
 
     @Test fun thousandEpisodesKeepConstantTimeToolbarAccessOnTabletAndTv() {
-        check(ins.targetContext.packageName.endsWith(".regression"))
+        check(ins.targetContext.packageName.endsWith(".regression") || ins.targetContext.packageName.endsWith(".debug"))
         for (television in listOf(false, true)) {
             val host = ins.startActivitySync(Intent(ins.targetContext, PlaybackFixtureHostActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
@@ -79,11 +90,29 @@ class SharedSeriesControlsDeviceTest {
                                 })
                         }
                     }
-                    LaunchedEffect(Unit) { repeat(5) { withFrameNanos { }; runCatching { entry.requestFocus() } } }
+                    LaunchedEffect(Unit) { repeat(300) {
+                        withFrameNanos { }
+                        if (host.hasWindowFocus() && runCatching { entry.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                    } }
                 } } }
                 await("Season dropdown rendered in TV=$television") { focused("Season 1") }
                 key(KeyEvent.KEYCODE_DPAD_DOWN)
                 await("Resume episode 2 in TV=$television") { focused("Fixture episode 2") }
+                val watchedBounds = cardBounds("Fixture episode 2")
+                key(KeyEvent.KEYCODE_DPAD_LEFT)
+                await("Poster row moves left to previous card in TV=$television") { focused("Fixture episode 3") }
+                val unwatchedBounds = cardBounds("Fixture episode 3")
+                assertEquals("Last watched retains the same card width", watchedBounds.width(), unwatchedBounds.width())
+                assertEquals("Last watched retains the same card height", watchedBounds.height(), unwatchedBounds.height())
+                // Traverse beyond the visible rail, including its virtualized items.
+                for (episode in 4..14) {
+                    key(KeyEvent.KEYCODE_DPAD_LEFT)
+                    await("Offscreen episode $episode in TV=$television") { focused("Fixture episode $episode") }
+                }
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                await("One key returns from any episode to options in TV=$television") { focused("Episode options") }
+                key(KeyEvent.KEYCODE_DPAD_LEFT)
+                await("Search after returning from the rail in TV=$television") { focused("Search episodes") }
                 key(KeyEvent.KEYCODE_DPAD_LEFT)
                 await("One key returns to season in TV=$television") { focused("Season 1") }
                 key(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -91,7 +120,24 @@ class SharedSeriesControlsDeviceTest {
                 key(KeyEvent.KEYCODE_DPAD_RIGHT)
                 await("Options are reachable in TV=$television") { focused("Episode options") }
                 key(KeyEvent.KEYCODE_DPAD_DOWN)
-                await("Return preserves episode 2 in TV=$television") { focused("Fixture episode 2") }
+                await("Return preserves episode 14 in TV=$television") { focused("Fixture episode 14") }
+                val ordinary = cardBounds("Fixture episode 14")
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Toolbar return retains the same card in TV=$television") { focused("Fixture episode 14") }
+                assertEquals(ordinary, cardBounds("Fixture episode 14"))
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                key(KeyEvent.KEYCODE_DPAD_LEFT)
+                await("Search receives focus without opening its editor") { focused("Search episodes") && find("Close episode search") == null }
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("OK starts episode search editing") { find("Close episode search") != null &&
+                    ins.targetContext.getSystemService(android.view.inputmethod.InputMethodManager::class.java).isAcceptingText }
+                key(KeyEvent.KEYCODE_BACK)
+                await("First Back closes the editor and returns directly to Search") {
+                    find("Close episode search") == null && focused("Search episodes")
+                }
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Search dismissal preserves episode 14") { focused("Fixture episode 14") }
             } finally { ins.runOnMainSync { host.finish() }; ins.waitForIdleSync() }
         }
     }

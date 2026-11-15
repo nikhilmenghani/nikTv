@@ -34,6 +34,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     onFocus: () -> Unit, up: () -> Boolean, down: () -> Boolean,
     modifier: Modifier = Modifier, lastWatched: Pair<Int, Int>? = null, loadInitialSeason: Boolean = true,
     onNewestFirstChanged: (Boolean) -> Unit = {},
+    onEpisodeEntry: ((() -> Unit) -> Unit) = {},
     header: (@Composable (@Composable () -> Unit) -> Unit)? = null) {
     val card = state.detail ?: return
     val alternateSource = LocalPlayAlternateSource.current
@@ -43,12 +44,12 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         configuration.screenWidthDp > configuration.screenHeightDp
     val seasons = state.details?.seasons.orEmpty()
     val chosen = state.season ?: discoveryInitialSeriesSeason(state.details, startSeason, lastWatched?.first)
-    var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
+    var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(!wide) }
     val shortWindow = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
-    val gridColumns = seriesEpisodeGridColumns(shortWindow)
     val listColumns = seriesEpisodeListColumns(configuration.smallestScreenWidthDp, configuration.screenWidthDp, context.isTvLikeDevice(configuration))
     val twoColumnList = listView && listColumns == 2
-    val viewportColumns = if (twoColumnList) listColumns else if (wide && !listView) gridColumns else 1
+    val posterRow = wide && !listView
+    val viewportColumns = if (twoColumnList) listColumns else 1
     var pendingLayoutEpisode by remember(card.key) { mutableStateOf<Int?>(null) }
     var newest by rememberSaveable(state.profile, card.key) { mutableStateOf(true) }
     LaunchedEffect(newest) { onNewestFirstChanged(newest) }
@@ -150,6 +151,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         val index = if (fromStart) 0 else episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.coerceAtLeast(0)
         focusEpisode(index)
     }
+    SideEffect { onEpisodeEntry { enterEpisodes() } }
     LaunchedEffect(episodes, lastWatched, chosen, pendingEpisodeEntry) {
         if (episodes.isNotEmpty() && lastWatched != null && lastWatched.first == chosen) {
             val identity = "${lastWatched.first}:${lastWatched.second}"
@@ -189,7 +191,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 loadSeason(season)
             }) },
             count = seriesEpisodeCountLabel(episodes.size, false, searchOpen && query.isNotBlank()),
-            compact = !wide, inline = header != null && !wide, withinPanel = wide, newestFirst = newest, onNewestFirst = {
+            compact = !wide, inline = header != null, posterRowLayout = wide, newestFirst = newest, onNewestFirst = {
                 newest = it; rememberEpisode(null)
             },
             listView = listView, onListView = {
@@ -272,12 +274,21 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             }
             Box(cell) {
             DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
-                listView = listView, compactList = twoColumnList, overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
-                modifier = (if (listView || wide) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
+                listView = listView, compactList = twoColumnList, portrait = posterRow,
+                overview = episode.overview, resume = lastWatched == (episode.season to episode.number),
+                modifier = (if (posterRow) Modifier.fillMaxSize() else if (listView || wide) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else {
                         val cursor = episodes.indexOfFirst { "${it.season}:${it.number}" == focusedEpisode() }.takeIf { it >= 0 } ?: index
-                        if (viewportColumns > 1) {
+                        if (posterRow) {
+                            when (event.key) {
+                                Key.DirectionLeft -> if (cursor > 0) focusEpisode(cursor - 1) else focusSeasonChoice()
+                                Key.DirectionRight -> if (cursor < episodes.lastIndex) focusEpisode(cursor + 1) else runCatching { sort.requestFocus() }.getOrDefault(false)
+                                Key.DirectionUp, Key.Menu -> runCatching { sort.requestFocus() }.getOrDefault(false)
+                                Key.DirectionDown -> true
+                                else -> false
+                            }
+                        } else if (viewportColumns > 1) {
                             val target = when (event.key) {
                                 Key.DirectionLeft -> seriesEpisodeGridMove(cursor, episodes.size, viewportColumns, dx = -1)
                                 Key.DirectionRight -> seriesEpisodeGridMove(cursor, episodes.size, viewportColumns, dx = 1)
@@ -339,21 +350,21 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 }
                 itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode, Modifier) }
             }
-        } else if (wide) SeriesEpisodeGrid(episodes, gridColumns, episodeState,
+        } else if (wide) SeriesEpisodeRow(episodes, episodeState,
             key = { "${it.season}:${it.number}" }, modifier = Modifier.weight(1f).fillMaxWidth(), content = tile)
         else if (!listView) LazyRow(modifier = Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }, ) { index, episode -> tile(index, episode, Modifier) }
         }
         }
         if (wide) {
-            header?.invoke({})
+            header?.invoke(toolbar)
             val short = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
             SeriesEpisodePanel(Modifier.weight(1f).fillMaxWidth()
                 .padding(start = if (short) 16.dp else 24.dp, end = if (short) 16.dp else 24.dp,
                     bottom = if (short) 8.dp else 16.dp), compact = short,
                 loading = "season" in state.loading || lastWatched?.takeIf { it.first == chosen }?.let {
                     positionedResumes[it.first] != "${it.first}:${it.second}" } == true,
-                loadingColumns = viewportColumns, toolbar = toolbar) {
+                loadingColumns = if (posterRow) 6 else viewportColumns, posterRow = posterRow, toolbar = null) {
                 Column(Modifier.fillMaxSize(), content = episodeBody)
             }
         } else {

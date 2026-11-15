@@ -1563,7 +1563,8 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false },
     categoryActions: (@Composable () -> Unit)? = null, trailerMedia: MediaItem? = null,
     emptyTitle: String = "Discover something to watch", contentInset: Dp = 0.dp,
-    openDetails: Boolean = false, stableSeriesHero: Boolean = false) {
+    openDetails: Boolean = false, stableSeriesHero: Boolean = false,
+    trailingActions: (@Composable () -> Unit)? = null) {
     val hasCarousel = carousel && count > 1
     if (portraitPhone) {
         val context = LocalContext.current
@@ -1666,14 +1667,21 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         }
         if (landscape) CompositionLocalProvider(LocalCollapsingDiscoveryActions provides true, LocalHeroActionSizing provides true) {
             // A single, fixed-height action row cannot reflow the page when a label expands.
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).then(actionNavigation)
+            Row(Modifier.fillMaxWidth().then(if (trailingActions == null) Modifier.horizontalScroll(rememberScrollState()) else Modifier).then(actionNavigation)
                 .focusProperties {
                     onExit = {
                         if (requestedFocusDirection == FocusDirection.Left || requestedFocusDirection == FocusDirection.Right)
                             cancelFocusChange()
                     }
                 }.focusGroup(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { actions() }
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (trailingActions == null) actions()
+                else {
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { actions() }
+                    trailingActions()
+                }
+            }
         } else FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth().then(actionNavigation)) { actions() }
 

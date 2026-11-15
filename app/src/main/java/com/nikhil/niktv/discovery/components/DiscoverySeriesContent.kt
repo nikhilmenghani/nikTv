@@ -208,11 +208,11 @@ internal fun DiscoverySeriesContent(
             episodeConfiguration.screenHeightDp >= episodeConfiguration.screenWidthDp
     val tabletEpisodeOverlay = !mobileEpisodeLayout
     val shortLandscapeEpisodes = episodeConfiguration.usesShortWideLayout(episodeIsTv)
-    var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(true) }
-    val gridColumns = seriesEpisodeGridColumns(shortLandscapeEpisodes)
+    var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(mobileEpisodeLayout) }
     val listColumns = seriesEpisodeListColumns(episodeConfiguration.smallestScreenWidthDp, episodeConfiguration.screenWidthDp, episodeIsTv)
     val twoColumnList = episodeListView && listColumns == 2
-    val viewportColumns = if (twoColumnList) listColumns else if (!mobileEpisodeLayout && !episodeListView) gridColumns else 1
+    val posterRow = !mobileEpisodeLayout && !episodeListView
+    val viewportColumns = if (twoColumnList) listColumns else 1
     var pendingLayoutEpisode by remember(series.id) { mutableStateOf<Int?>(null) }
     // Episodes always own their scroll state; phones keep the compact header in view.
     val verticalEpisodeLayout = false
@@ -424,7 +424,7 @@ internal fun DiscoverySeriesContent(
     fun requestEpisodeFocus(revealParent: Boolean, fromStart: Boolean = false, exactId: String? = null, directional: Boolean = false) {
         if (filteredEpisodes.isEmpty()) return
         val index = if (exactId != null) filteredEpisodes.indexOfFirst { it.id == exactId }.takeIf { it >= 0 } ?: return
-            else if (fromStart) 0 else filteredEpisodes.indexOfFirst { it.id == focusedEpisodeId }.coerceAtLeast(0)
+            else if (fromStart) 0 else filteredEpisodes.indexOfFirst { it.id == (focusedEpisodeId ?: recentEpisode?.id) }.coerceAtLeast(0)
         val targetId = filteredEpisodes[index].id
         val forceReveal = fromStart || exactId != null
         if (forceReveal) focusedEpisodeId = targetId
@@ -541,9 +541,9 @@ internal fun DiscoverySeriesContent(
         val target = when (from) {
             SeriesDetailFocus.TOP -> if (delta > 0) SeriesDetailFocus.PLAY else null
             SeriesDetailFocus.PLAY, SeriesDetailFocus.INFO, SeriesDetailFocus.TOOLS ->
-                if (delta > 0) SeriesDetailFocus.SEASONS else SeriesDetailFocus.TOP
-            SeriesDetailFocus.SORT -> if (delta < 0) SeriesDetailFocus.PLAY else SeriesDetailFocus.EPISODES
-            SeriesDetailFocus.SEASONS -> if (delta < 0) SeriesDetailFocus.PLAY else SeriesDetailFocus.EPISODES
+                if (delta > 0) SeriesDetailFocus.EPISODES else SeriesDetailFocus.TOP
+            SeriesDetailFocus.SORT -> if (delta < 0) SeriesDetailFocus.TOP else SeriesDetailFocus.EPISODES
+            SeriesDetailFocus.SEASONS -> if (delta < 0) SeriesDetailFocus.TOP else SeriesDetailFocus.EPISODES
             SeriesDetailFocus.EPISODES -> if (delta < 0) SeriesDetailFocus.SORT else null
         }
         target?.let { requestWideFocus(it, if (it == SeriesDetailFocus.PLAY) lastHeroControl else null) }
@@ -733,7 +733,7 @@ internal fun DiscoverySeriesContent(
             val controls: @Composable () -> Unit = {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth().onSizeChanged { toolbarHeightPx = it.height }
+                        .then(if (mobileEpisodeLayout) Modifier.fillMaxWidth() else Modifier).onSizeChanged { toolbarHeightPx = it.height }
                         .then(if (mobileEpisodeLayout) Modifier.background(Color(0xFF090B10))
                             .padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -751,7 +751,7 @@ internal fun DiscoverySeriesContent(
                                 }, refresh = refreshCatalog)
                         },
                         count = seriesEpisodeCountLabel(filteredEpisodes.size, state.episodeHasMore, activeSearchQuery.isNotBlank()),
-                        compact = mobileEpisodeLayout, withinPanel = !mobileEpisodeLayout,
+                        compact = mobileEpisodeLayout, inline = !mobileEpisodeLayout, posterRowLayout = !mobileEpisodeLayout,
                         newestFirst = episodeSortDescending, onNewestFirst = {
                             episodeSortDescending = it
                             focusedEpisodeId = null
@@ -822,9 +822,9 @@ internal fun DiscoverySeriesContent(
                                         },
                                     options = KeyboardOptions(imeAction = ImeAction.Search),
                                     actions = KeyboardActions(onSearch = {
+                                        runCatching { toolbarRequester.requestFocus() }
                                         episodeTextEditing = false
                                         keyboardController?.hide()
-                                        focusManager.clearFocus()
                                     })) },
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (!mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
@@ -886,7 +886,7 @@ internal fun DiscoverySeriesContent(
         val seriesHero: @Composable () -> Unit = {
             CompositionLocalProvider(
                 com.nikhil.niktv.discovery.LocalProviderSynopsisActions provides detailsTools,
-                com.nikhil.niktv.discovery.LocalProviderEpisodeControls provides null,
+                com.nikhil.niktv.discovery.LocalProviderEpisodeControls provides if (mobileEpisodeLayout) null else controls,
                 com.nikhil.niktv.discovery.LocalProviderSynopsisPanel provides detailsPanel
             ) { Box(Modifier.onSizeChanged { heroHeightPx = it.height }) { hero() } }
         }
@@ -976,7 +976,24 @@ internal fun DiscoverySeriesContent(
                             .then(if (episodeListView || !mobileEpisodeLayout) Modifier.fillMaxWidth() else Modifier.width(170.dp))
                             .focusRequester(remember(landscapeRequesters, episode.id) { landscapeRequesters.getOrPut(episode.id) { FocusRequester() } })
                             .onPreviewKeyEvent { event ->
-                                if (viewportColumns > 1 && event.type == KeyEventType.KeyDown) {
+                                if (posterRow && event.type == KeyEventType.KeyDown) {
+                                    val index = filteredEpisodes.indexOfFirst { it.id == episode.id }
+                                    when (event.key) {
+                                        Key.DirectionUp, Key.Menu -> { requestWideFocus(SeriesDetailFocus.SORT); true }
+                                        Key.DirectionDown -> true
+                                        Key.DirectionLeft -> {
+                                            if (index > 0) requestEpisodeFocus(revealParent = false, exactId = filteredEpisodes[index - 1].id, directional = true)
+                                            else requestWideFocus(SeriesDetailFocus.SEASONS)
+                                            true
+                                        }
+                                        Key.DirectionRight -> {
+                                            if (index < filteredEpisodes.lastIndex) requestEpisodeFocus(revealParent = false, exactId = filteredEpisodes[index + 1].id, directional = true)
+                                            else requestWideFocus(SeriesDetailFocus.SORT)
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                } else if (viewportColumns > 1 && event.type == KeyEventType.KeyDown) {
                                     val index = filteredEpisodes.indexOfFirst { it.id == episode.id }
                                     val target = when (event.key) {
                                         Key.DirectionLeft -> seriesEpisodeGridMove(index, filteredEpisodes.size, viewportColumns, dx = -1)
@@ -1043,6 +1060,18 @@ internal fun DiscoverySeriesContent(
                         SeriesEpisodeScrollIndicator(episodeRowState, Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                         }
                     }
+                } else if (posterRow) item("episode-row") {
+                    if (filteredEpisodes.isEmpty()) Box(Modifier.fillMaxWidth().height(wideEpisodeHeight), contentAlignment = Alignment.Center) {
+                        Text(if (state.loading) "Loading episodes…" else if (activeSearchQuery.isBlank()) "No episodes found for this series."
+                            else "No episodes matching “${activeSearchQuery.trim()}”", color = Color.LightGray)
+                    } else SeriesEpisodeRow(filteredEpisodes, episodeRowState, key = { it.id },
+                        modifier = Modifier.fillMaxWidth().height(wideEpisodeHeight).episodeViewportFocus(),
+                        tail = if ((state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) ({
+                            NikTvSecondaryActionButton(loadMoreEpisodes, Modifier.fillMaxSize().focusRequester(moreRequester)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { requestWideFocus(SeriesDetailFocus.SORT); true } else false
+                                }) { Text(if (state.episodeLoadingMore) "Loading episodes…" else "Load more episodes") }
+                        }) else null) { _, episode, cell -> episodeCard(episode, cell) }
                 } else if (!mobileEpisodeLayout) item("episode-row") {
                     if (filteredEpisodes.isEmpty()) Box(Modifier.fillMaxWidth().height(wideEpisodeHeight), contentAlignment = Alignment.Center) {
                         Text(if (state.loading) "Loading episodes…" else if (activeSearchQuery.isBlank()) "No episodes found for this series."
@@ -1120,7 +1149,7 @@ internal fun DiscoverySeriesContent(
                     end = if (shortLandscapeEpisodes) 16.dp else 24.dp,
                     bottom = if (shortLandscapeEpisodes) 8.dp else 16.dp),
                 compact = shortLandscapeEpisodes, loading = (state.loading && state.items.isEmpty()) || pendingPlaybackReturnId != null,
-                loadingColumns = viewportColumns, toolbar = controls, episodes = {
+                loadingColumns = if (posterRow) 6 else viewportColumns, posterRow = posterRow, toolbar = null, episodes = {
                     Column(Modifier.fillMaxSize()) {
                         state.episodePagingError?.takeIf { it.profile == profile && it.series == series.id && it.season == selectedSeason }?.let {
                             SeriesEpisodePagingError(it.message) {
@@ -1266,6 +1295,8 @@ internal fun ModernEpisodeCard(
         metadata = episode.displayAirDate().orEmpty(), progress = progressFraction,
         remaining = episodeRemainingLabel(progress), resume = isCurrentResume,
         listView = wideList, compactList = compactList, overview = episodeDescription,
+        portrait = landscapePoster && (isTv || episodeConfiguration.smallestScreenWidthDp >= 600 ||
+            episodeConfiguration.screenWidthDp > episodeConfiguration.screenHeightDp),
         modifier = Modifier.fillMaxWidth().focusRequester(episodeFocusRequester),
         onClick = onClick, onLongClick = { retainEpisodeFocus(); episodeActionsExpanded = true })
     else Surface(

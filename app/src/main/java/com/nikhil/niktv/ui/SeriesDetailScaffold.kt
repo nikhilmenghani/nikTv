@@ -48,7 +48,8 @@ internal fun SeriesEpisodePanel(
     compact: Boolean = false,
     loading: Boolean = false,
     loadingColumns: Int = 2,
-    toolbar: @Composable () -> Unit,
+    posterRow: Boolean = false,
+    toolbar: (@Composable () -> Unit)?,
     episodes: @Composable () -> Unit,
 ) {
     val reportTop = LocalSeriesEpisodePanelTop.current
@@ -58,15 +59,15 @@ internal fun SeriesEpisodePanel(
     } else Modifier), shape = RoundedCornerShape(14.dp), color = Color(0x44111720),
         border = BorderStroke(1.dp, Color.White.copy(alpha = .10f))) {
         Column(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
-                toolbar()
+            if (toolbar != null) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) { toolbar() }
+                HorizontalDivider(color = Color.White.copy(alpha = .08f))
             }
-            HorizontalDivider(color = Color.White.copy(alpha = .08f))
             Box(Modifier.weight(1f).fillMaxWidth().padding(start = 8.dp, end = 8.dp,
                 top = if (television) 4.dp else 8.dp, bottom = 8.dp)) {
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (loading) 0f else 1f }) { episodes() }
                 if (loading) Column(Modifier.fillMaxSize().padding(4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    repeat(3) {
+                    repeat(if (posterRow) 1 else 3) {
                         Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             repeat(loadingColumns.coerceIn(1, 6)) {
                                 Surface(Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(10.dp),
