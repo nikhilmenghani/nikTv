@@ -14,6 +14,7 @@ import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.ui.DecoderSessionFailures
 import com.nikhil.niktv.ui.decoderCandidateOrder
 import com.nikhil.niktv.ui.decoderFailureName
+import com.nikhil.niktv.ui.recreateSoftwareDecoderOnce
 
 /** Sports never reads or writes IPTV's historical device/series decoder preferences. */
 internal object SportsDecoderPolicy {
@@ -22,7 +23,7 @@ internal object SportsDecoderPolicy {
         decoderCandidateOrder(names, sessions.failed(session), preferSoftware = false)
     fun record(error: Throwable, session: String): String? {
         val name = decoderFailureName(generateSequence(error) { it.cause }.mapNotNull { it.message }.joinToString("\n")) ?: return null
-        sessions.record(session, name)
+        sessions.record(session, name, retryRuntimeOnce = recreateSoftwareDecoderOnce(error, name))
         return name
     }
     fun canRecover(count: Int) = count < 3

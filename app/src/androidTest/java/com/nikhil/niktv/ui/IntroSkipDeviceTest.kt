@@ -217,6 +217,7 @@ class IntroSkipDeviceTest {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
                 await("Controls must appear") { label("Intro timing") != null || label("More controls") != null }
                 if (label("Intro timing") == null) click("More controls")
+                if (label("More player tools") != null) click("More player tools")
                 click("Intro timing")
                 await("Intro timing dialog must open") { dialog() != null }
                 click("This episode")

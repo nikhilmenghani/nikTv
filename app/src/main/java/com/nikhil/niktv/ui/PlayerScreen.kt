@@ -363,6 +363,7 @@ fun PlayerScreen(
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
         context.isTvLikeDevice(LocalConfiguration.current)
     var extraControlsOpen by remember(media.progressKey) { mutableStateOf(false) }
+    val settingsRibbon = remember(media.progressKey) { PlayerSettingsRibbonState() }
     val extraControlsRequester = remember(media.progressKey) { FocusRequester() }
     val transportActivity = remember(context) {
         context.findActivity() as? MainActivity
@@ -720,8 +721,9 @@ fun PlayerScreen(
 
     LaunchedEffect(returnControlFocus) {
         val target = returnControlFocus ?: return@LaunchedEffect
+        settingsRibbon.restore(target)
         controlsVisible = true
-        if (compactMobileControls) extraControlsOpen = true
+        extraControlsOpen = true
         try {
             // Let the dialog window detach before handing focus back to its origin.
             delay(80L)
@@ -735,8 +737,9 @@ fun PlayerScreen(
 
     LaunchedEffect(restorePlayerSwitchFocus, effectiveEngine) {
         if (restorePlayerSwitchFocus) {
+            settingsRibbon.restore(playerSwitchFocusRequester)
             controlsVisible = true
-            if (compactMobileControls) extraControlsOpen = true
+            extraControlsOpen = true
             delay(120L)
             runCatching { playerSwitchFocusRequester.requestFocus() }
             restorePlayerSwitchFocus = false
@@ -1280,9 +1283,9 @@ fun PlayerScreen(
                          * MTK_AVC_RUNTIME_RECOVERY_V14
                          *
                          * Decoder failure is device-side, not a portal/VOD
-                         * failure. Hide the fatal overlay, blacklist the failed
-                         * codec, and recreate the player at a nearby safe
-                         * position so Media3 selects the next decoder.
+                         * failure. Hide the fatal overlay and recreate the player
+                         * near its current position. A software runtime failure
+                         * gets one fresh instance; other failures exclude the codec.
                          */
                         playbackError = null
                         startupTimedOut = false
@@ -1300,11 +1303,10 @@ fun PlayerScreen(
                         retryScope.launch {
                             delay(250L)
 
-                            if (!playbackRequested) {
-                                decoderRecoveryInProgress = false
-                                playbackError = "Decoder recovery paused. Retry or switch player."
-                                return@launch
-                            }
+                            if (currentLocalPlayer !== player) return@launch
+                            // Recreating a failed decoder is also necessary while paused.
+                            // Commit the latest intent before the host replaces its player.
+                            onPlaybackIntentChanged(playbackRequested)
 
                             onRetryAlternateDecoder(
                                 recoveryPosition
@@ -2243,28 +2245,11 @@ fun PlayerScreen(
                 downloadFocusRequester
             }
 
-            val secondaryActionRequesters = buildList {
-                if (media.catalogType != CatalogType.LIVE_TV) {
-                    if (introSettings.target != null) add(introFocusRequester)
-                    add(subtitleFocusRequester)
-                    if (audioTracks.size > 1) add(audioFocusRequester)
-                    if (!media.externalPlayback && onChooseAlternateSource == null) add(downloadFocusRequester)
-                }
-                if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) add(refreshFocusRequester)
-                if (media.catalogType != CatalogType.LIVE_TV) add(speedFocusRequester)
-                add(resizeFocusRequester)
-                add(pictureModeFocusRequester)
-                add(playerSwitchFocusRequester)
-                if (onChooseAlternateSource != null) add(sourceFocusRequester)
-                add(controlsTimeoutFocusRequester)
-                add(cricketScoreFocusRequester)
-                add(moreFocusRequester)
-                if (pipAvailable) add(pipFocusRequester)
-            }
+
             val firstQuickActionRequester = when {
                 media.catalogType == CatalogType.LIVE_TV -> programmeGuideFocusRequester
                 introAvailable -> skipIntroFocusRequester
-                extraControlsOpen -> secondaryActionRequesters.first()
+
                 else -> extraControlsRequester
             }
             val lastPlaybackActionRequester = when {
@@ -2360,162 +2345,163 @@ fun PlayerScreen(
                     }
                 }
 
-                val quickActions: @Composable () -> Unit = {
-                        if (introSettings.target != null) PlayerChromeIconButton(
-                            icon = Icons.Default.Flag, contentDescription = "Intro timing",
-                            onClick = {
-                                if (seekable && player.isCurrentMediaItemSeekable) introSettings.open(player.currentPosition)
-                                else modeFeedback = "Intro timing needs a seekable video"
-                            },
-                            modifier = Modifier.playerSecondaryFocus(introFocusRequester, secondaryActionRequesters,
-                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it })
+                val settingsActionsFactory: @Composable () -> List<PlayerSettingAction> = {
+                    buildList {
+                        if (introSettings.target != null) add(PlayerSettingAction(
+                                kind = PlayerSettingKind.INTRO,
+                                requester = introFocusRequester,
+                                icon = Icons.Default.Flag,
+                                contentDescription = "Intro timing",
+                                onClick = {
+                                    if (seekable && player.isCurrentMediaItemSeekable) introSettings.open(player.currentPosition)
+                                    else modeFeedback = "Intro timing needs a seekable video"
+                                }
+                            ))
                         if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) {
-                            PlayerChromeIconButton(
-                                icon = Icons.Default.Refresh,
-                                contentDescription = "Refresh stream",
-                                onClick = { onRetry(0L) },
-                                modifier = Modifier.playerSecondaryFocus(refreshFocusRequester, secondaryActionRequesters,
-                                    extraControlsRequester, lastPlaybackActionRequester, backFocusRequester),
-                                onFocused = { controlsFocused = it }
-                            )
+                            add(PlayerSettingAction(
+                                    kind = PlayerSettingKind.REFRESH,
+                                    requester = refreshFocusRequester,
+                                    icon = Icons.Default.Refresh,
+                                    contentDescription = "Refresh stream",
+                                    onClick = { onRetry(0L) }
+                                ))
                         }
                         if (media.catalogType != CatalogType.LIVE_TV) {
-PlayerChromeIconButton(
-                            icon = Icons.Default.Subtitles,
-                            contentDescription = "Subtitles",
-                            onClick = { subtitleDialogOpen = true },
-                            modifier = Modifier
-                                .playerSecondaryFocus(subtitleFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it }
-                        )
+                            add(PlayerSettingAction(
+                                    kind = PlayerSettingKind.SUBTITLES,
+                                    requester = subtitleFocusRequester,
+                                    icon = Icons.Default.Subtitles,
+                                    contentDescription = "Subtitles",
+                                    onClick = { subtitleDialogOpen = true },
+                                    value = if (externalSubtitleEnabled) "Downloaded" else subtitleTracks.firstOrNull { it.group.isTrackSelected(it.trackIndex) }?.label ?: "Off"
+                                ))
                         }
                         if (media.catalogType != CatalogType.LIVE_TV && audioTracks.size > 1) {
-                            PlayerChromeIconButton(
-                                icon = Icons.Default.AudioFile,
-                                contentDescription = "Audio language",
-                                onClick = { audioDialogOpen = true },
-                                modifier = Modifier.playerSecondaryFocus(
-                                    audioFocusRequester, secondaryActionRequesters,
-                                    extraControlsRequester, lastPlaybackActionRequester,
-                                    if (seekable) progressFocusRequester else backFocusRequester
-                                ),
-                                onFocused = { controlsFocused = it }
-                            )
+                            add(PlayerSettingAction(
+                                    kind = PlayerSettingKind.AUDIO,
+                                    requester = audioFocusRequester,
+                                    icon = Icons.Default.AudioFile,
+                                    contentDescription = "Audio language",
+                                    onClick = { audioDialogOpen = true },
+                                    value = audioTracks.firstOrNull { it.group.isTrackSelected(it.trackIndex) }?.label ?: "Default"
+                                ))
                         }
                         if (!media.externalPlayback && media.catalogType != CatalogType.LIVE_TV && onChooseAlternateSource == null) {
-                            PlayerChromeIconButton(
-                                icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
-                                contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
-                                onClick = {
-                                    if (!offlineDownloadPresent) downloadRequested = true
-                                    onDownload()
-                                },
-                                modifier = Modifier
-                                    .playerSecondaryFocus(downloadFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                                selected = offlineDownloadPresent,
-                                progress = offlineDownloadProgress.takeIf { displayedDownloadInProgress },
-                                indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
-                                onFocused = { controlsFocused = it }
-                            )
+                            add(PlayerSettingAction(
+                                    kind = PlayerSettingKind.DOWNLOAD,
+                                    requester = downloadFocusRequester,
+                                    icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                                    contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
+                                    onClick = {
+                                        if (!offlineDownloadPresent) downloadRequested = true
+                                        onDownload()
+                                    },
+                                    selected = offlineDownloadPresent,
+                                    progress = offlineDownloadProgress.takeIf { displayedDownloadInProgress },
+                                    indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null
+                                ))
                         }
-                        if (media.catalogType != CatalogType.LIVE_TV) PlayerChromeIconButton(
-                            icon = Icons.Default.Speed, badgeText = playbackSpeedLabel(playbackSpeed),
-                            contentDescription = "Playback speed", onClick = { speedPickerVisible = true },
-                            modifier = Modifier.playerSecondaryFocus(speedFocusRequester, secondaryActionRequesters,
-                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it })
-                        PlayerChromeIconButton(
-                            icon = when (resizeMode) {
-                                VideoResizeMode.FIT -> Icons.Default.FitScreen
-                                VideoResizeMode.FILL -> Icons.Default.CropFree
-                                VideoResizeMode.ZOOM -> Icons.Default.ZoomIn
-                                VideoResizeMode.STRETCH -> Icons.Default.AspectRatio
-                            },
-                            badgeText = resizeMode.badge,
-                            contentDescription = "Video fit: ${resizeMode.label}",
-                            onClick = {
-                                resizePreview = savedResizeMode
-                                resizePickerVisible = true
-                            },
-                            modifier = Modifier
-                                .playerSecondaryFocus(resizeFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            selected = false,
-                            onFocused = {
-                                controlsFocused = it
-                            }
-                        )
-                        PlayerChromeIconButton(
-                            icon = videoAppearanceIcon(activeAppearanceProfile.id),
-                            contentDescription = "Choose picture mode: ${activeAppearanceProfile.name}",
-                            onClick = { pictureModePickerVisible = true },
-                            modifier = Modifier
-                                .playerSecondaryFocus(pictureModeFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it }
-                        )
-                        PlayerChromeIconButton(
-                                    icon = Icons.Default.SmartDisplay,
-                                    badgeText = selectedPlayerChoice.playerChoiceBadge(),
-                                    contentDescription = "Player: ${selectedPlayerChoice.playerChoiceLabel()}",
-                                    onClick = { playerPickerVisible = true },
-                                    modifier = Modifier
-                                        .playerSecondaryFocus(playerSwitchFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                                    size = if (compactMobileControls) 44.dp else 48.dp,
-                                    selected = false,
-                                    onFocused = { controlsFocused = it }
-                                )
+                        if (media.catalogType != CatalogType.LIVE_TV) add(PlayerSettingAction(
+                                kind = PlayerSettingKind.SPEED,
+                                requester = speedFocusRequester,
+                                icon = Icons.Default.Speed,
+                                badgeText = playbackSpeedLabel(playbackSpeed),
+                                contentDescription = "Playback speed",
+                                onClick = { speedPickerVisible = true }
+                            ))
+                        add(PlayerSettingAction(
+                                kind = PlayerSettingKind.FIT,
+                                requester = resizeFocusRequester,
+                                icon = when (resizeMode) {
+                                    VideoResizeMode.FIT -> Icons.Default.FitScreen
+                                    VideoResizeMode.FILL -> Icons.Default.CropFree
+                                    VideoResizeMode.ZOOM -> Icons.Default.ZoomIn
+                                    VideoResizeMode.STRETCH -> Icons.Default.AspectRatio
+                                },
+                                badgeText = resizeMode.badge,
+                                contentDescription = "Video fit: ${resizeMode.label}",
+                                onClick = {
+                                    resizePreview = savedResizeMode
+                                    resizePickerVisible = true
+                                },
+                                selected = false
+                            ))
+                        add(PlayerSettingAction(
+                                kind = PlayerSettingKind.PICTURE,
+                                requester = pictureModeFocusRequester,
+                                icon = videoAppearanceIcon(activeAppearanceProfile.id),
+                                contentDescription = "Choose picture mode: ${activeAppearanceProfile.name}",
+                                onClick = { pictureModePickerVisible = true }
+                            ))
+                        add(PlayerSettingAction(
+                                kind = PlayerSettingKind.PLAYER,
+                                requester = playerSwitchFocusRequester,
+                                icon = Icons.Default.SmartDisplay,
+                                badgeText = selectedPlayerChoice.playerChoiceBadge(),
+                                contentDescription = "Player: ${selectedPlayerChoice.playerChoiceLabel()}",
+                                onClick = { playerPickerVisible = true },
+                                selected = false
+                            ))
                         if (onChooseAlternateSource != null) {
-                            PlayerChromeIconButton(
-                                icon = Icons.Default.VideoSettings,
-                                contentDescription = "Source and quality",
-                                onClick = {
-                                    onChooseAlternateSource(player.currentPosition.coerceAtLeast(0L)) {
-                                        player.currentPosition.coerceAtLeast(0L)
+                            add(PlayerSettingAction(
+                                    kind = PlayerSettingKind.SOURCE,
+                                    requester = sourceFocusRequester,
+                                    icon = Icons.Default.VideoSettings,
+                                    contentDescription = "Source and quality",
+                                    onClick = {
+                                        onChooseAlternateSource(player.currentPosition.coerceAtLeast(0L)) {
+                                            player.currentPosition.coerceAtLeast(0L)
+                                        }
                                     }
-                                },
-                                modifier = Modifier.playerSecondaryFocus(
-                                    sourceFocusRequester, secondaryActionRequesters,
-                                    extraControlsRequester, lastPlaybackActionRequester,
-                                    if (seekable) progressFocusRequester else backFocusRequester
-                                ),
-                                size = if (compactMobileControls) 44.dp else 48.dp,
-                                onFocused = { controlsFocused = it }
-                            )
+                                ))
                         }
-                        
-                        PlayerChromeIconButton(
-                            icon = Icons.Default.Timer,
-                            badgeText = playerControlsTimeoutBadge(controlsTimeoutSeconds),
-                            contentDescription = "Controls timeout: ${playerControlsTimeoutLabel(controlsTimeoutSeconds)}",
-                            onClick = {
-                                val seconds = nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
-                                onControlsTimeoutChanged(seconds)
-                                modeFeedback = playerControlsTimeoutFeedback(seconds)
-                            },
-                            modifier = Modifier.playerSecondaryFocus(controlsTimeoutFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it }
-                        )
-                        PlayerChromeIconButton(
-                            icon = Icons.Default.SportsCricket,
-                            contentDescription = "Live cricket scores",
-                            onClick = { extraControlsOpen = false; cricketScores.pickerOpen = true },
-                            modifier = Modifier.cricketScoreEntry(cricketScores, true, enter = { action ->
-                                    extraControlsOpen = false
-                                    coroutineScope.launch { delay(80L); action() }
-                                }) { showControlsAndFocusPlayPause() }
-                                .playerSecondaryFocus(cricketScoreFocusRequester, secondaryActionRequesters,
-                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it }
-                        )
-                        PlayerChromeIconButton(
-                            icon = Icons.Default.Info,
-                            contentDescription = "Playback information",
-                            onClick = { moreOptionsOpen = true },
-                            modifier = Modifier
-                                .playerSecondaryFocus(moreFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                            onFocused = { controlsFocused = it }
-                        )
+
+                        add(PlayerSettingAction(
+                                kind = PlayerSettingKind.TIMEOUT,
+                                requester = controlsTimeoutFocusRequester,
+                                icon = Icons.Default.Timer,
+                                badgeText = playerControlsTimeoutBadge(controlsTimeoutSeconds),
+                                contentDescription = "Controls timeout: ${playerControlsTimeoutLabel(controlsTimeoutSeconds)}",
+                                onClick = {
+                                    val seconds = nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
+                                    onControlsTimeoutChanged(seconds)
+                                    modeFeedback = playerControlsTimeoutFeedback(seconds)
+                                }
+                            ))
+                        add(PlayerSettingAction(
+                                kind = PlayerSettingKind.CRICKET,
+                                requester = cricketScoreFocusRequester,
+                                icon = Icons.Default.SportsCricket,
+                                contentDescription = "Live cricket scores",
+                                onClick = { extraControlsOpen = false; cricketScores.pickerOpen = true },
+                                modifier = Modifier.cricketScoreEntry(cricketScores, true, enter = { action ->
+                                        extraControlsOpen = false
+                                        coroutineScope.launch { delay(80L); action() }
+                                    }) { showControlsAndFocusPlayPause() }
+                            ))
+                        add(PlayerSettingAction(
+                                kind = PlayerSettingKind.INFORMATION,
+                                requester = moreFocusRequester,
+                                icon = Icons.Default.Info,
+                                contentDescription = "Playback information",
+                                onClick = { moreOptionsOpen = true }
+                            ))
+
+                        if (pipAvailable) { add(PlayerSettingAction(
+                                    kind = PlayerSettingKind.PIP,
+                                    requester = pipFocusRequester,
+                                    icon = Icons.Default.PictureInPictureAlt,
+                                    contentDescription = "Picture in Picture",
+                                    onClick = {
+                                        controlsVisible = false
+                                        controlsFocused = false
+                                        pipActivity?.enterPlayerPictureInPicture()
+                                    }
+                                )) }
+
+                    }
                 }
+                val settingsActions = settingsActionsFactory()
 
                 val liveActions: @Composable RowScope.() -> Unit = {
                     PlayerChromeIconButton(
@@ -2574,7 +2560,7 @@ PlayerChromeIconButton(
                             .focusRequester(downloadFocusRequester)
                             .playerDpadFocusRoutes(
                                 left = if (recordingThisChannel) recordingPauseFocusRequester else programmeGuideFocusRequester,
-                                right = if (extraControlsOpen) secondaryActionRequesters.first() else extraControlsRequester,
+                                right = extraControlsRequester,
                                 up = backFocusRequester
                             ),
                         onFocused = { controlsFocused = it }
@@ -2602,6 +2588,11 @@ PlayerChromeIconButton(
                         ),
                         verticalArrangement = Arrangement.spacedBy(if (compactPlayerSpacing) 3.dp else 8.dp)
                     ) {
+                        PlayerSettingsRibbon(
+                            visible = extraControlsOpen, actions = settingsActions, state = settingsRibbon,
+                            toggle = extraControlsRequester, down = if (seekable) progressFocusRequester else playPauseFocusRequester,
+                            onDismiss = { extraControlsOpen = false }, onFocused = { controlsFocused = it }
+                        )
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
@@ -2616,7 +2607,7 @@ PlayerChromeIconButton(
                                     .fillMaxWidth()
                                     .focusRequester(progressFocusRequester)
                                     .focusProperties {
-                                        up = backFocusRequester
+                                        up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else backFocusRequester
                                         down = playPauseFocusRequester
                                     }
                                     .playerControlFocus(
@@ -2813,50 +2804,25 @@ PlayerChromeIconButton(
                                     )
                                 }
 
-                                Box(
-                                    modifier = Modifier.weight(1f),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) {
-                                PlayerExtraControls(visible = extraControlsOpen, entry = secondaryActionRequesters.first(), onDismiss = {
-                                    extraControlsOpen = false
-                                    coroutineScope.launch { delay(80L); runCatching { extraControlsRequester.requestFocus() } }
-                                }) {
-                                quickActions()
-                                if (pipAvailable) {
-                                    val pipLeftRequester = moreFocusRequester
-                                    PlayerChromeIconButton(
-                                        icon = Icons.Default.PictureInPictureAlt,
-                                        contentDescription = "Picture in Picture",
-                                        onClick = {
-                                            controlsVisible = false
-                                            controlsFocused = false
-                                            pipActivity?.enterPlayerPictureInPicture()
-                                        },
-                                        modifier = Modifier
-                                            .playerSecondaryFocus(pipFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                                        size = if (compactMobileControls) 44.dp else 48.dp,
-                                        onFocused = { controlsFocused = it }
-                                    )
-                                }
-
-                                
-                                }
-                                }
+                                Spacer(Modifier.weight(1f))
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.Tune,
                                     contentDescription = if (extraControlsOpen) "Hide extra controls" else "More controls",
-                                    onClick = { extraControlsOpen = !extraControlsOpen },
+                                    onClick = {
+                                        if (extraControlsOpen) { runCatching { extraControlsRequester.requestFocus() }; extraControlsOpen = false }
+                                        else { settingsRibbon.open(settingsActions, directionalInput); extraControlsOpen = true }
+                                    },
                                     selected = extraControlsOpen,
                                     modifier = Modifier.focusRequester(extraControlsRequester)
                                         .focusProperties {
-                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester
+                                            left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester
                                             right = FocusRequester.Cancel
-                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                            up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (seekable) progressFocusRequester else backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                            left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
                                             right = FocusRequester.Cancel,
-                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                            up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (seekable) progressFocusRequester else backFocusRequester
                                         ),
                                     onFocused = { controlsFocused = it }
                                 )
@@ -3429,7 +3395,7 @@ private object FailedDecoderRegistry {
         val normalized =
             decoder.lowercase()
 
-        sessions.record(sessionId, normalized)
+        sessions.record(sessionId, normalized, retryRuntimeOnce = recreateSoftwareDecoderOnce(error, normalized))
 
         if (normalized == "omx.mtk.video.decoder.avc") {
             context
@@ -3500,10 +3466,6 @@ internal fun PlayerChromeIconButton(
     iconSize: Dp = if (primaryAction) 28.dp else 23.dp,
     onFocused: (Boolean) -> Unit = {}
 ) {
-    if (LocalPlayerOverflowNavigation.current != null) {
-        PlayerOverflowAction(icon, contentDescription, onClick, modifier, selected, progress, indeterminateProgress, badgeText, onFocused)
-        return
-    }
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val minimumFocusSize = when {

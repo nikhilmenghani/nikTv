@@ -1,7 +1,6 @@
 package com.nikhil.niktv.ui
 
 import android.content.Intent
-import android.content.res.Configuration
 import android.graphics.Rect
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -14,11 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -55,93 +51,110 @@ class PlayerOverflowControlsDeviceTest {
     }
     private fun key(code: Int) = ins.sendKeyDownUpSync(code)
 
-    @Test fun phoneAndTabletOverflowHaveTwoDimensionalNavigationAndRestoreOrigins() {
-        for (phone in listOf(false, true)) exercise(phone)
-    }
+    @Test fun compactRibbonKeepsTransportFixedAndRestoresDpadFocus() = exercise(false)
+    @Test fun narrowRibbonPagesWithoutWrappingOrMovingFocusToTransport() = exercise(true)
 
-    @Test fun shortLandscapePhoneOverflowKeepsLabeledSettingsAndFocus() = exercise(false, shortWide = true)
-
-    private fun exercise(phone: Boolean, shortWide: Boolean = false) {
+    private fun exercise(narrow: Boolean) {
         check(ins.targetContext.packageName.endsWith(".regression"))
         ins.setInTouchMode(false)
         val host = ins.startActivitySync(Intent(ins.targetContext, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
-        val activations = mutableListOf<Int>()
+        val history = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val activations = java.util.concurrent.CopyOnWriteArrayList<String>()
         try {
-            ins.runOnMainSync { host.setContent {
-                val configuration = Configuration(LocalConfiguration.current).apply {
-                    smallestScreenWidthDp = if (phone || shortWide) 400 else 800
-                    screenWidthDp = if (phone) 400 else if (shortWide) 800 else 960
-                    screenHeightDp = if (phone) 800 else if (shortWide) 400 else 600
-                }
-                CompositionLocalProvider(LocalConfiguration provides configuration) { MaterialTheme(colorScheme = NikColors) {
-                    val toggle = remember { FocusRequester() }
-                    val choices = remember { List(12) { FocusRequester() } }
-                    val scope = rememberCoroutineScope()
-                    var open by remember { mutableStateOf(false) }
-                    var selected by remember { mutableStateOf<Int?>(null) }
-                    fun dismiss() {
-                        open = false
-                        scope.launch { delay(80L); toggle.requestFocus() }
-                    }
-                    fun dismissChoice() {
-                        val origin = selected
-                        selected = null
-                        scope.launch { delay(80L); origin?.let { choices[it].requestFocus() } }
-                    }
-                    Surface(Modifier.fillMaxSize()) {
-                        Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = androidx.compose.ui.Alignment.BottomEnd) {
-                            PlayerChromeIconButton(Icons.Default.Settings, "More controls", { open = true }, Modifier.focusRequester(toggle))
-                            PlayerExtraControls(open, choices.first(), ::dismiss) {
-                                choices.forEachIndexed { index, requester ->
-                                    PlayerChromeIconButton(Icons.Default.Settings, "Setting $index", {
-                                        activations.add(index); selected = index
-                                    }, Modifier.playerSecondaryFocus(requester, choices, toggle, toggle, toggle))
-                                }
+            ins.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
+                val toggle = remember { FocusRequester() }
+                val seek = remember { FocusRequester() }
+                val play = remember { FocusRequester() }
+                val requesters = remember { PlayerSettingKind.entries.associateWith { FocusRequester() } }
+                val state = remember { PlayerSettingsRibbonState() }
+                var open by remember { mutableStateOf(false) }
+                var choice by remember { mutableStateOf<PlayerSettingKind?>(null) }
+                val actions = listOf(PlayerSettingKind.SUBTITLES, PlayerSettingKind.AUDIO, PlayerSettingKind.SPEED,
+                    PlayerSettingKind.FIT, PlayerSettingKind.PICTURE, PlayerSettingKind.PLAYER, PlayerSettingKind.DOWNLOAD,
+                    PlayerSettingKind.INTRO, PlayerSettingKind.TIMEOUT, PlayerSettingKind.CRICKET, PlayerSettingKind.INFORMATION)
+                    .map { kind -> PlayerSettingAction(kind, Icons.Default.Settings, kind.title,
+                        onClick = { activations.add(kind.title); choice = kind }, requester = requesters.getValue(kind),
+                        modifier = Modifier.onFocusChanged { if (it.isFocused) history.add(kind.title) }, value = "Current") }
+                Surface(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
+                        Column(if (narrow) Modifier.width(360.dp) else Modifier.fillMaxWidth()) {
+                            PlayerSettingsRibbon(open, actions, state, toggle, seek, { open = false })
+                            PlayerChromeIconButton(Icons.Default.Settings, "Seek fixture", {}, Modifier.focusRequester(seek)
+                                .focusProperties { up = if (open) state.entry(actions) else toggle; down = play }
+                                .onFocusChanged { if (it.isFocused) history.add("Seek") })
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                PlayerChromeIconButton(Icons.Default.Settings, "Play fixture", {}, Modifier.focusRequester(play)
+                                    .onFocusChanged { if (it.isFocused) history.add("Play") })
+                                PlayerChromeIconButton(Icons.Default.Settings, "Settings fixture", {
+                                    state.open(actions); open = true
+                                }, Modifier.focusRequester(toggle).onFocusChanged { if (it.isFocused) history.add("Toggle") })
                             }
                         }
                     }
-                    if (selected != null) AlertDialog(onDismissRequest = ::dismissChoice,
-                        title = { Text("Setting choice") }, confirmButton = {
-                            TextButton(onClick = ::dismissChoice) { Text("Close choice") }
-                        })
-                    LaunchedEffect(Unit) { repeat(20) { withFrameNanos { }; if (runCatching { toggle.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
-                } }
-            } }
-            await("More controls owns initial focus") { focused("More controls") }
+                }
+                if (choice != null) AlertDialog(onDismissRequest = { choice = null }, title = { Text("Setting choice") },
+                    confirmButton = { TextButton(onClick = { choice = null }) { Text("Close choice") } })
+                LaunchedEffect(Unit) { withFrameNanos { }; toggle.requestFocus() }
+            } } }
+            await("Settings owns initial focus") { focused("Settings fixture") }
+            val playBefore = bounds("Play fixture")
+            val seekBefore = bounds("Seek fixture")
+            val openedAt = history.size
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Overflow opens on its first setting") { focused("Setting 0") && find("Playback settings") != null }
-            val columns = if (phone) 3 else if (shortWide) 5 else 4
-            for (index in 0..11) assertTrue("Setting $index fits inside the panel", find("Setting $index")?.isVisibleToUser == true)
-            assertEquals("The visible row matches the D-pad column count", bounds("Setting 0").top, bounds("Setting ${columns - 1}").top)
-            assertTrue("The next setting begins the next visual row", bounds("Setting $columns").top > bounds("Setting 0").top)
+            await("Opening enters the first quick control") { focused("Subtitles") }
+            assertEquals("Opening must not visit another main control", listOf("Subtitles"), history.drop(openedAt))
+            assertEquals("Opening leaves Play anchored", playBefore, bounds("Play fixture"))
+            assertEquals("Opening leaves seek anchored", seekBefore, bounds("Seek fixture"))
+            val subtitlesBefore = bounds("Subtitles")
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Right reaches the next setting") { focused("Setting 1") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down retains the same settings column") { focused("Setting ${1 + columns}") }
+            await("Right enters Audio") { focused("Audio") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right enters Speed") { focused("Speed") }
+            assertEquals("Quick controls share a single row", subtitlesBefore.top, bounds("Speed").top)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Choosing a setting opens its own dialog") { find("Setting choice") != null }
+            await("Setting choice is open") { find("Setting choice") != null }
             key(KeyEvent.KEYCODE_BACK)
-            await("Dialog closes back to its originating setting") { find("Setting choice") == null && focused("Setting ${1 + columns}") }
-            assertEquals(listOf(1 + columns), activations)
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Up returns to the previous settings row") { focused("Setting 1") }
+            await("Dialog restores its exact origin") { find("Setting choice") == null && focused("Speed") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Navigation after dialog return is immediate") { focused("Video fit") }
             Thread.sleep(180)
-            assertTrue("Late dialog focus restoration must not override the next arrow", focused("Setting 1"))
-            key(KeyEvent.KEYCODE_TAB)
-            await("Tab can leave the last arrow destination") { focused("Setting 2") }
-            key(KeyEvent.KEYCODE_DPAD_LEFT)
-            await("Arrow navigation resumes after Tab") { focused("Setting 1") }
-            key(KeyEvent.KEYCODE_DPAD_LEFT)
-            await("Left returns to the first setting") { focused("Setting 0") }
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Top row Up reaches Close") { focused("Close playback settings") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Close Down returns to settings") { focused("Setting 0") }
-            NavigationAuditEvidence.capture("player-overflow-${if (phone) "phone" else if (shortWide) "landscape-phone" else "tablet"}")
+            assertTrue("No late correction steals the arrow destination", focused("Video fit"))
+            if (narrow) {
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                await("Up reaches the compact header Close") { focused("Close player settings") }
+                key(KeyEvent.KEYCODE_DPAD_LEFT)
+                await("Left reaches next page") { focused("Next controls") }
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Next page keeps the header anchor") { focused("Next controls") && find("Picture") != null }
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down enters the visible page") { focused("Picture") }
+                assertEquals("Paged controls stay in the same row", subtitlesBefore.top, bounds("Picture").top)
+                assertEquals("Paging does not resize cells", subtitlesBefore.width(), bounds("Picture").width())
+            }
+            // Request the persistent More anchor using native accessibility focus, then OK.
+            var more = checkNotNull(find("More player tools"))
+            while (!more.isFocusable && more.parent != null) more = more.parent
+            assertTrue(more.performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+            await("More receives focus") { focused("More player tools") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("More opens the secondary row") { find("Intro timing") != null && find("Back to quick controls") != null }
+            assertEquals("Tools share the same row height", subtitlesBefore.top, bounds("Intro timing").top)
             key(KeyEvent.KEYCODE_BACK)
-            await("Back closes overflow and restores More") { find("Playback settings") == null && focused("More controls") }
-            assertEquals("Moving focus and closing do not activate other settings", listOf(1 + columns), activations)
+            await("First Back returns to quick controls") { find("Subtitles") != null && find("Quick controls") != null }
+            val closedAt = history.size
+            key(KeyEvent.KEYCODE_BACK)
+            await("Second Back closes and retains the trigger") { find("Quick controls") == null && focused("Settings fixture") }
+            assertEquals("Close transfers directly to the surviving trigger", listOf("Toggle"), history.drop(closedAt))
+            assertEquals(listOf("Speed"), activations)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Reopening remains reachable") { focused("Subtitles") }
+            assertEquals("Focus outline does not resize its cell", subtitlesBefore, bounds("Subtitles"))
+            NavigationAuditEvidence.capture("player-compact-ribbon-${if (narrow) "narrow" else "wide"}")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches the seek row") { focused("Seek fixture") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Up returns to the ribbon") { focused("Subtitles") }
         } finally { ins.runOnMainSync { host.finish() }; ins.setInTouchMode(true) }
     }
 }

@@ -587,7 +587,7 @@ internal fun ModernSettingsScreen(
         topBar = { Column {
             CompactSettingsTopBar(if (compactSettingsHeader) null else LocalSelectedUserProfile.current?.name, settingsBack,
                 compact = compactSettingsHeader)
-            AccountSyncSettingsRow()
+            if (selectedSettingsPage != SettingsPage.XTREAM_CONTENT) AccountSyncSettingsRow()
         } }
     ) { padding ->
         val settingsPageContent: @Composable () -> Unit = {
@@ -629,7 +629,7 @@ internal fun ModernSettingsScreen(
                     if (entered) enterSettingsPage = false
                 }
             }
-            .verticalScroll(pageScroll)
+            .then(if (activePage == SettingsPage.XTREAM_CONTENT) Modifier else Modifier.verticalScroll(pageScroll))
             .padding(
                 horizontal =
                     when {
@@ -656,14 +656,14 @@ internal fun ModernSettingsScreen(
         )
     ) {
         val parentPage = settingsPageParents[activePage] ?: activePage.parent
-        if (parentPage != null && !compactSettingsHeader) {
+        if (parentPage != null && !compactSettingsHeader && activePage != SettingsPage.XTREAM_CONTENT) {
             NikTvTextActionButton(onClick = settingsBack, modifier = Modifier.focusProperties { canFocus = false }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(parentPage.title)
             }
         }
-        Text(activePage.title, style = if (shortWideSettings) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+        Text(activePage.title, style = if (shortWideSettings || activePage == SettingsPage.XTREAM_CONTENT) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold)
 
         if (activePage == SettingsPage.PROFILES) {
@@ -678,6 +678,9 @@ internal fun ModernSettingsScreen(
         }
         if (activePage == SettingsPage.VIEWER_PORTALS) {
             ViewerPortalSettings(managedViewerId, state.profiles)
+        }
+        if (activePage == SettingsPage.XTREAM_CONTENT) {
+            Box(Modifier.weight(1f)) { XtreamContentSettings(managedViewerId, state.profiles) { managedViewerId = it } }
         }
         if (activePage == SettingsPage.LIBRARY) {
             SettingsSection("Library & backup", page = SettingsPage.LIBRARY) {
@@ -1901,6 +1904,9 @@ private fun ViewerPortalSettings(profileId: String?, portals: List<com.nikhil.ni
             SettingsControlRow("Sports", checked = com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hidden,
                 onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
                     com.nikhil.niktv.data.ProfilePortalAccess.SPORTS, checked) } })
+            if (portals.any { it.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
+                SettingsLinkRow(SettingsPage.XTREAM_CONTENT, "Xtream · Languages, content & sports")
+            }
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "Shared portal connections")
             error?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error) }

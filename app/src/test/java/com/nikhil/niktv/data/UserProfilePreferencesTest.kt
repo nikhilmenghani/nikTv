@@ -25,6 +25,20 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
+    @Test fun xtreamContentPolicyIsPortableAndDoesNotLeakAcrossViewersOrAccounts() = runBlocking {
+        val chosen = XtreamContentPolicy.parents().copy(sports = setOf("cricket"))
+        XtreamContentPreferences.save(context, family(), chosen)
+        assertEquals(chosen, XtreamContentPreferences.read(context, family()))
+        assertFalse(XtreamContentPreferences.read(context, kids()).enabled)
+        users.selectProfile(kids().profileId)
+        XtreamContentPreferences.save(context, family(), chosen.copy(languages = setOf("hi", "gu")))
+        assertFalse(XtreamContentPreferences.read(context, kids()).enabled)
+        assertEquals(setOf("hi", "gu"), XtreamContentPreferences.read(context, family()).languages)
+        val portable = users.snapshot("101").filter { "xtream_content_policy_v1" in it.payload }
+        assertTrue(portable.isNotEmpty())
+        assertTrue(portable.all { it.profileId == family().profileId })
+        assertFalse(portable.any { "password" in it.payload || "portalUrl" in it.payload })
+    }
     @Test fun portalAccessIsProfileSpecificPortableAndDoesNotExposeConnectionDetails() = runBlocking {
         val portal = PortalProfile("Private", "http://private-provider.test", "00:11:22:33:44:55")
         assertTrue(ProfilePortalAccess.allowed(context, portal, family()))

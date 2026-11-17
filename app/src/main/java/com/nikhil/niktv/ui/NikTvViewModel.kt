@@ -53,6 +53,8 @@ import kotlinx.coroutines.NonCancellable
 data class TmdbIptvLookupMiss(val request: AlternateSourceRequest, val profileKey: String)
 
 data class NikTvState(
+    val xtreamContentPolicy: XtreamContentPolicy = XtreamContentPolicy(),
+    internal val contentPolicyCategories: Map<CatalogType, List<Category>> = emptyMap(),
     val profileSwitcherOpen: Boolean = false,
     val alternateSources: AlternateSourcePickerState? = null,
     val tmdbIptvLookupMiss: TmdbIptvLookupMiss? = null,
@@ -234,7 +236,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private val categoryRefreshSlots = kotlinx.coroutines.sync.Semaphore(1)
     internal var categoryMetadataLookup: suspend (PortalSession, CatalogType, Boolean) -> List<Category> = { session, type, background -> portal.categories(session, type, background) }
     private val _state = MutableStateFlow(NikTvState(parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(application), parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(application)))
-    val state: StateFlow<NikTvState> = _state.asStateFlow()
+    val state: StateFlow<NikTvState> = ContentFilteredStateFlow(_state)
     private val channelAvailability = IptvAvailabilityStore(application)
     private var remoteFrameAttempt: String? = null
     private var remoteFailedAttempt: String? = null
@@ -324,6 +326,13 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private var searchServerJob: kotlinx.coroutines.Job? = null
 
     init {
+        viewModelScope.launch {
+            userSyncStore.selectedScope.collectLatest { owner ->
+                com.nikhil.niktv.data.XtreamContentPreferences.observe(getApplication(), owner).collect { policy ->
+                    _state.update { it.copy(xtreamContentPolicy = policy) }
+                }
+            }
+        }
         viewModelScope.launch {
             state.map { it.episodeBrowseKey() }.distinctUntilChanged().collect { key ->
                 val request = _state.value.episodeDestination
@@ -1723,10 +1732,24 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             }
     }
     private fun gateAdultAction(item: MediaItem, type: CatalogType, action: () -> Unit): Boolean {
+        if (!guardXtreamContent(item, type)) return true
         if (!isAdultMedia(item, type) || !com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) ||
             com.nikhil.niktv.data.ParentalControls.unlocked(getApplication())) return false
         launchForViewer launch@ { if (authorizeParental()) action() }
         return true
+    }
+    private fun contentGate(): XtreamContentGate {
+        val snapshot = _state.value
+        val policy = com.nikhil.niktv.data.XtreamContentPreferences.read(getApplication(), userSyncStore.selectedScope.value)
+        return XtreamContentGate(if (policy == snapshot.xtreamContentPolicy) snapshot else snapshot.copy(xtreamContentPolicy = policy))
+    }
+    private fun guardXtreamContent(item: MediaItem, type: CatalogType): Boolean {
+        // Public TMDB details may be opened to resolve an allowed provider variant.
+        // The selected IPTV occurrence is always checked again before playback/download.
+        if (item.id.startsWith("tmdb-")) return true
+        if (contentGate().allows(item, type)) return true
+        _state.update { it.copy(error = "This content is hidden by this profile’s Xtream preferences.") }
+        return false
     }
     fun setParentalControlsEnabled(enabled: Boolean) = launchForViewer launch@ {
         if (!authorizeParental(force = true)) return@launch
@@ -4996,15 +5019,21 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         type: CatalogType,
         titleMatcher: (List<MediaItem>) -> List<MediaItem>
     ): List<MediaItem> {
+        if (contentGate().active && _state.value.rawCategoriesByType[type].isNullOrEmpty()) {
+            val metadata = store.browseCatalogMetadata(type, session.profile.cacheKey()).first()?.categories
+                ?: portal.categories(session, type)
+            _state.update { it.copy(rawCategoriesByType = it.rawCategoriesByType + (type to metadata)) }
+        }
         val cached = store.searchCatalog(type, session.profile.cacheKey()).first()?.items.orEmpty()
         // Known cached versions remain usable offline. A cache miss must verify full
         // catalogue coverage/freshness before it can become a negative lookup.
-        withContext(Dispatchers.Default) { titleMatcher(cached) }.takeIf { it.isNotEmpty() }?.let { return it }
+        val gate = contentGate()
+        withContext(Dispatchers.Default) { titleMatcher(cached.filter { gate.allows(it, type) }) }.takeIf { it.isNotEmpty() }?.let { return it }
         val candidates = collectionCatalog(session, type, force = false).items
 
         // Provider identity can identify the movie, but cannot choose its language
         // or quality variant. Keep every ranked occurrence for the existing picker.
-        return withContext(Dispatchers.Default) { titleMatcher(candidates) }
+        return withContext(Dispatchers.Default) { titleMatcher(candidates.filter { gate.allows(it, type) }) }
     }
 
     private fun localMovieCandidates(snapshot: NikTvState): List<MediaItem> {
@@ -6835,6 +6864,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         queueFilter: PlaybackQueueFilter? = null,
         resetDecoderSession: Boolean = false
     ) = latestPlaybackRequest.run(requestId) {
+        if (!guardXtreamContent(series ?: item, type)) return@run
         val userScope = store.captureScope()
         if (navigationCursor.pendingRequest != requestId) navigationCursor.select(requestId,
             _state.value.nowPlaying?.let(::playbackNavigationQueue).orEmpty().map { it.id }, item.id,
@@ -7484,7 +7514,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     ): List<MediaItem> {
         val snapshot = _state.value
         // The committed queue owns navigation, not whichever browse screen updated last.
+        val gate = contentGate()
         val providerOrder = providerPlayerQueue(playing.episodeQueue.ifEmpty { listOf(playing.media) })
+            .filter { gate.allows(playing.series ?: it, playing.catalogType) }
         if (playing.catalogType != CatalogType.LIVE_TV) return providerOrder
         val profileKey = snapshot.session?.profile?.cacheKey()
             ?: snapshot.savedProfile?.cacheKey()
@@ -7945,7 +7977,17 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
         val origin = settingsReturnSurface
         settingsReturnSurface = null
-        _state.update { origin?.restore(it) ?: it.copy(settingsOpen = false) }
+        val policy = com.nikhil.niktv.data.XtreamContentPreferences.read(getApplication(), userSyncStore.selectedScope.value)
+        _state.update { (origin?.restore(it) ?: it.copy(settingsOpen = false)).copy(xtreamContentPolicy = policy) }
+        val snapshot = _state.value
+        val gate = contentGate()
+        if (snapshot.selectedCategory?.let { !gate.allowsCategory(it) } == true && snapshot.nowPlaying == null) {
+            val raw = snapshot.rawCategoriesByType[snapshot.selectedType].orEmpty()
+            val next = filterCategories(raw, snapshot.savedProfile?.cacheKey(), snapshot.selectedType, snapshot.categoryFilters).firstOrNull()
+            _state.update { it.copy(selectedCategory = next, selectedSeries = null, providerMovieDetails = null,
+                modernIptvCategory = null, items = emptyList()) }
+            if (next != null && !snapshot.homeOpen && !snapshot.favoritesOpen && !snapshot.searchOpen) loadCategory(next)
+        }
     }
     private var manualReauthenticationJob: Job? = null
     private var manualReauthenticationGeneration = 0L
@@ -8558,6 +8600,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     }
 
     fun openSeriesFromHome(series: MediaItem) = task {
+        if (!guardXtreamContent(series, CatalogType.SERIES)) return@task
         searchSeriesReturn = null
         discoveryMetadataRequests.cancel()
         if (isAdultMedia(series, CatalogType.SERIES) && !authorizeParental()) return@task
@@ -8969,9 +9012,11 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         if (profileKey != null) com.nikhil.niktv.data.ParentalControls.rememberCategories(getApplication(), profileKey, type, raw)
         if (profileKey == null) return raw
         val key = filterKey(profileKey, type)
-        val enabledIds = filters[key] ?: return raw
+        val gate = contentGate()
+        val allowed = raw.filter(gate::allowsCategory)
+        val enabledIds = filters[key] ?: return allowed
         val enabledSet = enabledIds.toSet()
-        return raw.filter { it.id in enabledSet }
+        return allowed.filter { it.id in enabledSet }
     }
     private fun progressKeyFor(profile: PortalProfile, item: MediaItem, type: CatalogType, series: MediaItem?): String =
         providerProgressKey(profile.cacheKey(), item, type, series)

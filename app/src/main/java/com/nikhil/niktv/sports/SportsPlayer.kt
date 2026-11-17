@@ -44,6 +44,7 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     var decoderSession by remember(stream, sourceAttemptId) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
     var restartingDecoder by remember(stream, sourceAttemptId) { mutableStateOf(false) }
     var decoderResumePosition by remember(stream, sourceAttemptId) { mutableLongStateOf(0L) }
+    var playbackIntent by remember(stream, sourceAttemptId) { mutableStateOf(true) }
     val recoveryScope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
     val capturedOwner = remember(stream, sourceAttemptId) { com.nikhil.niktv.data.UserSyncStore.get(context).selectedScope.value }
@@ -70,7 +71,7 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     val committedMedia = remember(original, sourceAttemptId, attempt, decoderRecoveries, authorizationRetries, decoderSession, decoderResumePosition) {
         original.copy(playbackAttemptId = java.util.UUID.randomUUID().toString(), decoderSessionId = decoderSession,
             decoderRecoveryCount = decoderRecoveries, authorizationRetryCount = authorizationRetries,
-            resumePositionMillis = decoderResumePosition)
+            resumePositionMillis = decoderResumePosition, playWhenReady = playbackIntent)
     }
     val activeId = remember(original, sourceAttemptId) { "sports-active:$sourceAttemptId:${original.media.id}" }
     val displayQueue = remember(queue, selectedIndex, activeId) {
@@ -103,12 +104,22 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
-    key(sourceAttemptId) { PlayerScreen(media, onBack = onBack, onRetry = { attempt++ }, onRetryAlternateDecoder = { decoderRecoveries++; attempt++ },
+    key(sourceAttemptId) { PlayerScreen(media, onBack = onBack, onRetry = { attempt++ }, onRetryAlternateDecoder = { position ->
+        recoveryScope.launch {
+            restartingDecoder = true
+            delay(450L)
+            decoderResumePosition = position.coerceAtLeast(0L)
+            decoderRecoveries++
+            attempt++
+            restartingDecoder = false
+        }
+    },
         onRestartDecoderSession = { position ->
             onCancelPendingFallback?.invoke()
             recoveryScope.launch {
                 restartingDecoder = true
                 delay(450L)
+                playbackIntent = true
                 decoderRecoveries = 0
                 decoderSession = java.util.UUID.randomUUID().toString()
                 decoderResumePosition = position.coerceAtLeast(0L)
@@ -136,7 +147,7 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         liveQueueCategoryTitle = "Streams", onProgress = { _, _, _ -> },
         controlsTimeoutSeconds = currentSettings.timeout, onControlsTimeoutChanged = preferences::setTimeout,
         playbackEngine = currentSettings.engine, onPlaybackEngineChanged = preferences::setEngine,
-        onPlaybackIntentChanged = { if (!it) onCancelPendingFallback?.invoke() },
+        onPlaybackIntentChanged = { playbackIntent = it; if (!it) onCancelPendingFallback?.invoke() },
         startFullscreen = true, showLiveRecordingAndGuide = false, onVideoFrameRendered = onVideoFrameRendered,
         onVideoFramesRendered = onVideoFramesRendered, onTerminalPlaybackFailure = onTerminalFailure) }
 }

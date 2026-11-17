@@ -66,14 +66,30 @@ internal class PlaybackAudioIntent {
     fun noisy() = permanentLoss()
 }
 
+/** Initialization failures and hardware crashes still exclude the codec immediately. */
+internal fun recreateSoftwareDecoderOnce(error: Throwable, decoder: String): Boolean {
+    val name = decoder.lowercase()
+    return (name.startsWith("c2.android.") || name.startsWith("omx.google.")) &&
+        generateSequence(error) { it.cause }.filterIsInstance<androidx.media3.common.PlaybackException>()
+            .any { it.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED }
+}
+
 /** Failed candidates are bounded and isolated to one committed playback session. */
 internal class DecoderSessionFailures(private val maxSessions: Int = 8) {
-    private val bySession = linkedMapOf<String, MutableSet<String>>()
-    @Synchronized fun record(session: String, decoder: String) {
-        bySession.getOrPut(session) { mutableSetOf() }.add(decoder.lowercase())
+    private class Failures {
+        val excluded = mutableSetOf<String>()
+        val recreated = mutableSetOf<String>()
+    }
+    private val bySession = linkedMapOf<String, Failures>()
+    @Synchronized fun record(session: String, decoder: String, retryRuntimeOnce: Boolean = false) {
+        val failures = bySession.getOrPut(session) { Failures() }
+        val name = decoder.lowercase()
+        // A software codec can have a broken instance after flushing a seek. Give
+        // it one fresh instance before excluding what may be the last usable codec.
+        if (!retryRuntimeOnce || !failures.recreated.add(name)) failures.excluded.add(name)
         while (bySession.size > maxSessions) bySession.remove(bySession.keys.first())
     }
-    @Synchronized fun failed(session: String): Set<String> = bySession[session]?.toSet().orEmpty()
+    @Synchronized fun failed(session: String): Set<String> = bySession[session]?.excluded?.toSet().orEmpty()
 }
 
 internal fun adjacentQueueIndex(index: Int, size: Int, delta: Int, wrap: Boolean): Int? {

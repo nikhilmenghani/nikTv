@@ -52,7 +52,8 @@ class PlayerQueueRegressionActivity : ComponentActivity() {
                 MaterialTheme {
                     var favorites by remember { mutableStateOf(emptySet<String>()) }
                     PlayerQueueOverlay(
-                        items = queue,
+                        items = if (intent.getBooleanExtra("retryLoading", false)) queue.take(3) else queue,
+                        hasMore = intent.getBooleanExtra("retryLoading", false),
                         catalogType = if (episodes) com.nikhil.niktv.model.CatalogType.SERIES else com.nikhil.niktv.model.CatalogType.LIVE_TV,
                         alternateSeries = if (episodes) MediaItem("fixture-series", "Fixture series", null, null) else null,
                         playingId = intent.getStringExtra("playingId") ?: if (episodes) "episode-1" else "0",

@@ -23,9 +23,9 @@ internal data class DiscoveryCard(
 ) {
     val key get() = "${if (series) "tv" else "movie"}:$id"
     val media get() = MediaItem("tmdb-${if (series) "series" else "movie"}:$id", title, poster, null,
-        description = overview, externalTmdbId = id, isAdult = adult)
-    fun movie() = TmdbMovie(id, title, title, overview, poster, backdrop, date, rating)
-    fun show() = TmdbSeries(id, title, title, overview, poster, backdrop, date, rating)
+        description = overview, externalTmdbId = id, isAdult = adult, contentLanguage = originalLanguage, contentGenres = genres)
+    fun movie() = TmdbMovie(id, title, title, overview, poster, backdrop, date, rating, genres = genres, adult = adult, originalLanguage = originalLanguage)
+    fun show() = TmdbSeries(id, title, title, overview, poster, backdrop, date, rating, genres = genres, adult = adult, originalLanguage = originalLanguage)
     fun released(today: String = currentDiscoveryDate()): Boolean = !adult && releasedDiscoveryDate(date, today)
 }
 
@@ -38,8 +38,8 @@ internal fun relevantDiscoveryRecommendations(source: DiscoveryCard, cards: List
         .thenByDescending { card -> card.genres.count(source.genres::contains) })
 }
 
-internal fun TmdbMovie.discovery() = DiscoveryCard(id, false, title, overview, posterUrl, backdropUrl, releaseDate, voteAverage, genres, adult = adult)
-internal fun TmdbSeries.discovery() = DiscoveryCard(id, true, name, overview, posterUrl, backdropUrl, firstAirDate, voteAverage, genres, adult = adult)
+internal fun TmdbMovie.discovery() = DiscoveryCard(id, false, title, overview, posterUrl, backdropUrl, releaseDate, voteAverage, genres, adult = adult, originalLanguage = originalLanguage)
+internal fun TmdbSeries.discovery() = DiscoveryCard(id, true, name, overview, posterUrl, backdropUrl, firstAirDate, voteAverage, genres, adult = adult, originalLanguage = originalLanguage)
 
 @Serializable
 internal data class DiscoveryPerson(val name: String, val role: String = "", val portrait: String? = null, val id: Int? = null)

@@ -24,6 +24,58 @@ class PlayerQueueNavigationTest {
     }
     private fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
 
+    @Test fun retryLoadingFitsListAndGridAndRetainsItsFocusBounds() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        fun find(text: String, node: AccessibilityNodeInfo? = instrumentation.uiAutomation.rootInActiveWindow): AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (node.text?.toString() == text) return node
+            for (index in 0 until node.childCount) find(text, node.getChild(index))?.let { return it }
+            return null
+        }
+        fun await(message: String, condition: () -> Boolean) {
+            val until = android.os.SystemClock.uptimeMillis() + 8000
+            while (android.os.SystemClock.uptimeMillis() < until) {
+                if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+                if (condition()) return
+                Thread.sleep(50)
+            }
+            fail(message)
+        }
+        fun rect(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen)
+        fun retryOwner(): AccessibilityNodeInfo {
+            var node = requireNotNull(find("Retry loading"))
+            while (!node.isClickable && node.parent != null) node = node.parent
+            return node
+        }
+        for (layout in listOf("LIST", "GRID")) {
+            val host = instrumentation.startActivitySync(Intent(context, PlayerQueueRegressionActivity::class.java)
+                .putExtra("retryLoading", true).putExtra("layout", layout).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            try {
+                await("Retry appears after failed automatic append in $layout") { find("Retry loading") != null }
+                val before = rect(retryOwner())
+                val screenshot = instrumentation.uiAutomation.takeScreenshot()
+                try { java.io.File(context.filesDir, "queue-retry-$layout.png").outputStream().use {
+                    screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                } } finally { screenshot.recycle() }
+                val label = requireNotNull(find("Retry loading"))
+                val text = rect(label)
+                assertTrue("Retry label is visible in $layout", label.isVisibleToUser)
+                assertTrue("Retry label fits inside its card in $layout: label=$text card=$before", before.contains(text))
+                assertTrue("Retry label has a full text line in $layout: $text", text.height() >= 16 * context.resources.displayMetrics.density)
+                await("Queue has an initial D-pad target in $layout") { bounds() != null }
+                repeat(if (layout == "LIST") 3 else 1) { key(KeyEvent.KEYCODE_DPAD_DOWN) }
+                await("D-pad reaches Retry in $layout") { retryOwner().isFocused }
+                assertEquals("Focusing Retry keeps the same bounds in $layout", before, rect(retryOwner()))
+                val focusedScreenshot = instrumentation.uiAutomation.takeScreenshot()
+                try { java.io.File(context.filesDir, "queue-retry-$layout-focused.png").outputStream().use {
+                    focusedScreenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                } } finally { focusedScreenshot.recycle() }
+                assertFalse("Navigation does not play media", PlayerQueueRegressionActivity.selected)
+            } finally { instrumentation.runOnMainSync { host.finish() } }
+        }
+    }
+
     @Test fun touchRailEdgesKeepBordersAndNavigateToTheCorrectChannel() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))

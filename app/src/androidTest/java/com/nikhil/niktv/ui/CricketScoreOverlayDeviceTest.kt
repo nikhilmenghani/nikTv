@@ -85,6 +85,7 @@ class CricketScoreOverlayDeviceTest {
         }
         await("Player controls appear") { node("More controls") != null || node("Hide extra controls") != null }
         if (node("More controls") != null) click("More controls")
+        if (node("More player tools") != null) click("More player tools")
     }
     private fun drag(from: Rect) {
         val started = SystemClock.uptimeMillis()

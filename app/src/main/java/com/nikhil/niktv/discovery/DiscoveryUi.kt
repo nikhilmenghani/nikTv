@@ -225,29 +225,40 @@ private fun DiscoveryPreviewContent(
     val expectedProviderCategories = remember(providerBindingScope) {
         providerBindingScope.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
     }
-    val providerState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
+    val providerRawState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
         ?: ProviderDiscoveryState(profile = profile, categories = expectedProviderCategories)
-    val providerQueues by produceState(providerVm.retainedRows.takeIf { it.first == profile }
-        ?: (profile to emptyMap<String, List<MediaItem>>()), profile, providerSelections, providerState.pages, scrollVariant) {
+    val providerState = remember(providerRawState, app.xtreamContentPolicy, app.contentPolicyCategories) {
+        providerRawState.withContentPolicy(app)
+    }
+    val providerRawQueues by produceState(providerVm.retainedRows.takeIf { it.first == profile }
+        ?: (profile to emptyMap<String, List<MediaItem>>()), profile, providerSelections, providerRawState.pages, scrollVariant) {
         val retained = providerVm.retainedRows.takeIf { it.first == profile }?.second.orEmpty()
         val previous = value.takeIf { it.first == profile }?.second.orEmpty()
         value = profile to withContext(Dispatchers.Default) {
             buildMap { providerSelections.forEach { (type, categories) -> categories.forEach { category ->
                 val key = "provider:${type.name}:${category.id}"
                 val sources = providerDiscoverySources(listOf(category))
-                val pages = providerState.pages[type].orEmpty()
-                val items = if (!scrollVariant.recycledRows || sources.any { it.id in pages }) providerDiscoveryItems(sources, pages) else retained[key].orEmpty()
+                val pages = providerRawState.pages[type].orEmpty()
+                val items = if (!scrollVariant.recycledRows || sources.any { it.id in pages }) providerDiscoveryItems(sources, pages)
+                    else retained[key].orEmpty()
                 put(key, if (windowedProviderPreview) previous[key]?.takeIf { it == items } ?: items else items)
             } } }
         }
     }
-    SideEffect { if (providerQueues.first == profile) {
-        providerVm.retainedRows = if (!scrollVariant.recycledRows) providerQueues else {
+    SideEffect { if (providerRawQueues.first == profile) {
+        providerVm.retainedRows = if (!scrollVariant.recycledRows) providerRawQueues else {
             val hot = providerBindingSelections.flatMap { (type, cats) -> cats.map { "provider:${type.name}:${it.id}" } }.toSet()
-            val values = providerQueues.second
+            val values = providerRawQueues.second
             profile to (values.filterKeys { it in hot } + values.filter { it.key !in hot && it.value.isNotEmpty() }).entries.take(100).associate { it.toPair() }
         }
     } }
+    val providerQueues = remember(providerRawQueues, app.xtreamContentPolicy, app.contentPolicyCategories) {
+        val gate = com.nikhil.niktv.ui.XtreamContentGate(app)
+        if (!gate.active) providerRawQueues else providerRawQueues.first to providerRawQueues.second.mapValues { (key, items) ->
+            val type = if (key.startsWith("provider:SERIES:")) CatalogType.SERIES else CatalogType.MOVIES
+            items.filter { gate.allows(it, type) }
+        }
+    }
     var providerCollection by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
     var providerCollectionVisit by rememberSaveable(profile, surface) { mutableIntStateOf(0) }
     var providerCollectionCategory by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
@@ -282,7 +293,9 @@ private fun DiscoveryPreviewContent(
     val loadedState by if (isolateNativeHero)
         feedState.collectAsStateWithLifecycle(initialValue = initialFeedState)
     else vm.state.collectAsStateWithLifecycle()
-    val state = loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)
+    val state = remember(loadedState, profile, surface, app.xtreamContentPolicy, app.contentPolicyCategories) {
+        (loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)).withContentPolicy(app)
+    }
     // TV browsing prioritizes one decisive focus change over full-screen presentation work.
     // Explicit detail routes keep their artwork, metadata and actions.
     val fastTvLanding = (television || scrollVariant.tvPresentation || scrollVariant.staticArtwork) && state.detail == null
@@ -796,7 +809,8 @@ private fun DiscoveryPreviewContent(
                 scrollVariant.heroArtwork, scrollVariant.heroArtworkFade, scrollVariant.heroAutoRotate, scrollVariant.prepareNextHero,
                 seriesRecents = app.recentlyPlayed)) else null
         val nativeHero: RecycledHeroContent? = if (scrollVariant.heroLayout && surface == DashboardSurface.HOME) ({ focused, down, up ->
-            val heroState by vm.state.collectAsStateWithLifecycle()
+            val rawHeroState by vm.state.collectAsStateWithLifecycle()
+            val heroState = remember(rawHeroState, app.xtreamContentPolicy, app.contentPolicyCategories) { rawHeroState.withContentPolicy(app) }
             val heroCard = heroState.takeIf { it.profile == profile && it.surface == surface }?.hero
             val sceneArtwork = LocalDiscoverySceneArtwork.current
             LaunchedEffect(scrollVariant.prepareNextHero, mayRotateHero, heroCard?.key) {

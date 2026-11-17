@@ -860,6 +860,8 @@ class StalkerPortalClient(private val context: Context) {
                     o.boolish("tv_archive") ||
                         (o.string("tv_archive_duration")?.toIntOrNull() ?: 0) > 0
                 } else null,
+                contentLanguage = o.string("language"),
+                contentGenres = o.string("genre")?.split(',', '/')?.map(String::trim).orEmpty(),
                 externalTmdbId = listOf("tmdb", "tmdb_id", "tmdbid")
                     .firstNotNullOfOrNull { key -> o.string(key)?.toIntOrNull() }
             )

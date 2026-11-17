@@ -167,7 +167,10 @@ data class MediaItem(
     /** Provider upload/add timestamp, independent of the episode's original air date. */
     val episodeAddedAtMillis: Long? = null,
     /** Confirmed Stalker VOD hierarchy, even when its catalogue category is Movies. */
-    val vodSeriesContainer: Boolean = false
+    val vodSeriesContainer: Boolean = false,
+    /** Provider descriptive metadata for local content policy; never guessed from a TMDB title. */
+    val contentLanguage: String? = null,
+    val contentGenres: List<String> = emptyList()
 )
 
 @Serializable

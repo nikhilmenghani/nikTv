@@ -35,7 +35,8 @@ data class TmdbMovie(
     val voteAverage: Double?,
     val cast: List<String> = emptyList(),
     val genres: List<String> = emptyList(),
-    val adult: Boolean = false
+    val adult: Boolean = false,
+    val originalLanguage: String? = null
 ) {
     val releaseYear: Int?
         get() = releaseDate?.take(4)?.toIntOrNull()
@@ -46,7 +47,7 @@ data class TmdbMovie(
         logo = posterUrl ?: backdropUrl,
         command = null,
         description = overview,
-        cast = cast
+        cast = cast, contentLanguage = originalLanguage, contentGenres = genres, isAdult = adult
     )
 }
 
@@ -66,7 +67,8 @@ data class TmdbSeries(
     val cast: List<String> = emptyList(),
     val alternativeNames: List<String> = emptyList(),
     val genres: List<String> = emptyList(),
-    val adult: Boolean = false
+    val adult: Boolean = false,
+    val originalLanguage: String? = null
 ) {
     val firstAirYear: Int?
         get() = firstAirDate?.take(4)?.toIntOrNull()
@@ -77,7 +79,7 @@ data class TmdbSeries(
         logo = posterUrl ?: backdropUrl,
         command = null,
         description = overview,
-        cast = cast
+        cast = cast, contentLanguage = originalLanguage, contentGenres = genres, isAdult = adult
     )
 }
 
@@ -439,7 +441,8 @@ class TmdbClient {
             poster?.let { "$IMAGE_BASE_URL$it" }, backdrop?.let { "$BACKDROP_BASE_URL$it" },
             this["first_air_date"]?.jsonPrimitive?.contentOrNull,
             this["vote_average"]?.jsonPrimitive?.doubleOrNull,
-            genres = discoveryGenreNames(), adult = this["adult"]?.jsonPrimitive?.contentOrNull == "true"
+            genres = discoveryGenreNames(), adult = this["adult"]?.jsonPrimitive?.contentOrNull == "true",
+            originalLanguage = this["original_language"]?.jsonPrimitive?.contentOrNull
         )
     }
 
@@ -457,7 +460,8 @@ class TmdbClient {
             poster?.let { "$IMAGE_BASE_URL$it" }, backdrop?.let { "$BACKDROP_BASE_URL$it" },
             this["release_date"]?.jsonPrimitive?.contentOrNull,
             this["vote_average"]?.jsonPrimitive?.doubleOrNull,
-            genres = discoveryGenreNames(), adult = this["adult"]?.jsonPrimitive?.contentOrNull == "true"
+            genres = discoveryGenreNames(), adult = this["adult"]?.jsonPrimitive?.contentOrNull == "true",
+            originalLanguage = this["original_language"]?.jsonPrimitive?.contentOrNull
         )
     }
 
@@ -561,7 +565,8 @@ class TmdbClient {
                     posterUrl = posterPath?.let { "$IMAGE_BASE_URL$it" },
                     backdropUrl = backdropPath?.let { "$BACKDROP_BASE_URL$it" },
                     releaseDate = obj["release_date"]?.jsonPrimitive?.contentOrNull,
-                    voteAverage = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
+                    voteAverage = obj["vote_average"]?.jsonPrimitive?.doubleOrNull,
+                    originalLanguage = obj["original_language"]?.jsonPrimitive?.contentOrNull
                 )
             }
             .take(limit.coerceAtLeast(1))
@@ -608,7 +613,8 @@ class TmdbClient {
                     posterUrl = posterPath?.let { "$IMAGE_BASE_URL$it" },
                     backdropUrl = backdropPath?.let { "$BACKDROP_BASE_URL$it" },
                     firstAirDate = obj["first_air_date"]?.jsonPrimitive?.contentOrNull,
-                    voteAverage = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
+                    voteAverage = obj["vote_average"]?.jsonPrimitive?.doubleOrNull,
+                    originalLanguage = obj["original_language"]?.jsonPrimitive?.contentOrNull
                 )
             }
             .take(limit.coerceAtLeast(1))

@@ -6,6 +6,7 @@ import android.os.Debug
 import android.os.SystemClock
 import android.view.SurfaceView
 import androidx.activity.compose.setContent
+import androidx.lifecycle.viewModelScope
 import androidx.media3.common.*
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -70,6 +71,201 @@ class PlaybackEngineFixtureTest {
             Thread.sleep(50L)
         }
         fail(label)
+    }
+
+    /** Inject the logged renderer failure after a real -10s seek; no IPTV requests. */
+    @Test fun softwareDecoderRewindFailureRecoversPlayingAndPausedWithoutRefreshingSource() {
+        check(context.packageName.endsWith(".regression"))
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        val software = androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT
+            .getDecoderInfos(MimeTypes.VIDEO_H264, false, false).first {
+                it.name.startsWith("c2.android.") || it.name.startsWith("OMX.google.", true)
+            }.name
+        for (requested in listOf(true, false)) FixtureServer().use { server ->
+            server.requiredHeaders = mapOf("X-NikTV-Fixture" to "decoder-recovery")
+            val activity = host()
+            val scope = "rewind-software-$requested"
+            val prefs = context.getSharedPreferences("player_engine_fallbacks", android.content.Context.MODE_PRIVATE)
+            val preference = "mtk:$scope"
+            val prior = prefs.getInt(preference, 0)
+            prefs.edit().putInt(preference, 1).commit()
+            val frames = AtomicInteger()
+            val refreshes = AtomicInteger()
+            val recoveries = AtomicInteger()
+            val original = PlayingMedia(NikItem("rewind", "Rewind recovery fixture", null, null),
+                "${server.base}/movie.mp4", CatalogType.SERIES, resumePositionMillis = 12_000,
+                progressKey = scope, profileKey = "isolated-rewind", playbackFormat = "MP4",
+                streamRequestHeaders = server.requiredHeaders)
+            lateinit var vm: NikTvViewModel
+            fun currentPlayer(): ExoPlayer? {
+                var result: ExoPlayer? = null
+                main {
+                    fun walk(view: android.view.View) {
+                        if (view is androidx.media3.ui.PlayerView) result = view.player as? ExoPlayer
+                        if (view is android.view.ViewGroup) for (index in 0 until view.childCount) walk(view.getChildAt(index))
+                    }
+                    walk(activity.window.decorView)
+                }
+                return result
+            }
+            fun position(player: ExoPlayer): Long { var value = 0L; main { value = player.currentPosition }; return value }
+            try {
+                main {
+                    vm = androidx.lifecycle.ViewModelProvider(activity)[NikTvViewModel::class.java]
+                    vm.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                    @Suppress("UNCHECKED_CAST")
+                    val state = NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }
+                        .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<NikTvState>
+                    state.value = NikTvState(restoring = false, nowPlaying = original)
+                    activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                        val state by vm.state.collectAsState()
+                        val playing = state.nowPlaying
+                        if (playing == null) androidx.compose.material3.Text("Recreating decoder fixture")
+                        else PlayerScreen(playing, onBack = vm::closePlayer,
+                            onRetry = { refreshes.incrementAndGet() }, onPlaybackAuthorizationFailure = { refreshes.incrementAndGet() },
+                            onRetryAlternateDecoder = { at -> recoveries.incrementAndGet(); vm.retryPlaybackWithAlternateDecoder(at, playing) },
+                            onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
+                            onPlaybackIntentChanged = { vm.setPlaybackIntent(playing.playbackAttemptId, it) },
+                            playbackEngine = com.nikhil.niktv.model.PlaybackEngine.MEDIA3, controlsTimeoutSeconds = 0,
+                            startFullscreen = true, onVideoFrameRendered = { frames.incrementAndGet() })
+                    } }
+                }
+                await("Software player renders the initial resume") { frames.get() > 0 && currentPlayer()?.let { position(it) >= 12_000 } == true }
+                showStabilityControls(activity, original.media.title)
+                await("Native rewind is available") { control("Back 10 seconds") != null }
+                if (!requested) {
+                    clickControl("Pause")
+                    await("Pause intent is committed before seeking") { vm.state.value.nowPlaying?.playWhenReady == false && control("Play") != null }
+                }
+                val failedPlayer = requireNotNull(currentPlayer())
+                val beforeSeek = position(failedPlayer)
+                instrumentation.setInTouchMode(false)
+                var rewind = requireNotNull(control("Back 10 seconds"))
+                while (!rewind.isFocusable && rewind.parent != null) rewind = rewind.parent
+                assertTrue(rewind.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS))
+                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                await("The real D-pad -10s button seeks before the renderer fault") { position(failedPlayer) <= beforeSeek - 8_000 }
+                val seekPosition = position(failedPlayer)
+                val frameCount = frames.get()
+                main {
+                    failedPlayer.createMessage { _, _ ->
+                        throw androidx.media3.exoplayer.ExoPlaybackException.createForRenderer(
+                            IllegalStateException("Decoder failed: $software"), "MediaCodecVideoRenderer", 0,
+                            Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build(), C.FORMAT_HANDLED,
+                            false, PlaybackException.ERROR_CODE_DECODING_FAILED)
+                    }.send()
+                }
+                await("Automatic recovery creates a new player and renders a frame even when paused") {
+                    vm.state.value.nowPlaying?.let { it.playbackAttemptId != original.playbackAttemptId && it.decoderRecoveryCount == 1 } == true &&
+                        currentPlayer()?.let { it !== failedPlayer } == true && frames.get() > frameCount
+                }
+                val resumed = requireNotNull(vm.state.value.nowPlaying)
+                assertEquals(1, recoveries.get())
+                assertEquals("No portal lookup/reauthentication is needed", 0, refreshes.get())
+                assertEquals(original.url, resumed.url)
+                assertEquals(original.streamRequestHeaders, resumed.streamRequestHeaders)
+                assertEquals(0, server.rejected.get())
+                assertEquals(original.decoderSessionId, resumed.decoderSessionId)
+                assertEquals("Automatic recovery preserves explicit pause/play intent", requested, resumed.playWhenReady)
+                assertTrue("Recovery remains near the rewind target", kotlin.math.abs(resumed.resumePositionMillis - seekPosition) <= 2_000)
+                val recoveredPlayer = requireNotNull(currentPlayer())
+                main { assertEquals(requested, recoveredPlayer.playWhenReady); assertNull(recoveredPlayer.playerError) }
+                val recoveredAt = position(recoveredPlayer)
+                Thread.sleep(600)
+                if (requested) assertTrue("Playing recovery continues advancing", position(recoveredPlayer) > recoveredAt)
+                else assertEquals("Paused recovery does not autoplay", recoveredAt, position(recoveredPlayer))
+                assertNull(control("Decoder recovery paused. Retry or switch player."))
+                NavigationAuditEvidence.capture("rewind-software-recovered-${if (requested) "playing" else "paused"}")
+            } finally {
+                main { activity.finish() }
+                prefs.edit().putInt(preference, prior).commit()
+                instrumentation.setInTouchMode(true)
+            }
+        }
+    }
+
+    @Test fun compactRibbonPhoneLandscapeRetainsRealPlayerNavigation() {
+        assertTrue(instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90))
+        try { compactRibbonUsesRealIptvAndSportsPlayersAcrossEngines() }
+        finally { instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_UNFREEZE) }
+    }
+
+    @Test fun compactRibbonUsesRealIptvAndSportsPlayersAcrossEngines() {
+        check(context.packageName.endsWith(".regression"))
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        fun rect(label: String, prefix: Boolean = false): android.graphics.Rect {
+            var node = checkNotNull(control(label, prefix))
+            while (!node.isFocusable && node.parent != null) node = node.parent
+            return android.graphics.Rect().also(node::getBoundsInScreen)
+        }
+        fun focused(label: String, prefix: Boolean = false): Boolean {
+            var node = control(label, prefix)
+            while (node != null && !node.isFocusable) node = node.parent
+            return node?.isFocused == true
+        }
+        for (sports in listOf(false, true)) for (engine in listOf(
+            com.nikhil.niktv.model.PlaybackEngine.MEDIA3, com.nikhil.niktv.model.PlaybackEngine.VLC)) {
+            FixtureServer().use { server ->
+                val activity = host()
+                val frames = AtomicInteger()
+                val retries = AtomicInteger()
+                val title = "Compact controls fixture"
+                try {
+                    main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                        val media = remember { PlayingMedia(NikItem("ribbon", title, null, null), "${server.base}/movie.mp4",
+                            CatalogType.MOVIES, progressKey = "ribbon-$sports-$engine", profileKey = "isolated-ribbon") }
+                        if (sports) com.nikhil.niktv.sports.player.PlayerScreen(media, onBack = {},
+                            onRetry = { retries.incrementAndGet() }, onRetryAlternateDecoder = { retries.incrementAndGet() }, onPlaybackAuthorizationFailure = { retries.incrementAndGet() },
+                            onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
+                            playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = true,
+                            onVideoFrameRendered = { frames.incrementAndGet() })
+                        else PlayerScreen(media, onBack = {}, onRetry = { retries.incrementAndGet() },
+                            onRetryAlternateDecoder = { retries.incrementAndGet() }, onPlaybackAuthorizationFailure = { retries.incrementAndGet() }, onPlayPrevious = {}, onPlayNext = {},
+                            onProgress = { _, _, _ -> }, playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = true,
+                            onVideoFrameRendered = { frames.incrementAndGet() })
+                    } } }
+                    await("$sports/$engine renders the local fixture") { frames.get() > 0 }
+                    showStabilityControls(activity, title)
+                    await("Native duration exposes seek and rewind controls") {
+                        control("Current playback time ", true) != null && control("Back 10 seconds") != null
+                    }
+                    instrumentation.waitForIdleSync()
+                    val play = rect("Pause")
+                    val seek = rect("Current playback time ", true)
+                    clickControl("More controls")
+                    await("Shared quick row is mounted") { control("Quick controls") != null && control("Video fit:", true) != null }
+                    instrumentation.waitForIdleSync()
+                    NavigationAuditEvidence.capture("compact-production-open-$sports-$engine")
+                    assertEquals("Settings leave transport in place", play, rect("Pause"))
+                    assertEquals("Settings leave seek in place", seek, rect("Current playback time ", true))
+                    assertTrue("Controls share a horizontal row", rect("Subtitles").top == rect("Video fit:", true).top)
+                    NavigationAuditEvidence.capture("compact-player-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}-quick")
+                    instrumentation.setInTouchMode(false)
+                    clickControl("Video fit:", true)
+                    await("Real resize picker opens") { control("Video resize") != null }
+                    clickControl("Skip")
+                    await("Real picker returns to its exact origin") { control("Video resize") == null && focused("Video fit:", true) }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("Right immediately reaches Picture") { focused("Choose picture mode:", true) }
+                    Thread.sleep(200)
+                    assertTrue("Dialog handoff never corrects a subsequent arrow", focused("Choose picture mode:", true))
+                    clickControl("More player tools")
+                    await("Tools include existing stream info and timeout") { control("Playback information") != null && control("Controls timeout:", true) != null }
+                    clickControl("Playback information")
+                    await("Real information dialog opens") { control("Details for the current stream") != null }
+                    clickControl("Close")
+                    await("Info returns to its tool") { control("Details for the current stream") == null && focused("Playback information") }
+                    NavigationAuditEvidence.capture("compact-player-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}")
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    await("Back returns to quick settings") { control("Quick controls") != null }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    await("Closing returns directly to the surviving settings trigger") { control("Quick controls") == null && focused("More controls") }
+                    assertEquals("Settings never reload or reauthenticate the stream", 0, retries.get())
+                } finally { main { activity.finish() }; instrumentation.setInTouchMode(true) }
+            }
+        }
     }
 
     private fun host(): PlaybackFixtureHostActivity {
@@ -480,6 +676,7 @@ class PlaybackEngineFixtureTest {
             click("Watch live")
             await("Watch live seeks to native default without restarting") { position()?.let { it >= before - 4 } == true }
             click("More controls")
+            click("More player tools")
             await("Sports exposes the PiP control") { find("Picture in Picture") != null }
             val framesBeforePip = renderedFrames.get()
             click("Picture in Picture")
@@ -623,6 +820,7 @@ class PlaybackEngineFixtureTest {
             clickControl("Play")
             await("Playback resumes") { shownPosition()?.let { it > (paused ?: 0L) } == true }
             if (control("More controls") != null) clickControl("More controls")
+            clickControl("More player tools")
             await("Sports timeout value is visible") { control("Controls timeout: 3s") != null }
             clickControl("Controls timeout: 3s")
             val next = nextPlayerControlsTimeoutSeconds(3)
@@ -630,14 +828,18 @@ class PlaybackEngineFixtureTest {
             assertEquals(next, runBlocking { store.playerControlsTimeoutSeconds.first() })
             assertEquals("Sports timeout leaves IPTV unchanged", iptvTimeout, runBlocking { iptv.playerControlsTimeoutSeconds.first() })
             instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-            await("Back closes settings before the transport timeout resumes") { control("Playback settings") == null }
+            await("Back returns to the quick row") { control("Quick controls") != null }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await("Back closes settings before the transport timeout resumes") { control("Quick controls") == null }
             await("The new timeout actually hides the overlay", (next + 4) * 1_000L) {
                 control("More controls") == null && control("Pause") == null && control("Play") == null
             }
             instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
             await("Main controls reopen after timeout") { control("More controls") != null }
             clickControl("More controls")
+            clickControl("More player tools")
             await("Reopening retains the new timeout") { control("Controls timeout: ${playerControlsTimeoutLabel(next)}") != null }
+            clickControl("Back to quick controls")
             clickControl("Video fit:", true)
             await("Sports resize uses the real picker") { control("Video resize") != null }
             clickControl("Skip")
@@ -646,10 +848,12 @@ class PlaybackEngineFixtureTest {
             await("Picture mode opens") { control("Picture mode") != null && control("Apply") != null && control("Skip") != null }
             clickControl("Skip")
             await("Picture mode closes") { control("Apply") == null && control("Skip") == null }
+            clickControl("More player tools")
             clickControl("Playback information")
             await("Playback information opens") { control("Details for the current stream") != null }
             clickControl("Close")
             await("Information popup closes") { control("Details for the current stream") == null }
+            clickControl("Back to quick controls")
             clickControl("Player:", true)
             await("Engine picker is available") { control("Choose player") != null }
             val beforeSwitch = frames.get()

@@ -1543,36 +1543,15 @@ internal fun PlayerQueueOverlay(
                                         }
                                     )
                                     .focusable(),
-                                color = if (focused) Color(0xFF3B4D68) else Color(0xFF303030),
-                                border = if (focused) androidx.compose.foundation.BorderStroke(2.5.dp, Color.White) else null,
+                                color = if (listQueue) Color(0x66171A20) else Color(0xFF171A20),
+                                border = androidx.compose.foundation.BorderStroke(if (focused) 2.5.dp else 1.dp,
+                                    if (focused) Color.White else Color(0xFF35383F)),
                                 shape = shape
                             ) {
-                                Column(
-                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    if (loadingMore || loadMoreRequested) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(24.dp),
-                                            color = Color.White,
-                                            strokeWidth = 3.dp
-                                        )
-                                    } else {
-                                        Icon(Icons.Default.Add, null, tint = Color.White)
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        if (loadingMore || loadMoreRequested) "Loading previous…" else "Load previous",
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.titleSmall
-                                    )
-                                    Text(
-                                        "Earlier episodes",
-                                        color = Color.White.copy(alpha = .70f),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
+                                PlayerQueuePaginationContent(
+                                    label = if (loadingMore || loadMoreRequested) "Loading previous…" else "Load previous",
+                                    icon = Icons.Default.ExpandLess, loading = loadingMore || loadMoreRequested, list = listQueue
+                                )
                             }
                         }
                     }
@@ -1632,64 +1611,17 @@ internal fun PlayerQueueOverlay(
                                         }
                                     )
                                     .focusable(),
-                                color = if (focused) Color(0xFF3B4D68) else Color(0xFF303030),
-                                border = if (focused) androidx.compose.foundation.BorderStroke(2.5.dp, Color.White) else null,
+                                color = if (listQueue) Color(0x66171A20) else Color(0xFF171A20),
+                                border = androidx.compose.foundation.BorderStroke(if (focused) 2.5.dp else 1.dp,
+                                    if (focused) Color.White else Color(0xFF35383F)),
                                 shape = loadMoreShape
                             ) {
-                                Column(
-                                    Modifier.padding(
-                                        horizontal = if (tvQueueGrid) 8.dp else 16.dp,
-                                        vertical = if (tvQueueGrid) 6.dp else 14.dp
-                                    ),
-                                    horizontalAlignment =
-                                        Alignment.CenterHorizontally,
-                                    verticalArrangement =
-                                        Arrangement.spacedBy(if (tvQueueGrid) 4.dp else 10.dp)
-                                ) {
-                                    if (
-                                        loadingMore ||
-                                        loadMoreRequested
-                                    ) {
-                                        CircularProgressIndicator(
-                                            modifier =
-                                                Modifier.size(if (tvQueueGrid) 18.dp else 24.dp),
-                                            color = Color.White,
-                                            strokeWidth = 3.dp
-                                        )
-                                    } else {
-                                        Icon(
-                                            Icons.Default.Add,
-                                            null,
-                                            tint = Color.White
-                                        )
-                                    }
-                                    Text(
-                                        if (
-                                            loadingMore ||
-                                            loadMoreRequested
-                                        ) {
-                                            "Loading more…"
-                                        } else {
-                                            if (isEpisodeQueue) "Load more" else "Retry loading"
-                                        },
-                                        color = Color.White,
-                                        style =
-                                            if (tvQueueGrid) {
-                                                MaterialTheme.typography.labelLarge
-                                            } else {
-                                                MaterialTheme.typography.titleSmall
-                                            }
-                                    )
-                                    if (!tvQueueGrid) {
-                                        Text(
-                                            "Continue this playback list",
-                                            color = Color.White.copy(alpha = .70f),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
+                                PlayerQueuePaginationContent(
+                                    label = if (loadingMore || loadMoreRequested) "Loading more…"
+                                        else if (isEpisodeQueue) "Load more" else "Retry loading",
+                                    icon = if (isEpisodeQueue) Icons.Default.Add else Icons.Default.Refresh,
+                                    loading = loadingMore || loadMoreRequested, list = listQueue
+                                )
                             }
                         }
                     }
