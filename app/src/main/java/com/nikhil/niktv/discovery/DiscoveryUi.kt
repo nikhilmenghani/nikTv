@@ -527,7 +527,7 @@ private fun DiscoveryPreviewContent(
                     providerMedia = recent.series ?: recent.media,
                     providerType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                     source = recent.discoveryPlaybackSource(),
-                    subtitle = recent.lastPlayed?.title ?: recent.categoryTitle.orEmpty(),
+                    subtitle = recent.continueWatchingSubtitle(),
                     progress = progress?.takeIf { it.durationMillis > 0 }?.let { (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f) },
                     open = { focusOrigins.returningTo = "continue:${recent.contentIdentity()}"; currentOpenRecent(recent) },
                     popup = { expanded, dismiss, restore ->

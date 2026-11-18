@@ -1,5 +1,7 @@
 package com.nikhil.niktv.sports.player
 
+import com.nikhil.niktv.ui.playerSeriesSubtitle
+
 import com.nikhil.niktv.ui.*
 
 import android.app.Activity
@@ -2330,12 +2332,13 @@ fun PlayerScreen(
                             maxLines = 1,
                             textAlign = androidx.compose.ui.text.style.TextAlign.End
                         )
-                        media.series?.let {
+                        media.playerSeriesSubtitle()?.let {
                             Text(
-                                it.title,
+                                it,
                                 color = Color.White.copy(alpha = 0.72f),
                                 style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.End
                             )
                         }
