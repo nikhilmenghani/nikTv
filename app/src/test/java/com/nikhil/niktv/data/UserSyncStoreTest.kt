@@ -46,7 +46,7 @@ class UserSyncStoreTest {
         val store = ProfileStore(context, memoryPreferences())
         val series = MediaItem("series", "Fixture series", null, "/media/container.mpg")
         val first = MediaItem("series:1:1", "Episode 1", null, "/media/file_first.mpg",
-            seasonNumber = 1, episodeNumber = 1, portalSeasonId = "season", portalEpisodeId = "first")
+            seasonNumber = 1, episodeNumber = 1, portalSeasonId = "season", portalEpisodeId = "first", streamType = "mkv")
         store.saveRecentlyPlayed(listOf(RecentItem(FavoriteKind.SERIES, series,
             lastPlayed = first, profileKey = portal.cacheKey())))
         val history = users.snapshot("101").single { it.collection == "history" }
@@ -58,12 +58,14 @@ class UserSyncStoreTest {
         val nextPayload = history.payload.replace("series:1:1", "series:1:2")
             .replace("Episode 1", "Episode 2").replace("\"episodeNumber\":1", "\"episodeNumber\":2")
             .replace("\"portalEpisodeId\":\"first\"", "\"portalEpisodeId\":\"second\"")
+            .replace(",\"streamType\":\"mkv\"", "")
         users.merge("101", listOf(history.copy(payload = nextPayload, revision = history.revision + 2,
             deviceId = "other", mutationId = "next-episode")))
         val restored = store.recentlyPlayed.first().single()
         assertEquals("series:1:2", restored.lastPlayed?.id)
         assertEquals("second", restored.lastPlayed?.portalEpisodeId)
         assertNull(restored.lastPlayed?.command)
+        assertNull(restored.lastPlayed?.streamType)
         assertEquals(series.command, restored.media.command)
     }
     @Test fun publicArtworkAndConfirmedIdentitySurviveSyncWithoutProviderUrls(): Unit = runBlocking {
@@ -82,6 +84,61 @@ class UserSyncStoreTest {
         assertTrue(wire.any { public in it })
         assertTrue(wire.all { "454639" in it && "(2026)" in it })
         assertFalse(wire.any { "private-token" in it || "evil.invalid" in it || "private-stream" in it })
+    }
+    @Test fun sparseRemoteHistoryKeepsKnownArtworkIdentityAndProviderPlaybackMetadata(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val portal = PortalProfile("Sparse metadata fixture", "https://provider.invalid", "")
+        users.associatePortal(owner, portal)
+        val store = ProfileStore(context, memoryPreferences())
+        val media = MediaItem("movie", "Fixture movie", "https://image.tmdb.org/t/p/w342/known.jpg", "/media/movie.mpg",
+            description = "Known description", streamType = "mkv", externalTmdbId = 454639,
+            portalCategoryId = "english", contentLanguage = "English", contentGenres = listOf("Adventure"))
+        store.saveRecentlyPlayed(listOf(RecentItem(FavoriteKind.MOVIE, media, profileKey = portal.cacheKey())))
+        val history = users.snapshot("101").single { it.collection == "history" }
+        users.acknowledge("101", users.pending("101").map { it.mutationId })
+        val payload = Json.parseToJsonElement(history.payload).jsonObject
+        val entry = payload.getValue("entry").jsonObject
+        val sparse = entry.getValue("media").jsonObject.filterKeys {
+            it !in setOf("description", "streamType", "externalTmdbId", "portalCategoryId", "contentLanguage", "contentGenres")
+        }
+        users.merge("101", listOf(history.copy(payload = JsonObject(payload + ("entry" to
+            JsonObject(entry + ("media" to JsonObject(sparse))))).toString(), revision = history.revision + 1,
+            deviceId = "sparse-device", mutationId = "sparse-history")))
+        val restored = store.recentlyPlayed.first().single().media
+        assertEquals(media.externalTmdbId, restored.externalTmdbId)
+        assertEquals(media.streamType, restored.streamType)
+        assertEquals(media.portalCategoryId, restored.portalCategoryId)
+        assertEquals(media.contentLanguage, restored.contentLanguage)
+        assertEquals(media.contentGenres, restored.contentGenres)
+        assertEquals(media.description, restored.description)
+        assertEquals(media.logo, restored.logo)
+        assertEquals(media.command, restored.command)
+    }
+    @Test fun changedConfirmedMovieIdentityDoesNotReuseThePreviousMoviesArtwork(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val portal = PortalProfile("Identity fixture", "https://provider.invalid", "")
+        users.associatePortal(owner, portal)
+        val store = ProfileStore(context, memoryPreferences())
+        store.saveFavorites(listOf(FavoriteItem(FavoriteKind.MOVIE,
+            MediaItem("movie", "Fixture movie", "https://image.tmdb.org/t/p/w342/old.jpg", "/media/old.mpg", externalTmdbId = 1),
+            profileKey = portal.cacheKey())))
+        val favorite = users.snapshot("101").single { it.collection == "favorites" }
+        users.acknowledge("101", users.pending("101").map { it.mutationId })
+        val payload = Json.parseToJsonElement(favorite.payload).jsonObject
+        val entry = payload.getValue("entry").jsonObject
+        val corrected = JsonObject(entry.getValue("media").jsonObject + mapOf(
+            "externalTmdbId" to JsonPrimitive(2), "logo" to JsonNull))
+        users.merge("101", listOf(favorite.copy(payload = JsonObject(payload + ("entry" to
+            JsonObject(entry + ("media" to corrected)))).toString(), revision = favorite.revision + 1,
+            deviceId = "corrected-device", mutationId = "corrected-identity")))
+        val restored = store.favorites.first().single().media
+        assertEquals(2, restored.externalTmdbId)
+        assertNull(restored.logo)
+        assertNull(restored.command)
     }
     private val context get() = RuntimeEnvironment.getApplication()
     private val users get() = UserSyncStore.get(context)

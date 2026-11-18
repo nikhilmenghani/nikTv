@@ -640,20 +640,30 @@ class UserSyncStore private constructor(private val context: Context) {
         // episodes. Never combine that new identity with the old local command,
         // headers or DRM after the portable snapshot stripped those fields.
         remote is JsonObject && local is JsonObject && mediaIdentityChanged(remote, local) -> remote
-        remote is JsonObject && local is JsonObject -> JsonObject((remote.keys + local.keys.filter { it in SECRET_FIELDS }).associateWith { name ->
-            val incoming = remote[name]
-            val cached = local[name]
-            when {
-                incoming == null -> cached ?: JsonNull
-                name in URL_FIELDS && incoming == JsonNull -> cached ?: incoming
-                else -> mergeLocalMediaMetadata(incoming, cached)
-            }
-        })
+        remote is JsonObject && local is JsonObject -> {
+            val media = remote["id"] is JsonPrimitive && local["id"] is JsonPrimitive
+            val preserved = SECRET_FIELDS + if (media) MEDIA_METADATA_FIELDS else emptySet()
+            JsonObject((remote.keys + local.keys.filter { it in preserved }).associateWith { name ->
+                val incoming = remote[name]
+                val cached = local[name]
+                when {
+                    incoming == null -> cached ?: JsonNull
+                    name in URL_FIELDS && incoming == JsonNull -> cached ?: incoming
+                    // Default/unknown fields are often omitted by another device's
+                    // serializer. They must not erase a locally resolved stream format,
+                    // provider reference or confirmed artwork identity for the same item.
+                    media && name in MEDIA_METADATA_FIELDS && missingMediaMetadata(incoming) -> cached ?: incoming
+                    else -> mergeLocalMediaMetadata(incoming, cached)
+                }
+            })
+        }
         else -> remote
     }
+    private fun missingMediaMetadata(value: JsonElement): Boolean = value == JsonNull ||
+        value is JsonPrimitive && value.isString && value.content.isBlank() || value is JsonArray && value.isEmpty()
     private fun mediaIdentityChanged(remote: JsonObject, local: JsonObject): Boolean {
         if (remote["id"] !is JsonPrimitive || local["id"] !is JsonPrimitive) return false
-        return listOf("id", "seasonNumber", "episodeNumber", "portalSeasonId", "portalEpisodeId").any { name ->
+        return listOf("id", "seasonNumber", "episodeNumber", "portalSeasonId", "portalEpisodeId", "externalTmdbId").any { name ->
             val incoming = (remote[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
             val cached = (local[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
             incoming != null && cached != null && incoming != cached
@@ -677,6 +687,10 @@ class UserSyncStore private constructor(private val context: Context) {
         internal val ACCOUNT_KEYS = setOf("saved_profiles", "saved_sessions", "active_profile", "active_session", "active_profile_identity", "playback_urls", "tmdb_iptv_mappings", "paged_search_results", "episode_season_caches")
         private val SECRET_FIELDS = setOf("password", "token", "macAddress", "serialNumber", "username", "portalUrl", "sourceUrl", "url", "endpointUrl", "streamRequestHeaders", "streamDrm", "alternateTarget")
         private val URL_FIELDS = setOf("command", "logo", "licenseUri")
+        private val MEDIA_METADATA_FIELDS = URL_FIELDS + setOf("description", "externalTmdbId", "streamType",
+            "seasonNumber", "episodeNumber", "portalSeasonId", "portalEpisodeId", "portalCategoryId",
+            "channelNumber", "epgChannelId", "catchupAvailable", "episodeAirDate", "episodeAddedAtMillis",
+            "vodSeriesContainer", "cast", "contentLanguage", "contentGenres")
         private val IDENTITY_FIELDS = setOf("profileKey", "key")
     }
 }
