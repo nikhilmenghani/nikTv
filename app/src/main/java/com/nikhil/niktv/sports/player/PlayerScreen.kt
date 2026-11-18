@@ -534,6 +534,7 @@ fun PlayerScreen(
     var videoOffset by remember(media.progressKey) { mutableStateOf(Offset.Zero) }
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
+    // Suppress duplicate automatic completion only; manual navigation remains retryable.
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     // Fullscreen belongs to the player session, not to an individual queue item.
     // Preserve it while changing channels/episodes/titles.
@@ -731,14 +732,8 @@ fun PlayerScreen(
         val target = returnControlFocus ?: return@LaunchedEffect
         controlsVisible = true
         extraControlsOpen = true
-        try {
-            // Let the dialog window detach before handing focus back to its origin.
-            delay(80L)
-            repeat(4) {
-                withFrameNanos { }
-                if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-            }
-        } finally { if (returnControlFocus === target) returnControlFocus = null }
+        settingsRibbon.restore(target)
+        returnControlFocus = null
     }
 
 
@@ -746,8 +741,7 @@ fun PlayerScreen(
         if (restorePlayerSwitchFocus) {
             controlsVisible = true
             extraControlsOpen = true
-            delay(120L)
-            runCatching { playerSwitchFocusRequester.requestFocus() }
+            settingsRibbon.restore(playerSwitchFocusRequester)
             restorePlayerSwitchFocus = false
         }
     }
@@ -2115,11 +2109,9 @@ fun PlayerScreen(
                                         pendingSingleTap?.let(playerView::removeCallbacks)
                                         pendingSingleTap = null
                                         lastTapAtMillis = 0L
-                                        if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
-                                            advancing = true
-                                            if (tappedOnRight) currentOnPlayNext()
-                                            else currentOnPlayPrevious()
-                                        }
+                                        advancing = true
+                                        if (tappedOnRight) currentOnPlayNext()
+                                        else currentOnPlayPrevious()
                                     } else {
                                         lastTapAtMillis = event.eventTime
                                         lastTapOnRight = tappedOnRight
@@ -2596,8 +2588,9 @@ fun PlayerScreen(
                         if (seekable) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                             PlaybackProgressBar(
-                                mediaKey = media.progressKey,
+                                mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
                                 active = controlsVisible || (!focusMode && !embeddedMode),
+                                commitOnRelease = com.nikhil.niktv.ui.localPlaybackSource(media.url, media.offlinePlayback),
                                 position = position,
                                 duration = duration,
                                 bufferedPosition = bufferedPosition.takeIf { liveWindowSeekingAvailable },
@@ -2685,7 +2678,7 @@ fun PlayerScreen(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.SkipPrevious,
                                             contentDescription = "Previous",
-                                            onClick = { if (media.catalogType == CatalogType.LIVE_TV || !advancing) { advancing = true; onPlayPrevious() } },
+                                            onClick = { advancing = true; onPlayPrevious() },
                                             modifier = Modifier.focusRequester(previousFocusRequester)
                                                 .focusProperties {
                                                     up = if (seekable) progressFocusRequester else backFocusRequester
@@ -2785,7 +2778,7 @@ fun PlayerScreen(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.SkipNext,
                                             contentDescription = "Next",
-                                            onClick = { if (media.catalogType == CatalogType.LIVE_TV || !advancing) { advancing = true; onPlayNext() } },
+                                            onClick = { advancing = true; onPlayNext() },
                                             modifier = Modifier.focusRequester(nextFocusRequester)
                                                 .focusProperties {
                                                     up = if (seekable) progressFocusRequester else backFocusRequester
@@ -2858,10 +2851,7 @@ fun PlayerScreen(
                     detailLines = playbackDetailLines,
                     onDismiss = {
                         moreOptionsOpen = false
-                        coroutineScope.launch {
-                            delay(80L)
-                            runCatching { moreFocusRequester.requestFocus() }
-                        }
+                        settingsRibbon.restore(moreFocusRequester)
                     }
                 )
             }
@@ -2975,7 +2965,7 @@ fun PlayerScreen(
                 } else if (fromError) {
                     (onManualRetry ?: onRetry)(playbackRestartPosition(media.catalogType, player.currentPosition))
                 } else {
-                    coroutineScope.launch { delay(80L); runCatching { playerSwitchFocusRequester.requestFocus() } }
+                    settingsRibbon.restore(playerSwitchFocusRequester)
                 }
             }
         )
@@ -3133,7 +3123,7 @@ fun PlayerScreen(
                         playerViewRef?.requestFocus()
                     }) { Text("Cancel") }
                     NikTvPrimaryActionButton(
-                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                        onClick = { advancing = true; onPlayNext() },
                         modifier = Modifier.focusRequester(playNextFocusRequester)
                     ) { Text("Play now") }
                 }
@@ -3907,8 +3897,16 @@ internal fun PlaybackProgressBar(
     active: Boolean = true,
     modifier: Modifier = Modifier,
     bufferedPosition: Long? = null,
-    onNavigateRight: (() -> Boolean)? = null
+    onNavigateRight: (() -> Boolean)? = null,
+    commitOnRelease: Boolean = false
 ) {
+    if (bufferedPosition == null && onNavigateRight == null) {
+        // VOD/local files use the same input/commit lifecycle as the IPTV player.
+        // Live windows retain their buffered track and Watch live focus route.
+        com.nikhil.niktv.ui.PlaybackProgressBar(position, duration, onSeek, mediaKey,
+            compact, active, modifier, commitOnRelease)
+        return
+    }
     val safeDuration = duration.coerceAtLeast(0L)
     var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
     var revision by remember(mediaKey) { mutableIntStateOf(0) }

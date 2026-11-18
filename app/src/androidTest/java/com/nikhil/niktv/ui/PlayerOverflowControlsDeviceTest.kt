@@ -122,8 +122,11 @@ class PlayerOverflowControlsDeviceTest {
             assertEquals("Quick controls share a single row", subtitlesBefore.top, bounds("Speed").top)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Setting choice is open") { find("Setting choice") != null }
+            val dialogClosedAt = history.size
             key(KeyEvent.KEYCODE_BACK)
             await("Dialog restores its exact origin") { find("Setting choice") == null && focused("Speed") }
+            assertTrue("Dialog return retains Speed without visiting another main control",
+                history.drop(dialogClosedAt).all { it == "Speed" })
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Navigation after dialog return is immediate") { focused("Video fit") }
             Thread.sleep(180)

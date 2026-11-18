@@ -244,6 +244,7 @@ internal fun VlcPlayerScreen(
         embeddedMode && embeddedControlsDismissRequest > 0
     )
     var videoView by remember(media.progressKey) { mutableStateOf<View?>(null) }
+    // Suppress duplicate automatic completion only; manual navigation remains retryable.
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
@@ -305,16 +306,12 @@ internal fun VlcPlayerScreen(
     val currentPlayNext by rememberUpdatedState(onPlayNext)
     val currentNextEpisode by rememberUpdatedState(media.nextEpisode)
     val currentAdvancePrevious by rememberUpdatedState<() -> Unit> {
-        if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
-            advancing = true
-            onPlayPrevious()
-        }
+        advancing = true
+        onPlayPrevious()
     }
     val currentAdvanceNext by rememberUpdatedState<() -> Unit> {
-        if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
-            advancing = true
-            onPlayNext()
-        }
+        advancing = true
+        onPlayNext()
     }
     var queueExpansionStarted by remember(media.progressKey) { mutableStateOf(false) }
     LaunchedEffect(queueLoadingMore) {
@@ -393,14 +390,8 @@ internal fun VlcPlayerScreen(
         val target = returnControlFocus ?: return@LaunchedEffect
         controlsVisible = true
         extraControlsOpen = true
-        try {
-            // Let the dialog window detach before handing focus back to its origin.
-            delay(80L)
-            repeat(4) {
-                withFrameNanos { }
-                if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-            }
-        } finally { if (returnControlFocus === target) returnControlFocus = null }
+        settingsRibbon.restore(target)
+        returnControlFocus = null
     }
 
 
@@ -408,8 +399,7 @@ internal fun VlcPlayerScreen(
         if (focusPlayerSwitchOnEnter) {
             controlsVisible = true
             extraControlsOpen = true
-            delay(120L)
-            runCatching { playerSwitchRequester.requestFocus() }
+            settingsRibbon.restore(playerSwitchRequester)
             onPlayerSwitchFocusRestored()
         }
     }
@@ -1591,7 +1581,7 @@ internal fun VlcPlayerScreen(
         )
 
         }
-        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture && !speedPickerVisible) {
+        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val topDownRequester = if (seekable) progressRequester else playRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseRequester
@@ -1937,6 +1927,7 @@ internal fun VlcPlayerScreen(
                             PlaybackProgressBar(
                                 mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
                                 active = controlsVisible || (!focusMode && !embeddedMode),
+                                commitOnRelease = com.nikhil.niktv.ui.localPlaybackSource(media.url, media.offlinePlayback),
                                 position = position,
                                 duration = duration,
                                 onSeek = {
@@ -2184,10 +2175,7 @@ internal fun VlcPlayerScreen(
                     detailLines = playbackDetailLines,
                     onDismiss = {
                         onMoreOptionsOpenChanged(false)
-                        scope.launch {
-                            delay(80L)
-                            runCatching { moreRequester.requestFocus() }
-                        }
+                        settingsRibbon.restore(moreRequester)
                     }
                 )
             }
@@ -2297,12 +2285,12 @@ internal fun VlcPlayerScreen(
                 } else if (fromError) {
                     onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
                 } else {
-                    scope.launch { delay(80L); runCatching { playerSwitchRequester.requestFocus() } }
+                    settingsRibbon.restore(playerSwitchRequester)
                 }
             }
         )
         if (speedPickerVisible) PlaybackSpeedOverlay(playbackSpeed, onPlaybackSpeedChanged, {
-            speedPickerVisible = false; controlsVisible = true; returnControlFocus = speedRequester
+            settingsRibbon.restore(speedRequester); speedPickerVisible = false; controlsVisible = true
         })
         if (resizePickerVisible) VideoResizeQuickOverlay(
             preview = resizeMode,
@@ -2442,7 +2430,7 @@ internal fun VlcPlayerScreen(
                         onClick = { autoPlayCancelled = true; videoView?.requestFocus() }
                     ) { Text("Cancel") }
                     NikTvPrimaryActionButton(
-                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                        onClick = { advancing = true; onPlayNext() },
                         modifier = Modifier.focusRequester(playNextNowRequester)
                     ) { Text("Play now") }
                 }

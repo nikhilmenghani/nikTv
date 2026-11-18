@@ -245,6 +245,18 @@ class PlaybackEngineFixtureTest {
                     assertTrue("Controls share a horizontal row", rect("Subtitles").top == rect("Video fit:", true).top)
                     NavigationAuditEvidence.capture("bottom-settings-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}-quick")
                     instrumentation.setInTouchMode(false)
+                    if (!sports) {
+                        clickControl("Playback speed")
+                        await("The real speed popup is open") { control("Playback speed adjustment") != null }
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                        await("Speed returns directly to its mounted origin") {
+                            control("Playback speed adjustment") == null && focused("Playback speed")
+                        }
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+                        await("Right after speed dismissal reaches Video fit") { focused("Video fit:", true) }
+                        Thread.sleep(180L)
+                        assertTrue("No delayed restoration steals focus back to Speed", focused("Video fit:", true))
+                    }
                     clickControl("Video fit:", true)
                     await("Real resize picker opens") { control("Video resize") != null }
                     clickControl("Skip")
@@ -264,6 +276,255 @@ class PlaybackEngineFixtureTest {
                     assertEquals("Settings never reload or reauthenticate the stream", 0, retries.get())
                 } finally { main { activity.finish() }; instrumentation.setInTouchMode(true) }
             }
+        }
+    }
+
+    @Test fun failedEpisodeNavigationCanBeRetriedWithDpadWithoutLeavingThePlayer() {
+        check(context.packageName.endsWith(".regression"))
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        for (sports in listOf(false, true)) for (engine in listOf(
+            com.nikhil.niktv.model.PlaybackEngine.MEDIA3, com.nikhil.niktv.model.PlaybackEngine.VLC)) {
+            FixtureServer().use { server ->
+                val activity = host()
+                val frames = AtomicInteger()
+                val next = AtomicInteger()
+                val previous = AtomicInteger()
+                try {
+                    main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                        val episode = remember { NikItem("current", "Navigation failure fixture", null, null,
+                            seasonNumber = 1, episodeNumber = 2) }
+                        val media = remember { PlayingMedia(episode, "${server.base}/movie.mp4", CatalogType.SERIES,
+                            previousEpisode = episode.copy(id = "previous", episodeNumber = 1),
+                            nextEpisode = episode.copy(id = "next", episodeNumber = 3),
+                            progressKey = "failed-navigation-$sports-$engine", profileKey = "isolated-failure") }
+                        // A failed provider request leaves the committed player mounted.
+                        // Its next request must remain usable after the diagnostic closes.
+                        if (sports) com.nikhil.niktv.sports.player.PlayerScreen(media, onBack = {}, onRetry = {},
+                            onRetryAlternateDecoder = {}, onPlaybackAuthorizationFailure = {},
+                            onPlayPrevious = { previous.incrementAndGet() }, onPlayNext = { next.incrementAndGet() },
+                            onProgress = { _, _, _ -> }, playbackEngine = engine, controlsTimeoutSeconds = 0,
+                            startFullscreen = false, onVideoFrameRendered = { frames.incrementAndGet() })
+                        else PlayerScreen(media, onBack = {}, onRetry = {}, onRetryAlternateDecoder = {},
+                            onPlaybackAuthorizationFailure = {}, onPlayPrevious = { previous.incrementAndGet() },
+                            onPlayNext = { next.incrementAndGet() }, onProgress = { _, _, _ -> },
+                            playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = false,
+                            onVideoFrameRendered = { frames.incrementAndGet() })
+                    } } }
+                    await("$sports/$engine renders the navigation fixture") { frames.get() > 0 }
+                    // The 20-second sample immediately enters the real 30-second
+                    // next-episode prompt. Dismiss it before testing manual controls.
+                    await("The short sample offers automatic Next") { control("Cancel") != null }
+                    clickControl("Cancel")
+                    await("The automatic prompt has closed") { control("Play now") == null }
+                    showStabilityControls(activity, "Navigation failure fixture")
+                    instrumentation.setInTouchMode(false)
+                    if (control("Next") == null)
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("D-pad opens the native episode controls") { control("Next") != null && control("Previous") != null }
+                    fun press(label: String) {
+                        await("$sports/$engine: the current $label control accepts focus") {
+                            var node = control(label)
+                            var focused = false
+                            while (node != null && !focused) {
+                                focused = node.isFocused || node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS)
+                                node = node.parent
+                            }
+                            focused
+                        }
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                        instrumentation.sendStatus(0, android.os.Bundle().apply {
+                            putString("stream", "\n$sports/$engine: $label next=${next.get()} previous=${previous.get()}\n")
+                        })
+                    }
+                    press("Next")
+                    await("First next request is submitted") { next.get() == 1 }
+                    press("Next")
+                    await("Next is retryable without a replacement media item") { next.get() == 2 }
+                    press("Previous")
+                    await("Previous is usable after the failed Next") { previous.get() == 1 }
+                    press("Previous")
+                    await("Previous can also be retried") { previous.get() == 2 }
+                    NavigationAuditEvidence.capture("failed-navigation-retry-$sports-$engine")
+                } catch (failure: Throwable) {
+                    NavigationAuditEvidence.capture("failed-navigation-error-$sports-$engine")
+                    throw failure
+                } finally { main { activity.finish() }; instrumentation.setInTouchMode(true) }
+            }
+        }
+    }
+
+    @Test fun offlineRecordedTransportStreamSeeksWithoutLongPlaybackStalls() = exerciseLocalFileSeek(false)
+    @Test fun externalLocalVideoSeeksThroughProductionViewIntent() = exerciseLocalFileSeek(true)
+
+    private fun exerciseLocalFileSeek(external: Boolean) {
+        check(context.packageName.endsWith(".regression"))
+        assertTrue(instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90))
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        val source = InstrumentationRegistry.getArguments().getString("offlineSeekPath")?.let(::File)
+        val mp4 = source?.extension.equals("mp4", ignoreCase = true)
+        val mime = if (mp4) "video/mp4" else "video/mp2t"
+        val resolver = context.contentResolver
+        val uri = requireNotNull(resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "seek-audit-${java.util.UUID.randomUUID()}.${if (mp4) "mp4" else "ts"}")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/NikTV/PlaybackAudit/")
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
+            }))
+        resolver.openOutputStream(uri)!!.use { output ->
+            if (source != null) source.inputStream().use { it.copyTo(output) }
+            else ZipInputStream(instrumentation.context.assets.open("playback-fixtures.zip")).use { zip ->
+                val segments = sortedMapOf<String, ByteArray>()
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (Regex("seg[0-9]+\\.ts").matches(entry.name)) segments[entry.name] = zip.readBytes()
+                }
+                segments.values.forEach(output::write)
+            }
+        }
+        val activity: androidx.activity.ComponentActivity = if (external)
+            instrumentation.startActivitySync(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                .setClass(context, com.nikhil.niktv.ExternalVideoActivity::class.java)
+                .putExtra(Intent.EXTRA_TITLE, "Offline recording seek fixture")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)) as androidx.activity.ComponentActivity
+            else host()
+        val initialFrames = AtomicInteger()
+        val rendered = AtomicInteger()
+        val lastFrameUs = AtomicLong(Long.MIN_VALUE)
+        val videoFrames = java.util.concurrent.ConcurrentLinkedQueue<Pair<Long, Long>>()
+        val retries = AtomicInteger()
+        fun native(): ExoPlayer? {
+            var found: ExoPlayer? = null
+            main {
+                fun walk(view: android.view.View) {
+                    if (view is androidx.media3.ui.PlayerView) found = view.player as? ExoPlayer
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+                }
+                walk(activity.window.decorView)
+            }
+            return found
+        }
+        try {
+            if (!external) main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                val media = remember { PlayingMedia(NikItem("offline-recording", "Offline recording seek fixture", null, null),
+                    uri.toString(), CatalogType.MOVIES, progressKey = "isolated-offline-seek", offlinePlayback = true,
+                    playbackFormat = if (mp4) "MP4" else "MPEG-TS") }
+                PlayerScreen(media, onBack = {}, onRetry = { retries.incrementAndGet() },
+                    onRetryAlternateDecoder = { retries.incrementAndGet() }, onPlaybackAuthorizationFailure = { retries.incrementAndGet() },
+                    onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> }, controlsTimeoutSeconds = 0,
+                    startFullscreen = true, onVideoFrameRendered = { initialFrames.incrementAndGet() })
+            } } }
+            await("The production local-file player renders") {
+                if (!external) initialFrames.get() > 0 else {
+                    val current = native()
+                    var ready = false
+                    main { ready = current?.let { (it.videoDecoderCounters?.renderedOutputBufferCount ?: 0) > 0 } == true }
+                    ready
+                }
+            }
+            showStabilityControls(activity)
+            val player = requireNotNull(native())
+            var length = 0L
+            main {
+                length = player.duration
+                assertTrue("The recording exposes seeking", player.isCurrentMediaItemSeekable)
+                player.setVideoFrameMetadataListener { presentationUs, _, _, _ ->
+                    rendered.incrementAndGet()
+                    lastFrameUs.set(presentationUs)
+                    videoFrames.add(presentationUs to SystemClock.elapsedRealtime())
+                    while (videoFrames.size > 256) videoFrames.poll()
+                }
+            }
+            assertTrue("The recording has a bounded duration", length > 10_000L)
+            await("The renderer exposes frame timestamps") { lastFrameUs.get() != Long.MIN_VALUE }
+            var frameOffsetUs = 0L
+            main { frameOffsetUs = lastFrameUs.get() - player.currentPosition * 1_000L }
+            fun slider(): android.view.accessibility.AccessibilityNodeInfo? {
+                if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+                fun walk(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+                    node ?: return null
+                    if (node.packageName?.toString() == context.packageName &&
+                        node.rangeInfo?.let { it.max > it.min } == true) return node
+                    for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
+                    return null
+                }
+                return walk(instrumentation.uiAutomation.rootInActiveWindow)
+            }
+            fun selectedTime(): Long {
+                val range = requireNotNull(slider()?.rangeInfo)
+                return (((range.current - range.min) / (range.max - range.min)).toDouble() * length).toLong()
+            }
+            val delays = mutableListOf<Long>()
+            fun awaitSeek(target: Long, before: Int, started: Long, input: String) {
+                var firstDestinationFrameAt = 0L
+                await("$input renders after seeking to $target", 15_000L) {
+                    var ready = false
+                    main { assertNull(player.playerError); ready = player.playbackState == Player.STATE_READY &&
+                        player.currentPosition >= target - 750L && kotlin.math.abs(player.currentPosition - target) < 3_000L && player.isPlaying }
+                    val expectedUs = target * 1_000L + frameOffsetUs
+                    firstDestinationFrameAt = videoFrames.firstOrNull { frame ->
+                        frame.second >= started && frame.first in (expectedUs - 1_000_000L)..(expectedUs + 2_500_000L)
+                    }?.second ?: 0L
+                    ready && rendered.get() > before && firstDestinationFrameAt > 0L
+                }
+                val elapsed = firstDestinationFrameAt - started
+                delays += elapsed
+                android.util.Log.i("NikTvOfflineSeek", "mode=${if (external) "external" else "offline"} input=$input targetMs=$target durationMs=$length seekToFrameMs=$elapsed")
+                instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream",
+                    "\n${if (external) "external" else "offline"}: $input target=$target/${length}ms seek-to-frame=${elapsed}ms\n") })
+            }
+            for (fraction in listOf(.65, .20, .80)) {
+                showStabilityControls(activity)
+                await("The current player's enabled seek bar is attached") { activity.hasWindowFocus() && slider() != null }
+                val bounds = android.graphics.Rect().also { requireNotNull(slider()).getBoundsInScreen(it) }
+                assertTrue("Seek bar has visible input bounds", bounds.width() > 0 && bounds.height() > 0)
+                val x = bounds.left + (bounds.width() * fraction).toFloat()
+                val y = bounds.exactCenterY()
+                val before = rendered.get()
+                val started = SystemClock.elapsedRealtime()
+                val downAt = SystemClock.uptimeMillis()
+                instrumentation.setInTouchMode(true)
+                for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                    val event = android.view.MotionEvent.obtain(downAt, SystemClock.uptimeMillis(), action, x, y, 0)
+                    event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                    assertTrue(instrumentation.uiAutomation.injectInputEvent(event, true)); event.recycle()
+                }
+                instrumentation.waitForIdleSync()
+                awaitSeek(selectedTime(), before, started, "touch")
+                Thread.sleep(300L)
+            }
+            showStabilityControls(activity)
+            instrumentation.setInTouchMode(false)
+            var progress = requireNotNull(slider())
+            var accepted = false
+            while (!accepted) {
+                accepted = progress.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS)
+                if (accepted || progress.parent == null) break
+                progress = progress.parent
+            }
+            assertTrue("The seek group accepts D-pad focus", accepted)
+            val before = rendered.get()
+            val started = SystemClock.elapsedRealtime()
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_LEFT)
+            instrumentation.waitForIdleSync()
+            awaitSeek(selectedTime(), before, started, "dpad")
+            for ((label, delta) in listOf("Back 10 seconds" to -10_000L, "Forward 10 seconds" to 10_000L)) {
+                var target = 0L
+                main { target = (player.currentPosition + delta).coerceIn(0L, length) }
+                val frame = rendered.get()
+                val pressedAt = SystemClock.elapsedRealtime()
+                clickControl(label)
+                awaitSeek(target, frame, pressedAt, label)
+            }
+            assertEquals("Offline seeks never refresh portal authorization", 0, retries.get())
+            assertTrue("Local recording seeks should render within two seconds: $delays", delays.all { it < 2_000L })
+            NavigationAuditEvidence.capture("offline-recording-seek")
+        } finally {
+            main { activity.finish() }
+            resolver.delete(uri, null, null)
+            instrumentation.setInTouchMode(true)
+            instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_UNFREEZE)
         }
     }
 
@@ -1117,7 +1378,7 @@ class PlaybackEngineFixtureTest {
         }
     }
 
-    @Test fun audioFocusAndHeadphoneRemovalPreserveUserPauseAcrossEngines() {
+    @Test fun audioFocusLossPreservesUserPauseAcrossEngines() {
         val activity = host()
         val manager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
         val request = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
@@ -1134,12 +1395,29 @@ class PlaybackEngineFixtureTest {
                     Thread.sleep(500L)
                     assertFalse("$engine gain must retain explicit pause", probe.playing)
                     probe.play(); await("$engine explicit play must resume") { probe.playing }
-                    instrumentation.uiAutomation.executeShellCommand(
-                        "am broadcast -a android.media.AUDIO_BECOMING_NOISY -p ${context.packageName}").close()
-                    await("$engine must pause on headphone disconnection") { !probe.playing }
                 }
             }
         } finally { main { manager.abandonAudioFocusRequest(request); activity.finish() } }
+    }
+
+    @Test fun headphoneDisconnectPausesPlaybackWhenSystemInjectionIsSupported() {
+        fun disconnect(): String = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(
+                "am broadcast -a android.media.AUDIO_BECOMING_NOISY -p ${context.packageName}"))
+            .bufferedReader().use { it.readText() }
+        val permission = disconnect()
+        org.junit.Assume.assumeTrue("Android did not allow a completed synthetic headphone-disconnect broadcast",
+            permission.contains("Broadcast completed", true))
+        val activity = host()
+        try {
+            for (engine in listOf("MEDIA3", "MPV", "VLC")) FixtureServer().use { server ->
+                Probe(engine, server, activity, "movie.mp4", false, format = "MP4").use { probe ->
+                    await("$engine must start") { probe.sample(); probe.firstFrameAt > 0L }
+                    disconnect()
+                    await("$engine pauses when headphones disconnect") { !probe.playing }
+                }
+            }
+        } finally { main { activity.finish() } }
     }
 
     @Test fun speculativeCatalogLoadDoesNotPrepareAnotherStreamAndDefersUnderPressure() = runBlocking {

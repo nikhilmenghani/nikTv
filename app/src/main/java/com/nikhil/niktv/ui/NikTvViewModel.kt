@@ -7809,10 +7809,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun retryPlayback(positionMillis: Long, failedPlayback: PlayingMedia, reauthenticate: Boolean = false) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning || !samePlaybackAttempt(playing, failedPlayback)) return
-        if (playing.externalPlayback) {
+        if (playing.externalPlayback || playing.offlinePlayback) {
+            // A downloaded file/recording already owns a local URI. Recreating
+            // its player must not require a portal session or refresh a network link.
             _state.update { it.copy(error = null, nowPlaying = playing.copy(
                 playbackAttemptId = java.util.UUID.randomUUID().toString(), decoderSessionId = java.util.UUID.randomUUID().toString(),
-                resumePositionMillis = positionMillis.coerceAtLeast(0), playWhenReady = true)) }
+                decoderRecoveryCount = 0, resumePositionMillis = positionMillis.coerceAtLeast(0), playWhenReady = true)) }
             return
         }
         // An explicit Retry can start playback; a later pause while resolving is retained at commit.

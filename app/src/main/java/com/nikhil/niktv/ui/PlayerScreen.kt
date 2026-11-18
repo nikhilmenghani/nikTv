@@ -528,6 +528,7 @@ fun PlayerScreen(
     var videoOffset by remember(media.progressKey) { mutableStateOf(Offset.Zero) }
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
+    // Suppress duplicate automatic completion only; manual navigation remains retryable.
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     // Fullscreen belongs to the player session, not to an individual queue item.
     // Preserve it while changing channels/episodes/titles.
@@ -721,27 +722,18 @@ fun PlayerScreen(
 
     LaunchedEffect(returnControlFocus) {
         val target = returnControlFocus ?: return@LaunchedEffect
-        settingsRibbon.restore(target)
         controlsVisible = true
         extraControlsOpen = true
-        try {
-            // Let the dialog window detach before handing focus back to its origin.
-            delay(80L)
-            repeat(4) {
-                withFrameNanos { }
-                if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-            }
-        } finally { if (returnControlFocus === target) returnControlFocus = null }
+        settingsRibbon.restore(target)
+        returnControlFocus = null
     }
 
 
     LaunchedEffect(restorePlayerSwitchFocus, effectiveEngine) {
         if (restorePlayerSwitchFocus) {
-            settingsRibbon.restore(playerSwitchFocusRequester)
             controlsVisible = true
             extraControlsOpen = true
-            delay(120L)
-            runCatching { playerSwitchFocusRequester.requestFocus() }
+            settingsRibbon.restore(playerSwitchFocusRequester)
             restorePlayerSwitchFocus = false
         }
     }
@@ -2098,11 +2090,9 @@ fun PlayerScreen(
                                         pendingSingleTap?.let(playerView::removeCallbacks)
                                         pendingSingleTap = null
                                         lastTapAtMillis = 0L
-                                        if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
-                                            advancing = true
-                                            if (tappedOnRight) currentOnPlayNext()
-                                            else currentOnPlayPrevious()
-                                        }
+                                        advancing = true
+                                        if (tappedOnRight) currentOnPlayNext()
+                                        else currentOnPlayPrevious()
                                     } else {
                                         lastTapAtMillis = event.eventTime
                                         lastTapOnRight = tappedOnRight
@@ -2236,7 +2226,7 @@ fun PlayerScreen(
             }
         )
         }
-        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture && !speedPickerVisible) {
+        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
@@ -2592,6 +2582,7 @@ fun PlayerScreen(
                             PlaybackProgressBar(
                                 mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
                                 active = controlsVisible || (!focusMode && !embeddedMode),
+                                commitOnRelease = com.nikhil.niktv.ui.localPlaybackSource(media.url, media.offlinePlayback),
                                 position = position,
                                 duration = duration,
                                 onSeek = {
@@ -2667,7 +2658,7 @@ fun PlayerScreen(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.SkipPrevious,
                                             contentDescription = "Previous",
-                                            onClick = { if (media.catalogType == CatalogType.LIVE_TV || !advancing) { advancing = true; onPlayPrevious() } },
+                                            onClick = { advancing = true; onPlayPrevious() },
                                             modifier = Modifier.focusRequester(previousFocusRequester)
                                                 .focusProperties {
                                                     up = if (seekable) progressFocusRequester else backFocusRequester
@@ -2767,7 +2758,7 @@ fun PlayerScreen(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.SkipNext,
                                             contentDescription = "Next",
-                                            onClick = { if (media.catalogType == CatalogType.LIVE_TV || !advancing) { advancing = true; onPlayNext() } },
+                                            onClick = { advancing = true; onPlayNext() },
                                             modifier = Modifier.focusRequester(nextFocusRequester)
                                                 .focusProperties {
                                                     up = if (seekable) progressFocusRequester else backFocusRequester
@@ -2840,10 +2831,7 @@ fun PlayerScreen(
                     detailLines = playbackDetailLines,
                     onDismiss = {
                         moreOptionsOpen = false
-                        coroutineScope.launch {
-                            delay(80L)
-                            runCatching { moreFocusRequester.requestFocus() }
-                        }
+                        settingsRibbon.restore(moreFocusRequester)
                     }
                 )
             }
@@ -2961,12 +2949,12 @@ fun PlayerScreen(
                 } else if (fromError) {
                     onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                 } else {
-                    coroutineScope.launch { delay(80L); runCatching { playerSwitchFocusRequester.requestFocus() } }
+                    settingsRibbon.restore(playerSwitchFocusRequester)
                 }
             }
         )
         if (speedPickerVisible) PlaybackSpeedOverlay(playbackSpeed, { playbackSpeed = it }, {
-            speedPickerVisible = false; controlsVisible = true; returnControlFocus = speedFocusRequester
+            settingsRibbon.restore(speedFocusRequester); speedPickerVisible = false; controlsVisible = true
         })
         if (resizePickerVisible) VideoResizeQuickOverlay(
             preview = resizeMode,
@@ -3163,7 +3151,7 @@ fun PlayerScreen(
                         playerViewRef?.requestFocus()
                     }) { Text("Cancel") }
                     NikTvPrimaryActionButton(
-                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                        onClick = { advancing = true; onPlayNext() },
                         modifier = Modifier.focusRequester(playNextFocusRequester)
                     ) { Text("Play now") }
                 }
@@ -3973,7 +3961,8 @@ internal fun PlaybackProgressBar(
     mediaKey: String,
     compact: Boolean = false,
     active: Boolean = true,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    commitOnRelease: Boolean = false
 ) {
     val safeDuration = duration.coerceAtLeast(0L)
     var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
@@ -4017,6 +4006,10 @@ internal fun PlaybackProgressBar(
         delay(1_000L)
         if (pendingSeek == null) preview = null
     }
+    LaunchedEffect(mediaKey, position, commitRevision, commitOnRelease) {
+        if (commitOnRelease && pendingSeek == null && !directionHeld && !dragging &&
+            preview?.let { kotlin.math.abs(position - it) <= 500L } == true) preview = null
+    }
     val safePosition = (preview ?: position).coerceIn(0L, safeDuration)
     val fraction = if (safeDuration > 0L) safePosition.toFloat() / safeDuration else 0f
     val elapsed = formatPlayerTime(safePosition)
@@ -4047,6 +4040,9 @@ internal fun PlaybackProgressBar(
                 } else if (event.type == ComposeKeyEventType.KeyUp) {
                     holdAcceleration.release(direction)
                     directionHeld = holdAcceleration.isHeld
+                    // Local seeks do not need the network-request batching window.
+                    // A held key still produces a single seek at its final cursor.
+                    if (commitOnRelease && !directionHeld) commitPendingSeek()
                     revision++
                 }
                 true

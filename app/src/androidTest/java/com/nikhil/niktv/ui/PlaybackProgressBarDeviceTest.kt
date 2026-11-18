@@ -25,6 +25,7 @@ class PlaybackProgressBarDeviceTest {
     private class Harness {
         val active = mutableStateOf(true)
         val visible = mutableStateOf(true)
+        val local = mutableStateOf(false)
         val identity = mutableStateOf("episode:1")
         val position = mutableLongStateOf(30_000L)
         val progress = FocusRequester()
@@ -51,7 +52,7 @@ class PlaybackProgressBarDeviceTest {
                         PlaybackProgressBar(state.position.longValue, 600_000L, onSeek = { target ->
                             state.seeks += identity to target
                             state.position.longValue = target
-                        }, mediaKey = identity, active = state.active.value,
+                        }, mediaKey = identity, active = state.active.value, commitOnRelease = state.local.value,
                             modifier = Modifier.fillMaxWidth().focusRequester(state.progress).focusProperties { down = state.other })
                     }
                     Text("Other playback control", Modifier.focusRequester(state.other).focusable())
@@ -63,7 +64,21 @@ class PlaybackProgressBarDeviceTest {
         } finally { ins.runOnMainSync { host.finish() }; ins.setInTouchMode(true) }
     }
     private fun down(code: Int) = ins.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, code))
+    private fun up(code: Int) = ins.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, code))
     private fun key(code: Int) = ins.sendKeyDownUpSync(code)
+
+    @Test fun localPlaybackCommitsOnReleaseWithoutWaitingOrSeekingForEveryHeldRepeat() = fixture { state ->
+        ins.runOnMainSync { state.local.value = true }
+        ins.waitForIdleSync()
+        repeat(4) { down(KeyEvent.KEYCODE_DPAD_RIGHT) }
+        assertTrue("Holding a direction does not issue intermediate seeks", state.seeks.isEmpty())
+        up(KeyEvent.KEYCODE_DPAD_RIGHT)
+        ins.waitForIdleSync()
+        assertEquals("Local playback commits in the release event, before the 450ms debounce", 1, state.seeks.size)
+        assertEquals(70_000L, state.seeks.single().second)
+        Thread.sleep(550L)
+        assertEquals("The fallback timer cannot duplicate the committed seek", 1, state.seeks.size)
+    }
 
     @Test fun hidingControlsCommitsCursorButNewPlaybackAttemptDiscardsIt() = fixture { state ->
         down(KeyEvent.KEYCODE_DPAD_RIGHT)

@@ -74,7 +74,12 @@ internal class PlayerSettingsRibbonState {
         revealOnOpen = !directional
         target = if (directional) actions.firstOrNull()?.requester else null
     }
-    fun restore(requester: FocusRequester) { revealOnOpen = false; target = requester }
+    fun restore(requester: FocusRequester) {
+        revealOnOpen = false
+        // Retain a mounted origin before a popup leaves. Recreated engine controls
+        // consume the pending request on attachment instead of a delayed correction.
+        target = if (runCatching { requester.requestFocus() }.getOrDefault(false)) null else requester
+    }
     fun revealed() { revealOnOpen = false }
     fun rememberFocus(requester: FocusRequester) { lastFocused = requester }
     fun attach(requester: FocusRequester) {

@@ -128,6 +128,23 @@ class PlayerTransitionViewModelTest {
         assertNull(mutable.value.error)
     }
 
+    @Test fun offlineRetryKeepsTheLocalSourceWithoutAConnectedPortal() {
+        val offline = start(PortalType.STALKER).copy(url = "content://downloads/fixture",
+            offlinePlayback = true, resumePositionMillis = 12_000L)
+        mutable.value = mutable.value.copy(session = null, nowPlaying = offline)
+        vm.retryPlayback(42_000L, offline)
+        scheduler.runCurrent()
+        val retried = requireNotNull(mutable.value.nowPlaying)
+        assertNotEquals(offline.playbackAttemptId, retried.playbackAttemptId)
+        assertNotEquals(offline.decoderSessionId, retried.decoderSessionId)
+        assertEquals(offline.url, retried.url)
+        assertEquals(42_000L, retried.resumePositionMillis)
+        assertTrue(retried.offlinePlayback)
+        assertTrue(retried.playWhenReady)
+        assertEquals(0, requests.size)
+        assertNull(mutable.value.error)
+    }
+
     @Test fun stalkerNextUsesLoadedEpisodeAndCreatesFreshLinkWithoutRescanningSeasons() {
         start(PortalType.STALKER)
         vm.playNextEpisode()

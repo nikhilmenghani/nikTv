@@ -1,5 +1,8 @@
 package com.nikhil.niktv.ui
 
+internal fun localPlaybackSource(url: String, offline: Boolean): Boolean = offline ||
+    url.startsWith("content://", ignoreCase = true) || url.startsWith("file://", ignoreCase = true)
+
 /** Accumulate quick presses while the decoder is still completing a previous seek. */
 internal class PlaybackSeekTarget {
     private var pending: Long? = null
