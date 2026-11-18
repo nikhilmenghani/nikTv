@@ -43,28 +43,30 @@ internal data class SportsHeaderAction(val label: String, val icon: ImageVector,
 /** Keep fixed-size actions outside the title's space on every Sports destination. */
 @Composable
 internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsHeaderAction>,
-    backFocus: FocusRequester, menuFocus: FocusRequester,
+    backFocus: FocusRequester, menuFocus: FocusRequester, downFocus: FocusRequester? = null,
     navigation: @Composable (Modifier) -> Unit) {
     val phone = sportsPhoneLayout()
     val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
     val openProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
-    val scope = rememberCoroutineScope()
     val firstAction = remember { FocusRequester() }
     var expanded by remember { mutableStateOf(false) }
     fun close(action: (() -> Unit)? = null) {
+        // Establish the surviving origin before replacing the popup with a dialog.
+        runCatching { menuFocus.requestFocus() }
+        action?.invoke()
         expanded = false
-        scope.launch {
-            withFrameNanos { }
-            runCatching { menuFocus.requestFocus() }
-            action?.invoke()
-        }
     }
     @Composable fun options() {
             Box {
                 DiscoveryAction("Sports options", Icons.Default.MoreHoriz, iconOnly = true,
                     focusHint = false,
                     selected = actions.any { it.label == "Categories" && it.selected },
-                    modifier = Modifier.size(if (phone) 48.dp else 44.dp).focusRequester(menuFocus), onClick = { expanded = true })
+                    modifier = Modifier.size(if (phone) 48.dp else 44.dp).focusRequester(menuFocus)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && downFocus != null) {
+                                runCatching { downFocus.requestFocus() }; true
+                            } else false
+                        }, onClick = { expanded = true })
                 DropdownMenu(expanded, { close() }, containerColor = SportsSurface,
                     modifier = Modifier.initialFocusEntry(firstAction)) {
                     actions.forEachIndexed { index, action ->

@@ -185,13 +185,13 @@ class PlaybackEngineFixtureTest {
         }
     }
 
-    @Test fun compactRibbonPhoneLandscapeRetainsRealPlayerNavigation() {
+    @Test fun bottomSettingsPhoneLandscapeRetainRealPlayerNavigation() {
         assertTrue(instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90))
-        try { compactRibbonUsesRealIptvAndSportsPlayersAcrossEngines() }
+        try { bottomSettingsUseRealIptvAndSportsPlayersAcrossEngines() }
         finally { instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_UNFREEZE) }
     }
 
-    @Test fun compactRibbonUsesRealIptvAndSportsPlayersAcrossEngines() {
+    @Test fun bottomSettingsUseRealIptvAndSportsPlayersAcrossEngines() {
         check(context.packageName.endsWith(".regression"))
         val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
         audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
@@ -235,13 +235,15 @@ class PlaybackEngineFixtureTest {
                     val play = rect("Pause")
                     val seek = rect("Current playback time ", true)
                     clickControl("More controls")
-                    await("Shared quick row is mounted") { control("Quick controls") != null && control("Video fit:", true) != null }
+                    await("Inline settings are mounted") { control("Subtitles") != null && control("Video fit:", true) != null }
                     instrumentation.waitForIdleSync()
-                    NavigationAuditEvidence.capture("compact-production-open-$sports-$engine")
-                    assertEquals("Settings leave transport in place", play, rect("Pause"))
+                    NavigationAuditEvidence.capture("bottom-settings-production-open-$sports-$engine")
+                    assertEquals("Settings do not change the transport height", play.height(), rect("Pause").height())
+                    assertTrue("Settings share the bottom transport baseline (including pixel rounding)",
+                        kotlin.math.abs(play.centerY() - rect("Subtitles").centerY()) <= 1)
                     assertEquals("Settings leave seek in place", seek, rect("Current playback time ", true))
                     assertTrue("Controls share a horizontal row", rect("Subtitles").top == rect("Video fit:", true).top)
-                    NavigationAuditEvidence.capture("compact-player-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}-quick")
+                    NavigationAuditEvidence.capture("bottom-settings-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}-quick")
                     instrumentation.setInTouchMode(false)
                     clickControl("Video fit:", true)
                     await("Real resize picker opens") { control("Video resize") != null }
@@ -251,17 +253,14 @@ class PlaybackEngineFixtureTest {
                     await("Right immediately reaches Picture") { focused("Choose picture mode:", true) }
                     Thread.sleep(200)
                     assertTrue("Dialog handoff never corrects a subsequent arrow", focused("Choose picture mode:", true))
-                    clickControl("More player tools")
-                    await("Tools include existing stream info and timeout") { control("Playback information") != null && control("Controls timeout:", true) != null }
+                    await("Inline controls include existing stream info and timeout") { control("Playback information") != null && control("Controls timeout:", true) != null }
                     clickControl("Playback information")
                     await("Real information dialog opens") { control("Details for the current stream") != null }
                     clickControl("Close")
                     await("Info returns to its tool") { control("Details for the current stream") == null && focused("Playback information") }
-                    NavigationAuditEvidence.capture("compact-player-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}")
+                    NavigationAuditEvidence.capture("bottom-settings-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}")
                     instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-                    await("Back returns to quick settings") { control("Quick controls") != null }
-                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-                    await("Closing returns directly to the surviving settings trigger") { control("Quick controls") == null && focused("More controls") }
+                    await("Closing returns directly to the surviving settings trigger") { control("Subtitles") == null && focused("More controls") }
                     assertEquals("Settings never reload or reauthenticate the stream", 0, retries.get())
                 } finally { main { activity.finish() }; instrumentation.setInTouchMode(true) }
             }

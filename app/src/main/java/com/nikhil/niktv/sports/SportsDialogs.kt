@@ -13,6 +13,25 @@ import androidx.compose.ui.focus.*
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.ui.*
 
+@Composable internal fun SportsBrowseChoiceDialog(title: String, selected: String, choices: List<String>,
+    choose: (String) -> Unit, close: () -> Unit) {
+    val entry = remember { FocusRequester() }
+    val selectedIndex = choices.indexOf(selected).coerceAtLeast(0)
+    val scroll = androidx.compose.foundation.lazy.rememberLazyListState(selectedIndex)
+    AlertDialog(onDismissRequest = close, containerColor = SportsSurface, shape = SportsShape,
+        modifier = Modifier.initialFocusEntry(entry), title = { Text(title) }, text = {
+            LazyColumn(Modifier.heightIn(max = 320.dp), state = scroll, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                itemsIndexed(choices, key = { _, value -> value }) { index, value ->
+                    NikTvSecondaryActionButton({ choose(value) }, Modifier.fillMaxWidth()
+                        .then(if (index == selectedIndex) Modifier.focusRequester(entry) else Modifier)) {
+                        if (value == selected) { Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
+                        Text(value)
+                    }
+                }
+            }
+        }, confirmButton = { NikTvSecondaryActionButton(close, Modifier.fillMaxWidth()) { Text("Close") } })
+}
+
 @Composable internal fun SportsResolverModeDialog(selected: SportsResolverMode, choose: (SportsResolverMode) -> Unit, close: () -> Unit) {
     val first = remember { FocusRequester() }
     AlertDialog(onDismissRequest = close, containerColor = SportsSurface, shape = SportsShape,

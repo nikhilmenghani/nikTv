@@ -1,5 +1,6 @@
 package com.nikhil.niktv.sports
 
+import com.nikhil.niktv.ui.findActivity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -51,6 +52,14 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // IPTV portals replace content in place; Sports must use the same direct handoff.
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+        } else {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
+        }
         enableEdgeToEdge()
         val users = UserSyncStore.get(applicationContext)
         val owner = users.selectedScope.value
@@ -58,6 +67,22 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
             users.selectedScope.collect { if (it != owner) finish() }
         }
         showSportsContent()
+    }
+
+    override fun finish() {
+        super.finish()
+        if (android.os.Build.VERSION.SDK_INT < 34) {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
+        }
+    }
+
+    private fun openMainPortal(key: String) {
+        startActivity(Intent(this, com.nikhil.niktv.MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL, key),
+            android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
+        finish()
     }
 
     override fun onStart() {
@@ -84,28 +109,17 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
             val actions = portals.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
                 if (portal.portalType == com.nikhil.niktv.model.PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
                 open = {
-                    startActivity(Intent(this, com.nikhil.niktv.MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL, portal.cacheKey()))
-                    finish()
+                    openMainPortal(portal.cacheKey())
                 }) } + com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, selected = true, open = {})
             if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS in hiddenPortals) {
                 androidx.compose.runtime.LaunchedEffect(viewerScope) {
-                    startActivity(Intent(this@SportsActivity, com.nikhil.niktv.MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL,
-                            com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER))
-                    finish()
+                    openMainPortal(com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER)
                 }
             }
             androidx.compose.runtime.CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides actions,
                 com.nikhil.niktv.ui.LocalSelectedUserProfile provides viewer,
                 com.nikhil.niktv.ui.LocalOpenUserProfiles provides {
-                    startActivity(Intent(this, com.nikhil.niktv.MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL,
-                            com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER))
-                    finish()
+                    openMainPortal(com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER)
                 }) {
             androidx.compose.material3.Surface(color = NikColors.background, contentColor = NikColors.onBackground) {
                 com.nikhil.niktv.ui.LanPlaybackHost(com.nikhil.niktv.data.LanPlaybackSessions.get(applicationContext)) {
@@ -117,4 +131,8 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
     }
 }
 
-internal fun Context.openSports() { startActivity(Intent(this, SportsActivity::class.java)) }
+internal fun Context.openSports() {
+    val intent = Intent(this, SportsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+    if (findActivity() == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    startActivity(intent, android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
+}

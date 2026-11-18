@@ -38,11 +38,12 @@ internal suspend fun cachedProviderArtwork(cache: DiscoveryCache, item: MediaIte
     if (type == CatalogType.LIVE_TV) return null
     val series = type == CatalogType.SERIES
     val kind = if (series) FavoriteKind.SERIES else FavoriteKind.MOVIE
-    fun publicCover(card: DiscoveryCard?): String? = card?.takeIf { it.id > 0 && it.series == series }
+    val known = item.externalTmdbId?.takeIf { it > 0 }
+    fun publicCover(card: DiscoveryCard?): String? = card?.takeIf { it.id > 0 && it.series == series && (known == null || it.id == known) }
         ?.let { listOfNotNull(it.poster, it.backdrop).firstOrNull { url -> url.startsWith("https://image.tmdb.org/") } }
     publicCover(libraryCachedPresentation(cache, LibraryEntry(item, kind)))?.let { return it }
     val title = if (series) providerSeriesTmdbTitle(item.title) else providerTmdbTitle(item.title)
-    return publicCover(cache.findArtwork(title, series))
+    return publicCover(cache.findArtwork(title, series)?.takeIf { known == null || it.id == known })
 }
 
 internal fun providerCategoryQueueFilter(category: Category, items: List<MediaItem>, index: Int, query: String): PlaybackQueueFilter =
@@ -73,7 +74,9 @@ internal suspend fun readProviderHeroMetadata(cache: DiscoveryCache, item: Media
             runCatching { json.decodeFromString(ListSerializer(DiscoveryCard.serializer()), entry.payload).firstOrNull() }.getOrNull()
         }
         val seed = matched?.takeIf { it.series == (type == CatalogType.SERIES) && it.id > 0 && (known == null || it.id == known) }
-            ?: known?.let { DiscoveryCard(it, type == CatalogType.SERIES, "") } ?: return@withContext null
+            ?: known?.let { DiscoveryCard(it, type == CatalogType.SERIES, "") }
+            ?: cache.findArtwork(if (type == CatalogType.SERIES) providerSeriesTmdbTitle(item.title) else providerTmdbTitle(item.title),
+                type == CatalogType.SERIES) ?: return@withContext null
         cache.read("detail-v4:${seed.key}")?.let { entry ->
             runCatching { json.decodeFromString(DiscoveryDetails.serializer(), entry.payload).card }.getOrNull()
         }?.takeIf { it.key == seed.key } ?: seed.takeIf { it.title.isNotBlank() }

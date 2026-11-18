@@ -280,22 +280,24 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         // Saved heroes omit Add, but retain its non-interactive layout slot.
                         if (!detail && !showListAction && supportingTitle) Spacer(Modifier.size(48.dp))
                         val compactMovieActions = detail && card?.series == false
-                        DiscoveryMobileGlassContainer(if (detail && !compactMovieActions) Modifier.weight(1f).fillMaxHeight() else Modifier) {
+                        var primaryFocused by remember { mutableStateOf(false) }
+                        DiscoveryMobileGlassContainer(if (detail && !compactMovieActions) Modifier.weight(1f).fillMaxHeight() else Modifier, focused = primaryFocused) {
                         Surface(onClick = if (openDetails) info else play, enabled = card != null && (openDetails || playEnabled), shape = RoundedCornerShape(10.dp),
                             color = if (detail && !compactMovieActions) Color.Transparent else Color(0xFFE50925), contentColor = Color.White,
                             modifier = Modifier.then(if (!detail) Modifier.width(discoveryPrimaryActionWidth(phone = true))
                                 else if (!compactMovieActions) Modifier.fillMaxSize() else Modifier.widthIn(min = 120.dp))
                                 .heightIn(min = 48.dp).focusRequester(playRequester)
                                 .then(if (openDetails) Modifier.focusRequester(infoRequester) else Modifier)
-                                .onFocusChanged { if (it.isFocused) onFocus() }) {
+                                .onFocusChanged { primaryFocused = it.isFocused; if (it.isFocused) onFocus() }) {
                             Row(Modifier.padding(start = if (compactMovieActions) 16.dp else if (compactDetail) 6.dp else 18.dp,
-                                end = if (compactMovieActions) 22.dp else if (compactDetail) 6.dp else 18.dp, top = 12.dp, bottom = 12.dp),
+                                end = if (compactMovieActions) 22.dp else if (compactDetail) 6.dp else 18.dp, top = 8.dp, bottom = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(if (compactDetail) 4.dp else 6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(if (openDetails) Icons.AutoMirrored.Filled.ArrowForward else Icons.Default.PlayArrow, null, Modifier.size(if (compactDetail) 18.dp else 24.dp))
                                 Text(if (openDetails) "Open" else if (compactDetail && playLabel.startsWith("Resume ")) "Resume" else if (compactDetail) playLabel.replace("Episode ", "E") else playLabel,
                                     fontWeight = FontWeight.Bold, fontSize = if (compactDetail) 13.sp else 15.sp,
+                                    lineHeight = if (compactDetail) 16.sp else 20.sp,
                                     modifier = Modifier.weight(1f, fill = false),
-                                    maxLines = if (compactDetail) 1 else 2, overflow = TextOverflow.Ellipsis)
+                                    maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                             }
                         }
                         }

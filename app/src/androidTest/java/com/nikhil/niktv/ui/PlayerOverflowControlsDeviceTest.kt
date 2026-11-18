@@ -7,6 +7,7 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -51,8 +52,8 @@ class PlayerOverflowControlsDeviceTest {
     }
     private fun key(code: Int) = ins.sendKeyDownUpSync(code)
 
-    @Test fun compactRibbonKeepsTransportFixedAndRestoresDpadFocus() = exercise(false)
-    @Test fun narrowRibbonPagesWithoutWrappingOrMovingFocusToTransport() = exercise(true)
+    @Test fun bottomSettingsKeepDockFixedAndRestoreDpadFocus() = exercise(false)
+    @Test fun narrowBottomSettingsScrollWithoutWrappingOrLosingFocus() = exercise(true)
 
     private fun exercise(narrow: Boolean) {
         check(ins.targetContext.packageName.endsWith(".regression"))
@@ -79,16 +80,22 @@ class PlayerOverflowControlsDeviceTest {
                 Surface(Modifier.fillMaxSize()) {
                     Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
                         Column(if (narrow) Modifier.width(360.dp) else Modifier.fillMaxWidth()) {
-                            PlayerSettingsRibbon(open, actions, state, toggle, seek, { open = false })
                             PlayerChromeIconButton(Icons.Default.Settings, "Seek fixture", {}, Modifier.focusRequester(seek)
-                                .focusProperties { up = if (open) state.entry(actions) else toggle; down = play }
+                                .focusProperties { down = play }
                                 .onFocusChanged { if (it.isFocused) history.add("Seek") })
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                PlayerChromeIconButton(Icons.Default.Settings, "Play fixture", {}, Modifier.focusRequester(play)
-                                    .onFocusChanged { if (it.isFocused) history.add("Play") })
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                PlayerBottomActions(rememberScrollState()) {
+                                    PlayerChromeIconButton(Icons.Default.Settings, "Play fixture", {}, Modifier.focusRequester(play)
+                                        .focusProperties { right = if (open) state.firstOr(toggle) else toggle; up = seek }
+                                        .onFocusChanged { if (it.isFocused) history.add("Play") })
+                                    Spacer(Modifier.weight(1f))
+                                    PlayerSettingsRibbon(open, actions, state, toggle, play, seek, { open = false })
+                                }
                                 PlayerChromeIconButton(Icons.Default.Settings, "Settings fixture", {
                                     state.open(actions); open = true
-                                }, Modifier.focusRequester(toggle).onFocusChanged { if (it.isFocused) history.add("Toggle") })
+                                }, Modifier.focusRequester(toggle)
+                                    .focusProperties { left = if (open) state.entry(actions) else play; up = seek }
+                                    .onFocusChanged { if (it.isFocused) history.add("Toggle") })
                             }
                         }
                     }
@@ -107,6 +114,7 @@ class PlayerOverflowControlsDeviceTest {
             assertEquals("Opening leaves Play anchored", playBefore, bounds("Play fixture"))
             assertEquals("Opening leaves seek anchored", seekBefore, bounds("Seek fixture"))
             val subtitlesBefore = bounds("Subtitles")
+            assertEquals("Settings share the transport baseline", bounds("Play fixture").centerY(), subtitlesBefore.centerY())
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Right enters Audio") { focused("Audio") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -120,41 +128,35 @@ class PlayerOverflowControlsDeviceTest {
             await("Navigation after dialog return is immediate") { focused("Video fit") }
             Thread.sleep(180)
             assertTrue("No late correction steals the arrow destination", focused("Video fit"))
-            if (narrow) {
-                key(KeyEvent.KEYCODE_DPAD_UP)
-                await("Up reaches the compact header Close") { focused("Close player settings") }
-                key(KeyEvent.KEYCODE_DPAD_LEFT)
-                await("Left reaches next page") { focused("Next controls") }
-                key(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("Next page keeps the header anchor") { focused("Next controls") && find("Picture") != null }
-                key(KeyEvent.KEYCODE_DPAD_DOWN)
-                await("Down enters the visible page") { focused("Picture") }
-                assertEquals("Paged controls stay in the same row", subtitlesBefore.top, bounds("Picture").top)
-                assertEquals("Paging does not resize cells", subtitlesBefore.width(), bounds("Picture").width())
+            // Every control remains in the same bottom row, including overflow.
+            val remaining = listOf("Picture", "Player", "Download", "Intro timing", "Controls timeout", "Cricket scores", "Stream info")
+            for (label in remaining) {
+                key(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right reaches $label") { focused(label) }
+                assertEquals("Settings stay aligned with the bottom trigger", bounds("Settings fixture").centerY(), bounds(label).centerY())
             }
-            // Request the persistent More anchor using native accessibility focus, then OK.
-            var more = checkNotNull(find("More player tools"))
-            while (!more.isFocusable && more.parent != null) more = more.parent
-            assertTrue(more.performAction(AccessibilityNodeInfo.ACTION_FOCUS))
-            await("More receives focus") { focused("More player tools") }
-            key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("More opens the secondary row") { find("Intro timing") != null && find("Back to quick controls") != null }
-            assertEquals("Tools share the same row height", subtitlesBefore.top, bounds("Intro timing").top)
-            key(KeyEvent.KEYCODE_BACK)
-            await("First Back returns to quick controls") { find("Subtitles") != null && find("Quick controls") != null }
+            val info = bounds("Stream info")
+            val toggleBounds = bounds("Settings fixture")
+            assertTrue("Overflow scrolls the focused control fully into view", info.right <= toggleBounds.left && info.left >= seekBefore.left)
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Last control reaches the settings trigger") { focused("Settings fixture") }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Trigger returns to the last setting") { focused("Stream info") }
             val closedAt = history.size
             key(KeyEvent.KEYCODE_BACK)
-            await("Second Back closes and retains the trigger") { find("Quick controls") == null && focused("Settings fixture") }
+            await("Back closes and retains the trigger") { find("Subtitles") == null && focused("Settings fixture") }
             assertEquals("Close transfers directly to the surviving trigger", listOf("Toggle"), history.drop(closedAt))
             assertEquals(listOf("Speed"), activations)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Reopening remains reachable") { focused("Subtitles") }
-            assertEquals("Focus outline does not resize its cell", subtitlesBefore, bounds("Subtitles"))
-            NavigationAuditEvidence.capture("player-compact-ribbon-${if (narrow) "narrow" else "wide"}")
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down reaches the seek row") { focused("Seek fixture") }
+            assertEquals("Focus outline does not resize its cell", subtitlesBefore.width(), bounds("Subtitles").width())
+            NavigationAuditEvidence.capture("player-bottom-settings-${if (narrow) "narrow" else "wide"}")
             key(KeyEvent.KEYCODE_DPAD_UP)
-            await("Up returns to the ribbon") { focused("Subtitles") }
+            await("Up reaches the seek row") { focused("Seek fixture") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down returns to Play") { focused("Play fixture") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reenters the settings strip") { focused("Subtitles") }
         } finally { ins.runOnMainSync { host.finish() }; ins.setInTouchMode(true) }
     }
 }

@@ -1,4 +1,6 @@
 package com.nikhil.niktv.ui
+
+import com.nikhil.niktv.sports.openSports
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.CubicBezierEasing
@@ -199,7 +201,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                 preferredViewerPortal(portals, previous)?.let { activateViewerPortal(owner, it) }
             }
             ViewerDestinationKind.SPORTS -> if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner))
-                context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
+                context.openSports()
                 else portals.firstOrNull()?.let { activateViewerPortal(owner, it) }
             ViewerDestinationKind.PORTAL -> preferredViewerPortal(portals, destination.portalKey)?.let { activateViewerPortal(owner, it) }
             null -> {

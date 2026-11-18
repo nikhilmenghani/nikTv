@@ -256,7 +256,7 @@ class DiscoveryViewerNavigationDeviceTest {
                     LocalSelectedUserProfile provides UserProfile("c93b58be-3b8f-4e78-b8da-270dd3ad67aa", "Header fixture", avatar = "F"),
                     LocalOpenUserProfiles provides { opens.incrementAndGet() }) {
                     MaterialTheme(colorScheme = NikColors) {
-                        com.nikhil.niktv.sports.SportsHeader("Sports", {}, emptyList(), profile, remember { FocusRequester() }, {})
+                        com.nikhil.niktv.sports.SportsHeader("Sports", {}, emptyList(), profile, remember { FocusRequester() }, navigation = {})
                         LaunchedEffect(Unit) { withFrameNanos { }; profile.requestFocus() }
                     }
                 }

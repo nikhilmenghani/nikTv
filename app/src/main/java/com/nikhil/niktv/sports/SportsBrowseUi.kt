@@ -56,22 +56,22 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val backFocus = remember { FocusRequester() }
     val optionsAction = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
-    val firstFilter = remember { FocusRequester() }
-    val sportFilter = remember { FocusRequester() }
     val gridEntry = remember { FocusRequester() }
     val relatedEntry = remember { FocusRequester() }
-    val groupAction = remember { FocusRequester() }
-    val availabilityAction = remember { FocusRequester() }
     val sourceFocus = remember(state.streams) { state.streams.map { FocusRequester() } }
     val selected = state.selected
     var relatedExpanded by rememberSaveable(selected?.key) { mutableStateOf(false) }
-    val hasGroups = (if (state.favouritesOnly) state.favourites else state.collectionChannels).any { it.group.isNotBlank() }
-    val headerFocus = if (state.tab == SportsTab.CATEGORIES) optionsAction else tabFocus.getValue(state.tab)
+    val browseChannels = if (state.favouritesOnly) state.favourites else if (state.collection != null) state.collectionChannels else state.channels
+    val groups = remember(browseChannels) { listOf("All groups") + browseChannels.map { it.group }.filter(String::isNotBlank).distinct() }
+    val sports = remember(state.events, state.filters, sport) { sportsEventFilterChoices(state.events, state.filters, sport) }
+    val headerFocus = if (compact || state.tab == SportsTab.CATEGORIES) optionsAction else tabFocus.getValue(state.tab)
     var searchOpen by rememberSaveable { mutableStateOf(query.isNotBlank()) }
     var editing by remember { mutableStateOf(false) }
     var addOpen by rememberSaveable { mutableStateOf(false) }
     var groupsOpen by remember { mutableStateOf(false) }
     var availabilityOpen by remember { mutableStateOf(false) }
+    var statusOpen by remember { mutableStateOf(false) }
+    var sportOpen by remember { mutableStateOf(false) }
     var resolverOpen by remember { mutableStateOf(false) }
     val resolverContext = LocalContext.current
     val resolverPreferences = remember(resolverContext) { SportsResolverPreferences(resolverContext) }
@@ -85,6 +85,11 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val originFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     fun restore(requester: FocusRequester?) { scope.launch { withFrameNanos { }; requester?.let { runCatching { it.requestFocus() } } } }
+    fun closeFilters(apply: () -> Unit = {}) {
+        runCatching { optionsAction.requestFocus() }
+        apply()
+        statusOpen = false; sportOpen = false; availabilityOpen = false; groupsOpen = false
+    }
     fun closeSearch() { editing = false; searchOpen = false; setQuery(""); keyboard?.hide(); restore(optionsAction) }
     BackHandler(searchOpen && selected == null) { closeSearch() }
     LaunchedEffect(searchOpen) { if (searchOpen) { withFrameNanos { }; runCatching { searchFocus.requestFocus() }; if (editing) keyboard?.show() } }
@@ -119,20 +124,27 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             if (state.tab == SportsTab.CATEGORIES && selected == null) add(SportsHeaderAction("Add playlist", Icons.Default.PlaylistAdd) {
                 dismissLibraryError(); addOpen = true
             })
+            if (selected == null && state.tab == SportsTab.EVENTS && !state.favouritesOnly) {
+                add(SportsHeaderAction("Live events: $status", Icons.Default.Schedule, status != "Now & next") { statusOpen = true })
+                add(SportsHeaderAction("Sport: $sport", Icons.Default.SportsCricket, sport !in setOf("All sports", "All")) { sportOpen = true })
+            }
+            if (showsAvailability) add(SportsHeaderAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag,
+                state.availabilityFilter != SportsAvailabilityFilter.ALL) { availabilityOpen = true })
+            if (selected == null && (state.favouritesOnly || state.collection != null || state.tab == SportsTab.CHANNELS) && groups.size > 1)
+                add(SportsHeaderAction("Group: $group", Icons.Default.FilterList, group != "All groups") { groupsOpen = true })
             add(SportsHeaderAction("Refresh sports", Icons.Default.Refresh, onClick = refresh))
             add(SportsHeaderAction("Stream compatibility: ${resolverMode.title}", Icons.Default.Settings) { resolverOpen = true })
         }
-        SportsHeader("Sports", back, headerActions, backFocus, optionsAction) { modifier ->
+        SportsHeader("Sports", back, headerActions, backFocus, optionsAction,
+            downFocus = if (selected != null) sourceFocus.firstOrNull() else gridEntry) { modifier ->
             Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 sportsMainTabs.forEach { tab ->
                     DiscoveryAction(tab.title, horizontalPadding = 12.dp, selected = state.tab == tab,
                         modifier = Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
                             val target = when { selected != null -> sourceFocus.firstOrNull() ?: backFocus
-                                state.tab == SportsTab.EVENTS && !state.favouritesOnly -> firstFilter
                                 showsAvailability && state.availabilityFilter != SportsAvailabilityFilter.ALL &&
-                                    availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) } -> availabilityAction
-                                hasGroups -> groupAction
+                                    availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) } -> optionsAction
                                 else -> gridEntry }
                             runCatching { target.requestFocus() }; true
                         }, onClick = { keyboard?.hide(); selectTab(tab) })
@@ -199,36 +211,14 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                     .clickable { editing = true; keyboard?.show() })
             }
             val activeQuery = query.takeIf { searchOpen }.orEmpty()
-            if (showsAvailability && (state.tab != SportsTab.EVENTS || state.favouritesOnly)) DiscoveryAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag,
-                selected = state.availabilityFilter != SportsAvailabilityFilter.ALL,
-                modifier = Modifier.focusRequester(availabilityAction).onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown)) {
-                        val target = if (event.key == Key.DirectionUp) headerFocus else if (state.tab == SportsTab.EVENTS && !state.favouritesOnly) firstFilter
-                            else if (hasGroups) groupAction else gridEntry
-                        runCatching { target.requestFocus() }; true
-                    } else false
-                }) { availabilityOpen = true }
             if (state.tab == SportsTab.EVENTS && !state.favouritesOnly) {
-                val sports = remember(state.events, state.filters, sport) { sportsEventFilterChoices(state.events, state.filters, sport) }
-                val sportDropdown: @Composable (Modifier) -> Unit = { modifier ->
-                    SportsDropdown("Sport", sport, sports.map { it to it },
-                        select = { setSport(it); saveDefaultSport(it) }, modifier = modifier.focusRequester(sportFilter), valueOnly = compact)
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SportsDropdown("Live events", status, SPORTS_STATUS_FILTERS.map { it to it },
-                        select = { setStatus(it); saveDefaultStatus(it) }, modifier = Modifier.weight(if (compact) .9f else 1f).focusRequester(firstFilter), valueOnly = compact)
-                    sportDropdown(Modifier.weight(if (compact) 1.1f else 1f))
-                    DiscoveryAction("Availability: ${state.availabilityFilter.title}", Icons.Default.Flag, iconOnly = compact,
-                        selected = state.availabilityFilter != SportsAvailabilityFilter.ALL,
-                        modifier = Modifier.focusRequester(availabilityAction)) { availabilityOpen = true }
-                }
                 val visible = remember(state.events, sport, status, activeQuery, now.epochSecond, state.channelFlags, state.availabilityFilter) {
                     state.events.filter { sportsEventMatches(it, sport, status, activeQuery, now) && state.availabilityFilter.includes(state.channelFlags[it.slug]) }
                         .sortedWith(compareByDescending<SportsEvent> { it.isHot }.thenBy { if (it.status(now) == SportsStatus.LIVE) 0 else 1 }.thenBy { it.start })
                 }
                 val sections = remember(visible, state.filters, sport) { sportsEventSections(visible, state.filters, sport) }
                 SportsBrowseStatus(state, visible.size, "event", refresh)
-                SportsEventRows(sections, Modifier.weight(1f), compact, firstFilter,
+                SportsEventRows(sections, Modifier.weight(1f), compact, headerFocus,
                     entry = gridEntry, requester = { tileRequester(it) }) { event, rowKey, modifier ->
                     SportsEventTile(event, now, state.favourites.any { it.key == event.slug }, modifier,
                         click = { lastTile = rowKey; open(event) }, menu = { contextItem = event.asChannel(); restoreTile = tileRequester(rowKey) }, flag = state.channelFlags[event.slug])
@@ -244,33 +234,24 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                         menu = { if (category.custom) { contextCategory = category; restoreTile = tileRequester(category.id) } })
                 }
             } else {
-                val channels = if (state.favouritesOnly) state.favourites else if (state.collection != null) state.collectionChannels else state.channels
-                val groups = remember(channels) { listOf("All groups") + channels.map { it.group }.filter(String::isNotBlank).distinct() }
-                if (groups.size > 1) DiscoveryAction("Group: $group", Icons.Default.FilterList, selected = group != "All groups",
-                    modifier = Modifier.focusRequester(groupAction).onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown)) {
-                            runCatching { (if (event.key == Key.DirectionUp) availabilityAction else gridEntry).requestFocus() }; true
-                        } else false
-                    }) { groupsOpen = true }
+                val channels = browseChannels
                 val visible = remember(channels, activeQuery, group, state.channelFlags, state.availabilityFilter) { channels.filter {
                     state.availabilityFilter.includes(state.channelFlags[it.key]) && (group == "All groups" || it.group == group) &&
                         (activeQuery.isBlank() || it.title.contains(activeQuery.trim(), true) || it.group.contains(activeQuery.trim(), true))
                 } }
                 SportsBrowseStatus(state, visible.size, "channel", refresh)
-                SportsGrid(visible, { it.key }, eventsScroll, 170, Modifier.weight(1f), if (groups.size > 1) groupAction else availabilityAction,
+                SportsGrid(visible, { it.key }, eventsScroll, 170, Modifier.weight(1f), headerFocus,
                     entry = gridEntry, requester = { index -> tileRequester(visible[index].key) }) { item, _, modifier ->
                     SportsChannelTile(item, state.favourites.any { it.key == item.key }, modifier,
                         click = { lastTile = item.key; openChannel(item) }, menu = { contextItem = item; restoreTile = tileRequester(item.key) }, flag = state.channelFlags[item.key])
                 }
-                if (groupsOpen) SportsGroupDialog(groups, group, { group = it; groupsOpen = false; restore(groupAction) }, { groupsOpen = false; restore(groupAction) })
             }
         }
       }
       if (compact) SportsBottomNavigation(state.tab, { keyboard?.hide(); selectTab(it) }, tabFocus,
           content = if (selected != null) sourceFocus.firstOrNull() ?: backFocus
-              else if (state.tab == SportsTab.EVENTS && !state.favouritesOnly) firstFilter
               else if (showsAvailability && state.availabilityFilter != SportsAvailabilityFilter.ALL &&
-                  availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) }) availabilityAction
+                  availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) }) optionsAction
               else if (availableKeys.isNotEmpty()) gridEntry else null)
     }
     contextItem?.let { item -> SportsItemDialog(item, state.favourites.any { it.key == item.key },
@@ -278,14 +259,21 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
         flag = state.channelFlags[item.key], toggleFlag = {
             val remainsVisible = state.availabilityFilter.includes(if (item.key in state.channelFlags) null else SportsChannelFlag(SportsFlagReason.MANUAL, 0))
             toggleChannelFlag(item); contextItem = null
-            restore(if (selected == null && !remainsVisible) availabilityAction else restoreTile)
+            restore(if (selected == null && !remainsVisible) optionsAction else restoreTile)
         }) }
     if (resolverOpen) SportsResolverModeDialog(resolverMode, {
         resolverPreferences.set(it); resolverMode = it; resolverOpen = false; restore(optionsAction)
     }, { resolverOpen = false; restore(optionsAction) })
+    if (statusOpen) SportsBrowseChoiceDialog("Live events", status, SPORTS_STATUS_FILTERS, {
+        closeFilters { setStatus(it); saveDefaultStatus(it) }
+    }, { closeFilters() })
+    if (sportOpen) SportsBrowseChoiceDialog("Sport", sport, sports, {
+        closeFilters { setSport(it); saveDefaultSport(it) }
+    }, { closeFilters() })
+    if (groupsOpen) SportsGroupDialog(groups, group, { value -> closeFilters { group = value } }, { closeFilters() })
     if (availabilityOpen) SportsAvailabilityFilterDialog(state.availabilityFilter, {
-        setAvailabilityFilter(it); availabilityOpen = false; restore(availabilityAction)
-    }, { availabilityOpen = false; restore(availabilityAction) })
+        closeFilters { setAvailabilityFilter(it) }
+    }, { closeFilters() })
     contextCategory?.let { category -> SportsRemovePlaylistDialog(category, {
         removePlaylist(category); contextCategory = null; restore(restoreTile ?: headerFocus)
     }, { contextCategory = null; restore(restoreTile ?: headerFocus) }) }

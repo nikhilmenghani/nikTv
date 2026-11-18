@@ -2249,7 +2249,7 @@ fun PlayerScreen(
             val firstQuickActionRequester = when {
                 media.catalogType == CatalogType.LIVE_TV -> programmeGuideFocusRequester
                 introAvailable -> skipIntroFocusRequester
-
+                extraControlsOpen -> settingsRibbon.firstOr(extraControlsRequester)
                 else -> extraControlsRequester
             }
             val lastPlaybackActionRequester = when {
@@ -2560,7 +2560,7 @@ fun PlayerScreen(
                             .focusRequester(downloadFocusRequester)
                             .playerDpadFocusRoutes(
                                 left = if (recordingThisChannel) recordingPauseFocusRequester else programmeGuideFocusRequester,
-                                right = extraControlsRequester,
+                                right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
                                 up = backFocusRequester
                             ),
                         onFocused = { controlsFocused = it }
@@ -2588,11 +2588,6 @@ fun PlayerScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(if (compactPlayerSpacing) 3.dp else 8.dp)
                     ) {
-                        PlayerSettingsRibbon(
-                            visible = extraControlsOpen, actions = settingsActions, state = settingsRibbon,
-                            toggle = extraControlsRequester, down = if (seekable) progressFocusRequester else playPauseFocusRequester,
-                            onDismiss = { extraControlsOpen = false }, onFocused = { controlsFocused = it }
-                        )
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
@@ -2607,7 +2602,7 @@ fun PlayerScreen(
                                     .fillMaxWidth()
                                     .focusRequester(progressFocusRequester)
                                     .focusProperties {
-                                        up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else backFocusRequester
+                                        up = backFocusRequester
                                         down = playPauseFocusRequester
                                     }
                                     .playerControlFocus(
@@ -2664,6 +2659,8 @@ fun PlayerScreen(
                             ) {
                                 val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
                                 val isTv = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
+
+                                PlayerBottomActions(controlRowScrollState) {
 
                                 Row(horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 0.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                                     if (media.previousEpisode != null) {
@@ -2791,7 +2788,7 @@ fun PlayerScreen(
                                 if (introAvailable) PlayerChromeIconButton(
                                     icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
                                     modifier = Modifier.focusRequester(skipIntroFocusRequester).playerDpadFocusRoutes(
-                                        left = lastPlaybackActionRequester, right = extraControlsRequester,
+                                        left = lastPlaybackActionRequester, right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
                                         up = if (seekable) progressFocusRequester else backFocusRequester),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it })
@@ -2805,6 +2802,13 @@ fun PlayerScreen(
                                 }
 
                                 Spacer(Modifier.weight(1f))
+                                PlayerSettingsRibbon(
+                                    visible = extraControlsOpen, actions = settingsActions, state = settingsRibbon,
+                                    toggle = extraControlsRequester, left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                    up = if (seekable) progressFocusRequester else backFocusRequester,
+                                    onDismiss = { extraControlsOpen = false }, onFocused = { controlsFocused = it }
+                                )
+                                }
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.Tune,
                                     contentDescription = if (extraControlsOpen) "Hide extra controls" else "More controls",
@@ -2815,14 +2819,14 @@ fun PlayerScreen(
                                     selected = extraControlsOpen,
                                     modifier = Modifier.focusRequester(extraControlsRequester)
                                         .focusProperties {
-                                            left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester
                                             right = FocusRequester.Cancel
-                                            up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (seekable) progressFocusRequester else backFocusRequester
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
                                             right = FocusRequester.Cancel,
-                                            up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (seekable) progressFocusRequester else backFocusRequester
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
                                         ),
                                     onFocused = { controlsFocused = it }
                                 )
@@ -3464,6 +3468,7 @@ internal fun PlayerChromeIconButton(
     badgeText: String? = null,
     size: Dp = if (primaryAction) 56.dp else 48.dp,
     iconSize: Dp = if (primaryAction) 28.dp else 23.dp,
+    scaleOnFocus: Boolean = true,
     onFocused: (Boolean) -> Unit = {}
 ) {
     val configuration = LocalConfiguration.current
@@ -3483,7 +3488,7 @@ internal fun PlayerChromeIconButton(
             .size(controlSize)
             .playerControlFocus(
                 shape = shape,
-                scaleOnFocus = true,
+                scaleOnFocus = scaleOnFocus,
                 onFocused = {
                     isFocused = it
                     onFocused(it)

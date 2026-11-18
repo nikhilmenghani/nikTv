@@ -31,6 +31,15 @@ class ProviderTitlePresentationTest {
         assertEquals("The Latest", providerTmdbTitle("The Latest"))
         assertEquals("Kids", providerTmdbTitle("Kids"))
     }
+    @Test fun oldCollectionSuffixesArePresentationMetadataOnly() {
+        val original = "Omkara (Hindi) - HINDI | OLD COLLECTION"
+        assertEquals("Omkara", providerTmdbTitle(original))
+        assertEquals("Omkara", providerDisplayTitle(original, CatalogType.MOVIES))
+        assertEquals("Source Code", providerDisplayTitle("Source Code - HINDI | ENGLISH DUBB MOVIES", CatalogType.MOVIES))
+        assertEquals("Film", providerTmdbTitle("Film (English) - ENGLISH | ALL TIME FAV MOVIES"))
+        assertEquals("Old", providerTmdbTitle("Old"))
+        assertEquals("The Collection", providerTmdbTitle("The Collection"))
+    }
     @Test fun realTitlesAreNotMetadata() {
         for (raw in listOf("1917", "2001: A Space Odyssey", "V", "English", "Cam", "It: Chapter Two",
             "Hindi Medium", "The Office (US)", "Show (Nikosh Chhaya)", "Spider-Man: Brand New Day", "Unknown : Show")) {

@@ -101,6 +101,34 @@ class ProviderDiscoveryHeroDeviceTest {
         assertFalse(plays.any { it.id.startsWith("tmdb-") })
     }
 
+    @Test fun movieResumeKeepsUniformHeightAndReservedWidthAtLargeText() = fixture(fontScaleOverride = 1.4f) { _, vm, presentation, items, _, _ ->
+        fun bounds(label: String): Rect {
+            var target = requireNotNull(node(label))
+            while (!target.isClickable && target.parent != null) target = target.parent
+            return Rect().also(target::getBoundsInScreen)
+        }
+        await("Initial Play action is visible") { node("Play") != null }
+        val initial = bounds("Play")
+        val profile = vm.state.value.profile
+        val recent = RecentItem(FavoriteKind.MOVIE, items[0], profileKey = profile)
+        val progress = PlaybackProgress(requireNotNull(discoveryRecentProgressPrefix(recent)) + "fixture", 120_000, 1_200_000)
+        val lookup = DiscoveryProgressLookup.build(profile, listOf(recent), listOf(progress))
+        i.runOnMainSync { presentation.value = presentation.value.copy(progress = lookup, seriesRecents = listOf(recent)) }
+        await("Valid movie progress offers Resume") { node("Resume") != null }
+        val resumed = bounds("Resume")
+        assertEquals("Label change never resizes the primary action", initial, resumed)
+        val configuration = activeHost!!.resources.configuration
+        if (configuration.smallestScreenWidthDp < 600 && configuration.screenHeightDp >= configuration.screenWidthDp) {
+            assertEquals("Resume stays the same height as neighbouring icons", bounds("Add to My List").height(), resumed.height())
+            assertTrue("Info remains within the phone viewport", bounds("Info").right <= activeHost!!.window.decorView.width)
+        }
+        var target = requireNotNull(node("Resume"))
+        while (!target.isFocusable && target.parent != null) target = target.parent
+        assertTrue(target.performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+        assertEquals("Focusing does not resize the primary action", resumed, bounds("Resume"))
+        NavigationAuditEvidence.capture("provider-hero-resume-large-text")
+    }
+
     @Test fun backgroundAndFocusedStatesPauseRotationWithoutNewFeedData() = fixture { _, _, presentation, items, _, _ ->
         await("First cached title") { node(items[0].title) != null }
         i.runOnMainSync { presentation.value = presentation.value.copy(active = false, mayRotate = true) }
@@ -149,7 +177,7 @@ class ProviderDiscoveryHeroDeviceTest {
             assertEquals(plays, infos)
         }
     }
-    private fun fixture(type: CatalogType = CatalogType.MOVIES, test: (PlaybackFixtureHostActivity, ProviderDiscoveryViewModel,
+    private fun fixture(type: CatalogType = CatalogType.MOVIES, fontScaleOverride: Float? = null, test: (PlaybackFixtureHostActivity, ProviderDiscoveryViewModel,
         androidx.compose.runtime.MutableState<ProviderHeroPresentation>, List<MediaItem>, MutableList<MediaItem>, MutableList<MediaItem>) -> Unit) {
         check(i.targetContext.packageName.endsWith(".regression"))
         i.uiAutomation.serviceInfo = i.uiAutomation.serviceInfo.apply {
@@ -183,6 +211,9 @@ class ProviderDiscoveryHeroDeviceTest {
             activeHost = current
             current.window.decorView.isSoundEffectsEnabled = false
             current.setContent { MaterialTheme {
+                val physical = androidx.compose.ui.platform.LocalDensity.current
+                androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides
+                    androidx.compose.ui.unit.Density(physical.density, fontScaleOverride ?: physical.fontScale)) {
                 val configuration = LocalConfiguration.current
                 val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp,
                     LocalContext.current.isTvLikeDevice(configuration))
@@ -195,6 +226,7 @@ class ProviderDiscoveryHeroDeviceTest {
                     add = { item -> presentation.value = presentation.value.copy(favoriteIds =
                         if (item.id in presentation.value.favoriteIds) presentation.value.favoriteIds - item.id else presentation.value.favoriteIds + item.id) },
                     info = { item, queue -> assertTrue(item in queue); infos.add(item) }, focused = {}, down = {}, up = {}, categoryActions = {})
+                }
             } }
         }
         // The debug host deliberately has no configChanges override. Recreate only the local

@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.sports.openSports
+
 import com.nikhil.niktv.discovery.components.LocalRefreshProviderCategories
 import com.nikhil.niktv.discovery.DiscoveryScreenHost
 
@@ -521,7 +523,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                 com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
                     com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS))
             }
-            appContext.startActivity(android.content.Intent(appContext, com.nikhil.niktv.sports.SportsActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            appContext.openSports()
         }
     }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,

@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.usesShortWideLayout
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.transformations
@@ -61,8 +62,21 @@ internal fun detailActionSize(): androidx.compose.ui.unit.Dp {
 }
 
 @Composable
-internal fun discoveryPrimaryActionWidth(phone: Boolean = false): androidx.compose.ui.unit.Dp =
-    ((if (phone) 120f else 112f) * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
+internal fun discoveryPrimaryActionWidth(phone: Boolean = false): androidx.compose.ui.unit.Dp {
+    val density = LocalDensity.current
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val style = androidx.compose.material3.LocalTextStyle.current.copy(
+        fontSize = (if (phone) 15 else 12).sp,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+    val measured = remember(measurer, density, style, phone) {
+        val label = listOf("Open", "Play", "Resume").maxOf {
+            measurer.measure(androidx.compose.ui.text.AnnotatedString(it), style, softWrap = false).size.width
+        }
+        with(density) { label.toDp() } + (if (phone) 68.dp else 66.dp)
+    }
+    // Reserve the widest label before loading, regardless of Play/Resume/Open state.
+    return maxOf((if (phone) 120f else 112f * density.fontScale.coerceAtLeast(1f)).dp, measured)
+}
 
 internal val LocalDetailActionGlass = staticCompositionLocalOf { false }
 internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }

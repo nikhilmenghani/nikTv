@@ -23,6 +23,7 @@ class SportsUiDeviceTest {
     private fun await(message: String, condition: () -> Boolean) {
         val end = SystemClock.uptimeMillis() + 8_000
         while (SystemClock.uptimeMillis() < end) { if (condition()) return; Thread.sleep(50) }
+        if (!condition()) NavigationAuditEvidence.capture("sports-filter-failure")
         assertTrue(message, condition())
     }
     private fun find(text: String): AccessibilityNodeInfo? {
@@ -58,12 +59,12 @@ class SportsUiDeviceTest {
     }
 
     private fun assertNavigationPosition(activity: SportsFixtureHostActivity) {
-        val phone = activity.resources.configuration.smallestScreenWidthDp < 600
+        val phone = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(activity.resources.configuration, activity.isTvLikeDevice(activity.resources.configuration))
         val bounds = Rect().also { requireNotNull(find("Live Events")).getBoundsInScreen(it) }
         val height = activity.resources.displayMetrics.heightPixels
         assertTrue("Phone navigation is at the bottom; tablet navigation stays in the header",
             if (phone) bounds.centerY() > height * .75 else bounds.centerY() < height * .3)
-        listOf("Sports", "Categories", "Highlights").forEach { assertNotNull("Destination: $it", find(it)) }
+        listOf("Sports", "Highlights").forEach { assertNotNull("Destination: $it", find(it)) }
     }
 
     private fun screenshot(name: String) {
@@ -129,6 +130,12 @@ class SportsUiDeviceTest {
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 
+    @Test fun eventFilterOptionsKeepDpadPathsInPhoneLandscape() {
+        assertTrue(instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90))
+        try { eventDropdownSavesSelectionAndCategoryRowsSurviveReopening() }
+        finally { instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_UNFREEZE) }
+    }
+
     @Test fun eventDropdownSavesSelectionAndCategoryRowsSurviveReopening() {
         val activity = host()
         val context = instrumentation.targetContext
@@ -153,56 +160,70 @@ class SportsUiDeviceTest {
                         saveDefaultStatus = { prefs.setStatus(it) })
                 } } }
             }
+            fun openFilter(label: String, dialog: String, selected: String) {
+                click("Sports options")
+                await("Filter is available inside Sports options") { find(label) != null }
+                var option = requireNotNull(find(label))
+                while (!option.isFocusable && option.parent != null) option = option.parent
+                assertTrue(option.performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+                await("D-pad can reach the filter action") { focused(label) }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Picker focuses the current value") { find(dialog) != null && focused(selected) }
+            }
             render()
-            await("Category rows render") { find("All sports") != null && find("Cricket") != null }
+            await("Event tiles render without the filter row") { find("Cricket fixture") != null && find("Sports options") != null }
             assertNavigationPosition(activity)
-            val statusBounds = Rect().also(requireNotNull(find("Live events: Now & next"))::getBoundsInScreen)
-            val sportBounds = Rect().also(requireNotNull(find("Sport: All sports"))::getBoundsInScreen)
-            assertEquals("Status and sport share one filter row", statusBounds.centerY(), sportBounds.centerY())
-            assertTrue("Sport is beside status", sportBounds.left >= statusBounds.right)
+            assertNull(find("Live events: Now & next"))
+            assertNull(find("Sport: All sports"))
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Remote enters the status filter") { focused("Live events: Now & next") }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Remote reaches the sport filter") { focused("Sport: All sports") }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Remote opens the sport dropdown") { find("Football") != null }
+            await("Header Down goes directly to a tile") { focused("Cricket fixture") }
+            screenshot("sports-events-clean-grid")
+            openFilter("Sport: All sports", "Sport", "All sports")
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-            screenshot("sports-live-events")
-            click("Live events: Now & next")
-            await("Status dropdown opens") { find("Live") != null }
+            await("Picker Back restores the stable options origin") { focused("Sports options") && find("Sport: All sports") == null }
+            openFilter("Live events: Now & next", "Live events", "Now & next")
             click("Live")
-            await("Live selection applies") { find("Live events: Live") != null && find("2 events") != null }
+            await("Live selection applies and closes directly to Options") { find("2 events") != null && focused("Sports options") }
             assertEquals("Live", SportsBrowsePreferences(context).read().status)
-            click("Sport: All sports")
-            await("Sport choices open") { find("Cricket") != null && find("Football") != null }
+            openFilter("Sport: All sports", "Sport", "All sports")
             click("Cricket")
-            await("Cricket hides other sports and the aggregate rail") {
-                find("Sport: Cricket") != null && find("1 event") != null && find("Cricket fixture") != null &&
-                    find("Football fixture") == null && find("All sports") == null
+            await("Cricket hides other sports without restoring a filter bar") {
+                find("1 event") != null && find("Cricket fixture") != null && find("Football fixture") == null && focused("Sports options")
             }
             assertEquals("Cricket", SportsBrowsePreferences(context).read().sport)
-            screenshot("sports-cricket-filter")
+            openFilter("Sport: Cricket", "Sport", "Cricket")
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("Repeated picker return retains the origin") { focused("Sports options") }
+            click("Sports options")
+            click("Availability: All channels")
+            await("Availability moved to the same options menu") { find("Channel availability") != null }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("Availability returns directly to Options") { focused("Sports options") }
             instrumentation.runOnMainSync { activity.setContent {} }
             render()
-            await("Reload restores both saved filters") {
-                find("Live events: Live") != null && find("Sport: Cricket") != null && find("1 event") != null
-            }
-            click("Live events: Live")
-            await("Upcoming option available") { find("Upcoming") != null }
+            await("Reload restores the filtered content") { find("1 event") != null && find("Cricket fixture") != null }
+            openFilter("Live events: Live", "Live events", "Live")
             click("Upcoming")
-            await("Upcoming selection filters the rows") { find("1 event") != null && find("Upcoming fixture") != null && find("Football fixture") == null }
-            click("Sport: Cricket"); click("Football")
-            await("Empty category keeps both filters available") {
-                find("0 events") != null && find("Sport: Football") != null && find("Live events: Upcoming") != null
+            await("Upcoming selection filters the rows") { find("1 event") != null && find("Upcoming fixture") != null }
+            openFilter("Sport: Cricket", "Sport", "Cricket")
+            click("Football")
+            await("Empty filtered results retain recovery via Options") { find("0 events") != null && focused("Sports options") }
+            openFilter("Sport: Football", "Sport", "Football")
+            click("All sports")
+            await("All sports recovers from empty results") { find("1 event") != null && find("Upcoming fixture") != null }
+            openFilter("Live events: Upcoming", "Live events", "Upcoming")
+            // In short landscape windows earlier choices are off-screen. Exercise
+            // the real D-pad scroll instead of clicking an unmounted lazy item.
+            for (value in listOf("Recent", "Live", "Now & next")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("D-pad scroll reaches $value") { focused(value) }
             }
-            click("Sport: Football"); click("All sports")
-            await("All sports recovers from an empty category") { find("1 event") != null && find("Upcoming fixture") != null }
-            click("Live events: Upcoming"); click("Now & next")
-            click("Sport: All sports"); click("American Football")
-            await("Longest sport and status values remain available") {
-                find("Sport: American Football") != null && find("Live events: Now & next") != null
-            }
-            screenshot("sports-longest-filter")
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Status selection closes to Options") { focused("Sports options") }
+            click("Sports options")
+            screenshot("sports-event-filter-options")
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("Closing menu retains its origin") { focused("Sports options") }
         } finally {
             prefs.setSport(previous.sport); prefs.setStatus(previous.status)
             instrumentation.runOnMainSync { activity.finish() }

@@ -88,7 +88,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     play: (MediaItem, List<MediaItem>) -> Unit,
     add: (MediaItem) -> Unit, info: (MediaItem, List<MediaItem>) -> Unit,
     focused: (String) -> Unit, down: () -> Unit, up: () -> Unit,
-    categoryActions: @Composable () -> Unit) {
+    metadataRevision: Int = 0, categoryActions: @Composable () -> Unit) {
     val provider by providerVm.state.collectAsStateWithLifecycle()
     val display by presentation
     val context = LocalContext.current
@@ -121,7 +121,7 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     val fallback = remember(selected, type) { selected?.let { providerDetailFallback(it.item, type).copy(poster = it.artwork) } }
     var cached by remember(selected?.item?.id) { mutableStateOf<DiscoveryCard?>(null) }
     var presentationReady by remember(selected?.item) { mutableStateOf(false) }
-    LaunchedEffect(selected?.item, display.active) {
+    LaunchedEffect(selected?.item, display.active, metadataRevision) {
         if (display.active) {
             cached = selected?.item?.let { readProviderHeroMetadata(cache, it, type) }
             presentationReady = true

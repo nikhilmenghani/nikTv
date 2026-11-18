@@ -7,7 +7,7 @@ internal object ProviderTitles {
     private const val language = "english|eng|en|hindi|hin|hi|tamil|tam|ta|telugu|tel|te|kannada|kan|kn|malayalam|mal|ml|marathi|mar|mr|bengali|bangla|ben|bn|gujarati|guj|gu|punjabi|pan|pa|urdu|urd|ur|french|fra|fr|spanish|spa|es|german|ger|de|italian|ita|it|portuguese|por|pt|russian|rus|ru|arabic|ara|ar|japanese|jpn|jp|ja|korean|kor|ko|chinese|mandarin|cantonese|zho|chi|cn|zh|turkish|tur|tr|dutch|nld|nl|polish|pol|pl|ukrainian|ukr|uk"
     private const val quality = "4k|8k|uhd|fhd|hd|sd|2160p|1080p|720p|480p|cam|hdcam|hdr|hevc|x26[45]|h[ .-]?26[45]|blu[ -]?ray|web[ -]?(?:dl|rip)|dual[ -]?audio|multi(?:[ -]?(?:audio|language))?|dub(?:b|bed)?|sub(?:bed|title[sd]?)?|e[ -]?subs?"
     private const val platform = "netflix|amazon(?: prime)?|disney\\+?|paramount\\+?|comedy central|pbs kids|apple tv\\+?|hbo"
-    private const val content = "tv[ -]?shows?|web[ -]?series|series|movies?|latest|kids|collection"
+    private const val content = "tv[ -]?shows?|web[ -]?series|series|movies?|latest|kids|old|classics?|all[ -]?time|fav(?:ou?rites?)?|collection"
     private val metadata = Regex("^(?:$language|$quality)(?:[ ,/|+&-]+(?:$language|$quality|$platform|$content))*$", RegexOption.IGNORE_CASE)
     private val edgeLabel = Regex("^(?:$language|$quality|vod|movies?|series)\\s*(?:[|]\\s*|\\s+-\\s+)", RegexOption.IGNORE_CASE)
     private val trailingLabel = Regex("(?:\\s*\\|\\s*|\\s+-\\s+)((?:$language|$quality)(?:[ ,/|+&-]+(?:$language|$quality|$platform|$content))*)$", RegexOption.IGNORE_CASE)

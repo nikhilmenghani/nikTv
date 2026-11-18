@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.sports.openSports
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -52,7 +54,7 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                             com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS))
                         }
                         close()
-                        context.startActivity(android.content.Intent(context, com.nikhil.niktv.sports.SportsActivity::class.java))
+                        context.openSports()
                     }
                 }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.SportsCricket, null)

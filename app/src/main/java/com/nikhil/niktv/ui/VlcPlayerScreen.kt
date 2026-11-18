@@ -1605,7 +1605,7 @@ internal fun VlcPlayerScreen(
             val firstQuickActionRequester = when {
                 media.catalogType == CatalogType.LIVE_TV -> programmeGuideRequester
                 introAvailable -> skipIntroRequester
-
+                extraControlsOpen -> settingsRibbon.firstOr(extraControlsRequester)
                 else -> extraControlsRequester
             }
             val lastPlaybackActionRequester = when {
@@ -1905,7 +1905,7 @@ internal fun VlcPlayerScreen(
                             .focusRequester(downloadRequester)
                             .playerDpadFocusRoutes(
                                 left = if (recordingThisChannel) recordingPauseRequester else programmeGuideRequester,
-                                right = extraControlsRequester,
+                                right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
                                 up = backRequester
                             ),
                         onFocused = { controlsFocused = it }
@@ -1933,11 +1933,6 @@ internal fun VlcPlayerScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(if (compactPlayerSpacing) 3.dp else 8.dp)
                     ) {
-                        PlayerSettingsRibbon(
-                            visible = extraControlsOpen, actions = settingsActions, state = settingsRibbon,
-                            toggle = extraControlsRequester, down = if (seekable) progressRequester else playRequester,
-                            onDismiss = { extraControlsOpen = false }, onFocused = { controlsFocused = it }
-                        )
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = "${media.progressKey}:${media.playbackAttemptId}",
@@ -1952,7 +1947,7 @@ internal fun VlcPlayerScreen(
                                     .fillMaxWidth()
                                     .focusRequester(progressRequester)
                                     .focusProperties {
-                                        up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else backRequester
+                                        up = backRequester
                                         down = playRequester
                                     }
                                     .playerControlFocus(
@@ -2010,6 +2005,8 @@ internal fun VlcPlayerScreen(
                         ) {
                             val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
                                 val isTv = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
+
+                                PlayerBottomActions(controlRowScrollState) {
 
                                 Row(horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 0.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                                 if (media.previousEpisode != null) {
@@ -2136,7 +2133,7 @@ internal fun VlcPlayerScreen(
                                 if (introAvailable) PlayerChromeIconButton(
                                     icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
                                     modifier = Modifier.focusRequester(skipIntroRequester).playerDpadFocusRoutes(
-                                        left = lastPlaybackActionRequester, right = extraControlsRequester,
+                                        left = lastPlaybackActionRequester, right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
                                         up = if (seekable) progressRequester else backRequester),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it })
@@ -2150,6 +2147,13 @@ internal fun VlcPlayerScreen(
                                 }
 
                                 Spacer(Modifier.weight(1f))
+                                PlayerSettingsRibbon(
+                                    visible = extraControlsOpen, actions = settingsActions, state = settingsRibbon,
+                                    toggle = extraControlsRequester, left = if (media.catalogType == CatalogType.LIVE_TV) downloadRequester else if (introAvailable) skipIntroRequester else lastPlaybackActionRequester,
+                                    up = if (seekable) progressRequester else backRequester,
+                                    onDismiss = { extraControlsOpen = false }, onFocused = { controlsFocused = it }
+                                )
+                                }
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.Tune,
                                     contentDescription = if (extraControlsOpen) "Hide extra controls" else "More controls",
@@ -2160,14 +2164,14 @@ internal fun VlcPlayerScreen(
                                     selected = extraControlsOpen,
                                     modifier = Modifier.focusRequester(extraControlsRequester)
                                         .focusProperties {
-                                            left = if (media.catalogType == CatalogType.LIVE_TV) downloadRequester else if (introAvailable) skipIntroRequester else lastPlaybackActionRequester
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV) downloadRequester else if (introAvailable) skipIntroRequester else lastPlaybackActionRequester
                                             right = FocusRequester.Cancel
-                                            up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (seekable) progressRequester else backRequester
+                                            up = if (seekable) progressRequester else backRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = if (media.catalogType == CatalogType.LIVE_TV) downloadRequester else if (introAvailable) skipIntroRequester else lastPlaybackActionRequester,
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV) downloadRequester else if (introAvailable) skipIntroRequester else lastPlaybackActionRequester,
                                             right = FocusRequester.Cancel,
-                                            up = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (seekable) progressRequester else backRequester
+                                            up = if (seekable) progressRequester else backRequester
                                         ),
                                     onFocused = { controlsFocused = it }
                                 )
