@@ -37,7 +37,9 @@ internal class SportsPlaybackController(
     private val scope: CoroutineScope,
     private val loadSources: suspend (String) -> List<SportsStream>,
     private val resolve: suspend (SportsStream) -> SportsStream,
-    private val maxAttempts: Int = 4,
+    // The source list and single metadata refresh bound an ordinary campaign.
+    // A fixed four-attempt cap could hide a working fifth or later source.
+    private val maxAttempts: Int = Int.MAX_VALUE,
 ) {
     private data class Occurrence(val source: SportsStream, val index: Int, val duplicate: Int, val logicalDuplicate: Int)
     private data class AttemptKey(val source: SportsStream, val duplicate: Int)
@@ -67,7 +69,8 @@ internal class SportsPlaybackController(
         if (previous == null) committed = null
         val target = occurrence(sources, selected)
         preferred = target
-        queue.add(target)
+        fallbackAllowed = previous?.current == null
+        if (fallbackAllowed) fillQueue(sources, selected) else queue.add(target)
         mutable.value = SportsPlaybackSession(active = true, slug = slug, sources = sources,
             selectedIndex = selected, current = previous?.current, currentIndex = previous?.currentIndex,
             resolving = true, attemptId = previous?.attemptId ?: ++sequence)
@@ -88,20 +91,20 @@ internal class SportsPlaybackController(
         launchResolution(generation, refreshFirst = false)
     }
 
-    /** Renew the selected occurrence once per campaign, without resetting its retry budget. */
+    /** Renew once, then continue through the other sources of this same channel/event. */
     fun authorizationFailed(attemptId: Long) {
         val session = mutable.value
         if (!session.active || session.resolving || session.current == null ||
             session.attemptId != attemptId || handledFailure == attemptId) return
         handledFailure = attemptId
         cancelWork()
-        fallbackAllowed = false
+        fallbackAllowed = true
         pendingFreshRetry = true
         preferred = committed ?: return
         rejectedAuthorization = session.current
-        if (refreshed) { exhausted(); return }
+        fillQueue(session.sources, ((session.currentIndex ?: -1) + 1).coerceAtLeast(0))
         mutable.update { it.copy(resolving = true, error = null) }
-        launchResolution(generation, refreshFirst = true)
+        launchResolution(generation, refreshFirst = !refreshed)
     }
 
     /** Explicit Retry fetches fresh metadata and retains the same source occurrence and picture. */
@@ -111,6 +114,7 @@ internal class SportsPlaybackController(
         val selected = preferred ?: committed ?: return
         cancelWork()
         resetCycle()
+        fallbackAllowed = true
         pendingFreshRetry = true
         preferred = selected
         mutable.update { it.copy(resolving = true, attempts = 0, error = null) }
@@ -182,20 +186,34 @@ internal class SportsPlaybackController(
     private suspend fun refreshSources(owner: Long): Boolean {
         refreshed = true
         val fresh = try { withTimeout(30_000) { loadSources(mutable.value.slug) } }
-        catch (_: TimeoutCancellationException) { if (owner == generation) exhausted(); return false }
+        catch (_: TimeoutCancellationException) { return refreshFailed(owner) }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { if (owner == generation) exhausted(); return false }
+        catch (_: Exception) { return refreshFailed(owner) }
         if (owner != generation) return false
         val target = preferred?.let { locate(fresh, it) }
         val activeIndex = committed?.let { locate(fresh, it) }
         mutable.update { it.copy(sources = fresh, selectedIndex = target, currentIndex = activeIndex) }
-        if (fallbackAllowed) fillQueue(fresh, target ?: 0)
+        if (fallbackAllowed) {
+            fillQueue(fresh, target ?: 0)
+            // An unchanged web/API source can still obtain a fresh token. Give
+            // the rejected occurrence one renewal, without retrying it forever.
+            if (rejectedAuthorization != null && target != null && queue.none { it.index == target })
+                queue.addFirst(occurrence(fresh, target))
+        }
         else {
             queue.clear()
             target?.let { occurrence(fresh, it) }
                 ?.takeIf { rejectedAuthorization != null || attemptKey(it) !in attempted }?.let(queue::add)
         }
         return true
+    }
+
+    private fun refreshFailed(owner: Long): Boolean {
+        if (owner != generation) return false
+        // The catalogue being offline must not discard other loaded choices.
+        if (fallbackAllowed && queue.isNotEmpty()) return true
+        exhausted()
+        return false
     }
 
     private fun launchResolution(owner: Long, refreshFirst: Boolean) {
@@ -221,7 +239,7 @@ internal class SportsPlaybackController(
                     if (rejected != null && resolved.edgeTokenApi.isBlank() &&
                         resolved.link == rejected.link && resolved.headers == rejected.headers &&
                         resolved.drmType == rejected.drmType && resolved.drmLicense == rejected.drmLicense) {
-                        exhausted(); return@launch
+                        continue
                     }
                     committed = candidate
                     preferred = candidate
@@ -243,7 +261,8 @@ internal class SportsPlaybackController(
 
     private fun exhausted() {
         mutable.update { it.copy(resolving = false,
-            error = if (expiredLink) SPORTS_EXPIRED_LINK_MESSAGE
+            error = if (fallbackAllowed && it.sources.size > 1) "The available sources could not play. Retry to fetch fresh links, or choose another source."
+                else if (expiredLink) SPORTS_EXPIRED_LINK_MESSAGE
                 else if (rejectedAuthorization != null) SPORTS_AUTHORIZATION_MESSAGE
                 else if (fallbackAllowed) "The available sources could not play. Retry to fetch fresh links, or choose another source."
                 else "This source could not be resolved. Retry to fetch a fresh link, or choose another source.") }

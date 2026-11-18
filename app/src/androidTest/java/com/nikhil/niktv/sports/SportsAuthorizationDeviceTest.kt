@@ -26,7 +26,7 @@ import org.junit.Test
 /** Exercise real Media3 HTTP failures and rendered video through Sports' production callbacks. */
 class SportsAuthorizationDeviceTest {
     @Test fun live403FetchesReplacementHeadersAndRendersTheSameSource() = exercise(renewed = true)
-    @Test fun unchangedRejectedLinkStopsAfterOneRefreshWithoutPlayingAnotherSource() = exercise(renewed = false)
+    @Test fun rejectedSourcesAdvancePastFourChoicesUntilAnotherSourceRenders() = exercise(renewed = false)
 
     private fun exercise(renewed: Boolean) = runBlocking {
         val ins = InstrumentationRegistry.getInstrumentation()
@@ -56,20 +56,22 @@ class SportsAuthorizationDeviceTest {
                 val rejected = SportsStream("${server.base}/live-dvr", "Selected event",
                     headers = mapOf("X-Fixture-Authorization" to "expired"))
                 val replacement = rejected.copy(headers = mapOf("X-Fixture-Authorization" to "fresh"))
-                val unrelated = replacement.copy(title = "Unrequested source", link = "${server.base}/movie.mp4")
+                val alternative = replacement.copy(title = "Working alternative", link = "${server.base}/movie.mp4")
+                val failures = (0..4).map { rejected.copy(link = "${server.base}/live-dvr?choice=$it", title = "Rejected source $it") }
+                val sources = if (renewed) listOf(rejected, alternative) else failures + alternative
                 val loads = AtomicInteger()
                 val frames = AtomicInteger()
                 val renderedAttempt = AtomicLong()
                 val refreshes = AtomicInteger()
                 val controller = SportsPlaybackController(scope, {
                     loads.incrementAndGet()
-                    if (renewed) listOf(unrelated, replacement) else listOf(rejected, unrelated)
+                    if (renewed) listOf(alternative, replacement) else sources
                 }, { it })
                 val host = ins.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
                 activity = host
                 ins.runOnMainSync {
-                    controller.start("event", listOf(rejected, unrelated))
+                    controller.start("event", sources)
                     host.setContent {
                         val state by controller.state.collectAsState()
                         MaterialTheme(colorScheme = NikColors) {
@@ -102,19 +104,22 @@ class SportsAuthorizationDeviceTest {
                     assertNull(controller.state.value.error)
                     NavigationAuditEvidence.capture("sports-authorization-renewed")
                 } else {
-                    await("Unchanged rejected credentials produce a bounded provider error") {
-                        controller.state.value.error == SPORTS_AUTHORIZATION_MESSAGE
+                    await("Five HTTP 403 sources are skipped and the sixth source renders") {
+                        controller.state.value.current == alternative && frames.get() > 30
                     }
-                    val requests = synchronized(server.paths) { server.paths.size }
-                    SystemClock.sleep(2_000)
-                    assertEquals("No further network attempts after exhaustion", requests, synchronized(server.paths) { server.paths.size })
-                    assertEquals(rejected, controller.state.value.current)
-                    assertEquals(0, frames.get())
-                    NavigationAuditEvidence.capture("sports-authorization-unchanged")
+                    val attempt = controller.state.value.attemptId
+                    val rejectedRequests = server.rejected.get()
+                    val before = frames.get()
+                    await("The successful alternative keeps rendering") { frames.get() > before + 30 }
+                    assertEquals("Fallback stops when playback works", attempt, controller.state.value.attemptId)
+                    assertEquals(rejectedRequests, server.rejected.get())
+                    assertEquals(5, controller.state.value.currentIndex)
+                    assertNull(controller.state.value.error)
+                    NavigationAuditEvidence.capture("sports-authorization-sixth-source-working")
                 }
                 assertTrue("The player really received HTTP 403", server.rejected.get() > 0)
                 assertEquals("One automatic metadata refresh", 1, loads.get())
-                assertEquals("One automatic authorization callback", 1, refreshes.get())
+                assertEquals("Each rejected source advances once", if (renewed) 1 else failures.size, refreshes.get())
                 if (renewed) {
                     fun find(label: String): android.view.accessibility.AccessibilityNodeInfo? {
                         if (android.os.Build.VERSION.SDK_INT >= 33) ins.uiAutomation.clearCache()

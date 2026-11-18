@@ -101,17 +101,17 @@ class SportsPlaybackTest {
         assertEquals(2, attempts)
         assertEquals(1, refreshes)
         controller.retry(); runCurrent()
-        assertEquals(3, attempts)
+        assertEquals(4, attempts)
         assertEquals(2, refreshes)
         assertFalse(controller.state.value.resolving)
         controller.stop()
     }
 
-    @Test fun terminalFailureCampaignHasAFourResolutionBudgetUntilExplicitRetry() = runTest {
+    @Test fun anExplicitResolutionBudgetStillStopsUntilManualRetry() = runTest {
         val sources = (0..7).map { a.copy(link = "https://media.example.test/" + it + ".m3u8", title = "Source " + it) }
         val visited = mutableListOf<SportsStream>()
         var refreshes = 0
-        val controller = SportsPlaybackController(this, { refreshes++; sources }, { visited += it; it })
+        val controller = SportsPlaybackController(this, { refreshes++; sources }, { visited += it; it }, maxAttempts = 4)
         controller.start("event", sources); runCurrent()
         repeat(4) { controller.failed(controller.state.value.attemptId); runCurrent() }
         assertEquals(4, visited.size)
@@ -122,6 +122,46 @@ class SportsPlaybackTest {
         assertEquals(5, visited.size)
         assertEquals(1, refreshes)
         assertEquals(3, controller.state.value.currentIndex)
+        controller.stop()
+    }
+
+    @Test fun initialResolutionSkipsExpiredAndUnsupportedChoicesUntilAPlayableSource() = runTest {
+        val sources = (0..6).map { a.copy(link = "https://media.example.test/$it.m3u8", title = "Source $it") }
+        val visited = mutableListOf<SportsStream>()
+        var refreshes = 0
+        val controller = SportsPlaybackController(this, { refreshes++; sources }, {
+            visited += it
+            when (it) {
+                sources[0], sources[2] -> throw SportsExpiredLinkException()
+                sources.last() -> it
+                else -> throw SportsException("Unsupported fixture")
+            }
+        })
+        controller.start("event", sources); runCurrent()
+        assertEquals(sources, visited)
+        assertEquals(sources.last(), controller.state.value.current)
+        assertEquals(6, controller.state.value.currentIndex)
+        assertEquals("Available choices are tried before reloading the catalogue", 0, refreshes)
+        assertNull(controller.state.value.error)
+        assertFalse(controller.state.value.resolving)
+        controller.stop()
+    }
+
+    @Test fun defaultFallbackTriesEverySourceOnceAndStopsAfterExhaustion() = runTest {
+        val sources = (0..7).map { a.copy(link = "https://media.example.test/$it.m3u8", title = "Source $it") }
+        val visited = mutableListOf<SportsStream>()
+        var refreshes = 0
+        val controller = SportsPlaybackController(this, { refreshes++; sources }, { visited += it; it })
+        controller.start("event", sources); runCurrent()
+        repeat(sources.size) { controller.failed(controller.state.value.attemptId); runCurrent() }
+        assertEquals(sources, visited)
+        assertEquals(1, refreshes)
+        assertEquals(sources.last(), controller.state.value.current)
+        assertNotNull(controller.state.value.error)
+        assertFalse(controller.state.value.resolving)
+        repeat(3) { controller.failed(controller.state.value.attemptId); runCurrent() }
+        assertEquals(sources, visited)
+        assertEquals(1, refreshes)
         controller.stop()
     }
 

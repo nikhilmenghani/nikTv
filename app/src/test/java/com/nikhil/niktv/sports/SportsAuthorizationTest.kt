@@ -15,7 +15,7 @@ class SportsAuthorizationTest {
     private val fresh = old.copy(link = "https://media.example.test/live.m3u8?token=fresh")
     private val other = old.copy(link = "https://media.example.test/other.m3u8", title = "Other")
 
-    @Test fun authorizationRefreshRetainsSelectedSourceAcrossReorderingAndStopsAfterOneRenewal() = runTest {
+    @Test fun authorizationRefreshRetainsSelectedSourceAcrossReorderingThenTriesTheNextSource() = runTest {
         var refreshes = 0
         val controller = SportsPlaybackController(this, { refreshes++; listOf(other, fresh) }, { it })
         controller.start("match", listOf(old, other)); runCurrent()
@@ -29,27 +29,51 @@ class SportsAuthorizationTest {
         assertEquals(1, refreshes)
         controller.authorizationFailed(controller.state.value.attemptId); runCurrent()
         assertEquals(1, refreshes)
-        assertEquals(fresh, controller.state.value.current)
-        assertEquals(SPORTS_AUTHORIZATION_MESSAGE, controller.state.value.error)
+        assertEquals(other, controller.state.value.current)
+        assertNull(controller.state.value.error)
         controller.retry(); runCurrent()
         assertEquals("Only explicit retry starts a new renewal budget", 2, refreshes)
         assertNull(controller.state.value.error)
         controller.stop()
     }
 
-    @Test fun unchangedRejectedCredentialsStopWithoutChoosingAnotherBroadcastOrRestartingPlayer() = runTest {
+    @Test fun unchangedRejectedCredentialsAdvanceWithoutRestartingTheRejectedPlayer() = runTest {
         var refreshes = 0
         val controller = SportsPlaybackController(this, { refreshes++; listOf(old.copy(title = "Renamed"), other) }, { it })
         controller.start("match", listOf(old, other)); runCurrent()
         val attempt = controller.state.value.attemptId
         controller.authorizationFailed(attempt); runCurrent()
         assertEquals(1, refreshes)
-        assertEquals(attempt, controller.state.value.attemptId)
-        assertEquals(old, controller.state.value.current)
-        assertEquals(0, controller.state.value.currentIndex)
-        assertEquals(SPORTS_AUTHORIZATION_MESSAGE, controller.state.value.error)
+        assertTrue(controller.state.value.attemptId > attempt)
+        assertEquals(other, controller.state.value.current)
+        assertEquals(1, controller.state.value.currentIndex)
+        assertNull(controller.state.value.error)
         repeat(3) { controller.authorizationFailed(attempt); controller.failed(attempt); runCurrent() }
         assertEquals(1, refreshes)
+        controller.stop()
+    }
+
+    @Test fun repeatedAuthorizationFailuresReachSourcesBeyondTheOldFourAttemptLimit() = runTest {
+        val sources = (0..6).map { old.copy(link = "https://media.example.test/$it.m3u8", title = "Source $it") }
+        val visited = mutableListOf<SportsStream>()
+        var refreshes = 0
+        val controller = SportsPlaybackController(this, { refreshes++; sources }, { visited += it; it })
+        controller.start("event", sources); runCurrent()
+        repeat(6) { controller.authorizationFailed(controller.state.value.attemptId); runCurrent() }
+        assertEquals(sources.last(), controller.state.value.current)
+        assertEquals(6, controller.state.value.currentIndex)
+        assertEquals(1, refreshes)
+        assertEquals("Only the first rejected source receives one refresh attempt", listOf(sources.first()) + sources, visited)
+        assertNull(controller.state.value.error)
+        controller.stop()
+    }
+
+    @Test fun failedMetadataRefreshStillAllowsOtherAlreadyLoadedSources() = runTest {
+        val controller = SportsPlaybackController(this, { throw SportsException("Catalogue offline") }, { it })
+        controller.start("event", listOf(old, other)); runCurrent()
+        controller.authorizationFailed(controller.state.value.attemptId); runCurrent()
+        assertEquals(other, controller.state.value.current)
+        assertNull(controller.state.value.error)
         controller.stop()
     }
 
