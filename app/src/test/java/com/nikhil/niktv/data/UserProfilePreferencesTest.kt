@@ -25,6 +25,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
+    @Test fun seriesEpisodeViewSurvivesFastNavigationAndRetainsItsViewer() = runBlocking {
+        assertFalse(SeriesEpisodeViewPreferences.listView(context, family(), defaultListView = false))
+        assertTrue(SeriesEpisodeViewPreferences.listView(context, family(), defaultListView = true))
+        val list = SeriesEpisodeViewPreferences.setListView(context, family(), true)
+        assertTrue("A newly opened series immediately inherits List", SeriesEpisodeViewPreferences.listView(context, family(), false))
+        val grid = SeriesEpisodeViewPreferences.setListView(context, family(), false)
+        val last = SeriesEpisodeViewPreferences.setListView(context, family(), true)
+        users.selectProfile(kids().profileId)
+        assertFalse("Other viewers retain their own default", SeriesEpisodeViewPreferences.listView(context, kids(), false))
+        withTimeout(5_000) { list.await(); grid.await(); last.await() }
+        assertTrue("The last choice is durable, independent of the current default",
+            UserProfilePreferences.get(context, "discovery_experience", owner = family()).getBoolean("series_episode_list_view", false))
+        assertTrue(users.snapshot("101").any { it.profileId == family().profileId && "series_episode_list_view" in it.payload })
+        users.selectAccount("202"); users.initializeDefaults("202")
+        UserProfilePreferences.warm(context, family("202"))
+        assertFalse(SeriesEpisodeViewPreferences.listView(context, family("202"), false))
+        SeriesEpisodeViewPreferences.setListView(context, family(), false).await()
+        assertFalse("Grid is also saved", SeriesEpisodeViewPreferences.listView(context, family(), true))
+    }
     @Test fun pinchZoomDefaultsOffAndOptInStaysWithItsViewerAcrossAccountsAndSync() = runBlocking {
         assertFalse(PlayerGesturePreferences.pinchToZoom(context, family()))
         assertFalse(PlayerGesturePreferences.pinchToZoom(context, kids()))

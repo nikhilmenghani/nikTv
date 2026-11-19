@@ -44,7 +44,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         configuration.screenWidthDp > configuration.screenHeightDp
     val seasons = state.details?.seasons.orEmpty()
     val chosen = state.season ?: discoveryInitialSeriesSeason(state.details, startSeason, lastWatched?.first)
-    var listView by rememberSaveable(state.profile, card.key) { mutableStateOf(!wide) }
+    val (listView, setListView) = rememberSeriesEpisodeListView(defaultListView = !wide)
     val shortWindow = configuration.usesShortWideLayout(context.isTvLikeDevice(configuration))
     val listColumns = seriesEpisodeListColumns(configuration.smallestScreenWidthDp, configuration.screenWidthDp, context.isTvLikeDevice(configuration))
     val twoColumnList = listView && listColumns == 2
@@ -196,7 +196,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             },
             listView = listView, onListView = {
                 pendingLayoutEpisode = episodeState.firstVisibleItemIndex * viewportColumns
-                listView = it
+                setListView(it)
             }, searchOpen = searchOpen,
             onSearch = { if (searchOpen) closeSearch() else { searchEditing = true; searchOpen = true } },
             searchRequester = toolbarSearch, sortRequester = sort, layoutRequester = layout,

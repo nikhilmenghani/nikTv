@@ -208,7 +208,7 @@ internal fun DiscoverySeriesContent(
             episodeConfiguration.screenHeightDp >= episodeConfiguration.screenWidthDp
     val tabletEpisodeOverlay = !mobileEpisodeLayout
     val shortLandscapeEpisodes = episodeConfiguration.usesShortWideLayout(episodeIsTv)
-    var episodeListView by rememberSaveable(profile, series.id) { mutableStateOf(mobileEpisodeLayout) }
+    val (episodeListView, setEpisodeListView) = rememberSeriesEpisodeListView(defaultListView = mobileEpisodeLayout)
     val listColumns = seriesEpisodeListColumns(episodeConfiguration.smallestScreenWidthDp, episodeConfiguration.screenWidthDp, episodeIsTv)
     val twoColumnList = episodeListView && listColumns == 2
     val posterRow = !mobileEpisodeLayout && !episodeListView
@@ -760,7 +760,7 @@ internal fun DiscoverySeriesContent(
                             // Capture before changing layout: LazyColumn may already re-anchor
                             // its shared episode keys when the new content is measured.
                             pendingLayoutEpisode = episodeRowState.firstVisibleItemIndex * viewportColumns
-                            episodeListView = it
+                            setEpisodeListView(it)
                         },
                         searchOpen = expandedPanel == SeriesDetailPanel.SEARCH,
                         onSearch = {
