@@ -677,7 +677,7 @@ internal fun ModernSettingsScreen(
             }
         }
         if (activePage == SettingsPage.VIEWER_PORTALS) {
-            ViewerPortalSettings(managedViewerId, state.profiles)
+            ViewerProfileSettings(managedViewerId, state.profiles)
         }
         if (activePage == SettingsPage.XTREAM_CONTENT) {
             Box(Modifier.weight(1f)) { XtreamContentSettings(managedViewerId, state.profiles) { managedViewerId = it } }
@@ -1854,16 +1854,16 @@ internal fun DeviceProfileSettings(manage: (String) -> Unit) {
     val profiles by store.profiles.collectAsStateWithLifecycle(emptyList())
     val enabled by store.enabledProfiles.collectAsStateWithLifecycle(emptySet())
     SettingsSection("Profiles on this device", page = SettingsPage.PROFILES) {
-        Text("Choose a profile to control its visibility, sync and available portals.", style = MaterialTheme.typography.bodySmall)
+        Text("Choose a profile to manage its access and playback preferences.", style = MaterialTheme.typography.bodySmall)
         profiles.forEach { profile ->
-            SettingsControlRow(profile.name, if (profile.id in enabled) "Enabled · Manage portals" else "Disabled on this device",
+            SettingsControlRow(profile.name, if (profile.id in enabled) "Enabled · Profile settings" else "Disabled on this device",
                 onClick = { manage(profile.id) })
         }
     }
 }
 
 @Composable
-private fun ViewerPortalSettings(profileId: String?, portals: List<com.nikhil.niktv.model.PortalProfile>) {
+internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.niktv.model.PortalProfile>) {
     val context = LocalContext.current
     val users = remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context) }
     val profiles by users.profiles.collectAsStateWithLifecycle(emptyList())
@@ -1873,12 +1873,13 @@ private fun ViewerPortalSettings(profileId: String?, portals: List<com.nikhil.ni
     val owner = account?.let { id -> profile?.let { com.nikhil.niktv.data.UserScope(id, it.id) } }
     val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
         .collectAsStateWithLifecycle(emptySet())
+    val pinchToZoom by rememberPinchToZoomEnabled(owner)
     val scope = rememberCoroutineScope()
     var error by remember(owner) { mutableStateOf<String?>(null) }
     fun update(action: suspend () -> Unit) { scope.launch {
         try { action(); error = null }
         catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-        catch (_: Exception) { error = "Could not save profile access. Please try again." }
+        catch (_: Exception) { error = "Could not save profile settings. Please try again." }
     } }
     SettingsSection(profile?.name ?: "Profile", page = SettingsPage.VIEWER_PORTALS) {
         if (profile != null && owner != null) {
@@ -1907,6 +1908,14 @@ private fun ViewerPortalSettings(profileId: String?, portals: List<com.nikhil.ni
             if (portals.any { it.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
                 SettingsLinkRow(SettingsPage.XTREAM_CONTENT, "Xtream · Languages, content & sports")
             }
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
+            Text("Playback", Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            SettingsControlRow("Pinch to zoom", checked = pinchToZoom,
+                description = "Allow two-finger zoom in the player for this profile.",
+                onToggle = { checked -> update {
+                    com.nikhil.niktv.data.PlayerGesturePreferences.setPinchToZoom(context, owner, checked)
+                } })
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "Shared portal connections")
             error?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error) }

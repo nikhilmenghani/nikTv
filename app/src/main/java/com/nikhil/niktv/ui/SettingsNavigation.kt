@@ -70,7 +70,7 @@ internal enum class SettingsPage(val destination: SettingsDestination, val title
     PLAYBACK(SettingsDestination.PLAYBACK, "Playback"),
     DISPLAY(SettingsDestination.GENERAL, "Display & controls"),
     PROFILES(SettingsDestination.PROFILES, "Profiles & portals"),
-    VIEWER_PORTALS(SettingsDestination.PROFILES, "Profile portal access", PROFILES),
+    VIEWER_PORTALS(SettingsDestination.PROFILES, "Profile settings", PROFILES),
     XTREAM_CONTENT(SettingsDestination.PROFILES, "Content preferences", VIEWER_PORTALS),
     LIBRARY(SettingsDestination.CATALOG, "Library & backup"),
     APP(SettingsDestination.SYSTEM, "App & updates"),

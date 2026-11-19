@@ -27,6 +27,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -130,7 +131,7 @@ internal fun SettingsControlRow(
     Surface(modifier = modifier.fillMaxWidth()
         .settingsFocusEntry(enabled && (onClick != null || onToggle != null))
         .focusProperties { if (rail != null) left = rail }
-        .remoteFocusFrame(shape).then(interaction), shape = shape, color = SettingsSurface) {
+        .remoteFocusFrame(shape).clip(shape).then(interaction), shape = shape, color = SettingsSurface) {
         BoxWithConstraints {
         val narrow = maxWidth < 440.dp
         Row(Modifier.heightIn(min = if (LocalSettingsTv.current) 68.dp else 60.dp)

@@ -526,6 +526,11 @@ fun PlayerScreen(
     val activity = remember(context) { context.findActivity() }
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
     var videoOffset by remember(media.progressKey) { mutableStateOf(Offset.Zero) }
+    val pinchToZoomEnabled by rememberPinchToZoomEnabled(rememberPlayerGestureOwner(media))
+    val currentPinchToZoomEnabled by rememberUpdatedState(pinchToZoomEnabled)
+    LaunchedEffect(pinchToZoomEnabled) {
+        if (!pinchToZoomEnabled) { videoScale = 1f; videoOffset = Offset.Zero }
+    }
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
     // Suppress duplicate automatic completion only; manual navigation remains retryable.
@@ -1845,11 +1850,13 @@ fun PlayerScreen(
                     }
                     val scaleDetector = ScaleGestureDetector(viewContext, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                            if (!currentPinchToZoomEnabled) return false
                             lastFocus = Offset(detector.focusX, detector.focusY)
                             return true
                         }
 
                         override fun onScale(detector: ScaleGestureDetector): Boolean {
+                            if (!currentPinchToZoomEnabled) return false
                             val newScale = (videoScale * detector.scaleFactor).coerceIn(1f, 3f)
                             val focus = Offset(detector.focusX, detector.focusY)
                             if (newScale == 1f) videoOffset = Offset.Zero
@@ -2021,7 +2028,12 @@ fun PlayerScreen(
                                     }
                                 }
                             }
-                            MotionEvent.ACTION_POINTER_DOWN -> lastTouch = Offset(event.x, event.y)
+                            MotionEvent.ACTION_POINTER_DOWN -> {
+                                lastTouch = Offset(event.x, event.y)
+                                // A disabled pinch must not become a tap when the fingers lift.
+                                tapCandidate = false
+                                gestureConsumed = true
+                            }
                             MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
                                 val movement = Offset(event.x, event.y) - lastTouch
                                 if (movement.getDistance() > tapSlop) tapCandidate = false
@@ -2041,7 +2053,7 @@ fun PlayerScreen(
                                     // The bottom-edge swipe belongs to the queue sheet,
                                     // not brightness/volume adjustment.
                                     Unit
-                                } else if (videoScale > 1f) {
+                                } else if (currentPinchToZoomEnabled && videoScale > 1f) {
                                     val current = Offset(event.x, event.y)
                                     val delta = current - lastTouch
                                     if (delta.getDistance() > 1f) {
@@ -2142,8 +2154,8 @@ fun PlayerScreen(
                 }
                 playerView.videoSurfaceView?.apply {
                     val modeScale = if (mpvPlayer == null && resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
-                    val gestureScale = if (resizePreview != null) 1f else videoScale
-                    val gestureOffset = if (resizePreview != null) Offset.Zero else videoOffset
+                    val gestureScale = if (resizePreview != null || !pinchToZoomEnabled) 1f else videoScale
+                    val gestureOffset = if (resizePreview != null || !pinchToZoomEnabled) Offset.Zero else videoOffset
                     scaleX = gestureScale * modeScale
                     scaleY = gestureScale * modeScale
                     translationX = gestureOffset.x

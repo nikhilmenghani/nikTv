@@ -25,6 +25,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
+    @Test fun pinchZoomDefaultsOffAndOptInStaysWithItsViewerAcrossAccountsAndSync() = runBlocking {
+        assertFalse(PlayerGesturePreferences.pinchToZoom(context, family()))
+        assertFalse(PlayerGesturePreferences.pinchToZoom(context, kids()))
+        assertFalse(PlayerGesturePreferences.pinchToZoom(context, null))
+        PlayerGesturePreferences.setPinchToZoom(context, family(), true)
+        assertTrue(PlayerGesturePreferences.observePinchToZoom(context, family()).first())
+        assertFalse(PlayerGesturePreferences.pinchToZoom(context, kids()))
+        users.selectProfile(kids().profileId)
+        PlayerGesturePreferences.setPinchToZoom(context, family(), false)
+        assertFalse(PlayerGesturePreferences.pinchToZoom(context, kids()))
+        PlayerGesturePreferences.setPinchToZoom(context, family(), true)
+        val records = users.snapshot("101").filter { "niktv_playback_ui|pinch_to_zoom" in it.payload }
+        assertTrue(records.isNotEmpty())
+        assertTrue(records.all { it.profileId == family().profileId })
+        users.selectAccount("202"); users.initializeDefaults("202")
+        UserProfilePreferences.warm(context, family("202"))
+        assertFalse(PlayerGesturePreferences.pinchToZoom(context, family("202")))
+        assertTrue(PlayerGesturePreferences.pinchToZoom(context, family()))
+    }
     @Test fun xtreamContentPolicyIsPortableAndDoesNotLeakAcrossViewersOrAccounts() = runBlocking {
         val chosen = XtreamContentPolicy.parents().copy(sports = setOf("cricket"))
         XtreamContentPreferences.save(context, family(), chosen)
