@@ -90,7 +90,7 @@ internal class CricbuzzDirectClient(
     }
 
     internal suspend fun scoreRequest(path: String): ByteArray {
-        require(path in setOf("/a/matches/v1/live", "/a/infra/v1/settings") || path.matches(Regex("/a/mcenter/v1/[1-9][0-9]*/h?comm")))
+        require(path in setOf("/a/matches/v1/live", "/a/infra/v1/settings") || matchScoreRoute.matches(path))
         if (!configured) throw SportsException("Import your Cricbuzz configuration in Settings to enable live scores.")
         return request(path)
     }
@@ -114,6 +114,10 @@ internal class CricbuzzDirectClient(
             clockOffset = offset
             return send()
         }
+    }
+
+    private companion object {
+        val matchScoreRoute = Regex("/a/mcenter/v1/[1-9][0-9]*/h?(?:scard|comm(?:\\?iid=[1-9][0-9]*&tms=[1-9][0-9]*)?)")
     }
 }
 

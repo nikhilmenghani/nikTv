@@ -1,5 +1,7 @@
 package com.nikhil.niktv.sports
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Locale
@@ -19,14 +21,52 @@ internal data class CricketInnings(
 internal data class CricketScoreEvent(val id: String, val timestamp: Long, val title: String, val detail: String)
 internal data class CricketDelivery(val id: String, val value: String, val over: String, val description: String = "")
 
+internal data class CricketScorecard(val innings: List<CricketInningsCard>, val status: String, val complete: Boolean)
+
+internal data class CricketInningsCard(
+    val score: CricketInnings,
+    val balls: Int?,
+    val declared: Boolean,
+    val batters: List<CricketBatter>,
+    val bowlers: List<CricketBowler>,
+    val extras: CricketExtras?,
+    val wickets: List<CricketWicket>,
+)
+
+internal data class CricketBatter(
+    val name: String, val dismissal: String, val runs: Int, val balls: Int,
+    val fours: Int, val sixes: Int, val strikeRate: String,
+)
+
+internal data class CricketBowler(
+    val name: String, val overs: String, val balls: Int?, val maidens: Int,
+    val runs: Int, val wickets: Int, val economy: String,
+)
+
+internal data class CricketExtras(
+    val total: Int, val byes: Int, val legByes: Int, val wides: Int, val noBalls: Int, val penalty: Int,
+)
+
+internal data class CricketWicket(val batter: String, val runs: Int, val over: String, val ball: Int?)
+internal data class CricketCommentaryCursor(val innings: Int, val timestamp: Long)
+internal data class CricketCommentaryLine(
+    val id: String, val timestamp: Long, val innings: Int, val delivery: String?, val event: String?, val text: String,
+)
+internal data class CricketCommentaryPage(
+    val lines: List<CricketCommentaryLine>, val older: CricketCommentaryCursor?, val complete: Boolean,
+)
+
 internal data class CricketScoreTiming(val widgetMillis: Long = 10_000L, val matchesMillis: Long = 25_000L)
 
 internal data class CricketLiveScore(
     val matchId: Int, val innings: List<CricketInnings>, val status: String, val state: String,
     val recentBalls: String, val events: List<CricketScoreEvent>, val lastDelivery: CricketDelivery? = null,
 ) {
-    val complete get() = state.lowercase(Locale.US) in setOf("complete", "completed", "result", "abandon", "abandoned", "cancelled", "canceled")
+    val complete get() = completeState(state)
 }
+
+private fun completeState(state: String) =
+    state.lowercase(Locale.US) in setOf("complete", "completed", "result", "abandon", "abandoned", "cancelled", "canceled")
 
 /** Only newly received commentary produces alerts; opening a match never replays its history. */
 internal class CricketScoreEventTracker {
@@ -63,9 +103,23 @@ internal class CricketLiveScoresRepository(
 
     // tms/iid are pagination cursors for older commentary. Always fetch the current snapshot here.
     suspend fun score(match: CricketLiveMatch): CricketLiveScore {
+        return CricketScoreProtobuf.score(direct.scoreRequest(matchPath(match, "comm")), match)
+    }
+
+    suspend fun scorecard(match: CricketLiveMatch): CricketScorecard {
+        val bytes = direct.scoreRequest(matchPath(match, "scard"))
+        return withContext(Dispatchers.Default) { CricketScoreProtobuf.scorecard(bytes) }
+    }
+
+    suspend fun commentary(match: CricketLiveMatch, cursor: CricketCommentaryCursor? = null): CricketCommentaryPage {
+        val query = cursor?.let { "?iid=${it.innings}&tms=${it.timestamp}" }.orEmpty()
+        val bytes = direct.scoreRequest(matchPath(match, "comm") + query)
+        return withContext(Dispatchers.Default) { CricketScoreProtobuf.commentary(bytes, match.hundred) }
+    }
+
+    private fun matchPath(match: CricketLiveMatch, endpoint: String): String {
         require(match.id > 0)
-        val route = if (match.hundred) "hcomm" else "comm"
-        return CricketScoreProtobuf.score(direct.scoreRequest("/a/mcenter/v1/${match.id}/$route"), match)
+        return "/a/mcenter/v1/${match.id}/${if (match.hundred) "h" else ""}$endpoint"
     }
 }
 
@@ -92,7 +146,7 @@ internal object CricketScoreProtobuf {
                     info.text(5).equals("HUN", true) || info.text(5).contains("hundred", true))
             }
         } }
-    }.distinctBy { it.id }.filterNot { it.state.lowercase(Locale.US) in setOf("complete", "completed", "result", "abandon", "abandoned", "cancelled", "canceled") }.take(200)
+    }.distinctBy { it.id }.filterNot { completeState(it.state) }.take(200)
 
     fun score(bytes: ByteArray, match: CricketLiveMatch): CricketLiveScore {
         val root = message(bytes)
@@ -100,7 +154,7 @@ internal object CricketScoreProtobuf {
         val header = root.child(4)
         if (mini == null && header == null) invalid()
         val innings = mini?.child(10)?.messages(1).orEmpty().map { innings(it, it.text(3)) }.sortedBy { it.id }
-        val lines = root.messages(2).mapNotNull { it.child(1) }
+        val lines = commentaryMessages(root)
         val recentBalls = mini?.text(9).orEmpty()
         val latest = lines.filter { it.double(3) > 0 && it.text(5) != "over-break" }
             .maxWithOrNull(compareBy<Message> { it.int(4) }.thenBy { it.number(2) })
@@ -130,19 +184,86 @@ internal object CricketScoreProtobuf {
             header?.text(1).orEmpty().ifBlank { match.state }, recentBalls, events, delivery)
     }
 
+    fun scorecard(bytes: ByteArray): CricketScorecard {
+        val root = message(bytes)
+        val innings = root.messages(1).mapNotNull { card ->
+            val id = card.int(1).takeIf { it > 0 } ?: return@mapNotNull null
+            val team = card.text(11).ifBlank { card.text(12) }
+            if (team.isBlank()) return@mapNotNull null
+            CricketInningsCard(
+                score = CricketInnings(id, team, card.int(7), card.int(8), oversLabel(card.double(9))),
+                balls = card.int(15).takeIf { it > 0 },
+                declared = card.int(13) != 0,
+                batters = card.messages(2).mapNotNull { batter ->
+                    val name = batter.text(7).ifBlank { batter.text(8) }
+                    if (name.isBlank()) null else CricketBatter(name, cleanText(batter.text(11)), batter.int(3),
+                        batter.int(2), batter.int(4), batter.int(5), batter.text(6))
+                },
+                bowlers = card.messages(3).mapNotNull { bowler ->
+                    val name = bowler.text(7).ifBlank { bowler.text(8) }
+                    if (name.isBlank()) null else CricketBowler(name, bowler.text(2), bowler.int(15).takeIf { it > 0 },
+                        bowler.int(3), bowler.int(5), bowler.int(4), bowler.text(6))
+                },
+                extras = card.child(5)?.let {
+                    CricketExtras(it.int(6), it.int(2), it.int(1), it.int(3), it.int(4), it.int(5))
+                },
+                wickets = card.child(4)?.messages(1).orEmpty().map {
+                    CricketWicket(it.text(2), it.int(4), oversLabel(it.double(3)), it.int(5).takeIf { balls -> balls > 0 })
+                },
+            )
+        }.distinctBy { it.score.id }.sortedBy { it.score.id }
+        return CricketScorecard(innings, cleanText(root.text(4)), root.int(2) != 0)
+    }
+
+    fun commentary(bytes: ByteArray, hundred: Boolean): CricketCommentaryPage {
+        val root = message(bytes)
+        val entries = commentaryMessages(root)
+        fun cursor(line: Message): CricketCommentaryCursor? {
+            val innings = line.int(4).takeIf { it > 0 } ?: root.int(1)
+            val timestamp = line.number(2)
+            return if (innings > 0 && timestamp > 0) CricketCommentaryCursor(innings, timestamp) else null
+        }
+        val lines = entries.mapNotNull { line ->
+            val position = cursor(line) ?: return@mapNotNull null
+            val text = commentaryText(line).takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val over = line.double(3)
+            val ball = line.int(11)
+            val events = line.text(5).uppercase(Locale.US).split(',').map(String::trim)
+            val delivery = when {
+                "OVER-BREAK" in events -> null
+                hundred && ball > 0 -> "Ball $ball"
+                over > 0 -> String.format(Locale.US, "%.1f", over)
+                else -> null
+            }
+            val event = listOf("WICKET", "SIX", "FOUR").firstOrNull { it in events }
+            CricketCommentaryLine("${position.innings}:${position.timestamp}:$over:$ball:${line.text(5)}",
+                position.timestamp, position.innings, delivery, event, text)
+        }.distinctBy { it.id }.sortedByDescending { it.timestamp }
+        val oldest = entries.mapNotNull(::cursor).minByOrNull { it.timestamp }
+        return CricketCommentaryPage(lines, oldest, completeState(root.child(4)?.text(1).orEmpty()))
+    }
+
+    private fun commentaryMessages(root: Message) = root.messages(2).mapNotNull { it.child(1) }
+
     private fun commentaryText(line: Message): String {
         var detail = line.text(1)
         line.messages(7).flatMap { it.messages(2) }.forEach { value ->
             val token = value.text(1)
             if (token.isNotBlank()) detail = detail.replace(token, value.text(2))
         }
-        return detail.replace(Regex("<[^>]*>"), "").replace(Regex("[A-Z][0-9]+\\$"), "")
-            .replace("&amp;", "&").replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", "\"").trim()
+        return cleanText(detail.replace(Regex("[A-Z][0-9]+\\$"), ""))
     }
+
+    private fun cleanText(text: String): String =
+        text.replace(Regex("(?i)<br\\s*/?>"), "\n").replace(Regex("<[^>]*>"), "")
+            .replace("&amp;", "&").replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", "\"").trim()
+
+    private fun oversLabel(value: Double) =
+        if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.US, "%.1f", value)
 
     private fun teamScores(score: Message?, team: String) = listOfNotNull(score?.child(1), score?.child(2)).map { innings(it, team) }
     private fun innings(value: Message, team: String) = CricketInnings(value.int(1), team.take(20), value.int(4), value.int(5),
-        value.double(6).let { if (it % 1.0 == 0.0) it.toInt().toString() else String.format(Locale.US, "%.1f", it) })
+        oversLabel(value.double(6)))
 
     private class Message(val blobs: Map<Int, List<ByteArray>>, val numbers: Map<Int, Long>) {
         fun messages(tag: Int) = blobs[tag].orEmpty().map(::message)

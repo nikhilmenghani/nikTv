@@ -91,7 +91,15 @@ class CricketLiveScoresTest {
         val match = repository.matches().first { it.id == 161234 }
         repository.score(match)
         repository.score(match.copy(hundred = true))
+        val page = repository.commentary(match)
+        assertTrue(page.lines.any { it.delivery == "11.3" && it.event == "WICKET" })
+        assertEquals(page.lines.sortedByDescending { it.timestamp }, page.lines)
+        val cursor = requireNotNull(page.older)
+        assertTrue(cursor.timestamp <= page.lines.minOf { it.timestamp })
+        repository.commentary(match.copy(hundred = true), cursor)
         assertEquals(listOf("https://api.cricbuzz.com/a/matches/v1/live", "https://api.cricbuzz.com/a/mcenter/v1/161234/comm",
-            "https://api.cricbuzz.com/a/mcenter/v1/161234/hcomm"), urls)
+            "https://api.cricbuzz.com/a/mcenter/v1/161234/hcomm",
+            "https://api.cricbuzz.com/a/mcenter/v1/161234/comm",
+            "https://api.cricbuzz.com/a/mcenter/v1/161234/hcomm?iid=${cursor.innings}&tms=${cursor.timestamp}"), urls)
     }
 }

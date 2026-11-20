@@ -14,6 +14,30 @@ import org.junit.Test
 
 /** Opt-in live check; provision configuration into the isolated regression package first. */
 class CricbuzzDirectDeviceTest {
+    @Test fun liveMatchReturnsScorecardAndCommentary(): Unit = runBlocking {
+        val ins = InstrumentationRegistry.getInstrumentation()
+        assumeTrue(InstrumentationRegistry.getArguments().getString("cricbuzzLive") == "true")
+        val context = ins.targetContext
+        check(context.packageName.endsWith(".regression"))
+        RemoteCredentials.initialize(context)
+        val direct = CricbuzzDirectClient(CricketHighlightsHttpTransport())
+        assumeTrue("The isolated device has Cricbuzz configured", direct.configured)
+        val scores = CricketLiveScoresRepository(direct)
+        val match = scores.matches().firstOrNull { it.scores.any { innings -> innings.runs > 0 } }
+        assumeTrue("At least one active match has started", match != null)
+        requireNotNull(match)
+        val card = scores.scorecard(match)
+        assertTrue("An innings has batting and bowling statistics",
+            card.innings.any { it.batters.isNotEmpty() && it.bowlers.isNotEmpty() })
+        val commentary = scores.commentary(match)
+        assertTrue("Score feed supplies delivery commentary", commentary.lines.any { it.delivery != null })
+        commentary.older?.let { cursor ->
+            val earlier = scores.commentary(match, cursor)
+            assertTrue("The history endpoint returns earlier entries or the end of history",
+                earlier.lines.isEmpty() || earlier.lines.any { it.timestamp < cursor.timestamp })
+        }
+    }
+
     @Test fun liveCanadianCatalogueUsesDirectSigningAndEncryptedConfiguration() = runBlocking {
         val ins = InstrumentationRegistry.getInstrumentation()
         assumeTrue(InstrumentationRegistry.getArguments().getString("cricbuzzLive") == "true")

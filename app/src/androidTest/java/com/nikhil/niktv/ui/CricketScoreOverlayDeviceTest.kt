@@ -153,6 +153,23 @@ class CricketScoreOverlayDeviceTest {
         }
         val fixtureMatch = CricketScoreProtobuf.matches(listing).single { it.id == 4242 }
         assertEquals("IND 100/1 (10)", CricketScoreProtobuf.score(score(), fixtureMatch).innings.single().label)
+        val scorecard = Proto.proto {
+            child(1) {
+                number(1, 1); text(11, "India"); number(7, 100); number(8, 1); double(9, 10.0)
+                child(2) { text(7, "Sample batter"); text(11, "not out"); number(3, 43); number(2, 34); text(6, "126.47") }
+                child(3) { text(7, "Sample bowler"); text(2, "2.0"); number(4, 1); number(5, 12); text(6, "6.00") }
+                child(5) { number(6, 5); number(3, 5) }
+            }
+            child(1) {
+                number(1, 2); text(11, "Australia"); number(7, 71); number(8, 3); double(9, 6.2)
+                child(2) { text(7, "Second innings batter"); number(3, 22) }
+            }
+            text(4, "Australia batting")
+        }
+        val earlier = Proto.proto {
+            number(1, 1)
+            child(2) { child(1) { text(1, "Earlier: two runs through cover."); number(2, 50); double(3, 9.5) } }
+        }
         failureDetails = {
             "selectedMatch=${prefs.getInt("match", 0)}, polls=${polls.get()}, revision=${revision.get()}, " +
                 "badge=${node("Live cricket score.", true)?.contentDescription}, " +
@@ -160,6 +177,8 @@ class CricketScoreOverlayDeviceTest {
         }
         val repo = CricketLiveScoresRepository(CricbuzzDirectClient(CricketHighlightsTransport { url, _ ->
             when { url.endsWith("settings") -> settings; url.endsWith("live") -> listing
+                url.endsWith("/scard") -> scorecard
+                "iid=1&tms=100" in url -> earlier
                 else -> { polls.incrementAndGet(); score() } }
         }, { CricbuzzCredentials("ab".repeat(32)) }))
         val videoServer = PlaybackEngineFixtureTest().FixtureServer()
@@ -184,6 +203,28 @@ class CricketScoreOverlayDeviceTest {
             click("Live cricket scores")
             await("Match choices are visible before the landscape screenshot") { node("IND vs AUS") != null }
             screenshot("landscape-match-picker-$sports-$engine")
+            instrumentation.setInTouchMode(false)
+            val playingAt = progress.get()
+            click("Scorecard for IND vs AUS")
+            await("Complete scorecard opens at the latest innings") { node("Second innings batter") != null && focused("Scorecard") }
+            click("Previous innings")
+            await("Earlier innings show batting stats") { node("Sample batter") != null && node("126.47") != null }
+            key(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches the commentary tab") { focused("Ball-by-ball") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Ball-by-ball shows the latest delivery") { node("A single to square leg.") != null }
+            await("Tab activation retains focus") { focused("Ball-by-ball") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down focuses the scrollable commentary") { focused("Ball-by-ball commentary") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches earlier commentary") { focused("Load earlier balls") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Earlier commentary appends") { node("Earlier: two runs through cover.") != null }
+            screenshot("scorecard-commentary-$sports-$engine")
+            key(android.view.KeyEvent.KEYCODE_BACK)
+            await("Back restores the match's scorecard button") { focused("Scorecard for IND vs AUS") }
+            await("Scorecard browsing leaves video playing") { progress.get() > playingAt }
+            assertEquals("Opening a scorecard does not follow the match", 0, prefs.getInt("match", 0))
             click("IND vs AUS")
             await("Badge shows initial total") { node("Live cricket score.", true)?.contentDescription?.contains("100/1") == true }
             await("Score starts as a collapsed pill") { node("Expand score badge") != null }

@@ -77,7 +77,10 @@ internal val LocalCricketLiveScoresRepository = staticCompositionLocalOf<Cricket
 
 internal data class CricketScoreReading(val id: String, val title: String, val text: String, val score: CricketLiveScore?)
 
-internal class CricketScoreController(context: Context) {
+internal class CricketScoreController(
+    context: Context,
+    internal val repository: CricketLiveScoresRepository = CricketLiveScoresRepository(),
+) {
     internal val badgeFocus = FocusRequester()
     internal val toggleFocus = FocusRequester()
     internal val commentaryFocus = FocusRequester()
@@ -190,9 +193,9 @@ internal fun Modifier.cricketScoreMovement(controller: CricketScoreController): 
 @Composable
 internal fun rememberCricketScoreController(): CricketScoreController {
     val context = LocalContext.current
-    val controller = remember(context.applicationContext) { CricketScoreController(context) }
     val suppliedRepository = LocalCricketLiveScoresRepository.current
     val repository = remember(suppliedRepository) { suppliedRepository ?: CricketLiveScoresRepository() }
+    val controller = remember(context.applicationContext, repository) { CricketScoreController(context, repository) }
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val active = lifecycle.isAtLeast(Lifecycle.State.STARTED)
     val selected = controller.selected
@@ -496,22 +499,40 @@ private fun CricketLastBall(delivery: CricketDelivery, stale: Boolean, compact: 
 @Composable
 private fun CricketMatchPicker(controller: CricketScoreController) {
     val entry = remember { FocusRequester() }
+    val matchScroll = rememberScrollState()
+    val scorecardFocus = remember { mutableMapOf<Int, FocusRequester>() }
+    var details by remember { mutableStateOf<CricketLiveMatch?>(null) }
+    var returnToMatch by remember { mutableIntStateOf(0) }
+    val openDetails: (CricketLiveMatch) -> Unit = { match ->
+        returnToMatch = match.id
+        details = match
+    }
+    val onBack = {
+        if (details != null) details = null else controller.pickerOpen = false
+    }
     DisposableEffect(controller) {
         val returnToBadge = controller.badgeHasFocus
         onDispose {
             if (returnToBadge && !controller.moving && controller.selected != null) controller.focusBadge()
         }
     }
-    Dialog(onDismissRequest = { controller.pickerOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = onBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp), contentAlignment = Alignment.Center) {
             val wide = maxWidth > 580.dp && maxWidth > maxHeight
-            Surface(Modifier.widthIn(max = 860.dp).fillMaxWidth().heightIn(max = maxHeight.coerceAtMost(560.dp))
-                .initialFocusEntry(entry), shape = RoundedCornerShape(24.dp),
+            val match = details
+            val matchEntry = scorecardFocus[returnToMatch]?.takeIf {
+                controller.matches.any { it.id == returnToMatch }
+            } ?: entry
+            Surface(Modifier.widthIn(max = 860.dp).fillMaxWidth().heightIn(max = maxHeight.coerceAtMost(560.dp)),
+                shape = RoundedCornerShape(24.dp),
                 color = Color.Transparent, contentColor = Color.White,
                 border = androidx.compose.foundation.BorderStroke(1.dp,
                     Brush.linearGradient(listOf(Color.White.copy(alpha = .28f), Color.White.copy(alpha = .06f))))) {
-                Column(Modifier.background(Brush.linearGradient(listOf(Color(0xDA2A3039), Color(0xC5111721)))).padding(16.dp),
+                Column(Modifier.background(Brush.linearGradient(listOf(Color(0xF02A3039), Color(0xF0111721)))).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (match != null) {
+                        CricketMatchDetails(match, controller.repository, controller.refreshIntervalMillis, onBack)
+                    } else Column(Modifier.initialFocusEntry(matchEntry), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Live cricket scores", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         NikTvSecondaryActionButton({ controller.refresh++ }, Modifier.size(40.dp), contentPadding = PaddingValues(0.dp)) {
@@ -524,11 +545,12 @@ private fun CricketMatchPicker(controller: CricketScoreController) {
                     if (wide) Row(Modifier.fillMaxWidth().weight(1f, fill = false).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         CricketBadgeControls(controller, Modifier.weight(.36f).verticalScroll(rememberScrollState()))
                         VerticalDivider(Modifier.fillMaxHeight(), color = Color.White.copy(alpha = .1f))
-                        CricketMatchesList(controller, Modifier.weight(.64f).verticalScroll(rememberScrollState()))
-                    } else Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CricketMatchesList(controller, Modifier.weight(.64f).verticalScroll(matchScroll), scorecardFocus, openDetails)
+                    } else Column(Modifier.weight(1f, fill = false).verticalScroll(matchScroll), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         CricketBadgeControls(controller, Modifier.fillMaxWidth())
                         HorizontalDivider(color = Color.White.copy(alpha = .1f))
-                        CricketMatchesList(controller, Modifier.fillMaxWidth())
+                        CricketMatchesList(controller, Modifier.fillMaxWidth(), scorecardFocus, openDetails)
+                    }
                     }
                 }
             }
@@ -558,21 +580,33 @@ private fun CricketBadgeControls(controller: CricketScoreController, modifier: M
 }
 
 @Composable
-private fun CricketMatchesList(controller: CricketScoreController, modifier: Modifier) {
+private fun CricketMatchesList(
+    controller: CricketScoreController,
+    modifier: Modifier,
+    scorecardFocus: MutableMap<Int, FocusRequester>,
+    openDetails: (CricketLiveMatch) -> Unit,
+) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (controller.listLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
         controller.listError?.let { Text(it, color = Color(0xFFFFCA6A), style = MaterialTheme.typography.bodySmall) }
         if (!controller.listLoading && controller.listError == null && controller.matches.isEmpty()) Text("No live matches right now.")
-        controller.matches.forEach { match ->
-            NikTvSecondaryActionButton({ controller.select(match) }, Modifier.fillMaxWidth(), contentPadding = PaddingValues(10.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(match.title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, lineHeight = 17.sp)
-                    if (match.description.isNotBlank()) Text(match.description, color = Color.White.copy(alpha = .55f), fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (match.scores.isNotEmpty()) Text(match.scores.joinToString(" · ") { it.label }, color = Color.White.copy(alpha = .85f), fontSize = 11.sp, lineHeight = 14.sp)
-                    if (match.status.isNotBlank()) Text(match.status, color = Color.White.copy(alpha = .55f), fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        controller.matches.forEach { match -> key(match.id) {
+            val scorecard = remember { scorecardFocus.getOrPut(match.id) { FocusRequester() } }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                NikTvSecondaryActionButton({ controller.select(match) }, Modifier.weight(1f), contentPadding = PaddingValues(10.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(match.title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, lineHeight = 17.sp)
+                        if (match.description.isNotBlank()) Text(match.description, color = Color.White.copy(alpha = .65f), fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (match.scores.isNotEmpty()) Text(match.scores.joinToString(" · ") { it.label }, color = Color.White.copy(alpha = .85f), fontSize = 11.sp, lineHeight = 14.sp)
+                        if (match.status.isNotBlank()) Text(match.status, color = Color.White.copy(alpha = .65f), fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (controller.selected?.id == match.id) { Spacer(Modifier.width(6.dp)); Icon(Icons.Default.Check, "Following", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
                 }
-                if (controller.selected?.id == match.id) { Spacer(Modifier.width(6.dp)); Icon(Icons.Default.Check, "Following", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
+                NikTvSecondaryActionButton({ openDetails(match) }, Modifier.focusRequester(scorecard)
+                    .semantics { contentDescription = "Scorecard for ${match.title}" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)) {
+                    Text("Scorecard", style = MaterialTheme.typography.labelMedium)
+                }
             }
-        }
+        } }
     }
 }
