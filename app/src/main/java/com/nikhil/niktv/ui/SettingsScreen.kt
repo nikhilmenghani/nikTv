@@ -99,6 +99,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.compose.SubcomposeAsyncImage
@@ -373,8 +375,20 @@ internal fun ModernSettingsScreen(
     var obsoleteApks by remember { mutableStateOf<DownloadedApkCleanup?>(null) }
     var cleaningObsoleteApks by remember { mutableStateOf(false) }
     var apkCleanupMessage by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(downloadState) {
-        obsoleteApks = runCatching { updates.obsoleteApks(context) }.getOrNull()
+    var apkCleanupScanFailed by remember { mutableStateOf(false) }
+    var apkCleanupNeedsAccess by remember { mutableStateOf(false) }
+    var apkCleanupRefresh by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { apkCleanupRefresh++ }
+    LaunchedEffect(downloadState::class, downloadState.updateInfoOrNull()?.version, apkCleanupRefresh) {
+        try {
+            obsoleteApks = updates.obsoleteApks(context)
+            apkCleanupScanFailed = false
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            obsoleteApks = null
+            apkCleanupScanFailed = true
+        }
     }
     val performDownload: (UpdateInfo) -> Unit = { update ->
         downloadActionMessage = null
@@ -1604,27 +1618,38 @@ internal fun ModernSettingsScreen(
                 }
 
                 SettingsDivider()
+                val olderInstallers = obsoleteApks
+                val offerFolderAccess = olderInstallers?.folderAccessRequired == true &&
+                    (olderInstallers.fileCount == 0 || apkCleanupNeedsAccess)
+                val cleanupShape = RoundedCornerShape(14.dp)
                 ResponsiveSettingsOptionRow(
                     icon = Icons.Default.DeleteSweep,
                     title = "Delete older update APKs",
-                    subtitle =
-                        obsoleteApks?.let { cleanup ->
-                            if (cleanup.fileCount == 0) {
-                                "No obsolete NikTV installers found"
-                            } else {
-                                "${cleanup.fileCount} installer${if (cleanup.fileCount == 1) "" else "s"} · ${formatDownloadBytes(cleanup.totalBytes)}"
-                            }
-                        } ?: "Checking Downloads/NikTV…",
+                    subtitle = when {
+                        apkCleanupScanFailed -> "Could not check Downloads/NikTV · Select to retry"
+                        olderInstallers == null -> "Checking Downloads/NikTV…"
+                        offerFolderAccess -> "Allow file access to manage older installers"
+                        olderInstallers.fileCount > 0 ->
+                            "${olderInstallers.fileCount} installer${if (olderInstallers.fileCount == 1) "" else "s"} · ${formatDownloadBytes(olderInstallers.totalBytes)}"
+                        else -> "No accessible older NikTV installers found"
+                    },
                     modifier = Modifier
-                        .remoteFocusFrame(RoundedCornerShape(14.dp))
-                        .clickable(enabled = !cleaningObsoleteApks) {
-                            if ((obsoleteApks?.fileCount ?: 0) == 0) {
-                                apkCleanupMessage =
-                                    if (obsoleteApks == null) {
-                                        "Still checking Downloads/NikTV for older installers"
-                                    } else {
-                                        "No obsolete NikTV installers found"
-                                    }
+                        .clip(cleanupShape)
+                        .remoteFocusFrame(cleanupShape)
+                        .clickable {
+                            if (cleaningObsoleteApks) return@clickable
+                            if (apkCleanupScanFailed) {
+                                apkCleanupRefresh++
+                                return@clickable
+                            }
+                            if (offerFolderAccess) {
+                                apkCleanupMessage = runCatching { AppUpdates.requestInstallerFolderAccess(context) }
+                                    .exceptionOrNull()?.let { "Could not open Fire TV file access settings." }
+                                return@clickable
+                            }
+                            if (olderInstallers == null || olderInstallers.fileCount == 0) {
+                                apkCleanupMessage = if (olderInstallers == null) "Still checking Downloads/NikTV for older installers"
+                                    else "No accessible older NikTV installers found"
                                 return@clickable
                             }
                             cleaningObsoleteApks = true
@@ -1635,12 +1660,15 @@ internal fun ModernSettingsScreen(
                                         context
                                     )
                                 }.onSuccess { result ->
-                                    apkCleanupMessage =
-                                        "Deleted ${result.deletedCount} installer${if (result.deletedCount == 1) "" else "s"} and reclaimed ${formatDownloadBytes(result.deletedBytes)}"
-                                    obsoleteApks =
-                                        AppUpdates.obsoleteDownloadedApks(
-                                            context
-                                        )
+                                    val remaining = result.fileCount - result.deletedCount
+                                    apkCleanupNeedsAccess = remaining > 0 && result.folderAccessRequired
+                                    apkCleanupMessage = when {
+                                        result.fileCount == 0 -> "No accessible older NikTV installers found"
+                                        result.deletedCount == 0 -> "Could not delete the older installers in Downloads/NikTV"
+                                        remaining > 0 -> "Deleted ${result.deletedCount} · Could not delete $remaining"
+                                        else -> "Deleted ${result.deletedCount} installer${if (result.deletedCount == 1) "" else "s"} · ${formatDownloadBytes(result.deletedBytes)} reclaimed"
+                                    }
+                                    apkCleanupRefresh++
                                 }.onFailure {
                                     apkCleanupMessage =
                                         "Could not delete old installers: ${it.message}"

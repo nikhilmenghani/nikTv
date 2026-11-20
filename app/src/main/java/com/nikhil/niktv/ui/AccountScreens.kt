@@ -74,6 +74,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import com.nikhil.niktv.update.AppUpdates
+import com.nikhil.niktv.update.automaticUpdateChecks
 import com.nikhil.niktv.data.AccountSyncManager
 import com.nikhil.niktv.data.AccountSyncState
 import com.nikhil.niktv.data.UserProfile
@@ -100,7 +105,7 @@ internal val LocalCloseProfileDownloads = staticCompositionLocalOf<(() -> Unit)?
 
 /** Account authentication precedes both the people chooser and every content destination. */
 @Composable
-internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> Unit) {
+internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolean) -> Unit) {
     val context = LocalContext.current
     val manager = remember(context) { AccountSyncManager.get(context) }
     val store = remember(context) { UserSyncStore.get(context) }
@@ -111,6 +116,29 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
     val selectedScope by store.selectedScope.collectAsStateWithLifecycle()
     val pendingCount by store.pendingChanges.collectAsStateWithLifecycle(0)
     val appState by vm.state.collectAsStateWithLifecycle()
+    val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
+    val updateDownload by AppUpdates.downloadState.collectAsStateWithLifecycle()
+    val enforceUpdates by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
+    val autoCheckEnabled by AppUpdates.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
+    val availableUpdate = pendingUpdate ?: updateDownload.updateInfoOrNull()
+    val updateKnown = availableUpdate != null
+    val playing = appState.nowPlaying != null
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var checkingUpdate by remember { mutableStateOf(enforceUpdates && autoCheckEnabled && !updateKnown) }
+    LaunchedEffect(lifecycle, autoCheckEnabled, playing, updateKnown) {
+        if (!autoCheckEnabled || playing || updateKnown) {
+            checkingUpdate = false
+            return@LaunchedEffect
+        }
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            automaticUpdateChecks(
+                check = { AppUpdates.check() },
+                available = { AppUpdates.notifyAvailable(context, it) },
+                attemptFinished = { checkingUpdate = false },
+                failed = { android.util.Log.w("AppUpdates", "Foreground update check failed; retrying in one minute", it) },
+            )
+        }
+    }
     val requestedPortal by PortalNavigationRequests.pending.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val legacyStore = remember(context) { ProfileStore(context) }
@@ -299,7 +327,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
             Surface(Modifier.fillMaxSize()) {
                 when {
                     !launchComplete || restoringViewer -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    showSettings -> content()
+                    showSettings -> content(checkingUpdate)
                     showAccount || !account.initialized || (account.reconnectRequired && !useCachedProfiles) -> GitHubAccountScreen(
                         state = account,
                         onConnect = { token -> scope.launch {
@@ -318,6 +346,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                         onDisconnect = { scope.launch { vm.resetPortalSession(); manager.disconnect(); selectedUser = null } }
                     )
                     choosingProfile || selectedUser == null || enabledProfiles.none { it.id == selectedUser } -> {
+                        var showUpdate by remember { mutableStateOf(false) }
                         AccountGateBackHandler(peopleVisible = true, choosingProfile = choosingProfile,
                             selectedViewerAvailable = selectedUser != null && profiles.any { it.id == selectedUser }, state = appState,
                             openPeople = ::openProfiles, resumeContent = { choosingProfile = false })
@@ -359,17 +388,27 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable () -> U
                         },
                         onSync = manager::requestManualSync,
                         selectedProfileId = selectedUser,
+                        updateVersion = availableUpdate?.version,
+                        onUpdate = { showUpdate = true },
                         onOfflineDownloads = { profile -> scope.launch {
                             profileAction("Could not open local downloads. Your files are preserved.") {
                                 openViewer(profile.id, offlineOnly = true)
                             }
                         } }
-                    ) }
+                    )
+                        if (showUpdate && availableUpdate != null) {
+                            Dialog(onDismissRequest = { showUpdate = false },
+                                properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                                MandatoryNikTvUpdateScreen(false, availableUpdate, updateDownload, enforceUpdates,
+                                    AppUpdates::setUpdateEnforcementEnabled, onLater = { showUpdate = false })
+                            }
+                        }
+                    }
                     else -> {
                         AccountGateBackHandler(peopleVisible = false, choosingProfile = choosingProfile,
                             selectedViewerAvailable = true, state = appState,
                             openPeople = ::openProfiles, resumeContent = { choosingProfile = false })
-                        content()
+                        content(checkingUpdate)
                     }
                 }
             }
@@ -515,7 +554,9 @@ internal fun UserProfilesScreen(
     onManagePortals: ((UserProfile) -> Unit)? = null,
     selectedProfileId: String? = null,
     onOfflineDownloads: ((UserProfile) -> Unit)? = null,
-    onSettings: (() -> Unit)? = null
+    onSettings: (() -> Unit)? = null,
+    updateVersion: String? = null,
+    onUpdate: (() -> Unit)? = null,
 ) {
     var editing by remember { mutableStateOf<UserProfile?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
@@ -557,6 +598,14 @@ internal fun UserProfilesScreen(
             if (profiles.isEmpty()) Text("Enable profiles in Settings to show and sync them on this device.",
                 style = MaterialTheme.typography.bodySmall, color = Color(0xFF9699A2), textAlign = TextAlign.Center)
             Text("Who's watching?", style = if (shortWide) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            if (updateVersion != null && onUpdate != null) {
+                Spacer(Modifier.height(8.dp))
+                NikTvPrimaryActionButton(onUpdate, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                    Icon(Icons.Default.Download, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Update available · $updateVersion", style = MaterialTheme.typography.labelLarge)
+                }
+            }
             Spacer(Modifier.height(if (shortWide) 12.dp else 20.dp))
             Column(verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 entries.chunked(columns).forEach { row ->

@@ -71,7 +71,8 @@ data class DownloadedApkCleanup(
     val fileCount: Int,
     val totalBytes: Long,
     val deletedCount: Int = 0,
-    val deletedBytes: Long = 0L
+    val deletedBytes: Long = 0L,
+    val folderAccessRequired: Boolean = false,
 )
 
 sealed interface UpdateDownloadState {
@@ -161,6 +162,8 @@ object AppUpdates {
         "https://raw.githubusercontent.com/nikhilmenghani/nikTv/main/release.txt"
     private const val RELEASE_BY_TAG_URL =
         "https://api.github.com/repos/nikhilmenghani/nikTv/releases/tags/"
+    private const val LATEST_RELEASE_URL =
+        "https://api.github.com/repos/nikhilmenghani/nikTv/releases/latest"
     private const val APK_MIME = "application/vnd.android.package-archive"
     private val VERSION_PATTERN = Regex("""\d+\.\d+\.\d+""")
 
@@ -272,29 +275,36 @@ object AppUpdates {
         val versionFileName = if (distribution.development) "dev.txt" else "release.txt"
         val versionFileUrl = if (distribution.development) DEV_VERSION_URL else RELEASE_VERSION_URL
 
-        val version = fetchText(versionFileUrl).trim()
+        val advertisedVersion = fetchText(versionFileUrl).trim()
 
-        require(isValidUpdateVersion(version)) {
-            "$versionFileName must contain a version in x.y.z format; received '$version'"
+        require(isValidUpdateVersion(advertisedVersion)) {
+            "$versionFileName must contain a version in x.y.z format; received '$advertisedVersion'"
         }
 
-        if (!isNewer(version, BuildConfig.VERSION_NAME)) {
+        if (!isNewer(advertisedVersion, BuildConfig.VERSION_NAME)) {
             return@withContext null
         }
 
+        fun releaseAt(url: String) = Json.parseToJsonElement(fetchText(url, "application/vnd.github+json")).jsonObject
+        val (release, usePublishedTag) = try {
+            releaseAt("$RELEASE_BY_TAG_URL${expectedReleaseTag(advertisedVersion)}") to false
+        } catch (error: UpdateHttpException) {
+            // The release commit updates release.txt before the signed APKs are published.
+            if (distribution.development || error.code != 404) throw error
+            releaseAt(LATEST_RELEASE_URL) to true
+        }
+        val actualTag = release["tag_name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val version = if (usePublishedTag) {
+            actualTag.removePrefix("v").also { publishedVersion ->
+                require(isValidUpdateVersion(publishedVersion) && !isNewer(publishedVersion, advertisedVersion)) {
+                    "GitHub returned an unexpected published release tag: '$actualTag'"
+                }
+            }
+        } else advertisedVersion
+        if (!isNewer(version, BuildConfig.VERSION_NAME)) return@withContext null
         val expectedTag = expectedReleaseTag(version)
         val selectedPackage = effectiveUpdatePackage()
         val expectedAssetName = expectedApkAssetName(version, selectedPackage)
-
-        val releaseJson = fetchText(
-            "$RELEASE_BY_TAG_URL$expectedTag",
-            accept = "application/vnd.github+json"
-        )
-
-        val release = Json.parseToJsonElement(releaseJson).jsonObject
-
-        val actualTag =
-            release["tag_name"]?.jsonPrimitive?.contentOrNull.orEmpty()
 
         if (actualTag != expectedTag) {
             error(
@@ -580,55 +590,50 @@ object AppUpdates {
 
     suspend fun obsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
         withContext(Dispatchers.IO) {
-            if (isolatedRegression) return@withContext DownloadedApkCleanup(0, 0L)
-            ensureInitialized(context)
-            val files = obsoleteApkFiles()
-            DownloadedApkCleanup(files.size, files.sumOf(File::length))
+            cleanUpdateApks(context, delete = false)
         }
 
     suspend fun deleteObsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
         withContext(Dispatchers.IO) {
-            if (isolatedRegression) return@withContext DownloadedApkCleanup(0, 0L)
-            ensureInitialized(context)
-            val files = obsoleteApkFiles()
-            var deletedCount = 0
-            var deletedBytes = 0L
-            files.forEach { file ->
-                val bytes = file.length()
-                if (file.delete()) {
-                    deletedCount++
-                    deletedBytes += bytes
-                }
-            }
-            DownloadedApkCleanup(
-                fileCount = files.size,
-                totalBytes = files.sumOf(File::length) + deletedBytes,
-                deletedCount = deletedCount,
-                deletedBytes = deletedBytes
-            )
+            cleanUpdateApks(context, delete = true)
         }
 
-    private fun obsoleteApkFiles(): List<File> {
-        val protectedVersion = when (val state = mutableDownloadState.value) {
-            is UpdateDownloadState.Queued -> state.version
-            is UpdateDownloadState.Downloading -> state.version
-            is UpdateDownloadState.Paused -> state.version
-            is UpdateDownloadState.Ready -> state.version
-            is UpdateDownloadState.Installing -> state.version
-            is UpdateDownloadState.InstallerLaunched -> state.version
-            else -> null
-        }
-        val protectedName = protectedVersion?.let(::apkFileName)
+    private fun needsInstallerFolderAccess(): Boolean =
+        BuildConfig.FIRE_TV_APK && !BuildConfig.DEBUG &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()
+
+    internal fun requestInstallerFolderAccess(context: Context) {
+        check(needsInstallerFolderAccess()) { "The folder access request is unavailable." }
+        context.startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    private fun cleanUpdateApks(context: Context, delete: Boolean): DownloadedApkCleanup {
+        if (isolatedRegression) return DownloadedApkCleanup(0, 0L)
+        ensureInitialized(context)
         val directory = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             "NikTV"
         )
-        return directory.listFiles().orEmpty().filter { file ->
-            file.isFile &&
-                file.name.startsWith(if (distribution.development) "NikTV-dev-v" else "NikTV-v") &&
-                file.extension.equals("apk", ignoreCase = true) &&
-                file.name != protectedName
+        val manager = downloadManager()
+        val installers = olderUpdateInstallers(directory, distribution, BuildConfig.VERSION_NAME,
+            manager.installerDownloads(), preferences().getLong(PREF_ID, NO_DOWNLOAD_ID))
+        var deletedCount = 0
+        var deletedBytes = 0L
+        if (delete) for (installer in installers) {
+            val removed = runCatching {
+                if (installer.id != NO_DOWNLOAD_ID && manager.remove(installer.id) > 0) true
+                else installer.file.canonicalFile == installer.file && installer.file.delete()
+            }.onFailure {
+                Log.w(TAG, "Failed to delete update installer ${installer.file.name}", it)
+            }.getOrDefault(false)
+            if (removed) {
+                deletedCount++
+                deletedBytes += installer.bytes
+            }
         }
+        return DownloadedApkCleanup(installers.size, installers.sumOf { it.bytes }, deletedCount, deletedBytes,
+            folderAccessRequired = needsInstallerFolderAccess())
     }
 
     fun setUpdatePackage(updatePackage: UpdatePackage) {
@@ -911,12 +916,15 @@ object AppUpdates {
 
         response.use {
             if (!it.isSuccessful) {
-                error("GitHub returned HTTP ${it.code} for $url")
+                throw UpdateHttpException(it.code, url)
             }
 
             return it.body?.string().orEmpty()
         }
     }
+
+    private class UpdateHttpException(val code: Int, url: String) :
+        IllegalStateException("GitHub returned HTTP $code for $url")
 
     private fun expectedReleaseTag(version: String): String = distribution.releaseTag(version)
 

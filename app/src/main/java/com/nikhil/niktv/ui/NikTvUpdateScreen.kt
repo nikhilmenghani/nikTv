@@ -124,7 +124,8 @@ internal fun MandatoryNikTvUpdateScreen(
     enforcementEnabled: Boolean,
     setEnforcementEnabled: (Boolean) -> Unit,
     downloadUpdate: ((UpdateInfo) -> Unit)? = null,
-    installUpdate: (() -> Unit)? = null
+    installUpdate: (() -> Unit)? = null,
+    onLater: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val actionRequester = remember { FocusRequester() }
@@ -178,7 +179,7 @@ internal fun MandatoryNikTvUpdateScreen(
             }
         }
     }
-    BackHandler(enabled = true) { }
+    BackHandler(enabled = true) { onLater?.invoke() }
 
     Surface(Modifier.fillMaxSize(), color = Color(0xFF090909)) {
         Box(
@@ -202,13 +203,18 @@ internal fun MandatoryNikTvUpdateScreen(
                         }
                     }
                     Text(
-                        if (checking) "Checking for updates…" else "Update required",
+                        when {
+                            checking -> "Checking for updates…"
+                            onLater != null -> "Update available"
+                            else -> "Update required"
+                        },
                         color = Color.White,
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         if (checking) "Confirming that NikTV is up to date."
+                        else if (onLater != null) "NikTV ${update?.version} is available. Installed version ${BuildConfig.VERSION_NAME}."
                         else "NikTV ${update?.version} is available. Update from ${BuildConfig.VERSION_NAME} to continue.",
                         color = Color(0xFFB3B3B3),
                         style = MaterialTheme.typography.bodyLarge,
@@ -283,7 +289,11 @@ internal fun MandatoryNikTvUpdateScreen(
                             Text("Update settings")
                         }
                     }
-                    Text(
+                    if (onLater != null) {
+                        NikTvTextActionButton(onClick = onLater, modifier = Modifier.fillMaxWidth()) {
+                            Text("Back to profiles")
+                        }
+                    } else Text(
                         "The latest version is required to continue using NikTV.",
                         color = Color.Gray,
                         style = MaterialTheme.typography.bodySmall,

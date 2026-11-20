@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.model.PortalProfile
+import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
 import com.nikhil.niktv.update.UpdatePackage
@@ -98,7 +99,11 @@ class CompactSettingsDeviceTest {
             bitmap.recycle()
         }
     }
-    private fun fixture(tv: Boolean, test: (AtomicReference<PlaybackEngine>, AtomicBoolean, AtomicInteger) -> Unit) {
+    private fun fixture(
+        tv: Boolean,
+        cleanup: DownloadedApkCleanup? = null,
+        test: (AtomicReference<PlaybackEngine>, AtomicBoolean, AtomicInteger) -> Unit,
+    ) {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
         val automation = instrumentation.uiAutomation
@@ -126,7 +131,7 @@ class CompactSettingsDeviceTest {
                 var state by remember { mutableStateOf(NikTvState(restoring = false, savedProfile = profile, profiles = listOf(profile))) }
                 val updates = remember { SettingsUpdateStreams(MutableStateFlow(UpdateDownloadState.Idle),
                     MutableStateFlow<UpdateInfo?>(null), MutableStateFlow(false), MutableStateFlow(false),
-                    MutableStateFlow(UpdatePackage.AUTO), { null }) }
+                    MutableStateFlow(UpdatePackage.AUTO), { cleanup }) }
                 CompositionLocalProvider(LocalConfiguration provides config, LocalSettingsUpdateStreams provides updates,
                     LocalOpenUserProfiles provides { accountNavigation.set("profiles") },
                     LocalOpenAccountScreen provides { accountNavigation.set("account") }) { MaterialTheme(colorScheme = NikColors) {
@@ -346,6 +351,22 @@ class CompactSettingsDeviceTest {
         key(KeyEvent.KEYCODE_BACK)
         await("Back restores Account & profile data") { focused("Account & profile data") }
         assertFalse(closed.get())
+    }
+
+    @Test fun tabletDpadReachesCleanupWithRestrictedStorage() = fixture(
+        tv = false,
+        cleanup = DownloadedApkCleanup(0, 0, folderAccessRequired = true),
+    ) { _, _, _ ->
+        click("App & updates")
+        await("Installer cleanup shows the storage state") { find("Allow file access to manage older installers") != null }
+        instrumentation.setInTouchMode(false)
+        await("The update check accepts D-pad focus") {
+            val action = button("Check for updates")
+            focused("Check for updates") || action?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true
+        }
+        move(KeyEvent.KEYCODE_DPAD_DOWN, "Delete older update APKs")
+        screenshot("settings-tablet-update-cleanup.png")
+        move(KeyEvent.KEYCODE_DPAD_DOWN, "Update preferences")
     }
 
     private fun hasEditableField(requireFocus: Boolean = false): Boolean {

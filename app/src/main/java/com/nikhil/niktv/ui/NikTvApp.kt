@@ -98,9 +98,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.compose.SubcomposeAsyncImage
@@ -366,12 +363,12 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
-    LanPlaybackHost(vm) { AccountProfileGate(vm) { NikTvAuthenticatedApp(vm) } }
+    LanPlaybackHost(vm) { AccountProfileGate(vm) { checking -> NikTvAuthenticatedApp(vm, checking) } }
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
+internal fun NikTvAuthenticatedApp(vm: NikTvViewModel, checkingForRequiredUpdate: Boolean = false) {
     val openUserProfiles = LocalOpenUserProfiles.current
     var metadataLookup by remember { mutableStateOf<Pair<MediaItem, CatalogType>?>(null) }
     androidx.compose.runtime.CompositionLocalProvider(
@@ -410,7 +407,7 @@ internal fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
         LocalMarkUnwatched provides vm::markUnwatched,
         LocalShowRecommendations provides vm::showRecommendationsOnHome,
         LocalRecommendationTypeFor provides vm::recommendationTypeFor) {
-        NikTvAppContent(vm)
+        NikTvAppContent(vm, checkingForRequiredUpdate)
         metadataLookup?.let { (item, type) ->
             ProviderMetadataLookupDialog(item, type, confirm = { card -> vm.confirmProviderTmdb(item, type, card) },
                 close = { metadataLookup = null })
@@ -420,7 +417,7 @@ internal fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun NikTvAppContent(vm: NikTvViewModel) {
+private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boolean) {
     val openAccount = LocalOpenAccountScreen.current
     val openUserProfiles = LocalOpenUserProfiles.current
     val closeProfileDownloads = LocalCloseProfileDownloads.current
@@ -442,13 +439,6 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
-    val startupUpdateCheckEnabled by AppUpdates.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
-    var checkingForRequiredUpdate by remember { mutableStateOf(
-        updateEnforcementEnabled &&
-            startupUpdateCheckEnabled &&
-            pendingUpdate == null &&
-            updateDownloadState.updateInfoOrNull() == null
-    ) }
     val appContext = LocalContext.current
     val onScreenDpadEnabled by rememberOnScreenDpadEnabled()
     val appConfiguration = LocalConfiguration.current
@@ -487,22 +477,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val clipboard = remember(appContext) {
         appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
-    val updateLifecycle = LocalLifecycleOwner.current.lifecycle
-    val updateAlreadyKnown = pendingUpdate != null || updateDownloadState.updateInfoOrNull() != null
     val playbackActive = state.nowPlaying != null
-    LaunchedEffect(updateLifecycle, startupUpdateCheckEnabled, playbackActive, updateAlreadyKnown) {
-        if (!startupUpdateCheckEnabled || playbackActive || updateAlreadyKnown) {
-            checkingForRequiredUpdate = false
-            return@LaunchedEffect
-        }
-        updateLifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            com.nikhil.niktv.update.automaticUpdateChecks(
-                check = { AppUpdates.check() },
-                available = { AppUpdates.notifyAvailable(appContext, it) },
-                attemptFinished = { checkingForRequiredUpdate = false },
-                failed = { android.util.Log.w("AppUpdates", "Foreground update check failed; retrying in one minute", it) })
-        }
-    }
     val requiredUpdate = pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     val directPortalOwner = LocalViewingOwner.current

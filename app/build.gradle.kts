@@ -121,6 +121,7 @@ android {
         versionName = "0.1.0"
         buildConfigField("String", "LOCAL_GITHUB_TOKEN", "\"\"")
         buildConfigField("boolean", "PLAYBACK_SYNC_DIAGNOSTICS", "false")
+        buildConfigField("boolean", "FIRE_TV_APK", fireTvApk.get().toString())
         listOf("NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION").forEach {
             buildConfigField("String", it, "\"\"")
         }
@@ -191,6 +192,11 @@ android {
     if (providers.gradleProperty("regressionBuild").orNull == "true") {
         sourceSets.getByName("debug") {
             manifest.srcFile("src/regression/AndroidManifest.xml")
+        }
+    }
+    if (fireTvApk.get()) {
+        sourceSets.getByName("release") {
+            manifest.srcFile("src/firetv/AndroidManifest.xml")
         }
     }
     buildFeatures { compose = true; buildConfig = true; resValues = true }
