@@ -12,9 +12,11 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
 import androidx.test.platform.app.InstrumentationRegistry
+import com.nikhil.niktv.data.ViewerLayout
 import com.nikhil.niktv.model.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -28,8 +30,8 @@ class VideoDecoderControlsDeviceTest {
     private val ins get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = ins.targetContext
     private fun main(block: () -> Unit) = ins.runOnMainSync(block)
-    private fun await(message: String, test: () -> Boolean) {
-        val end = SystemClock.uptimeMillis() + 10_000
+    private fun await(message: String, timeoutMillis: Long = 10_000, test: () -> Boolean) {
+        val end = SystemClock.uptimeMillis() + timeoutMillis
         while (!test() && SystemClock.uptimeMillis() < end) SystemClock.sleep(30)
         assertTrue(message, test())
     }
@@ -87,6 +89,82 @@ class VideoDecoderControlsDeviceTest {
         ins.uiAutomation.takeScreenshot()?.let { bitmap ->
             File(context.cacheDir, name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
             bitmap.recycle()
+        }
+    }
+
+    @Test fun easyPlayerShowsSimpleChannelListFromButton() {
+        check(context.packageName.endsWith(".regression"))
+        val audio = requireNotNull(context.getSystemService(android.media.AudioManager::class.java))
+        val originalVolume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        try {
+            for (engine in listOf(PlaybackEngine.MEDIA3, PlaybackEngine.VLC)) PlaybackEngineFixtureTest().FixtureServer().use { server ->
+                val host = ins.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as PlaybackFixtureHostActivity
+                try {
+                    val one = MediaItem("one", "First fixture channel", null, null)
+                    val two = MediaItem("two", "Second fixture channel", null, null)
+                    val selected = java.util.concurrent.atomic.AtomicReference<String?>(null)
+                    val frames = AtomicInteger()
+                    val media = PlayingMedia(one, "${server.base}/live-dvr", CatalogType.LIVE_TV,
+                        episodeQueue = listOf(one, two), progressKey = "easy-player-${engine.name}", playbackFormat = "HLS")
+                    main {
+                        host.setContent {
+                            MaterialTheme(colorScheme = NikColors) {
+                                CompositionLocalProvider(LocalViewerLayout provides ViewerLayout.EASY) {
+                                    PlayerScreen(media, {}, {}, {}, {}, {}, {}, { _, _, _ -> },
+                                        onPlayQueueItem = { item, _ -> selected.set(item.id) },
+                                        playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = true,
+                                        onVideoFrameRendered = { frames.incrementAndGet() })
+                                }
+                            }
+                        }
+                    }
+                    await("Easy $engine player renders the local stream", 25_000) { host.hasWindowFocus() && frames.get() > 0 }
+                    ins.setInTouchMode(true)
+                    val point = FloatArray(2)
+                    main {
+                        val view = host.window.decorView
+                        val origin = IntArray(2).also(view::getLocationOnScreen)
+                        point[0] = origin[0] + view.width * .5f
+                        point[1] = origin[1] + view.height * .4f
+                    }
+                    val down = SystemClock.uptimeMillis()
+                    for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                        val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, point[0], point[1], 0)
+                        try { ins.sendPointerSync(event) } finally { event.recycle() }
+                    }
+                    await("Easy $engine player has a Channels button") { button("Channels") != null }
+                    assertNull(find("Programme guide"))
+                    assertNull(find("Record live TV"))
+                    activate("More controls")
+                    await("The Easy settings ribbon opens") { find("Hide extra controls") != null }
+                    assertNull(find("Playback information"))
+                    activate("Hide extra controls")
+                    await("The Easy settings ribbon closes") { find("More controls") != null }
+                    activate("Channels")
+                    await("The button opens a list with the playing channel focused") {
+                        find("Playing") != null && focused("First fixture channel") && button("Close") != null
+                    }
+                    assertNull(find("Tiles"))
+                    NavigationAuditEvidence.capture("easy-player-channels-${engine.name.lowercase()}")
+                    key(KeyEvent.KEYCODE_BACK)
+                    await("Back returns to the Channels button") { button("Close") == null && focused("Channels") }
+                    key(KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("The list reopens on the playing channel") { focused("First fixture channel") }
+                    key(KeyEvent.KEYCODE_DPAD_DOWN)
+                    await("D-pad moves to the next channel") { focused("Second fixture channel") }
+                    key(KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("Selecting another channel plays the selected item") { selected.get() == two.id }
+                } catch (failure: AssertionError) {
+                    NavigationAuditEvidence.capture("easy-player-failure-${engine.name.lowercase()}")
+                    throw failure
+                } finally {
+                    main { host.finish() }
+                }
+            }
+        } finally {
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, originalVolume, 0)
         }
     }
     private fun verify(sports: Boolean, requested: Boolean = false) {

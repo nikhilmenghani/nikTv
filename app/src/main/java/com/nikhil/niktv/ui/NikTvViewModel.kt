@@ -3211,7 +3211,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         cancelEpisodeDestination()
         episodePageJob?.cancel()
         val series = requireNotNull(_state.value.selectedSeries)
-        _state.update { it.copy(items = emptyList(), selectedSeriesSeason = season) }
+        _state.update { it.copy(items = emptyList(), selectedSeriesSeason = season, episodePage = 1,
+            episodeHasMore = false, episodeLoadingMore = false, episodePagingError = null) }
         loadSeriesEpisodes(series, season)
     }
 
@@ -3252,8 +3253,13 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 availableSeriesSeasons = cache.availableSeasons,
                 selectedSeriesSeason = cache.season,
                 seriesSeasonEpisodeCounts = episodeSeasonCaches
-                    .filter { it.profileKey == cache.profileKey && it.seriesId == cache.seriesId && !it.hasMore && it.season != null }
-                    .associate { it.season!! to it.episodes.size },
+                    .filter { it.profileKey == cache.profileKey && it.seriesId == cache.seriesId }
+                    .mapNotNull { season ->
+                        val number = season.season ?: return@mapNotNull null
+                        val total = if (!season.hasMore) season.episodes.size else season.totalEpisodes
+                            ?.takeIf { it > season.episodes.size } ?: return@mapNotNull null
+                        number to total
+                    }.toMap(),
                 seriesSeasonEpisodeCountsKey = "${cache.profileKey}|${cache.seriesId}",
                 episodePage = cache.page,
                 episodeHasMore = cache.hasMore,
@@ -3438,7 +3444,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             tmdbEpisodeKeys = if (forceTmdb) emptySet() else previous?.tmdbEpisodeKeys.orEmpty(),
             tmdbSeriesId = previous?.tmdbSeriesId,
             tmdbCachedAtMillis = if (forceTmdb) 0L else previous?.tmdbCachedAtMillis ?: 0L,
-            seasonIndexValidated = true
+            seasonIndexValidated = true,
+            totalEpisodes = loaded.totalEpisodes
         )
         cacheSeason(base)
         if (backgroundTmdb) {
@@ -3513,7 +3520,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                         .sorted(),
                 selectedSeason = next.selectedSeason ?: loaded.selectedSeason,
                 page = next.page,
-                hasMore = next.hasMore && addedEpisodes
+                hasMore = next.hasMore && addedEpisodes,
+                totalEpisodes = next.totalEpisodes ?: loaded.totalEpisodes
             )
             if (!addedEpisodes) break
         }
@@ -3893,7 +3901,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             episodes = loaded.episodes.map { enriched[it.id] ?: it }, page = loaded.page, hasMore = loaded.hasMore,
             metadataVersion = EPISODE_METADATA_VERSION, iptvEpisodes = raw,
             tmdbEpisodeKeys = previous?.tmdbEpisodeKeys.orEmpty(), tmdbSeriesId = previous?.tmdbSeriesId,
-            tmdbCachedAtMillis = previous?.tmdbCachedAtMillis ?: 0L, seasonIndexValidated = previous?.seasonIndexValidated == true)
+            tmdbCachedAtMillis = previous?.tmdbCachedAtMillis ?: 0L, seasonIndexValidated = previous?.seasonIndexValidated == true,
+            totalEpisodes = loaded.totalEpisodes ?: previous?.totalEpisodes)
         cacheSeason(cache)
         _state.update { state ->
             val active = state.nowPlaying
@@ -3908,7 +3917,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val snapshot = _state.value
         val key = snapshot.episodeBrowseKey() ?: return
         val series = snapshot.selectedSeries ?: return
-        if (!snapshot.episodeHasMore || snapshot.episodeLoadingMore || snapshot.episodeDestination?.running == true) return
+        if (snapshot.loading || !snapshot.episodeHasMore || snapshot.episodeLoadingMore || snapshot.episodeDestination?.running == true) return
         _state.update { it.copy(episodeLoadingMore = true, episodePagingError = null) }
         episodePageJob = launchForViewer launch@ {
             try {
@@ -5894,6 +5903,16 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             globalSearchPagerKey = key
         }
         val pager = requireNotNull(globalSearchPager)
+        val categoryNames = mutableMapOf<CatalogType, Map<String, String>>()
+        fun searchCategoryName(type: SearchContentType, category: String): String? {
+            if (category == "*") return "All categories"
+            val catalog = catalogTypeForSearch(type)
+            return categoryNames.getOrPut(catalog) {
+                _state.value.rawCategoriesByType[catalog].orEmpty()
+                    .ifEmpty { _state.value.browseCachesByType[catalog]?.categories.orEmpty() }
+                    .associate { it.id to it.title }
+            }[category]
+        }
         val searchJob = kotlinx.coroutines.currentCoroutineContext()[Job]
         fun current() = searchJob?.isActive != false && _state.value.let {
             it.searchOpen && it.session?.profile?.cacheKey() == profileKey &&
@@ -5902,20 +5921,18 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false, searchProviderMessage = null,
             searchResults = existing.filter { it.searchResultType in globalSearchTypes },
             searchUsedServer = true, searchHasMore = pager.hasMore,
-            searchActivityTitle = "Loading provider results") }
+            searchActivityTitle = if (append) "Loading more IPTV results" else "Searching IPTV") }
         try {
             var failures = 0
-            var checkedPages = 0
             do {
             val batch = pager.next(
                 search = { type, category, page ->
-                    _state.update { it.copy(searchActivityDetail = "${type.title} · $checkedPages pages checked",
-                        searchActivityProgress = null) }
+                    val location = listOfNotNull(type.title, searchCategoryName(type, category), "Page $page").joinToString(" · ")
+                    if (current()) _state.update { it.copy(searchActivityDetail = location, searchActivityProgress = null) }
                     delay(METADATA_SCAN_REQUEST_DELAY_MS)
                     val result = withAutomaticSessionRetry(session) { activeSession ->
                         searchProviderPage(activeSession, type, query, page, category)
                     }
-                    checkedPages++
                     val previous = store.pagedSearches.first().firstOrNull {
                         it.profileKey == profileKey && it.type == type && it.query.equals(query, true) && it.categoryId == category
                     }
@@ -5932,7 +5949,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                                 portal.categories(activeSession, catalogType)
                             }
                         }
-                    filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters).map { it.id }
+                    val categories = filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters)
+                    categoryNames[catalogType] = categories.associate { it.id to it.title }
+                    categories.map { it.id }
                     }
                 },
                 onItems = { items ->
@@ -6009,7 +6028,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     } },
                     progress = { scanned, total -> _state.update { current -> current.copy(
                         searchActivityTitle = "Searching IPTV categories",
-                        searchActivityDetail = "Categories ${scanned + 1}–${minOf(scanned + 3, total)} of $total",
+                        searchActivityDetail = "${type.title} · $scanned of $total categories checked",
                         searchActivityProgress = scanned.toFloat() / total.coerceAtLeast(1)) } },
                     publish = { discovered -> _state.update { current ->
                         if (current.searchOpen && current.session?.profile?.cacheKey() == profileKey &&

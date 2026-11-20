@@ -51,7 +51,7 @@ internal fun seasonEpisodeCountLabels(provider: Map<Int, Int>, tmdb: Map<Int, In
     loaded: Int, hasMore: Boolean, loading: Boolean): Map<Int, String> {
     val result = tmdb.filterValues { it >= 0 }.mapValues { "${it.value} eps · TMDB" }.toMutableMap()
     provider.filterValues { it >= 0 }.forEach { (season, count) -> result[season] = "$count episodes" }
-    if (selected != null && !loading && (loaded > 0 || selected !in result))
+    if (selected != null && !loading && selected !in provider && (loaded > 0 || selected !in result))
         result[selected] = if (hasMore) "$loaded+ loaded" else "$loaded episodes"
     return result
 }

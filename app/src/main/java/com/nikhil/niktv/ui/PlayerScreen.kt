@@ -604,6 +604,10 @@ fun PlayerScreen(
     }
     val hasPlaybackQueue =
         playerQueueItems.size > 1 || queueHasMore || queueLoadingMore
+    val easyPlayer = LocalViewerLayout.current == com.nikhil.niktv.data.ViewerLayout.EASY
+    val showEasyList = easyPlayer && focusMode && hasPlaybackQueue
+    val easyListRequester = remember(media.progressKey) { FocusRequester() }
+    val queueGesturesAllowed by rememberUpdatedState(!easyPlayer)
     LaunchedEffect(modeFeedback) {
         if (modeFeedback != null) {
             delay(1_800L)
@@ -1673,8 +1677,10 @@ fun PlayerScreen(
 
     fun showEpisodeQueue() {
         if (!focusMode || !hasPlaybackQueue) return
-        controlsVisible = false
-        controlsFocused = false
+        if (!easyPlayer) {
+            controlsVisible = false
+            controlsFocused = false
+        }
         queueRevealDragging = false
         queueRevealProgress = 1f
         queueVisible = true
@@ -1761,7 +1767,7 @@ fun PlayerScreen(
         modifier
             .fillMaxSize()
             .playerQueueSwipeObserver(
-                enabled = focusMode && hasPlaybackQueue && !pictureEditorVisible,
+                enabled = !easyPlayer && focusMode && hasPlaybackQueue && !pictureEditorVisible,
                 onOpen = ::showEpisodeQueue
             )
             .playerActivityObserver {
@@ -2018,7 +2024,7 @@ fun PlayerScreen(
                                 tapCandidate = true
                                 queueGestureOwned =
                                     focusMode &&
-                                        hasPlaybackQueue &&
+                                        queueGesturesAllowed && hasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         !playerOptionsOpen &&
                                         if (smallTouchDevice) {
@@ -2234,7 +2240,7 @@ fun PlayerScreen(
         VideoAppearanceOverlay(activeAppearanceProfile)
         MobileQueueSwipeHandle(
             visible =
-                compactMobileControls &&
+                !easyPlayer && compactMobileControls &&
                     focusMode &&
                     hasPlaybackQueue &&
                     !queueVisible &&
@@ -2262,8 +2268,9 @@ fun PlayerScreen(
 
 
             val firstQuickActionRequester = when {
-                media.catalogType == CatalogType.LIVE_TV -> programmeGuideFocusRequester
+                !easyPlayer && media.catalogType == CatalogType.LIVE_TV -> programmeGuideFocusRequester
                 introAvailable -> skipIntroFocusRequester
+                showEasyList -> easyListRequester
                 extraControlsOpen -> settingsRibbon.firstOr(extraControlsRequester)
                 else -> extraControlsRequester
             }
@@ -2271,6 +2278,12 @@ fun PlayerScreen(
                 media.nextEpisode != null -> nextFocusRequester
                 seekable -> forwardFocusRequester
                 else -> playPauseFocusRequester
+            }
+            val lastQuickActionRequester = when {
+                showEasyList -> easyListRequester
+                !easyPlayer && media.catalogType == CatalogType.LIVE_TV -> downloadFocusRequester
+                introAvailable -> skipIntroFocusRequester
+                else -> lastPlaybackActionRequester
             }
             val controlRowScrollState = rememberScrollState()
             val playbackDetailLines = buildList {
@@ -2501,7 +2514,7 @@ fun PlayerScreen(
                                         coroutineScope.launch { delay(80L); action() }
                                     }) { showControlsAndFocusPlayPause() }
                             ))
-                        add(PlayerSettingAction(
+                        if (!easyPlayer) add(PlayerSettingAction(
                                 kind = PlayerSettingKind.INFORMATION,
                                 requester = moreFocusRequester,
                                 icon = Icons.Default.Info,
@@ -2664,7 +2677,7 @@ fun PlayerScreen(
                                             event.type == ComposeKeyEventType.KeyDown &&
                                             event.key == ComposeKey.DirectionDown &&
                                             focusMode &&
-                                            hasPlaybackQueue
+                                            hasPlaybackQueue && !easyPlayer
                                         ) {
                                             dpadInteraction++
                                 watching.interact()
@@ -2811,12 +2824,20 @@ fun PlayerScreen(
                                 if (introAvailable) PlayerChromeIconButton(
                                     icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
                                     modifier = Modifier.focusRequester(skipIntroFocusRequester).playerDpadFocusRoutes(
-                                        left = lastPlaybackActionRequester, right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
+                                        left = lastPlaybackActionRequester, right = if (showEasyList) easyListRequester
+                                            else if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
                                         up = if (seekable) progressFocusRequester else backFocusRequester),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it })
 
-                                if (media.catalogType == CatalogType.LIVE_TV) {
+                                if (showEasyList) EasyPlayerListButton(media.catalogType,
+                                    Modifier.focusRequester(easyListRequester).playerDpadFocusRoutes(
+                                        left = if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                        right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
+                                        up = if (seekable) progressFocusRequester else backFocusRequester)
+                                        .onFocusChanged { controlsFocused = it.isFocused },
+                                    open = ::showEpisodeQueue)
+                                if (!easyPlayer && media.catalogType == CatalogType.LIVE_TV) {
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -2827,7 +2848,7 @@ fun PlayerScreen(
                                 Spacer(Modifier.weight(1f))
                                 PlayerSettingsRibbon(
                                     visible = extraControlsOpen, actions = settingsActions, state = settingsRibbon,
-                                    toggle = extraControlsRequester, left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                    toggle = extraControlsRequester, left = lastQuickActionRequester,
                                     up = if (seekable) progressFocusRequester else backFocusRequester,
                                     onDismiss = { extraControlsOpen = false }, onFocused = { controlsFocused = it }
                                 )
@@ -2842,12 +2863,12 @@ fun PlayerScreen(
                                     selected = extraControlsOpen,
                                     modifier = Modifier.focusRequester(extraControlsRequester)
                                         .focusProperties {
-                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else lastQuickActionRequester
                                             right = FocusRequester.Cancel
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else lastQuickActionRequester,
                                             right = FocusRequester.Cancel,
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         ),
@@ -2932,9 +2953,14 @@ fun PlayerScreen(
                 queueRevealProgress = 0f
                 queueRevealDragging = false
                 dpadInteraction++
-                controlsVisible = false
-                controlsFocused = false
-                coroutineScope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
+                if (easyPlayer) {
+                    controlsVisible = true
+                    returnControlFocus = easyListRequester
+                } else {
+                    controlsVisible = false
+                    controlsFocused = false
+                    coroutineScope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
+                }
             },
             onSelect = { item, index ->
                 queueVisible = false

@@ -18,7 +18,8 @@ internal fun EpisodeSeasonResult.retainLoadedEpisodes(
         previous.season != selectedSeason || previousEpisodes.isEmpty()) return this
     return copy(episodes = (episodes + previousEpisodes).distinctBy { it.id },
         availableSeasons = (availableSeasons + previous.availableSeasons).distinct().sorted(),
-        page = maxOf(page, previous.page), hasMore = previous.hasMore)
+        page = maxOf(page, previous.page), hasMore = previous.hasMore,
+        totalEpisodes = totalEpisodes ?: previous.totalEpisodes)
 }
 
 data class EpisodeDestinationState(

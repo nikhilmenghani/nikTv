@@ -674,6 +674,11 @@ internal fun PlayerQueueOverlay(
     onDismiss: () -> Unit,
     onSelect: (MediaItem, Int) -> Unit
 ) {
+    if (LocalViewerLayout.current == com.nikhil.niktv.data.ViewerLayout.EASY) {
+        EasyPlayerQueue(items, catalogType, playingId, hasMore, loadingMore, onLoadMore, onDismiss, onSelect,
+            favoriteIds, onToggleFavorite)
+        return
+    }
     BackHandler(onBack = onDismiss)
     val availability = rememberIptvAvailability(availabilityProfile)
 

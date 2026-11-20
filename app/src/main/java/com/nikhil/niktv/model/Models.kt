@@ -335,7 +335,8 @@ data class EpisodeSeasonResult(
     val availableSeasons: List<Int>,
     val selectedSeason: Int?,
     val page: Int = 1,
-    val hasMore: Boolean = false
+    val hasMore: Boolean = false,
+    val totalEpisodes: Int? = null
 )
 
 @Serializable
@@ -356,7 +357,8 @@ data class EpisodeSeasonCache(
     val tmdbSeriesId: Int? = null,
     val tmdbCachedAtMillis: Long = 0L,
     /** True after loading the series index, not merely a subsequent season page. */
-    val seasonIndexValidated: Boolean = false
+    val seasonIndexValidated: Boolean = false,
+    val totalEpisodes: Int? = null
 ) {
     val key: String get() = "$profileKey|$seriesId|${season ?: -1}"
 }

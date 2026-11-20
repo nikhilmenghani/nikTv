@@ -28,11 +28,15 @@ internal fun RecentItem.continueWatchingSubtitle(): String {
         ?: return categoryTitle.orEmpty()
     if (kind !in setOf(FavoriteKind.SERIES, FavoriteKind.EPISODE)) return episode.title
     val label = episode.episodeIdentityLabel() ?: return episode.title
-    val title = episode.title.trim()
+    val detail = episode.episodeTitleWithoutIdentity()
+    return if (detail.isBlank()) label else "$label · $detail"
+}
+
+internal fun MediaItem.episodeTitleWithoutIdentity(): String {
+    val title = title.trim()
     val prefix = episodeTitlePrefix.find(title)
     val existingNumber = prefix?.groupValues?.let { (it[2].ifEmpty { it[3] }).toIntOrNull() }
     val existingSeason = prefix?.groupValues?.get(1)?.toIntOrNull()
-    val detail = if (prefix != null && existingNumber == episode.episodeNumber &&
-        (existingSeason == null || existingSeason == episode.seasonNumber)) title.drop(prefix.value.length) else title
-    return if (detail.isBlank()) label else "$label · $detail"
+    return if (prefix != null && existingNumber == episodeNumber &&
+        (existingSeason == null || existingSeason == seasonNumber)) title.drop(prefix.value.length) else title
 }

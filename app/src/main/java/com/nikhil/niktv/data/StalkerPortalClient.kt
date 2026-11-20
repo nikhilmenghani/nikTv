@@ -537,7 +537,7 @@ class StalkerPortalClient(private val context: Context) {
                 .distinctBy { it.id }.sortedWith(compareBy({ it.episodeNumber ?: 0 }, { it.title }))
             return@withContext EpisodeSeasonResult(
                 episodes, listOfNotNull(requestedSeason), requestedSeason, requestedPage,
-                episodePayloadHasMore(pagePayload, requestedPage)
+                episodePayloadHasMore(pagePayload, requestedPage), episodePayloadTotal(pagePayload, episodes.size)
             )
         }
         val initialPayload = if (series.vodSeriesContainer && requestedPage == 1) vodRoot(session, series)
@@ -564,7 +564,16 @@ class StalkerPortalClient(private val context: Context) {
         val seasonPayload = response.payload()
         val episodes = stalkerEpisodeItems(seasonPayload.arrayFromData(), series, seasonNumber, seasonId)
             .distinctBy { it.id }.sortedWith(compareBy({ it.episodeNumber ?: 0 }, { it.title }))
-        EpisodeSeasonResult(episodes, available, selected, requestedPage, episodePayloadHasMore(seasonPayload, requestedPage))
+        EpisodeSeasonResult(episodes, available, selected, requestedPage, episodePayloadHasMore(seasonPayload, requestedPage),
+            episodePayloadTotal(seasonPayload, episodes.size))
+    }
+
+    private fun episodePayloadTotal(payload: JsonElement, episodes: Int): Int? {
+        // Only a season-scoped response with one playable episode per row gives a usable episode total.
+        val metadata = payload as? JsonObject ?: return null
+        if (episodes == 0 || episodes != payload.arrayFromData().size) return null
+        return (metadata.string("total_items")?.toIntOrNull() ?: metadata.string("total")?.toIntOrNull())
+            ?.takeIf { it >= episodes }
     }
 
     private fun episodePayloadHasMore(payload: JsonElement, page: Int): Boolean {

@@ -79,10 +79,26 @@ class SearchLayoutDeviceTest {
             assertTrue("Clear is outside the query field", clearBounds.left > queryBounds.right)
             for (target in listOf("Search type: Movies", "Search provider again", movie.title)) {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                if (target == "Search provider again") {
+                    await("Down reaches the category or provider control") { focused(target) || focused("All categories") }
+                    // On a narrow phone the category control has a row of its own.
+                    if (focused("All categories")) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                }
                 await("Down reaches $target") { focused(target) }
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Center opens the exact movie") { opened.get()?.id == movie.id }
+            instrumentation.runOnMainSync {
+                state.value = state.value.copy(searchServerLoading = true, searchHasMore = true,
+                    searchActivityTitle = "Searching IPTV", searchActivityDetail = "Movies · Action · Page 2",
+                    searchActivityProgress = .5f)
+            }
+            await("Standard Search reports where the provider is searching") {
+                label("Movies · Action · Page 2") != null && find(root()) { it.contentDescription == "Searching" } != null
+            }
+            instrumentation.runOnMainSync { state.value = state.value.copy(searchServerLoading = false, searchHasMore = false) }
+            await("A finished search displays its end state") { label("No more results") != null }
+            assertNull(label("Show more results"))
             screenshot(host, "underline-search-mixed-results")
         } finally {
             instrumentation.runOnMainSync { host.finish() }
