@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.MediaPlayer
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** Reuse LibVLC modules, but give every stream its own player and decoder state. */
 internal class VlcPlaybackSession private constructor(
@@ -24,6 +25,14 @@ internal class VlcPlaybackSession private constructor(
 ) {
     private val closing = AtomicBoolean()
     private val closed = CompletableDeferred<Pair<Long, Long>>()
+    @Volatile private var predecessor: VlcPlaybackSession? = null
+
+    suspend fun awaitPlaybackOwnership() {
+        val previous = predecessor ?: return
+        previous.beginClose()
+        previous.closed.await()
+        if (predecessor === previous) predecessor = null
+    }
 
     fun retireAfterFailure() {
         // A fresh MediaPlayer alone still shares LibVLC's engine-level state.
@@ -45,13 +54,14 @@ internal class VlcPlaybackSession private constructor(
         VlcResumeSeekResult(result, player.time.coerceAtLeast(0L))
     }
 
-    suspend fun close(): Pair<Long, Long> {
+    private fun beginClose() {
         if (closing.compareAndSet(false, true)) {
             // This job survives composition cancellation and owns shutdown once.
             NativePlaybackWorker.scope.launch {
                 val started = SystemClock.elapsedRealtime()
                 var timing = 0L to 0L
                 try {
+                    awaitPlaybackOwnership()
                     withContext(Dispatchers.Main.immediate) { player.setEventListener(null) }
                     timing = runCatching { player.time.coerceAtLeast(0L) to player.length.coerceAtLeast(0L) }
                         .getOrDefault(timing)
@@ -59,6 +69,7 @@ internal class VlcPlaybackSession private constructor(
                     withContext(Dispatchers.Main.immediate) { runCatching { player.detachViews() } }
                     runCatching { player.release() }
                 } finally {
+                    owner.compareAndSet(this@VlcPlaybackSession, null)
                     runCatching { pool.release(options, lib) }
                     closed.complete(timing)
                     android.util.Log.i("NikTvPlayback", "VLC cleanup completed in ${SystemClock.elapsedRealtime() - started}ms on native worker")
@@ -66,10 +77,15 @@ internal class VlcPlaybackSession private constructor(
                 }
             }
         }
+    }
+
+    suspend fun close(): Pair<Long, Long> {
+        beginClose()
         return withContext(NonCancellable) { closed.await() }
     }
 
     companion object {
+        private val owner = AtomicReference<VlcPlaybackSession?>(null)
         private var appContext: Context? = null
         private val pool = ReusablePlaybackEnginePool<List<String>, LibVLC>(
             create = { LibVLC(requireNotNull(appContext), ArrayList(it)) },
@@ -84,6 +100,7 @@ internal class VlcPlaybackSession private constructor(
             try {
                 android.util.Log.i("NikTvPlayback", "VLC engine id=${System.identityHashCode(lib)}; fresh stream player")
                 return VlcPlaybackSession(lib, MediaPlayer(lib), options).also {
+                    it.predecessor = owner.getAndSet(it)
                     android.util.Log.i("NikTvPlayback", "VLC creation elapsedMs=${SystemClock.elapsedRealtime() - started}")
                 }
             } catch (failure: Throwable) {

@@ -425,10 +425,12 @@ internal fun VlcPlayerScreen(
             withContext(kotlinx.coroutines.NonCancellable + NativePlaybackWorker.dispatcher) {
                 created = VlcPlaybackSession.create(context, playbackOptions)
             }
+            kotlinx.coroutines.withTimeout(10_000L) { created?.awaitPlaybackOwnership() }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             session = created
             awaitCancellation()
-        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) { error = "The previous player is still closing. Retry or choose another player." }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { error = "VLC initialization failed. Retry or switch player." }
         finally { created?.close() }
     }
@@ -541,7 +543,7 @@ internal fun VlcPlayerScreen(
             }
         }
     }
-    val surfacePlayer = remember { arrayOfNulls<MediaPlayer>(1) }
+    val surfacePlayers = remember { PlaybackSurfaceBindings<MediaPlayer, VLCVideoLayout>() }
     fun refreshSubtitleTracks() {
         subtitleTracks = player.spuTracks.orEmpty()
             .filter { it.id >= 0 && it.id !in downloadedNativeTrackIds }
@@ -1460,11 +1462,11 @@ internal fun VlcPlayerScreen(
                     // LibVLC only creates its separate subtitle surface when
                     // using SurfaceView. TextureView silently drops SPU text.
                     player.attachViews(layout, null, true, false)
-                    surfacePlayer[0] = player
+                    surfacePlayers.bind(layout, player)
                     }
                 },
                 update = { layout ->
-                    val previouslyAttached = surfacePlayer[0]
+                    val previouslyAttached = surfacePlayers.player(layout)
                     if (previouslyAttached !== player) {
                         // The previous player's coroutine stops/releases it on IO,
                         // and the playback mutex holds back the replacement stream.
@@ -1473,7 +1475,7 @@ internal fun VlcPlayerScreen(
                         runCatching { previouslyAttached?.detachViews() }
                         runCatching { player.detachViews() }
                         player.attachViews(layout, null, true, false)
-                        surfacePlayer[0] = player
+                        surfacePlayers.bind(layout, player)
                     }
                     // Apply after attachment and on every size-mode change. Fill preserves
                     // aspect ratio; Zoom adds visible magnification even for 16:9 streams.
@@ -1495,10 +1497,9 @@ internal fun VlcPlayerScreen(
                     // coroutine performs stop/release on IO exactly once.
                     layout.setOnTouchListener(null)
                     layout.setOnKeyListener(null)
-                    val attached = surfacePlayer[0]
+                    val attached = surfacePlayers.release(layout)
                     runCatching { attached?.setEventListener(null) }
                     runCatching { attached?.detachViews() }
-                    surfacePlayer[0] = null
                     if (videoView === layout) videoView = null
                 },
                 modifier = Modifier.fillMaxSize().then(
