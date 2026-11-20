@@ -187,18 +187,18 @@ class EasyHomeDeviceTest {
                 val seasons = listOf(1, 2)
                 val episodes = seasons.map { season ->
                     val episode = MediaItem("episode-$season", "Fixture Episode $season", null,
-                        "ffmpeg https://fixture.invalid/episode", seasonNumber = season, episodeNumber = 1)
-                    val batch = if (season == 2) listOf(episode) + (2..30).map { number ->
+                        "ffmpeg https://fixture.invalid/episode", seasonNumber = season, episodeNumber = if (season == 2) 31 else 1)
+                    val batch = if (season == 2) (2..30).map { number ->
                         episode.copy(id = "episode-2-$number", title = "Episode $number", episodeNumber = number)
-                    } else listOf(episode)
+                    } + episode else listOf(episode)
                     EpisodeSeasonCache(portal.cacheKey(), series.id, season, seasons, batch, hasMore = season == 2,
                         metadataVersion = episodeCacheVersion, cachedAtMillis = now, iptvEpisodes = batch,
                         tmdbCachedAtMillis = now, seasonIndexValidated = true, totalEpisodes = if (season == 2) 31 else 1)
                 }
                 appVm.episodePageLookup = { _, requestedSeries, season, page, _ ->
                     check(requestedSeries.id == series.id && season == 2 && page == 2)
-                    EpisodeSeasonResult(listOf(episodes.last().episodes.first().copy(id = "episode-2-31",
-                        title = "Episode 31", episodeNumber = 31)), seasons, season, page, totalEpisodes = 31)
+                    EpisodeSeasonResult(listOf(episodes.last().episodes.first().copy(id = "episode-2-1",
+                        title = "Episode 1", episodeNumber = 1)), seasons, season, page, totalEpisodes = 31)
                 }
                 appVm.episodePageEnrichment = { _, _ -> }
                 NikTvViewModel::class.java.getDeclaredField("episodeSeasonCaches").apply { isAccessible = true }
@@ -210,7 +210,7 @@ class EasyHomeDeviceTest {
                     recentlyPlayed = listOf(RecentItem(FavoriteKind.MOVIE, movie, profileKey = portal.cacheKey()),
                         RecentItem(FavoriteKind.SERIES, series, lastPlayed = episodes.first().episodes.first(), profileKey = portal.cacheKey())),
                     playbackProgress = episodes.map { cache ->
-                        val key = providerProgressKey(portal.cacheKey(), cache.episodes.first(), CatalogType.SERIES, series)
+                        val key = providerProgressKey(portal.cacheKey(), cache.episodes.last(), CatalogType.SERIES, series)
                         if (cache.season == 1) PlaybackProgress(key, 0, 0, action = ViewingAction.COMPLETED)
                         else PlaybackProgress(key, 120_000, 360_000)
                     },
@@ -309,6 +309,9 @@ class EasyHomeDeviceTest {
             await("The current episode has progress and the provider total is visible") {
                 find("4 min left") != null && find("30 of 31 episodes") != null
             }
+            val newest = Rect().also(requireNotNull(control("Fixture Episode 2"))::getBoundsInScreen)
+            val next = Rect().also(requireNotNull(control("Season 2, episode 30"))::getBoundsInScreen)
+            assertTrue("Newest episode precedes the rest of its provider page", newest.top < next.top)
             NavigationAuditEvidence.capture("easy-episodes")
             for (attempt in 0 until 20) {
                 if (appVm.state.value.episodePage > 1) break
@@ -318,6 +321,7 @@ class EasyHomeDeviceTest {
             await("Scrolling automatically loads the next episode page") {
                 appVm.state.value.episodePage == 2 && find("31 episodes") != null
             }
+            reveal("Season 2, episode 1")
             tap("Home")
             await("Home returns directly from episodes") { control("Profiles") != null }
             tap("My List")

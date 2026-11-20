@@ -52,6 +52,7 @@ import com.nikhil.niktv.ui.NikTvSecondaryActionButton
 import com.nikhil.niktv.ui.NikDropdownMenuItem
 import com.nikhil.niktv.ui.NikTvState
 import com.nikhil.niktv.ui.episodeRemainingLabel
+import com.nikhil.niktv.ui.episodeComparator
 import com.nikhil.niktv.ui.seriesEpisodeCountLabel
 import com.nikhil.niktv.ui.seriesEpisodeProgress
 import com.nikhil.niktv.ui.episodeTitleWithoutIdentity
@@ -287,7 +288,10 @@ internal fun EasyBrowsePage(
     val keys = remember(entries) { entries.map(EasyBrowseEntry::key) }
     var usedPaging by rememberSaveable(pagingScope) { mutableStateOf(false) }
     var footerFocused by remember { mutableStateOf(false) }
-    var pageStart by remember(pagingScope) { mutableStateOf<Int?>(null) }
+    var previousPageKeys by remember(pagingScope) { mutableStateOf<Set<String>?>(null) }
+    val firstAppendedKey = remember(keys, previousPageKeys) {
+        previousPageKeys?.let { previous -> keys.firstOrNull { it !in previous } }
+    }
     var requestedPage by rememberSaveable(pagingScope) { mutableIntStateOf(-1) }
     val pageItem = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -299,15 +303,15 @@ internal fun EasyBrowsePage(
         requestedPage = page
         requestMore()
     }
-    LaunchedEffect(entries.size, loading) {
-        val start = pageStart ?: return@LaunchedEffect
-        if (loading || entries.size <= start) return@LaunchedEffect
+    LaunchedEffect(firstAppendedKey, loading) {
+        if (loading || firstAppendedKey == null) return@LaunchedEffect
+        val start = keys.indexOf(firstAppendedKey)
         if (footerFocused) {
             list.scrollToItem(start)
             snapshotFlow { list.layoutInfo.visibleItemsInfo.any { it.index == start } }.first { it }
             if (footerFocused) pageItem.requestFocus()
         }
-        pageStart = null
+        previousPageKeys = null
     }
     EasyPage(title, home, back, homeRequester, Modifier.initialFocusEntry(entryRequester, remote)) {
         tools?.let { Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = it) }
@@ -344,7 +348,7 @@ internal fun EasyBrowsePage(
                 }
                 val modifier = Modifier
                     .then(if (entry.key == entryKey) Modifier.focusRequester(listEntry) else Modifier)
-                    .then(if (entries.getOrNull(pageStart ?: -1)?.key == entry.key) Modifier.focusRequester(pageItem) else Modifier)
+                    .then(if (firstAppendedKey == entry.key) Modifier.focusRequester(pageItem) else Modifier)
                 if (actions == null) EasyBrowseTile(entry, openEntry, modifier)
                 else {
                     val requester = remember { FocusRequester() }
@@ -364,7 +368,7 @@ internal fun EasyBrowsePage(
                     if (hasMore) {
                         if (!loading) {
                             usedPaging = true
-                            pageStart = entries.size
+                            previousPageKeys = keys.toSet()
                             requestedPage = page
                             loadMore()
                         }
@@ -473,7 +477,11 @@ internal fun EasySeriesPage(state: NikTvState, series: MediaItem, home: () -> Un
         state.favorites.filter { it.kind == FavoriteKind.EPISODE }.mapTo(mutableSetOf()) { it.media.id }
     }
     val counts = state.seriesSeasonEpisodeCounts.takeIf { state.seriesSeasonEpisodeCountsKey == "$profile|${series.id}" }.orEmpty()
-    val episodes = remember(state.items) { state.items.filter(MediaItem::isEasyIptvTitle).distinctBy(MediaItem::id) }
+    val episodes = remember(state.items) {
+        // Stalker can return newer pages first and order episodes differently within each page.
+        state.items.filter(MediaItem::isEasyIptvTitle).distinctBy(MediaItem::id)
+            .sortedWith(episodeComparator(descending = true))
+    }
     val progress = remember(state.playbackProgress, profile, series.id, episodes) {
         episodes.associate { it.id to seriesEpisodeProgress(state.playbackProgress, profile, series, it) }
     }
