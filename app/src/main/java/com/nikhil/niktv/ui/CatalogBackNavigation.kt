@@ -9,7 +9,7 @@ internal enum class CatalogBackAction {
     CLOSE_FAVORITES,
     CLOSE_SERIES,
     CLOSE_MODERN_SECTION,
-    OPEN_LANDING,
+    OPEN_HOME,
     SHOW_EXIT_CONFIRMATION
 }
 
@@ -34,5 +34,5 @@ internal fun catalogBackAction(
     seriesOpen -> CatalogBackAction.CLOSE_SERIES
     modernSectionOpen -> CatalogBackAction.CLOSE_MODERN_SECTION
     homeOpen -> CatalogBackAction.SHOW_EXIT_CONFIRMATION
-    else -> CatalogBackAction.OPEN_LANDING
+    else -> CatalogBackAction.OPEN_HOME
 }

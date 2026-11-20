@@ -103,7 +103,6 @@ class ProfileDashboardStartupTest {
         application.getSharedPreferences("discovery_experience", 0).edit().putBoolean("enabled", false).commit()
         application.getSharedPreferences("mobile_ui_preferences", 0).edit().putString("mobile_ui_design", "CLASSIC").commit()
         launchDashboard()
-        mutableState().value = vm.state.value.copy(showHomeTab = true)
         vm.openHome()
         assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
         assertTrue(vm.state.value.homeOpen)
@@ -116,7 +115,7 @@ class ProfileDashboardStartupTest {
         val state = stateField.get(vm) as MutableStateFlow<NikTvState>
         for (surface in listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)) {
             state.value = NikTvState(searchOpen = true, settingsOpen = true, favoritesOpen = true,
-                offlineDownloadsOpen = true, watchProvidersOpen = true, showHomeTab = true)
+                offlineDownloadsOpen = true, watchProvidersOpen = true)
             vm.openDiscovery(surface)
             assertEquals(surface, vm.state.value.discoverySurface)
             assertTrue(vm.state.value.homeOpen)
@@ -135,7 +134,7 @@ class ProfileDashboardStartupTest {
         val state = NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }
             .get(vm) as MutableStateFlow<NikTvState>
         val item = MediaItem("fixture", "Fixture", null, null)
-        val origin = NikTvState(searchOpen = true, selectedSeries = item, showHomeTab = true,
+        val origin = NikTvState(searchOpen = true, selectedSeries = item,
             seriesOpenedFromHome = true, seriesOpenedFromFavorites = true, seriesOpenedFromModernSection = true,
             providerMovieDetails = com.nikhil.niktv.discovery.ProviderMovieDetails("fixture", item, listOf(item)),
             movieMatchSelection = TmdbMovie(1, "Movie", "Movie", null, null, null, null, null),
@@ -165,7 +164,6 @@ class ProfileDashboardStartupTest {
     }
 
     @Test fun optimizedHomeIsDefaultAndPreviousHomeRemainsAnExplicitDestination() = runTest(scheduler) {
-        mutableState().value = vm.state.value.copy(showHomeTab = true)
         vm.openHome()
         assertTrue(vm.state.value.discoveryExperiment)
         val originalNavigation = vm.state.value.discoveryNavigationId
@@ -184,7 +182,6 @@ class ProfileDashboardStartupTest {
     }
 
     @Test fun optimizedCatalogsRetainExplicitPreviousRoutes() = runTest(scheduler) {
-        mutableState().value = vm.state.value.copy(showHomeTab = true)
         for (surface in listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)) {
             vm.openDiscoveryExperiment(surface)
             assertEquals(surface, vm.state.value.discoverySurface)
@@ -240,7 +237,7 @@ class ProfileDashboardStartupTest {
         assertNull(vm.state.value.session)
     }
 
-    @Test fun savedSessionOpensLiveTvWithoutWaitingForProviderAuthentication(): Unit = runBlocking {
+    @Test fun savedSessionOpensHomeWithoutWaitingForProviderAuthentication(): Unit = runBlocking {
         val profile = PortalProfile("Cached", "https://unreachable.invalid", "00:00:00:00:00:08")
         val session = PortalSession(profile, "cached-session", "https://unreachable.invalid/portal.php", "", "", "")
         store.save(session)
@@ -254,11 +251,8 @@ class ProfileDashboardStartupTest {
                 }
             }
             assertEquals(session, vm.state.value.session)
-            assertTrue(vm.state.value.isIptvLanding())
-            vm.openHome()
-            vm.openWatchProviders()
-            assertTrue(vm.state.value.isIptvLanding())
-            assertFalse(vm.state.value.watchProvidersOpen)
+            assertEquals(DashboardSurface.HOME, vm.state.value.discoverySurface)
+            assertTrue(vm.state.value.homeOpen)
         } finally {
             com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(RuntimeEnvironment.getApplication(), true)
         }

@@ -1874,10 +1874,7 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
     val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
         .collectAsStateWithLifecycle(emptySet())
     val pinchToZoom by rememberPinchToZoomEnabled(owner)
-    val showHome by key(owner) {
-        remember(context, owner) { com.nikhil.niktv.data.ProfileBrowsePreferences.observeShowHome(context, owner) }
-            .collectAsStateWithLifecycle(com.nikhil.niktv.data.ProfileBrowsePreferences.showHome(context, owner))
-    }
+    val viewerLayout by rememberViewerLayout(owner)
     val scope = rememberCoroutineScope()
     var error by remember(owner) { mutableStateOf<String?>(null) }
     fun update(action: suspend () -> Unit) { scope.launch {
@@ -1887,6 +1884,9 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
     } }
     SettingsSection(profile?.name ?: "Profile", page = SettingsPage.VIEWER_PORTALS) {
         if (profile != null && owner != null) {
+            SettingsPickerRow("App layout", com.nikhil.niktv.data.ViewerLayout.entries.map { it to it.label }, viewerLayout,
+                onSelect = { layout -> update { com.nikhil.niktv.data.ProfileBrowsePreferences.setLayout(context, owner, layout) } },
+                description = "Easy gives this profile a simpler Home with large, labeled shortcuts for watching IPTV.")
             SettingsControlRow("Show and sync on this device", checked = profile.id in enabled,
                 description = "Controls whether this profile appears on Who’s watching.",
                 onToggle = { checked -> update {
@@ -1912,14 +1912,6 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
             if (portals.any { it.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
                 SettingsLinkRow(SettingsPage.XTREAM_CONTENT, "Xtream · Languages, content & sports")
             }
-            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
-            Text("Browsing", Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            SettingsControlRow("Show Home tab", checked = showHome,
-                description = "Show TMDB recommendations on Home. When off, this profile opens to Live TV.",
-                onToggle = { checked -> update {
-                    com.nikhil.niktv.data.ProfileBrowsePreferences.setShowHome(context, owner, checked)
-                } })
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             Text("Playback", Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

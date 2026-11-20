@@ -714,8 +714,7 @@ private fun DiscoveryPreviewContent(
             Text("Browse source", style = MaterialTheme.typography.labelMedium)
             val openExperiment = LocalOpenDiscoveryExperimentSurface.current
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(DashboardSurface.HOME to "Test Home", DashboardSurface.MOVIES to "Test IPTV Movies", DashboardSurface.SERIES to "Test IPTV Series")
-                    .filter { app.showHomeTab || it.first != DashboardSurface.HOME }.forEach { (destination, title) ->
+                listOf(DashboardSurface.HOME to "Test Home", DashboardSurface.MOVIES to "Test IPTV Movies", DashboardSurface.SERIES to "Test IPTV Series").forEach { (destination, title) ->
                     NikTvSecondaryActionButton(onClick = { experimentSettings = false; openExperiment(destination) },
                         modifier = Modifier.weight(1f).semantics { contentDescription = title }) {
                         Text(destination.trialTitle(), maxLines = 1)

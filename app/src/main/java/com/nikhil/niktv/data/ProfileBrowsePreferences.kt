@@ -9,34 +9,40 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
+internal enum class ViewerLayout(val label: String) {
+    STANDARD("Standard"), EASY("Easy")
+}
+
 internal object ProfileBrowsePreferences {
     const val DOMAIN = "profile_browse_v1"
-    private const val SHOW_HOME = "show_home"
+    private const val LAYOUT = "layout"
 
     private fun preferences(context: Context, owner: UserScope) =
         UserProfilePreferences.get(context, DOMAIN, owner = owner)
 
-    fun showHome(context: Context, owner: UserScope?): Boolean =
-        owner?.let { preferences(context, it).getBoolean(SHOW_HOME, false) } ?: false
+    fun layout(context: Context, owner: UserScope?): ViewerLayout {
+        val stored = owner?.let { preferences(context, it).getString(LAYOUT, null) }
+        return ViewerLayout.entries.firstOrNull { it.name == stored } ?: ViewerLayout.STANDARD
+    }
 
-    fun observeShowHome(context: Context, owner: UserScope?) = callbackFlow {
+    fun observeLayout(context: Context, owner: UserScope?) = callbackFlow {
         if (owner == null) {
-            trySend(false)
+            trySend(ViewerLayout.STANDARD)
             close()
             return@callbackFlow
         }
         UserProfilePreferences.warm(context, owner)
         val prefs = preferences(context, owner)
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == SHOW_HOME) trySend(showHome(context, owner))
+            if (key == LAYOUT) trySend(layout(context, owner))
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
-        trySend(showHome(context, owner))
+        trySend(layout(context, owner))
         awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }.flowOn(Dispatchers.IO).distinctUntilChanged()
 
-    suspend fun setShowHome(context: Context, owner: UserScope, enabled: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun setLayout(context: Context, owner: UserScope, layout: ViewerLayout) = withContext(Dispatchers.IO) {
         UserProfilePreferences.warm(context, owner)
-        check(preferences(context, owner).edit().putBoolean(SHOW_HOME, enabled).commit())
+        check(preferences(context, owner).edit().putString(LAYOUT, layout.name).commit())
     }
 }

@@ -371,7 +371,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
+internal fun NikTvAuthenticatedApp(vm: NikTvViewModel) {
     val openUserProfiles = LocalOpenUserProfiles.current
     var metadataLookup by remember { mutableStateOf<Pair<MediaItem, CatalogType>?>(null) }
     androidx.compose.runtime.CompositionLocalProvider(
@@ -506,6 +506,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val requiredUpdate = pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     val directPortalOwner = LocalViewingOwner.current
+    val viewerLayout by rememberViewerLayout(directPortalOwner)
     val hiddenPortals by remember(directPortalOwner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(appContext, directPortalOwner) }
         .collectAsStateWithLifecycle(emptySet())
     val accessiblePortals = state.profiles.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }
@@ -527,7 +528,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
         }
     }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
-        com.nikhil.niktv.discovery.LocalShowHomeTab provides state.showHomeTab,
+        LocalViewerLayout provides viewerLayout,
         com.nikhil.niktv.discovery.LocalPortalFocusReturn provides portalFocusReturn) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }

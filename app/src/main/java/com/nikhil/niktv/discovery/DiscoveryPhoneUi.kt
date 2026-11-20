@@ -81,7 +81,6 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
     select: (DiscoveryPhoneDestination) -> Unit, modifier: Modifier = Modifier) {
     var portalsOpen by remember { mutableStateOf(false) }
     val portals = LocalDirectPortalActions.current
-    val showHomeTab = LocalShowHomeTab.current
     LaunchedEffect(portals.size) { if (portals.size <= 1) portalsOpen = false }
     val portalFocusReturn = LocalPortalFocusReturn.current
     DiscoveryGlassPanel(modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
@@ -89,10 +88,8 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
         fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
         fillWidth = LocalMobileGlassFillWidth.current) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            val destinations = DiscoveryPhoneDestination.entries.filter {
-                it != DiscoveryPhoneDestination.PROVIDERS && (showHomeTab || it != DiscoveryPhoneDestination.HOME)
-            }
-            (destinations + if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination -> key(destination) {
+            (DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS } +
+                if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination ->
                 val active = destination == selected
                 val icon = when (destination) {
                     DiscoveryPhoneDestination.HOME -> Icons.Default.Home
@@ -132,7 +129,7 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                     }
                 }
                 }
-            } }
+            }
         }
     }
 }

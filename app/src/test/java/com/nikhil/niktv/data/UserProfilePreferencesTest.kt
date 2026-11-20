@@ -25,18 +25,20 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
-    @Test fun homeTabDefaultsOffAndOptInIsPortableForOnlyTheEditedViewer() = runBlocking {
-        assertFalse(ProfileBrowsePreferences.observeShowHome(context, family()).first())
-        assertFalse(ProfileBrowsePreferences.showHome(context, kids()))
+    @Test fun easyLayoutIsOptInAndAppliesOnlyToTheEditedProfile() = runBlocking {
+        val legacy = UserProfilePreferences.get(context, ProfileBrowsePreferences.DOMAIN, owner = family())
+        assertTrue(legacy.edit().putBoolean("show_home", false).commit())
+        assertEquals(ViewerLayout.STANDARD, ProfileBrowsePreferences.observeLayout(context, family()).first())
+
         users.selectProfile(kids().profileId)
-        ProfileBrowsePreferences.setShowHome(context, family(), true)
-        assertTrue(ProfileBrowsePreferences.observeShowHome(context, family()).first())
-        assertFalse(ProfileBrowsePreferences.showHome(context, kids()))
+        ProfileBrowsePreferences.setLayout(context, family(), ViewerLayout.EASY)
+        assertEquals(ViewerLayout.EASY, ProfileBrowsePreferences.observeLayout(context, family()).first())
+        assertEquals(ViewerLayout.STANDARD, ProfileBrowsePreferences.layout(context, kids()))
         assertTrue(users.snapshot("101").any {
-            it.profileId == family().profileId && "profile_browse_v1|show_home" in it.payload
+            it.profileId == family().profileId && "profile_browse_v1|layout" in it.payload
         })
-        ProfileBrowsePreferences.setShowHome(context, family(), false)
-        assertFalse(ProfileBrowsePreferences.showHome(context, family()))
+        ProfileBrowsePreferences.setLayout(context, family(), ViewerLayout.STANDARD)
+        assertEquals(ViewerLayout.STANDARD, ProfileBrowsePreferences.layout(context, family()))
     }
 
     @Test fun seriesEpisodeViewSurvivesFastNavigationAndRetainsItsViewer() = runBlocking {

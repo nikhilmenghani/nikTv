@@ -171,7 +171,7 @@ class NavigationAuditDeviceTest {
                 @Suppress("UNCHECKED_CAST")
                 state = NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }.get(app) as MutableStateFlow<NikTvState>
                 state.value = NikTvState(savedProfile = profile, session = PortalSession(profile, "fixture", profile.portalUrl, "", "", ""),
-                    restoring = false, discoverySurface = DashboardSurface.HOME, showHomeTab = true)
+                    restoring = false, discoverySurface = DashboardSurface.HOME)
                 discovery = DiscoveryViewModel(context.applicationContext as Application, source)
                 activity.setContent { MaterialTheme {
                     val current by app.state.collectAsState()
@@ -191,7 +191,6 @@ class NavigationAuditDeviceTest {
                     BackHandler(current.movieMatchSelection != null || current.seriesMatchSelection != null || current.searchOpen) {
                         if (current.movieMatchSelection != null || current.seriesMatchSelection != null) closeMatches() else app.closeSearch()
                     }
-                    CompositionLocalProvider(LocalShowHomeTab provides current.showHomeTab) {
                     Box(Modifier.fillMaxSize()) {
                         when {
                             current.movieMatchSelection != null || current.seriesMatchSelection != null ->
@@ -220,7 +219,6 @@ class NavigationAuditDeviceTest {
                             DiscoveryPhoneBottomNavigation(selected, { destination -> navigate(destination.title) },
                                 Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars))
                         }
-                    }
                     }
                 } }
             }

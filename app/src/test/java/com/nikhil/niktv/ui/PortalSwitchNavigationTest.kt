@@ -11,7 +11,7 @@ class PortalSwitchNavigationTest {
 
     @Test fun eachDashboardStaysOnItsCurrentSurfaceWhenThePortalChanges() {
         for (surface in DashboardSurface.entries) {
-            val origin = NikTvState(session = session, savedProfile = profile, showHomeTab = true,
+            val origin = NikTvState(session = session, savedProfile = profile,
                 discoverySurface = surface, homeOpen = true, discoveryExperiment = true)
             val result = PortalSwitchDestination.capture(origin).restore(origin)
             assertEquals(surface, result.discoverySurface)
@@ -32,7 +32,7 @@ class PortalSwitchNavigationTest {
         assertNull(result.discoverySurface)
         assertNull(result.selectedCategory)
         assertNull(result.modernIptvCategory)
-        assertEquals(CatalogBackAction.SHOW_EXIT_CONFIRMATION, backAction(result))
+        assertEquals(CatalogBackAction.OPEN_HOME, backAction(result))
     }
 
     @Test fun categorySearchRetainsTitleAndMediaTypeAndSearchesAllCategoriesOfTheNewPortal() {
@@ -110,7 +110,7 @@ class PortalSwitchNavigationTest {
             discoveryExperiment = false, favoritesOpen = true, searchOpen = true,
             searchQuery = "Previous viewer's search", searchType = SearchContentType.SERIES,
             searchCategoryId = "old-category", selectedSeries = movie, seriesOpenedFromFavorites = true)
-        val result = PortalSwitchDestination.capture(origin).restore(origin.copy(showHomeTab = true))
+        val result = PortalSwitchDestination.capture(origin).restore(origin)
         assertEquals(DashboardSurface.HOME, result.discoverySurface)
         assertTrue(result.discoveryExperiment)
         assertTrue(result.homeOpen)
@@ -124,23 +124,7 @@ class PortalSwitchNavigationTest {
         assertEquals(CatalogBackAction.SHOW_EXIT_CONFIRMATION, backAction(result))
     }
 
-    @Test fun disablingHomeDoesNotLeaveAHomeRouteBehindSettingsOrSearch() {
-        val home = NikTvState(session = session, showHomeTab = true,
-            discoverySurface = DashboardSurface.HOME, homeOpen = true)
-        val origin = SettingsReturnSurface.capture(home)
-        val whileEditing = home.copy(settingsOpen = true, homeOpen = false).withHomeTab(false)
-        val closed = origin.restore(whileEditing).withHomeTab()
-        assertTrue(closed.isIptvLanding())
-        val switched = PortalSwitchDestination.capture(home.copy(searchOpen = true, searchQuery = "Friends"))
-            .restore(closed)
-        assertTrue(switched.isIptvLanding())
-        assertTrue(switched.searchOpen)
-        assertEquals("Friends", switched.searchQuery)
-        assertEquals(CatalogBackAction.CLOSE_SEARCH, backAction(switched))
-    }
-
     private fun backAction(state: NikTvState) = catalogBackAction(searchOpen = state.searchOpen,
         favoritesOpen = state.favoritesOpen, seriesOpen = state.selectedSeries != null,
-        modernSectionOpen = state.modernIptvCategory != null || state.modernTmdbSection != null,
-        homeOpen = state.homeOpen || state.isIptvLanding())
+        modernSectionOpen = state.modernIptvCategory != null || state.modernTmdbSection != null, homeOpen = state.homeOpen)
 }

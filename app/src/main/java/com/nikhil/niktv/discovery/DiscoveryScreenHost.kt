@@ -238,13 +238,7 @@ internal fun DiscoveryScreenHost(
     val openHomeExperiment = com.nikhil.niktv.discovery.LocalOpenDiscoveryExperiment.current
     val openPreviousHome = com.nikhil.niktv.discovery.LocalOpenPreviousHome.current
     val openPreviousDiscovery = com.nikhil.niktv.discovery.LocalOpenPreviousDiscovery.current
-    fun returnToLanding() {
-        when {
-            state.isIptvLanding() || state.discoverySurface == DashboardSurface.HOME -> exitConfirmationOpen = true
-            state.showHomeTab -> openTrial(DashboardSurface.HOME)
-            else -> selectType(CatalogType.LIVE_TV)
-        }
-    }
+    fun landingHome() { openTrial(DashboardSurface.HOME) }
     val playTrialEpisode = com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode.current
     val openProviders = com.nikhil.niktv.discovery.LocalOpenWatchProviders.current
     val providersVisible = state.watchProvidersOpen && state.homeOpen && !state.settingsOpen && !state.searchOpen &&
@@ -253,6 +247,11 @@ internal fun DiscoveryScreenHost(
     val previewVisible = !providersVisible && state.discoverySurface != null && !state.settingsOpen && !state.searchOpen &&
         !state.favoritesOpen && !state.offlineDownloadsOpen && state.selectedSeries == null &&
         state.movieMatchSelection == null && state.seriesMatchSelection == null && !modernSectionOpen
+    val easyHome = previewVisible && state.discoverySurface == DashboardSurface.HOME &&
+        LocalViewerLayout.current == com.nikhil.niktv.data.ViewerLayout.EASY
+    var easyHomeReturn by rememberSaveable(LocalViewingOwner.current, state.savedProfile?.cacheKey()) {
+        mutableStateOf(EasyHomeAction.LIVE)
+    }
     val previewProviderCategory = state.discoverySurface != null && state.modernIptvCategory?.type in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
         state.selectedSeries == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && !state.offlineDownloadsOpen
     val discoveryMatches = state.movieMatchSelection != null || state.seriesMatchSelection != null
@@ -314,10 +313,12 @@ internal fun DiscoveryScreenHost(
         favoritesOpen = state.favoritesOpen,
         seriesOpen = state.selectedSeries != null,
         modernSectionOpen = modernSectionOpen,
-        homeOpen = state.homeOpen || state.isIptvLanding()
+        homeOpen = state.homeOpen
     )
-    BackHandler(enabled = !exitConfirmationOpen && !previewVisible && !providersVisible) {
-        if (libraryBrowseAll && discoveryLibrary != null && !modernSectionOpen) libraryBrowseAll = false else when (backAction) {
+    BackHandler(enabled = !exitConfirmationOpen && (!previewVisible || easyHome) && !providersVisible) {
+        if (easyHome) {
+            exitConfirmationOpen = true
+        } else if (libraryBrowseAll && discoveryLibrary != null && !modernSectionOpen) libraryBrowseAll = false else when (backAction) {
             CatalogBackAction.CLOSE_MOVIE_MATCHES -> closeTmdbMovieMatches()
             CatalogBackAction.CLOSE_SERIES_MATCHES -> closeTmdbSeriesMatches()
             CatalogBackAction.CLOSE_DOWNLOADS -> closeOfflineDownloads()
@@ -326,7 +327,7 @@ internal fun DiscoveryScreenHost(
             CatalogBackAction.CLOSE_FAVORITES -> closeFavorites()
             CatalogBackAction.CLOSE_SERIES -> closeSeries()
             CatalogBackAction.CLOSE_MODERN_SECTION -> closeModernSection()
-            CatalogBackAction.OPEN_LANDING -> returnToLanding()
+            CatalogBackAction.OPEN_HOME -> landingHome()
             CatalogBackAction.SHOW_EXIT_CONFIRMATION -> exitConfirmationOpen = true
         }
     }
@@ -435,7 +436,10 @@ internal fun DiscoveryScreenHost(
                     CompositionLocalProvider(LocalDiscoveryExperiment provides state.discoveryExperiment) {
                     com.nikhil.niktv.discovery.DiscoveryPreviewScreen(
                     app = state, surface = requireNotNull(state.discoverySurface), selectSurface = openTrial,
-                    exit = ::returnToLanding, navigate = { label -> when (label) {
+                    exit = {
+                        if (state.discoverySurface == DashboardSurface.HOME) exitConfirmationOpen = true
+                        else landingHome()
+                    }, navigate = { label -> when (label) {
                         "Home" -> openHome(); "Home 2" -> openHomeExperiment(); "Previous Home" -> openPreviousHome(); "Live TV" -> selectType(CatalogType.LIVE_TV)
                         "Previous Movies" -> openPreviousDiscovery(DashboardSurface.MOVIES)
                         "Previous Series" -> openPreviousDiscovery(DashboardSurface.SERIES)
@@ -526,7 +530,7 @@ internal fun DiscoveryScreenHost(
             ) { MainContent(Modifier.fillMaxSize()) }
             else if (discoveryLibrary != null) com.nikhil.niktv.discovery.DiscoveryLibraryScreen(
                 state, discoveryLibrary,
-                back = { if (libraryBrowseAll) libraryBrowseAll = false else if (state.favoritesOpen) closeFavorites() else if (modernSectionOpen) closeModernSection() else returnToLanding() },
+                back = { if (libraryBrowseAll) libraryBrowseAll = false else if (state.favoritesOpen) closeFavorites() else if (modernSectionOpen) closeModernSection() else landingHome() },
                 select = openTrial, navigate = navigateDiscovery,
                 presentation = libraryPresentation.takeIf { (!useEstablishedLibrary || state.favoritesOpen) && !modernSectionOpen && !libraryBrowseAll }) {
                     Column(Modifier.fillMaxSize()) {
@@ -556,6 +560,24 @@ internal fun DiscoveryScreenHost(
     if (state.settingsOpen) {
         // Settings owns its header, navigation and system insets on every layout.
         MainContent(Modifier.fillMaxSize())
+    } else if (easyHome) {
+        val recent = remember(state.recentlyPlayed, state.session?.profile, state.xtreamContentPolicy,
+            state.contentPolicyCategories, state.rawCategoriesByType, state.browseCachesByType, state.categories) {
+            state.easyHomeResume()
+        }
+        EasyHomeScreen(recent, easyHomeReturn) { action ->
+            easyHomeReturn = action
+            when (action) {
+                EasyHomeAction.LIVE -> selectType(CatalogType.LIVE_TV)
+                EasyHomeAction.MOVIES -> openTrial(DashboardSurface.MOVIES)
+                EasyHomeAction.SERIES -> openTrial(DashboardSurface.SERIES)
+                EasyHomeAction.SEARCH -> (openGlobalSearch ?: openSearch)()
+                EasyHomeAction.SAVED -> openFavorites()
+                EasyHomeAction.RESUME -> recent?.let(openRecent)
+                EasyHomeAction.PROFILES -> openProfileSwitcher()
+                EasyHomeAction.SETTINGS -> openSettings()
+            }
+        }
     } else if (phoneExperience) {
         val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&
             state.movieMatchSelection == null && state.seriesMatchSelection == null && !state.categoryManagerOpen
@@ -622,7 +644,7 @@ internal fun DiscoveryScreenHost(
         // Secondary destinations, including downloads, use the same modern header.
         com.nikhil.niktv.discovery.DiscoveryLibraryScreen(
             state, com.nikhil.niktv.discovery.DiscoveryLibraryDestination.MY_LIST,
-            back = { if (state.offlineDownloadsOpen) closeOfflineDownloads() else returnToLanding() }, select = openTrial, navigate = navigateDiscovery
+            back = ::landingHome, select = openTrial, navigate = navigateDiscovery
         ) {
             Column(Modifier.fillMaxSize()) {
                 MainContent(Modifier.weight(1f).fillMaxWidth())
