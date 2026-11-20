@@ -222,6 +222,9 @@ internal fun DiscoveryScreenHost(
     goToSeriesEpisode: ((Int?) -> Unit)? = null,
     cancelEpisodeDestination: () -> Unit = {},
     cancelSearch: () -> Unit = {},
+    playEasyTitle: (MediaItem) -> Unit = play,
+    openEasyFavorite: (FavoriteItem) -> Unit = openFavorite,
+    openEasySearchResult: (MediaItem) -> Unit = openSearchResult,
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -247,14 +250,31 @@ internal fun DiscoveryScreenHost(
     val previewVisible = !providersVisible && state.discoverySurface != null && !state.settingsOpen && !state.searchOpen &&
         !state.favoritesOpen && !state.offlineDownloadsOpen && state.selectedSeries == null &&
         state.movieMatchSelection == null && state.seriesMatchSelection == null && !modernSectionOpen
-    val easyHome = previewVisible && state.discoverySurface == DashboardSurface.HOME &&
-        LocalViewerLayout.current == com.nikhil.niktv.data.ViewerLayout.EASY
+    val easyLayout = LocalViewerLayout.current == com.nikhil.niktv.data.ViewerLayout.EASY
+    val easyHome = easyLayout && previewVisible && state.discoverySurface == DashboardSurface.HOME
     var easyHomeReturn by rememberSaveable(LocalViewingOwner.current, state.savedProfile?.cacheKey()) {
         mutableStateOf(EasyHomeAction.LIVE)
+    }
+    var easyDownloadsFromMyList by rememberSaveable(LocalViewingOwner.current, state.savedProfile?.cacheKey()) {
+        mutableStateOf(false)
+    }
+    fun returnFromEasyDownloads() {
+        easyDownloadsFromMyList = false
+        openFavorites()
     }
     val previewProviderCategory = state.discoverySurface != null && state.modernIptvCategory?.type in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
         state.selectedSeries == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && !state.offlineDownloadsOpen
     val discoveryMatches = state.movieMatchSelection != null || state.seriesMatchSelection != null
+    val easyPage = easyLayout && !state.settingsOpen && !discoveryMatches && !providersVisible && state.modernTmdbSection == null
+    val easyCatalogType = when {
+        !easyPage -> null
+        state.discoverySurface == DashboardSurface.MOVIES -> CatalogType.MOVIES
+        state.discoverySurface == DashboardSurface.SERIES -> CatalogType.SERIES
+        !state.homeOpen && state.selectedType == CatalogType.LIVE_TV -> CatalogType.LIVE_TV
+        else -> null
+    }
+    val easyCategoryRoot = easyCatalogType != null && !modernSectionOpen && !state.searchOpen &&
+        !state.favoritesOpen && !state.offlineDownloadsOpen && state.selectedSeries == null
     fun closeMatches() { if (state.movieMatchSelection != null) closeTmdbMovieMatches() else closeTmdbSeriesMatches() }
     val discoverySearch = com.nikhil.niktv.discovery.usesDiscoverySearchShell(
         state.searchOpen, state.settingsOpen, state.offlineDownloadsOpen,
@@ -315,10 +335,11 @@ internal fun DiscoveryScreenHost(
         modernSectionOpen = modernSectionOpen,
         homeOpen = state.homeOpen
     )
-    BackHandler(enabled = !exitConfirmationOpen && (!previewVisible || easyHome) && !providersVisible) {
-        if (easyHome) {
-            exitConfirmationOpen = true
-        } else if (libraryBrowseAll && discoveryLibrary != null && !modernSectionOpen) libraryBrowseAll = false else when (backAction) {
+    BackHandler(enabled = !exitConfirmationOpen && (!previewVisible || easyHome || easyCategoryRoot) && !providersVisible) {
+        if (easyHome) exitConfirmationOpen = true
+        else if (easyCategoryRoot || (easyPage && backAction == CatalogBackAction.CLOSE_FAVORITES)) landingHome()
+        else if (easyPage && easyDownloadsFromMyList && backAction == CatalogBackAction.CLOSE_DOWNLOADS) returnFromEasyDownloads()
+        else if (libraryBrowseAll && discoveryLibrary != null && !modernSectionOpen) libraryBrowseAll = false else when (backAction) {
             CatalogBackAction.CLOSE_MOVIE_MATCHES -> closeTmdbMovieMatches()
             CatalogBackAction.CLOSE_SERIES_MATCHES -> closeTmdbSeriesMatches()
             CatalogBackAction.CLOSE_DOWNLOADS -> closeOfflineDownloads()
@@ -577,6 +598,44 @@ internal fun DiscoveryScreenHost(
                 EasyHomeAction.PROFILES -> openProfileSwitcher()
                 EasyHomeAction.SETTINGS -> openSettings()
             }
+        }
+    } else if (easyPage && easyDownloadsFromMyList && state.offlineDownloadsOpen) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+            OfflineDownloadsScreen(state, playOfflineDownload, playRecording, removeOfflineDownload, close = ::returnFromEasyDownloads)
+        }
+    } else if (easyPage && state.searchOpen) {
+        browseStateHolder.SaveableStateProvider("easy-search:${state.savedProfile?.cacheKey()}") {
+            val results = remember(state.searchResults) { state.searchResults.filter(MediaItem::isEasyIptvTitle) }
+            DiscoverySearchContent(
+                state = state.copy(searchResults = results), close = closeSearch,
+                setType = setSearchType, setCategory = setSearchCategory, setQuery = setSearchQuery, search = search,
+                cancelSearch = cancelSearch, useRecent = useRecentSearch, deleteRecent = deleteRecentSearch,
+                openResult = openEasySearchResult, loadMore = loadMoreSearch, toggleFavorite = toggleFavoriteEntry,
+                easyHome = ::landingHome
+            )
+        }
+    } else if (easyPage && state.favoritesOpen) {
+        browseStateHolder.SaveableStateProvider("easy-favorites:${state.savedProfile?.cacheKey()}") {
+            EasyMyListPage(state, ::landingHome, {
+                easyDownloadsFromMyList = true
+                openDownloadsPane()
+            }, openEasyFavorite, toggleFavoriteEntry)
+        }
+    } else if (easyPage && state.selectedSeries != null) {
+        browseStateHolder.SaveableStateProvider("easy-episodes:${state.savedProfile?.cacheKey()}:${state.selectedSeries.id}") {
+            EasySeriesPage(state, state.selectedSeries, ::landingHome, closeSeries, loadSeriesSeason,
+                playEasyTitle, refreshCatalog, loadMoreEpisodes)
+        }
+    } else if (easyPage && state.modernIptvCategory != null) {
+        val category = state.modernIptvCategory
+        browseStateHolder.SaveableStateProvider("easy-titles:${state.savedProfile?.cacheKey()}:${category.type}:${category.id}") {
+            EasyTitlesPage(state, category, ::landingHome, closeModernSection, playEasyTitle, refreshCatalog,
+                loadMoreCatalog, toggleFavorite)
+        }
+    } else if (easyCategoryRoot) {
+        val refresh = com.nikhil.niktv.discovery.components.LocalRefreshProviderCategories.current
+        browseStateHolder.SaveableStateProvider("easy-categories:${state.savedProfile?.cacheKey()}:$easyCatalogType") {
+            EasyCategoriesPage(state, easyCatalogType, ::landingHome, { refresh(easyCatalogType) }, openModernIptvCategory)
         }
     } else if (phoneExperience) {
         val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&

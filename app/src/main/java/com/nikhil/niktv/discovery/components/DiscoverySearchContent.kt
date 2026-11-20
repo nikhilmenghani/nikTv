@@ -80,6 +80,10 @@ import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.data.artworkRequest
 import com.nikhil.niktv.discovery.DiscoveryAction
+import com.nikhil.niktv.discovery.EasyBrowseEntry
+import com.nikhil.niktv.discovery.EasyFavoriteTile
+import com.nikhil.niktv.discovery.EasyPage
+import com.nikhil.niktv.discovery.easyEpisodeLabel
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.launch
 
@@ -139,8 +143,12 @@ internal fun DiscoverySearchContent(
     headerFocusRequester: FocusRequester? = null,
     queryFocusRequester: FocusRequester? = null,
     headerHasFocus: Boolean = false,
-    cancelSearch: () -> Unit = {}
+    cancelSearch: () -> Unit = {},
+    easyHome: (() -> Unit)? = null
 ) {
+    val easy = easyHome != null
+    val easyHomeRequester = remember { FocusRequester() }
+    val headerRequester = if (easy) easyHomeRequester else headerFocusRequester
     var categoryPickerOpen by rememberSaveable(state.searchType) {
         mutableStateOf(false)
     }
@@ -155,6 +163,13 @@ internal fun DiscoverySearchContent(
 
     val fallbackSearchRequester = remember { FocusRequester() }
     val searchRequester = queryFocusRequester ?: fallbackSearchRequester
+    val returnResultRequester = remember { FocusRequester() }
+    var lastOpenedResult by rememberSaveable(state.searchQuery) { mutableStateOf<String?>(null) }
+    val returnResult = remember { lastOpenedResult }
+    val initialQuery = remember { state.searchQuery }
+    val restoreResult = if (easy && state.searchQuery == initialQuery) {
+        returnResult?.takeIf { key -> state.searchResults.any { it.searchIdentity(state.searchType) == key } }
+    } else null
     val clearSearchRequester = remember { FocusRequester() }
     val submitSearchRequester = remember { FocusRequester() }
     val categoryRequester = remember { FocusRequester() }
@@ -196,12 +211,14 @@ internal fun DiscoverySearchContent(
         state.recentSearches,
         activeProfileKey,
         state.searchScopeLocked,
-        state.searchType
+        state.searchType,
+        easy
     ) {
         state.recentSearches
             .filter {
                 it.type in searchVisibleTypes &&
                     it.profileKey == activeProfileKey &&
+                    (!easy || (it.type == SearchContentType.ALL && it.categoryId == "*")) &&
                     (!state.searchScopeLocked || it.type == state.searchType)
             }
             .take(8)
@@ -262,7 +279,11 @@ internal fun DiscoverySearchContent(
             state.searchHasMore ||
             (state.searchQuery.isBlank() && visibleRecentSearches.isNotEmpty())
     val belowFiltersRequester = if (hasContentFocusTarget) contentRequester else FocusRequester.Cancel
-    val typeBelowSearch = if (state.searchScopeLocked) categoryRequester else selectedTypeRequester
+    val typeBelowSearch = when {
+        easy -> belowFiltersRequester
+        state.searchScopeLocked -> categoryRequester
+        else -> selectedTypeRequester
+    }
 
 
     fun activateSearchField() {
@@ -312,7 +333,7 @@ internal fun DiscoverySearchContent(
     }
 
     LaunchedEffect(remoteNavigationActive) {
-        if (remoteNavigationActive) {
+        if (remoteNavigationActive && !easy) {
             withFrameNanos { }
             repeat(4) { attempt ->
                 if (runCatching { searchRequester.requestFocus() }.getOrDefault(false)) {
@@ -375,11 +396,12 @@ internal fun DiscoverySearchContent(
         }
     }
 
-    Column(
+    @Composable
+    fun SearchBody() = Column(
         Modifier
             .fillMaxSize()
-            .background(SearchBackground)
-            .padding(horizontal = if (configuration.screenWidthDp < 600) 14.dp else 20.dp)
+            .then(if (easy) Modifier else Modifier.background(SearchBackground)
+                .padding(horizontal = if (configuration.screenWidthDp < 600) 14.dp else 20.dp))
     ) {
 
         Spacer(Modifier.height(6.dp))
@@ -455,17 +477,17 @@ internal fun DiscoverySearchContent(
                                     keyboard?.hide()
                                     restoreQueryFocus = true
                                     if (state.searchQuery.isNotBlank()) {
-                                        // Use cached matches first, then fall back to the provider on a miss.
-                                        search(false)
+                                        search(easy)
                                     }
                                 }
                             ),
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
+                                .then(if (easy) Modifier.semantics { contentDescription = "Search title or channel" } else Modifier)
                                 .focusRequester(searchRequester)
                                 .focusProperties {
-                                    headerFocusRequester?.let { up = it }
+                                    headerRequester?.let { up = it }
                                     right =
                                         if (state.searchQuery.isNotEmpty()) {
                                             clearSearchRequester
@@ -492,7 +514,7 @@ internal fun DiscoverySearchContent(
                                     } else false
                                 }
                                 .onPreviewKeyEvent { event ->
-                                    if (!searchEditing) {
+                                    if (!searchEditing || (easy && !imeVisible && editSessionSawIme)) {
                                         when (event.key) {
                                             Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                                                 // Consume the whole click; enter edit mode only
@@ -510,14 +532,15 @@ internal fun DiscoverySearchContent(
                                             }
                                             Key.DirectionDown -> {
                                                 if (event.type == KeyEventType.KeyDown) {
-                                                    runCatching { typeBelowSearch.requestFocus() }
+                                                    if (easy && state.searchResults.isNotEmpty()) resultsEntryRequest++
+                                                    else runCatching { typeBelowSearch.requestFocus() }
                                                 }
                                                 true
                                             }
                                             Key.DirectionUp -> {
                                                 // A read-only text editor can consume Up as caret
                                                 // movement before Compose follows focusProperties.
-                                                val header = headerFocusRequester
+                                                val header = headerRequester
                                                 if (header != null) {
                                                     if (event.type == KeyEventType.KeyDown) {
                                                         runCatching { header.requestFocus() }
@@ -546,7 +569,9 @@ internal fun DiscoverySearchContent(
                                 ) {
                                     if (state.searchQuery.isEmpty()) {
                                         Text(
-                                            if (state.searchScopeLocked) {
+                                            if (easy) {
+                                                "Enter a title or channel"
+                                            } else if (state.searchScopeLocked) {
                                                 "Search ${state.searchType.title.lowercase()}"
                                             } else {
                                                 "Search NikTV"
@@ -583,30 +608,41 @@ internal fun DiscoverySearchContent(
                             }
                     )
                 }
-                SearchIconControl("Search", Icons.AutoMirrored.Filled.ArrowForward,
-                    selected = state.searchQuery.isNotBlank() && !state.searchServerLoading,
-                    onClick = {
-                        searchEditing = false
-                        keyboard?.hide()
-                        search(false)
-                    }, modifier = Modifier.width(controlHeight).focusRequester(submitSearchRequester).focusProperties {
-                        left = if (state.searchQuery.isNotEmpty()) clearSearchRequester else searchRequester
-                        right = FocusRequester.Cancel
-                        down = typeBelowSearch
-                        headerFocusRequester?.let { up = it }
-                    })
+                val submit: () -> Unit = {
+                    searchEditing = false
+                    keyboard?.hide()
+                    search(easy)
+                }
+                val submitModifier = Modifier.focusRequester(submitSearchRequester).focusProperties {
+                    left = if (state.searchQuery.isNotEmpty()) clearSearchRequester else searchRequester
+                    right = FocusRequester.Cancel
+                    down = typeBelowSearch
+                    headerRequester?.let { up = it }
+                }
+                val canSubmit = state.searchQuery.isNotBlank() && !state.searchServerLoading
+                if (easy) SearchControl(submit, submitModifier, selected = canSubmit) {
+                    Text("Search", color = Color.White)
+                } else SearchIconControl("Search", Icons.AutoMirrored.Filled.ArrowForward, submit,
+                    Modifier.width(controlHeight).then(submitModifier), selected = canSubmit)
 
             }
         }
 
-        Spacer(Modifier.height(6.dp))
-        SearchFilters()
-
+        if (!easy) {
+            Spacer(Modifier.height(6.dp))
+            SearchFilters()
+        }
         Spacer(Modifier.height(4.dp))
 
         // Keep one provider action mounted throughout loading and empty states.
         // Removing the focused empty-state button sends TV focus to the sidebar.
-        if (state.searchQuery.isNotBlank()) {
+        if (easy && (state.searchServerLoading || showLocalSearchProgress || state.searchResults.isNotEmpty())) {
+            Text(
+                if (state.searchServerLoading || showLocalSearchProgress) "Searching…"
+                else if (state.searchResults.size == 1) "1 result" else "${state.searchResults.size} results",
+                style = MaterialTheme.typography.bodyMedium, color = SearchMuted, modifier = Modifier.padding(vertical = 4.dp)
+            )
+        } else if (!easy && state.searchQuery.isNotBlank()) {
             val resultLabel = if (state.searchResults.size == 1) "result" else "results"
             Row(
                 Modifier.fillMaxWidth().heightIn(min = controlHeight),
@@ -662,7 +698,7 @@ internal fun DiscoverySearchContent(
         }
 
         state.searchProviderMessage?.let { message ->
-            Text(message, style = MaterialTheme.typography.bodySmall,
+            Text(if (easy) "Search couldn’t finish. Select Search to try again." else message, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 4.dp))
         }
@@ -685,7 +721,7 @@ internal fun DiscoverySearchContent(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
-            Text(
+            if (!easy) Text(
                 "Select to search again · × to remove",
                 style = MaterialTheme.typography.bodySmall,
                 color = SearchMuted,
@@ -715,7 +751,7 @@ internal fun DiscoverySearchContent(
                             useRecent(recent)
                         },
                         onRemove = { removeRecent(recent) },
-                        showRemoveButton = true,
+                        showRemoveButton = !easy,
                         // The first history row may be offscreen after scrolling.
                         modifier = if (index == recentListState.firstVisibleItemIndex)
                             Modifier.focusRequester(contentRequester) else Modifier
@@ -745,6 +781,7 @@ internal fun DiscoverySearchContent(
                 )
                 Text(
                     when {
+                        easy && state.searchProviderMessage == null -> "No matching titles"
                         state.searchProviderMessage != null -> "Search incomplete"
                         state.searchUsedServer && searchingSpecificCategory ->
                             "No provider matches in $selectedCategoryTitle"
@@ -757,6 +794,7 @@ internal fun DiscoverySearchContent(
                 )
                 Text(
                     when {
+                        easy -> "Try a different title or channel name."
                         !state.searchUsedServer ->
                             "Search the provider for titles not yet cached on this device."
                         else ->
@@ -765,7 +803,7 @@ internal fun DiscoverySearchContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (state.searchUsedServer && searchingSpecificCategory) {
+                if (!easy && state.searchUsedServer && searchingSpecificCategory) {
                     NikTvSecondaryActionButton(
                         onClick = {
                             // This broaden action disappears when its category
@@ -796,16 +834,26 @@ internal fun DiscoverySearchContent(
                 state = state,
                 isTv = isTv,
                 screenWidthDp = configuration.screenWidthDp,
-                openResult = openResult,
+                openResult = { item ->
+                    if (easy) lastOpenedResult = item.searchIdentity(state.searchType)
+                    openResult(item)
+                },
                 loadMore = loadMore,
                 toggleFavorite = toggleFavorite,
                 firstItemRequester = contentRequester,
                 entryRequest = resultsEntryRequest,
-                topRequester = if (state.searchScopeLocked) categoryRequester else selectedTypeRequester,
-                modifier = Modifier.weight(1f)
+                topRequester = if (easy) searchRequester else if (state.searchScopeLocked) categoryRequester else selectedTypeRequester,
+                modifier = Modifier.weight(1f), easy = easy,
+                restoreResult = restoreResult, returnResultRequester = returnResultRequester
             )
         }
     }
+
+    if (easyHome != null) {
+        val entryRequester = if (restoreResult != null) returnResultRequester else searchRequester
+        EasyPage("Search", easyHome, close, easyHomeRequester,
+            Modifier.initialFocusEntry(entryRequester, remoteNavigationActive), keyboardInsets = true) { SearchBody() }
+    } else SearchBody()
 
     if (categoryPickerOpen) {
         SearchCategoryPicker(
@@ -1371,7 +1419,10 @@ private fun SearchResultsContent(
     firstItemRequester: FocusRequester,
     entryRequest: Int,
     topRequester: FocusRequester,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    easy: Boolean = false,
+    restoreResult: String? = null,
+    returnResultRequester: FocusRequester? = null
 ) {
     val all = state.searchType == SearchContentType.ALL
     val configuration = LocalConfiguration.current
@@ -1379,7 +1430,7 @@ private fun SearchResultsContent(
         LocalContext.current.isTvLikeDevice(configuration))
     val resultRequester = firstItemRequester
     val denseResults = !phoneLayout
-    val columns = if (phoneLayout) 1 else 2
+    val columns = if (easy || phoneLayout) 1 else 2
     val entries = remember(state.searchResults, state.searchType) {
         state.searchResults.map { SearchResultEntry(it.searchIdentity(state.searchType), media = it) }
     }
@@ -1387,10 +1438,13 @@ private fun SearchResultsContent(
     val keys = results.map { it.searchIdentity(state.searchType) }
     val resultIndices = keys.withIndex().associate { it.value to it.index }
     val lazyIndices = entries.withIndex().associate { it.value.key to it.index }
-    val footer = state.searchHasMore || state.searchUsedServer || (all && results.isEmpty())
+    val footer = state.searchHasMore || (!easy && (state.searchUsedServer || (all && results.isEmpty()))) ||
+        (easy && state.searchUsedServer && results.isNotEmpty())
     val footerKey = "search-pagination"
-    val gridState = rememberLazyGridState()
-    LaunchedEffect(state.searchType, state.searchQuery, state.searchCategoryId) { gridState.scrollToItem(0) }
+    val gridState = if (easy) key(state.searchQuery) {
+        rememberLazyGridState(initialFirstVisibleItemIndex = lazyIndices[restoreResult] ?: 0)
+    } else rememberLazyGridState()
+    LaunchedEffect(state.searchType, state.searchQuery, state.searchCategoryId) { if (!easy) gridState.scrollToItem(0) }
     PrefetchCatalogPage(
         scope = "search:${state.session?.profile?.cacheKey()}:${state.searchQuery}:${state.searchType}:${state.searchCategoryId}",
         ids = keys,
@@ -1497,7 +1551,16 @@ private fun SearchResultsContent(
                 val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
                 val itemModifier = Modifier.focusRequester(requesterAt(index))
                     .then(navigation(index))
-                if (type == SearchContentType.LIVE_TV) {
+                if (easy) {
+                    val isSeries = type == SearchContentType.SERIES
+                    EasyFavoriteTile(
+                        EasyBrowseEntry(entry.key, item.title, if (isSeries) Icons.Default.Tv else Icons.Default.PlayArrow,
+                            item.easyEpisodeLabel() ?: type.title, opensList = isSeries),
+                        { openResult(item) }, state.isSearchFavorite(item), toggle,
+                        itemModifier.then(if (entry.key == restoreResult && returnResultRequester != null)
+                            Modifier.focusRequester(returnResultRequester) else Modifier)
+                    )
+                } else if (type == SearchContentType.LIVE_TV) {
                     ModernSearchLiveResultRow(item, label, state.isSearchFavorite(item), toggle,
                         { openResult(item) }, isTv, itemModifier)
                 } else {
@@ -1507,23 +1570,30 @@ private fun SearchResultsContent(
             }
         }
         if (footer) item(key = footerKey, span = { GridItemSpan(maxLineSpan) }) {
-            SearchLoadMoreButton(
-                loading = state.searchServerLoading,
-                hasMore = state.searchHasMore,
-                idleLabel = when {
-                    all && state.searchLocalLoading -> "Checking local indexes…"
-                    all && !state.searchUsedServer && results.isEmpty() -> "No cached matches · Search provider for more"
-                    all && state.searchHasMore -> "Load more results"
-                    else -> null
-                },
-                onClick = {
-                    pendingPage = state.searchPaginationGeneration to keys.toSet()
-                    loadMore()
-                },
-                modifier = Modifier.focusRequester(requesterAt(results.size))
-                    .onFocusChanged { footerFocused = it.hasFocus }
-                    .then(navigation(results.size))
-            )
+            val footerModifier = Modifier.focusRequester(requesterAt(results.size))
+                .onFocusChanged { footerFocused = it.hasFocus }
+                .then(navigation(results.size))
+            if (easy && !state.searchHasMore && !state.searchServerLoading) {
+                SearchQuietControl(onClick = { topRequester.requestFocus() }, modifier = footerModifier) {
+                    Text("Back to search")
+                }
+            } else {
+                SearchLoadMoreButton(
+                    loading = state.searchServerLoading,
+                    hasMore = state.searchHasMore,
+                    idleLabel = when {
+                        all && state.searchLocalLoading -> "Checking local indexes…"
+                        all && !state.searchUsedServer && results.isEmpty() -> "No cached matches · Search provider for more"
+                        all && state.searchHasMore -> "Load more results"
+                        else -> null
+                    },
+                    onClick = {
+                        pendingPage = state.searchPaginationGeneration to keys.toSet()
+                        loadMore()
+                    },
+                    modifier = footerModifier
+                )
+            }
         }
     }
     }

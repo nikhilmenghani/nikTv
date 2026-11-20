@@ -795,6 +795,9 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,playRecording = vm::playRecording
                     ,playProviderMovie = vm::playProviderMovieDetails
                     ,closeProviderMovie = vm::closeProviderMovieDetails
+                    ,playEasyTitle = vm::openMedia
+                    ,openEasyFavorite = vm::openFavorite
+                    ,openEasySearchResult = vm::openSearchResult
                 )
             }
             }
