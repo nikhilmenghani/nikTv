@@ -48,7 +48,7 @@ internal data class PortalSwitchDestination private constructor(
         searchProviderMessage = null, searchActivityTitle = null, searchActivityDetail = null, searchActivityProgress = null,
         searchUsedServer = false, searchPage = 0, searchHasMore = false,
         searchPaginationGeneration = current.searchPaginationGeneration + 1,
-    )
+    ).withHomeTab()
 
     companion object {
         fun capture(origin: NikTvState): PortalSwitchDestination {

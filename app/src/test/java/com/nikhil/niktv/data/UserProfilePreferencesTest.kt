@@ -25,6 +25,20 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
+    @Test fun homeTabDefaultsOffAndOptInIsPortableForOnlyTheEditedViewer() = runBlocking {
+        assertFalse(ProfileBrowsePreferences.observeShowHome(context, family()).first())
+        assertFalse(ProfileBrowsePreferences.showHome(context, kids()))
+        users.selectProfile(kids().profileId)
+        ProfileBrowsePreferences.setShowHome(context, family(), true)
+        assertTrue(ProfileBrowsePreferences.observeShowHome(context, family()).first())
+        assertFalse(ProfileBrowsePreferences.showHome(context, kids()))
+        assertTrue(users.snapshot("101").any {
+            it.profileId == family().profileId && "profile_browse_v1|show_home" in it.payload
+        })
+        ProfileBrowsePreferences.setShowHome(context, family(), false)
+        assertFalse(ProfileBrowsePreferences.showHome(context, family()))
+    }
+
     @Test fun seriesEpisodeViewSurvivesFastNavigationAndRetainsItsViewer() = runBlocking {
         assertFalse(SeriesEpisodeViewPreferences.listView(context, family(), defaultListView = false))
         assertTrue(SeriesEpisodeViewPreferences.listView(context, family(), defaultListView = true))

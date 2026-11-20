@@ -66,7 +66,7 @@ class CatalogBackNavigationTest {
     }
 
     @Test fun `browse hub returns home and home then asks to exit`() {
-        assertEquals(CatalogBackAction.OPEN_HOME, catalogBackAction())
+        assertEquals(CatalogBackAction.OPEN_LANDING, catalogBackAction())
         assertEquals(CatalogBackAction.SHOW_EXIT_CONFIRMATION, catalogBackAction(homeOpen = true))
     }
 }

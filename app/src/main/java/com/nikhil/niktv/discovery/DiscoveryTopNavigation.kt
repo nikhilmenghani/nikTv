@@ -42,6 +42,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Date
 
+// The authenticated shell supplies the viewer's preference. Standalone Discovery previews have full navigation.
+internal val LocalShowHomeTab = staticCompositionLocalOf { true }
+
 @Composable
 internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     surface: DashboardSurface, navigate: (String) -> Unit, customize: (() -> Unit)?,
@@ -81,6 +84,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     categoryPopupChanged: (Boolean) -> Unit = {},
     library: DiscoveryLibraryDestination? = null, searchActive: Boolean = false) {
     val experiment = LocalDiscoveryExperiment.current
+    val showHomeTab = LocalShowHomeTab.current
     val tabs = rememberScrollState()
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -95,7 +99,8 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
         .discoveryHeaderFocusEntry(tabRequester)) {
     // Keep all ordinary tabs visible before spending a short phone window on
     // the optional clock. Portals and the person remain separate full targets.
-    val naturalMenu = (if (shortWide) 170f else 202f) + (trialSurfaces.map { it.trialTitle().removeSuffix(" 2") } + listOf("Live TV", "My List"))
+    val dashboardTabs = trialSurfaces.filter { showHomeTab || it != DashboardSurface.HOME }
+    val naturalMenu = (if (shortWide) 170f else 202f) + (dashboardTabs.map { it.trialTitle().removeSuffix(" 2") } + listOf("Live TV", "My List"))
         .sumOf { textWidth(it).value.toDouble() + if (shortWide) 20.0 else 28.0 }.toFloat()
     val profileSpace = if (shortWide) discoveryProfileHeaderWidth(clock = false).value
         else naturalProfile.value.coerceAtMost((maxWidth.value * .4f).coerceAtLeast(discoveryProfileHeaderWidth(clock = false).value))
@@ -121,13 +126,13 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                 StableTileFocusViewport {
                     Row(Modifier.weight(1f, fill = false).horizontalScroll(tabs), horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        trialSurfaces.forEach { tab ->
+                        dashboardTabs.forEach { tab -> key(tab) {
                             DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
                                 selected = !searchActive && library == null && surface == tab, horizontalPadding = 12.dp,
                                 modifier = Modifier.semantics { contentDescription = tab.trialTitle() }
                                     .then(if (!searchActive && library == null && tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
                                 onFocus = headerFocus) { if (experiment) navigate(tab.trialTitle()) else select(tab) }
-                        }
+                        } }
                         DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
                             modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
                             onFocus = headerFocus) { navigate("Live TV") }

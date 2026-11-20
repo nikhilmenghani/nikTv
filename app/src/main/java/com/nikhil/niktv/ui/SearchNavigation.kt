@@ -19,7 +19,7 @@ internal class SearchSeriesReturn private constructor(
 ) {
     fun restore(current: NikTvState): NikTvState? =
         if (current.searchProfileKey() == profileKey && current.selectedSeries?.id == seriesId) {
-            restoreBrowse(current).copy(searchLocalLoading = false, searchServerLoading = false)
+            restoreBrowse(current).copy(searchLocalLoading = false, searchServerLoading = false).withHomeTab()
         } else null
 
     fun resolved(profile: String, requested: String, resolved: String): SearchSeriesReturn =

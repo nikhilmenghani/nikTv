@@ -54,6 +54,7 @@ data class TmdbIptvLookupMiss(val request: AlternateSourceRequest, val profileKe
 
 data class NikTvState(
     val xtreamContentPolicy: XtreamContentPolicy = XtreamContentPolicy(),
+    val showHomeTab: Boolean = false,
     internal val contentPolicyCategories: Map<CatalogType, List<Category>> = emptyMap(),
     val profileSwitcherOpen: Boolean = false,
     val alternateSources: AlternateSourcePickerState? = null,
@@ -328,6 +329,13 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     init {
         viewModelScope.launch {
             userSyncStore.selectedScope.collectLatest { owner ->
+                com.nikhil.niktv.data.ProfileBrowsePreferences.observeShowHome(getApplication(), owner).collect { enabled ->
+                    if (owner == userSyncStore.selectedScope.value) _state.update { it.withHomeTab(enabled) }
+                }
+            }
+        }
+        viewModelScope.launch {
+            userSyncStore.selectedScope.collectLatest { owner ->
                 com.nikhil.niktv.data.XtreamContentPreferences.observe(getApplication(), owner).collect { policy ->
                     _state.update { it.copy(xtreamContentPolicy = policy) }
                 }
@@ -532,6 +540,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         ownedStore.save(session, owns)
         if (!owns()) throw kotlinx.coroutines.CancellationException("Portal changed")
         rememberPortalForViewer(session.profile)
+        val showHome = com.nikhil.niktv.data.ProfileBrowsePreferences.showHome(getApplication(), store.captureScope())
         _state.update {
             it.copy(
                 session = session,
@@ -571,7 +580,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 thrillerMovies = emptyList(),
                 thrillerMoviesLoading = false,
                 thrillerMoviesError = null
-            )
+            ).withHomeTab(showHome)
         }
         updateProfileLoad(0.26f, "Loading saved favorites and watch history…")
         loadProfileLibrary(session.profile.cacheKey())
@@ -7740,12 +7749,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     items = restoredItems,
                     availableSeriesSeasons = emptyList(),
                     selectedSeriesSeason = null
-                )
+                ).withHomeTab()
             }
             return@task
         }
         if (_state.value.seriesOpenedFromHome) {
-            _state.update { it.copy(selectedSeries = null, useTmdbEpisodeMetadata = true, seriesOpenedFromHome = false, homeOpen = true) }
+            _state.update { it.copy(selectedSeries = null, useTmdbEpisodeMetadata = true, seriesOpenedFromHome = false, homeOpen = true).withHomeTab() }
             return@task
         }
         if (_state.value.seriesOpenedFromFavorites) {
@@ -7980,7 +7989,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val origin = settingsReturnSurface
         settingsReturnSurface = null
         val policy = com.nikhil.niktv.data.XtreamContentPreferences.read(getApplication(), userSyncStore.selectedScope.value)
-        _state.update { (origin?.restore(it) ?: it.copy(settingsOpen = false)).copy(xtreamContentPolicy = policy) }
+        val showHome = com.nikhil.niktv.data.ProfileBrowsePreferences.showHome(getApplication(), userSyncStore.selectedScope.value)
+        _state.update { (origin?.restore(it) ?: it.copy(settingsOpen = false)).copy(xtreamContentPolicy = policy).withHomeTab(showHome) }
         val snapshot = _state.value
         val gate = contentGate()
         if (snapshot.selectedCategory?.let { !gate.allowsCategory(it) } == true && snapshot.nowPlaying == null) {
@@ -8304,7 +8314,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         if (portalActivation.get() != activation) throw kotlinx.coroutines.CancellationException("Portal changed")
         rememberPortalForViewer(profile)
         updateProfileLoad(0.24f, "Authentication complete")
-        _state.update { current -> destination.restore(current).copy(session = session, savedProfile = profile, profileEditorOpen = false,
+        val showHome = com.nikhil.niktv.data.ProfileBrowsePreferences.showHome(getApplication(), store.captureScope())
+        _state.update { current -> destination.restore(current.copy(showHomeTab = showHome)).copy(session = session, savedProfile = profile, profileEditorOpen = false,
             categories = emptyList(), rawCategoriesByType = emptyMap(),
             items = emptyList(), catalogPage = 1, catalogHasMore = false, catalogLoadingMore = false,
             browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null,
@@ -8444,6 +8455,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun openDiscoveryExperiment(surface: DashboardSurface) = openDiscoveryRoute(surface, experiment = true)
 
     private fun openDiscoveryRoute(surface: DashboardSurface, experiment: Boolean) {
+        if (surface == DashboardSurface.HOME && !_state.value.showHomeTab) return
         searchSeriesReturn = null
         cancelPendingPlayback()
         movieStructureJob?.cancel()
@@ -8454,6 +8466,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             selectedSeries = null, modernTmdbSection = null, modernIptvCategory = null) }
     }
     fun openWatchProviders() {
+        if (!_state.value.showHomeTab) return
         openDiscovery(DashboardSurface.HOME)
         _state.update { it.copy(watchProvidersOpen = true) }
     }

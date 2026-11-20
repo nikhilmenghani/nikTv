@@ -527,6 +527,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
         }
     }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
+        com.nikhil.niktv.discovery.LocalShowHomeTab provides state.showHomeTab,
         com.nikhil.niktv.discovery.LocalPortalFocusReturn provides portalFocusReturn) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
