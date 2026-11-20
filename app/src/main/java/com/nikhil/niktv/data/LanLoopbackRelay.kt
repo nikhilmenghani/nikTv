@@ -2,21 +2,28 @@ package com.nikhil.niktv.data
 
 import android.util.Base64
 import fi.iki.elonen.NanoHTTPD
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.ByteArrayInputStream
 import java.io.FilterInputStream
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /** Bridges an app-owned loopback movie without exposing a general-purpose URL proxy. */
-internal class LanLoopbackRelay(private val rootUrl: String, private val headers: Map<String, String>, private val route: String) : AutoCloseable {
+internal class LanLoopbackRelay(private val rootUrl: String, private val headers: Map<String, String>,
+    private val route: String, readTimeoutSeconds: Long = 20L) : AutoCloseable {
     private val key = SecretKeySpec(ByteArray(16).also(SecureRandom()::nextBytes), "AES")
-    private val client = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+    private val client = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS).build()
+    private val activeCalls = ConcurrentHashMap.newKeySet<Call>()
+    private val closed = AtomicBoolean()
     private fun seal(url: String): String {
         require(url.length <= 4096)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key) }
@@ -37,7 +44,17 @@ internal class LanLoopbackRelay(private val rootUrl: String, private val headers
         val builder = Request.Builder().url(remote)
         headers.filterKeys { it.lowercase() !in setOf("host", "connection", "content-length", "range") }.forEach { (name, value) -> builder.header(name, value) }
         request.headers["range"]?.let { builder.header("Range", it) }
-        val response = client.newCall(builder.build()).execute()
+        val call = client.newCall(builder.build())
+        activeCalls.add(call)
+        if (closed.get()) call.cancel()
+        val response = try { call.execute() } catch (failure: Exception) {
+            activeCalls.remove(call)
+            throw failure
+        }
+        fun release() {
+            response.close()
+            activeCalls.remove(call)
+        }
         try {
             if (response.code !in setOf(200, 206, 416)) error("Source is unavailable")
             val type = response.header("Content-Type") ?: "application/octet-stream"
@@ -59,10 +76,10 @@ internal class LanLoopbackRelay(private val rootUrl: String, private val headers
                     if (line.isBlank()) line else if (line.startsWith('#')) Regex("URI=\"([^\"]+)\"").replace(line) { "URI=\"${mapped(it.groupValues[1])}\"" }
                     else mapped(line.trim())
                 }.toByteArray()
-                response.close()
+                release()
                 return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, "application/vnd.apple.mpegurl", ByteArrayInputStream(body), body.size.toLong()).apply { addHeader("Connection", "close") }
             }
-            val input = object : FilterInputStream(response.body.byteStream()) { override fun close() { response.close() } }
+            val input = object : FilterInputStream(response.body.byteStream()) { override fun close() { release() } }
             val length = response.body.contentLength()
             val status = when (response.code) { 206 -> NanoHTTPD.Response.Status.PARTIAL_CONTENT; 416 -> NanoHTTPD.Response.Status.RANGE_NOT_SATISFIABLE; else -> NanoHTTPD.Response.Status.OK }
             return (if (length >= 0) NanoHTTPD.newFixedLengthResponse(status, type, input, length)
@@ -71,7 +88,13 @@ internal class LanLoopbackRelay(private val rootUrl: String, private val headers
                 addHeader("Cache-Control", "no-store")
                 addHeader("Connection", "close")
             }
-        } catch (failure: Exception) { response.close(); throw failure }
+        } catch (failure: Exception) { release(); throw failure }
     }
-    override fun close() { client.dispatcher.cancelAll(); client.connectionPool.evictAll() }
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        // Synchronous calls are no longer in OkHttp's dispatcher once headers
+        // arrive, even while VLC is waiting on the response body.
+        activeCalls.forEach(Call::cancel)
+        client.connectionPool.evictAll()
+    }
 }

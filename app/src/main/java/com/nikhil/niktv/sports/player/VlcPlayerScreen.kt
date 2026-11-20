@@ -218,8 +218,11 @@ internal fun VlcPlayerScreen(
     var buffering by remember(media.progressKey) { mutableStateOf(true) }
     var position by remember(media.progressKey) { mutableLongStateOf(initialResumePosition) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
-    var pendingInitialResumePosition by remember(media.progressKey, media.playbackAttemptId, media.url) {
-        mutableLongStateOf(playbackRestartPosition(media.catalogType, initialResumePosition))
+    var nativeRetryPosition by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<Long?>(null) }
+    var nativeRetryGeneration by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableIntStateOf(0) }
+    val requestedResumePosition = nativeRetryPosition ?: initialResumePosition
+    var pendingInitialResumePosition by remember(media.progressKey, media.playbackAttemptId, media.url, nativeRetryGeneration) {
+        mutableLongStateOf(playbackRestartPosition(media.catalogType, requestedResumePosition))
     }
     val sourceStill = remember(media.progressKey) { VlcSourceStill() }
     val currentPlaybackAttempt by rememberUpdatedState(media.playbackAttemptId)
@@ -414,12 +417,17 @@ internal fun VlcPlayerScreen(
     // Construct JNI state asynchronously; the session still owns decoder cleanup
     // before replacement media may acquire the native playback slot.
     var playbackRequested by remember(media.progressKey, media.playbackAttemptId) { mutableStateOf(media.playWhenReady) }
-    val liveRecovery = remember(media.progressKey) { LiveStreamRecovery(LiveStreamRecovery.VLC_RETRY_DELAYS_MILLIS) }
+    val liveRecovery = remember(media.progressKey) {
+        LiveStreamRecovery(LiveStreamRecovery.VLC_RETRY_DELAYS_MILLIS, VLC_VIDEO_STALL_MILLIS)
+    }
+    val vodRecovery = remember(media.progressKey, media.playbackAttemptId, media.url) {
+        LiveStreamRecovery(stallTimeoutMillis = VLC_VIDEO_STALL_MILLIS)
+    }
     var channelHasPlayed by remember(media.progressKey) { mutableStateOf(false) }
-    var session by remember(playbackDomain, media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+    var session by remember(playbackDomain, media.progressKey, media.url, media.playbackAttemptId, playbackOptions, nativeRetryGeneration) {
         mutableStateOf<VlcPlaybackSession?>(null)
     }
-    LaunchedEffect(playbackDomain, media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+    LaunchedEffect(playbackDomain, media.progressKey, media.url, media.playbackAttemptId, playbackOptions, nativeRetryGeneration) {
         var created: VlcPlaybackSession? = null
         try {
             // JNI construction and module discovery must not block Compose or input dispatch.
@@ -899,7 +907,7 @@ internal fun VlcPlayerScreen(
             // preparation on a worker prevents that mutex from freezing Compose
             // input dispatch and triggering an ANR.
             withContext(NativePlaybackWorker.dispatcher) {
-                val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
+                val vlcMedia = Media(libVlc, preparedSession.playbackUri(context, media)).apply {
                     // Prefer device-supported hardware decoders. With force=false,
                     // VLC retains its software decoder fallback and device exclusions.
                     setHWDecoderEnabled(true, false)
@@ -932,7 +940,7 @@ internal fun VlcPlayerScreen(
             if (media.progressKey.isNotBlank() &&
                 media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
                 onProgress(media.progressKey,
-                    if (!streamWasPlaying) media.resumePositionMillis else if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else finalTiming.first,
+                    if (!streamWasPlaying) requestedResumePosition else if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else finalTiming.first,
                     finalTiming.second)
             }
             } finally {
@@ -1044,27 +1052,52 @@ internal fun VlcPlayerScreen(
         } finally { resumeSeekJob?.cancel() }
     }
 
-    // Successful playback belongs to the channel, not its current native player.
-    // Replacement-open failures remain in this same bounded recovery burst.
+    // A running audio clock doesn't prove that video is playing. Once VLC has
+    // presented pictures, watch that counter; live audio still uses its clock.
     LaunchedEffect(player) {
-        if (media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) return@LaunchedEffect
+        if (localPlaybackSource(media.url, media.offlinePlayback) || media.externalPlayback) return@LaunchedEffect
+        val live = media.catalogType == CatalogType.LIVE_TV
+        if (!live && media.catalogType !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) return@LaunchedEffect
+        val recovery = if (live) liveRecovery else vodRecovery
+        val pictures = VlcPictureProgress()
+        fun playingRequested() = playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
+            androidx.lifecycle.Lifecycle.State.STARTED
+        ) && playbackRequested && focus.shouldPlay && error == null && !watching.awaiting && !advancing &&
+            !authorizationRecoveryRequested && !refreshPending
+
         while (true) {
             delay(1_000L)
-            val active = playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
-                androidx.lifecycle.Lifecycle.State.STARTED)
-            if (liveRecovery.shouldRecover(
-                    android.os.SystemClock.elapsedRealtime(), player.time,
-                    active && playbackRequested && focus.shouldPlay && channelHasPlayed && error == null &&
-                        !authorizationRecoveryRequested && !refreshPending,
-                    streamTerminated
-                )) {
-                android.util.Log.w("NikTvPlayback", "VLC live stream stopped/stalled; requesting fresh stream")
-                streamTerminated = true
-                refreshLiveStream()
-            } else if (error == null && liveRecovery.unrecoverable(android.os.SystemClock.elapsedRealtime(),
-                    active && playbackRequested && focus.shouldPlay && channelHasPlayed && !authorizationRecoveryRequested && !refreshPending,
-                    streamTerminated)) {
-                error = "The stream is still unavailable after ${liveRecovery.retryLimit} reconnect attempts. Retry or choose another source."
+            val displayed = if (playingRequested()) player.vlcDisplayedPictures() else null
+            val now = android.os.SystemClock.elapsedRealtime()
+            val clock = player.time
+            val videoProgress = pictures.sample(displayed, clock)
+            val eligible = playingRequested() && if (live) channelHasPlayed else
+                streamWasPlaying && !streamTerminated && pendingInitialResumePosition == 0L &&
+                    !seekTarget.isPending(now) && videoProgress != null && player.isSeekable &&
+                    pictures.positionMillis > 0L && duration - clock > 3_000L
+            val stopped = live && streamTerminated
+            if (recovery.shouldRecover(now, videoProgress ?: clock, eligible, stopped)) {
+                if (live) {
+                    android.util.Log.w("NikTvPlayback", "VLC live stream stalled; requesting fresh stream")
+                    streamTerminated = true
+                    refreshLiveStream()
+                } else {
+                    // Reopen the same authorized URL before doing another provider lookup.
+                    // The normal VLC teardown and resume path handles the replacement.
+                    android.util.Log.w("NikTvPlayback", "VLC video stalled; reopening the current source")
+                    preparedSession.retireAfterFailure()
+                    position = pictures.positionMillis
+                    buffering = true
+                    nativeRetryPosition = position
+                    nativeRetryGeneration++
+                }
+            } else if (recovery.unrecoverable(now, eligible, stopped)) {
+                buffering = false
+                error = if (live) {
+                    "The stream is still unavailable after ${recovery.retryLimit} reconnect attempts. Retry or choose another source."
+                } else {
+                    "The video is still stalled. Retry or choose another source."
+                }
                 controlsVisible = true
             }
         }

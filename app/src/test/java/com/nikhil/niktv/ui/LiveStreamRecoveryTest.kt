@@ -6,6 +6,26 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class LiveStreamRecoveryTest {
+    @Test fun vlcDetectsFrozenPicturesEvenWhileItsClockKeepsAdvancing() {
+        val pictures = VlcPictureProgress()
+        val recovery = LiveStreamRecovery(stallTimeoutMillis = VLC_VIDEO_STALL_MILLIS)
+        assertFalse(recovery.shouldRecover(0, pictures.sample(30, 10_000)!!, true, false))
+        assertFalse(recovery.shouldRecover(6_999, pictures.sample(30, 16_999)!!, true, false))
+        assertTrue(recovery.shouldRecover(7_000, pictures.sample(30, 17_000)!!, true, false))
+        assertEquals(10_000L, pictures.positionMillis)
+        assertFalse(recovery.shouldRecover(14_000, pictures.sample(null, 24_000)!!, true, false))
+    }
+
+    @Test fun vlcCanResumeNaturallyBeforeTheWatchdogReopensTheSource() {
+        val recovery = LiveStreamRecovery(stallTimeoutMillis = VLC_VIDEO_STALL_MILLIS)
+        assertFalse(recovery.shouldRecover(0, 60, true, false))
+        assertFalse(recovery.shouldRecover(6_999, 60, true, false))
+        assertFalse(recovery.shouldRecover(7_000, 61, true, false))
+        assertFalse(recovery.shouldRecover(30_000, 61, false, false))
+        assertFalse(recovery.shouldRecover(31_000, 61, true, false))
+        assertEquals(0, recovery.attemptCount)
+    }
+
     @Test fun vlcReplacementFailuresUseBoundedBackoffAcrossAnOutage() {
         val recovery = LiveStreamRecovery(LiveStreamRecovery.VLC_RETRY_DELAYS_MILLIS)
         recovery.observePlayback(0, 1_000, true)

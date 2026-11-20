@@ -125,10 +125,12 @@ internal fun localLanAddress(): String = NetworkInterface.getNetworkInterfaces()
 
 /** One selected resource, an unpredictable route, and only the paired receiver can read it. */
 internal class LanSelectedMediaServer(private val context: Context, address: String, private val media: PlayingMedia,
-    private val peer: String, private val onFailure: (Exception) -> Unit = {}) : NanoHTTPD(address, 0), AutoCloseable {
+    private val peer: String, readTimeoutSeconds: Long = 20L,
+    private val onFailure: (Exception) -> Unit = {}) : NanoHTTPD(address, 0), AutoCloseable {
     private val route = "/" + ByteArray(32).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) } + "/"
     private val source = Uri.parse(media.url)
-    private val proxy = if (source.scheme in setOf("http", "https")) LanLoopbackRelay(media.url, media.streamRequestHeaders, route) else null
+    private val proxy = if (source.scheme in setOf("http", "https"))
+        LanLoopbackRelay(media.url, media.streamRequestHeaders, route, readTimeoutSeconds) else null
     private val closed = java.util.concurrent.atomic.AtomicBoolean()
     private val handlers = ConcurrentHashMap.newKeySet<ClientHandler>()
     private val workers = java.util.concurrent.ThreadPoolExecutor(4, 4, 20, java.util.concurrent.TimeUnit.SECONDS,
@@ -179,5 +181,5 @@ internal class LanSelectedMediaServer(private val context: Context, address: Str
             } catch (failure: Exception) { descriptor.close(); throw failure }
         } catch (failure: Exception) { onFailure(failure); newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "The selected video is unavailable.") }
     }
-    override fun close() { if (closed.compareAndSet(false, true)) { stop(); proxy?.close() } }
+    override fun close() { if (closed.compareAndSet(false, true)) { proxy?.close(); stop() } }
 }

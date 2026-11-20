@@ -23,4 +23,6 @@ internal class PlaybackSeekTarget {
     fun acknowledge(actual: Long) {
         if (pending?.let { kotlin.math.abs(actual - it) <= 500L } == true) pending = null
     }
+
+    fun isPending(now: Long): Boolean = pending != null && now - requestedAt < 5_000L
 }

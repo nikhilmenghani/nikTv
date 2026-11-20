@@ -1,7 +1,10 @@
 package com.nikhil.niktv.ui
 
 /** A bounded reconnect budget, rearmed by a minute of confirmed playback. */
-internal class LiveStreamRecovery(private val retryDelaysMillis: List<Long> = listOf(0L)) {
+internal class LiveStreamRecovery(
+    private val retryDelaysMillis: List<Long> = listOf(0L),
+    private val stallTimeoutMillis: Long = 20_000L
+) {
     init { require(retryDelaysMillis.isNotEmpty() && retryDelaysMillis.all { it >= 0 }) }
     val retryLimit get() = retryDelaysMillis.size
     var attemptCount = 0
@@ -45,7 +48,7 @@ internal class LiveStreamRecovery(private val retryDelaysMillis: List<Long> = li
         if (terminated || (previousPosition != null && position < previousPosition) || sampleMillis > 5_000L) {
             healthyPlaybackMillis = 0L
         } else if (previousPosition != null && position > previousPosition) {
-            if (now - lastAdvanceAt >= 20_000L) healthyPlaybackMillis = 0L
+            if (now - lastAdvanceAt >= stallTimeoutMillis) healthyPlaybackMillis = 0L
             else healthyPlaybackMillis += sampleMillis
         }
         if (lastPosition == null || position != lastPosition) {
@@ -63,13 +66,13 @@ internal class LiveStreamRecovery(private val retryDelaysMillis: List<Long> = li
 
     /** Exhaustion must also cover engines stuck in READY, not just explicit EOF. */
     fun unrecoverable(now: Long, eligible: Boolean, terminated: Boolean): Boolean =
-        eligible && exhausted && (terminated || (lastPosition != null && now - lastAdvanceAt >= 20_000L))
+        eligible && exhausted && (terminated || (lastPosition != null && now - lastAdvanceAt >= stallTimeoutMillis))
 
     fun shouldRecover(now: Long, position: Long, eligible: Boolean, terminated: Boolean): Boolean {
         observePlayback(now, position, eligible, terminated)
         if (!eligible) return false
         if (exhausted) return false
-        if (!terminated && now - lastAdvanceAt < 20_000L) {
+        if (!terminated && now - lastAdvanceAt < stallTimeoutMillis) {
             failureDetectedAt = null
             return false
         }

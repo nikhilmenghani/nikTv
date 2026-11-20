@@ -26,6 +26,13 @@ internal class VlcPlaybackSession private constructor(
     private val closing = AtomicBoolean()
     private val closed = CompletableDeferred<Pair<Long, Long>>()
     @Volatile private var predecessor: VlcPlaybackSession? = null
+    private var hlsInput: com.nikhil.niktv.data.LanSelectedMediaServer? = null
+
+    // Called on the playback worker before preparing this session's single media input.
+    fun playbackUri(context: Context, media: com.nikhil.niktv.model.PlayingMedia): android.net.Uri {
+        hlsInput = openVlcHlsInput(context, media)
+        return android.net.Uri.parse(hlsInput?.url ?: media.url)
+    }
 
     suspend fun awaitPlaybackOwnership() {
         val previous = predecessor ?: return
@@ -65,6 +72,7 @@ internal class VlcPlaybackSession private constructor(
                     withContext(Dispatchers.Main.immediate) { player.setEventListener(null) }
                     timing = runCatching { player.time.coerceAtLeast(0L) to player.length.coerceAtLeast(0L) }
                         .getOrDefault(timing)
+                    runCatching { hlsInput?.close() }
                     runCatching { player.stop() }
                     withContext(Dispatchers.Main.immediate) { runCatching { player.detachViews() } }
                     runCatching { player.release() }

@@ -544,6 +544,7 @@ class PlaybackEngineFixtureTest {
         val peak = AtomicInteger()
         @Volatile var requiredHeaders: Map<String, String> = emptyMap()
         @Volatile var beforeResponse: ((String) -> Unit)? = null
+        @Volatile var beforeBody: ((String) -> Unit)? = null
         val rejected = AtomicInteger()
         var missingOnce: String? = null
         val missing = AtomicInteger()
@@ -579,7 +580,10 @@ class PlaybackEngineFixtureTest {
                 fun reply(status: String, body: ByteArray, type: String = "application/octet-stream", extra: String = "") {
                     val out = client.getOutputStream()
                     out.write("HTTP/1.1 $status\r\nContent-Length: ${body.size}\r\nContent-Type: $type\r\nConnection: close\r\n$extra\r\n".toByteArray())
-                    if (!first.startsWith("HEAD")) out.write(body)
+                    if (!first.startsWith("HEAD")) {
+                        beforeBody?.let { hook -> out.flush(); hook(path) }
+                        out.write(body)
+                    }
                     out.flush()
                 }
                 if (path == "catalog") { Thread.sleep(200L); reply("200 OK", "catalog-metadata".toByteArray(), "application/json"); return }
@@ -1469,6 +1473,93 @@ class PlaybackEngineFixtureTest {
                 assertEquals(0, PlaybackRegressionActivity.automaticRetries)
                 assertTrue("Live reconnect policy remains bounded", PlaybackRegressionActivity.retries <= 1)
             } finally { main { activity.finish() }; Thread.sleep(500L) }
+        }
+    }
+
+    @Test fun vlcVodReopensStalledSourceAndResumesWithoutProviderRetry() {
+        check(context.packageName.endsWith(".regression"))
+        FixtureServer().use { server ->
+            val blockedAt = AtomicLong()
+            val reopenedAt = AtomicLong()
+            val release = java.util.concurrent.CountDownLatch(1)
+            val opens = AtomicInteger()
+            server.beforeResponse = { path ->
+                if (path == "vod-hls" && opens.incrementAndGet() > 1) {
+                    reopenedAt.compareAndSet(0L, SystemClock.elapsedRealtime())
+                    release.countDown()
+                }
+            }
+            server.beforeBody = { path ->
+                if (path == "seg008.ts" && opens.get() == 1) {
+                    blockedAt.compareAndSet(0L, SystemClock.elapsedRealtime())
+                    release.await(40, java.util.concurrent.TimeUnit.SECONDS)
+                }
+            }
+            val activity = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
+                .putExtra("engine", "VLC").putExtra("url", "${server.base}/vod-hls")
+                .putExtra("catalog", "MOVIES").putExtra("format", "HLS").putExtra("resume", 0L)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            try {
+                await("VLC renders before encountering the stalled segment") {
+                    PlaybackRegressionActivity.firstFrames == 1 && blockedAt.get() > 0L
+                }
+                // VLC plays the already buffered segments before the picture
+                // stops. Time from the blocked HTTP request includes that lead.
+                await("VLC reopens the source while the original connection is still stalled", 30_000L) {
+                    reopenedAt.get() > blockedAt.get()
+                }
+                val oldProgress = PlaybackRegressionActivity.progress
+                await("VLC renders again after reconnecting at the saved position", 15_000L) {
+                    PlaybackRegressionActivity.firstFrames >= 2
+                }
+                await("Playback continues past its pre-stall position", 9_000L) {
+                    PlaybackRegressionActivity.progress >= oldProgress + 2_000L
+                }
+                assertEquals(2, opens.get())
+                assertEquals(0, PlaybackRegressionActivity.retries)
+                assertEquals(0, PlaybackRegressionActivity.automaticRetries)
+                android.util.Log.i("NikTvFixture", "VLC VOD stalled-source reopenMs=${reopenedAt.get() - blockedAt.get()} resumedFrames=${PlaybackRegressionActivity.firstFrames}")
+            } finally {
+                release.countDown()
+                main { activity.finish() }
+            }
+        }
+    }
+
+    @Test fun vlcLiveRefreshesWhenVideoStopsRendering() {
+        check(context.packageName.endsWith(".regression"))
+        FixtureServer().use { server ->
+            val blockedAt = AtomicLong()
+            val release = java.util.concurrent.CountDownLatch(1)
+            server.beforeResponse = { path ->
+                if (path == "seg052.ts" && PlaybackRegressionActivity.retries == 0) {
+                    blockedAt.compareAndSet(0L, SystemClock.elapsedRealtime())
+                    release.await(45, java.util.concurrent.TimeUnit.SECONDS)
+                }
+            }
+            val activity = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
+                .putExtra("engine", "VLC").putExtra("url", "${server.base}/live")
+                .putExtra("catalog", "LIVE_TV").putExtra("format", "HLS")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            try {
+                await("Live video renders before the blocked segment", 35_000L) {
+                    PlaybackRegressionActivity.firstFrames == 1 && blockedAt.get() > 0L
+                }
+                await("VLC requests one live refresh before the stalled connection times out", 28_000L) {
+                    PlaybackRegressionActivity.retries == 1
+                }
+                val refreshedIn = SystemClock.elapsedRealtime() - blockedAt.get()
+                release.countDown()
+                await("Live video renders again on the replacement stream", 15_000L) {
+                    PlaybackRegressionActivity.firstFrames >= 2
+                }
+                assertEquals(1, PlaybackRegressionActivity.retries)
+                assertEquals(0, PlaybackRegressionActivity.automaticRetries)
+                android.util.Log.i("NikTvFixture", "VLC live stalled-source refreshMs=$refreshedIn")
+            } finally {
+                release.countDown()
+                main { activity.finish() }
+            }
         }
     }
 
