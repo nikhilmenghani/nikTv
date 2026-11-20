@@ -293,10 +293,11 @@ private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
 
 internal fun PlaybackEngine.resolvePlayerEngine(
     context: Context,
-    playbackScope: String
+    playbackScope: String,
+    live: Boolean = false
 ): PlaybackEngine = when (this) {
     PlaybackEngine.AUTO ->
-        if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
+        if (!live && PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
         else PlaybackEngine.MEDIA3
     PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
     PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
@@ -444,7 +445,7 @@ fun PlayerScreen(
         PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
-        PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
+        PlaybackEngine.AUTO -> PlaybackEngine.AUTO.resolvePlayerEngine(context, playbackScope, media.catalogType == CatalogType.LIVE_TV)
     }
 
     val requestedEngine = sessionEngineOverride ?: configuredEngine
@@ -791,7 +792,8 @@ fun PlayerScreen(
             else DefaultRenderersFactory(context)).apply {
             if (effectiveEngine.isMedia3Player()) {
                 setEnableDecoderFallback(true)
-                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope, media.decoderSessionId))
+                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope, media.decoderSessionId,
+                    live = media.catalogType == CatalogType.LIVE_TV))
             }
         }
         val builder = ExoPlayer.Builder(context, renderersFactory)
@@ -1247,7 +1249,8 @@ fun PlayerScreen(
                         context,
                         error,
                         playbackScope,
-                        media.decoderSessionId
+                        media.decoderSessionId,
+                        rememberFailure = media.catalogType != CatalogType.LIVE_TV
                     )
 
                 val authorizationFailure = httpStatus in setOf(401, 403)
@@ -2948,7 +2951,7 @@ fun PlayerScreen(
                 playerPickerFromError = false
                 playerPickerVisible = false
                 controlsVisible = true
-                if (fromError && selectedEngine.resolvePlayerEngine(context, playbackScope) == effectiveEngine) {
+                if (fromError && selectedEngine.resolvePlayerEngine(context, playbackScope, media.catalogType == CatalogType.LIVE_TV) == effectiveEngine) {
                     selectedPlayerChoice = selectedEngine
                     onPlaybackEngineChanged(selectedEngine)
                     onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
@@ -2958,7 +2961,7 @@ fun PlayerScreen(
                     modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
                     engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
                     onPlaybackEngineChanged(selectedEngine)
-                    sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
+                    sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope, media.catalogType == CatalogType.LIVE_TV)
                 } else if (fromError) {
                     onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                 } else {
@@ -3285,25 +3288,12 @@ private object FailedDecoderRegistry {
             RegexOption.IGNORE_CASE
         )
 
-    private fun isAndroidSoftwareDecoder(
-        name: String
-    ): Boolean {
-        val normalized =
-            name.lowercase()
-
-        return normalized.startsWith(
-            "omx.google."
-        ) ||
-            normalized.startsWith(
-                "c2.android."
-            )
-    }
-
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun selector(
         context: Context,
         playbackScope: String,
-        sessionId: String
+        sessionId: String,
+        live: Boolean
     ): MediaCodecSelector {
         val rememberedMtk = context
                 .getSharedPreferences(
@@ -3330,19 +3320,6 @@ private object FailedDecoderRegistry {
                     )
 
             val failedNames = rememberedMtk + sessions.failed(sessionId)
-            val filtered =
-                candidates.filterNot {
-                    it.name.lowercase() in
-                        failedNames
-                }
-
-            /*
-             * MTK_AVC_SOFTWARE_PREFERENCE_V14
-             *
-             * Keep hardware decoding as the default. Only after this device
-             * has actually crashed OMX.MTK.VIDEO.DECODER.AVC do we prefer an
-             * Android software AVC decoder for subsequent player instances.
-             */
             val mtkAvcPreviouslyFailed =
                 mimeType.equals(
                     "video/avc",
@@ -3351,22 +3328,9 @@ private object FailedDecoderRegistry {
                     ("omx.mtk.video.decoder.avc" in failedNames ||
                         PlayerEngineFallback.prefersSoftwareAvc(context, playbackScope))
 
-            val ordered =
-                if (mtkAvcPreviouslyFailed) {
-                    filtered.sortedBy { codec ->
-                        if (
-                            isAndroidSoftwareDecoder(
-                                codec.name
-                            )
-                        ) {
-                            0
-                        } else {
-                            1
-                        }
-                    }
-                } else {
-                    filtered
-                }
+            val candidatesByName = candidates.associateBy { it.name }
+            val ordered = iptvDecoderCandidateOrder(candidates.map { it.name }, rememberedMtk, sessions.failed(sessionId),
+                preferSoftware = mtkAvcPreviouslyFailed, live = live).mapNotNull(candidatesByName::get)
 
             // Exhaustion is final for this selection: do not restore failed candidates.
             ordered
@@ -3377,7 +3341,8 @@ private object FailedDecoderRegistry {
         context: Context,
         error: Throwable,
         playbackScope: String,
-        sessionId: String
+        sessionId: String,
+        rememberFailure: Boolean
     ): String? {
         val messages =
             generateSequence(
@@ -3402,7 +3367,7 @@ private object FailedDecoderRegistry {
 
         sessions.record(sessionId, normalized, retryRuntimeOnce = recreateSoftwareDecoderOnce(error, normalized))
 
-        if (normalized == "omx.mtk.video.decoder.avc") {
+        if (rememberFailure && normalized == "omx.mtk.video.decoder.avc") {
             context
                 .getSharedPreferences(
                     "player_decoder_fallbacks",

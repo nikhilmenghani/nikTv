@@ -19,9 +19,12 @@ internal fun decoderCandidateOrder(names: List<String>, failed: Set<String>, pre
     }
 }
 
-/** IPTV retains its committed historical MTK exclusion and session failure rules. */
-internal fun iptvDecoderCandidateOrder(names: List<String>, historicalFailures: Set<String>, sessionFailures: Set<String>, preferSoftware: Boolean) =
-    decoderCandidateOrder(names, historicalFailures + sessionFailures, preferSoftware)
+/** A new live channel gets a fresh hardware attempt; actual failures remain excluded
+ * for that session. Preserve the established VOD/seek workaround independently. */
+internal fun iptvDecoderCandidateOrder(names: List<String>, historicalFailures: Set<String>, sessionFailures: Set<String>,
+    preferSoftware: Boolean, live: Boolean = false) =
+    if (live) decoderCandidateOrder(names, sessionFailures, preferSoftware = false)
+    else decoderCandidateOrder(names, historicalFailures + sessionFailures, preferSoftware)
 
 private val decoderFailurePattern = Regex("(?:decoder failed|decoder init failed):\\s*([^,\\s]+)", RegexOption.IGNORE_CASE)
 internal fun decoderFailureName(message: String): String? = decoderFailurePattern.findAll(message)

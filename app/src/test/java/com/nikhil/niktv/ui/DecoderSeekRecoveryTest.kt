@@ -8,6 +8,31 @@ import org.junit.Test
 @org.robolectric.annotation.Config(sdk = [28], application = android.app.Application::class, manifest = org.robolectric.annotation.Config.NONE)
 class DecoderSeekRecoveryTest {
     private val software = "c2.android.avc.decoder"
+    @Test fun newLiveSessionTriesHardwareDespiteOldDeviceAndChannelFallbacks() {
+        val hardware = "OMX.MTK.VIDEO.DECODER.AVC"
+        val names = listOf(hardware, software)
+        assertEquals(names, iptvDecoderCandidateOrder(names, setOf(hardware.lowercase()), emptySet(), true, live = true))
+        val failures = DecoderSessionFailures()
+        failures.record("channel-A", hardware)
+        assertEquals(listOf(software), iptvDecoderCandidateOrder(names, emptySet(), failures.failed("channel-A"), true, live = true))
+        assertEquals(names, iptvDecoderCandidateOrder(names, setOf(hardware.lowercase()), failures.failed("channel-B"), true, live = true))
+        failures.record("channel-A", software)
+        assertTrue(iptvDecoderCandidateOrder(names, emptySet(), failures.failed("channel-A"), false, live = true).isEmpty())
+        assertEquals(listOf(software), iptvDecoderCandidateOrder(names, setOf(hardware.lowercase()), emptySet(), true, live = false))
+    }
+
+    @Test fun liveAutoIgnoresRememberedBackendButExplicitPlayersAndVodRetainTheirPolicy() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val scope = "historical-live-test"
+        context.getSharedPreferences("player_engine_fallbacks", android.content.Context.MODE_PRIVATE)
+            .edit().putInt("mtk:$scope", 3).commit()
+        assertEquals(com.nikhil.niktv.model.PlaybackEngine.MEDIA3,
+            com.nikhil.niktv.model.PlaybackEngine.AUTO.resolvePlayerEngine(context, scope, live = true))
+        assertEquals(com.nikhil.niktv.model.PlaybackEngine.VLC,
+            com.nikhil.niktv.model.PlaybackEngine.AUTO.resolvePlayerEngine(context, scope, live = false))
+        assertEquals(com.nikhil.niktv.model.PlaybackEngine.VLC,
+            com.nikhil.niktv.model.PlaybackEngine.VLC.resolvePlayerEngine(context, scope, live = true))
+    }
     private fun error(code: Int = PlaybackException.ERROR_CODE_DECODING_FAILED) =
         PlaybackException("Decoder failed: $software", IllegalStateException(), code)
 

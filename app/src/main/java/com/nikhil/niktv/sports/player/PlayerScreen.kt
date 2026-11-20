@@ -300,10 +300,11 @@ private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
 internal fun PlaybackEngine.resolvePlayerEngine(
     context: Context,
     playbackScope: String,
-    domain: PlaybackDomain = PlaybackDomain.SPORTS
+    domain: PlaybackDomain = PlaybackDomain.SPORTS,
+    live: Boolean = false
 ): PlaybackEngine = when (this) {
     PlaybackEngine.AUTO ->
-        if (domain == PlaybackDomain.IPTV && PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
+        if (domain == PlaybackDomain.IPTV && !live && PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
         else PlaybackEngine.MEDIA3
     PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
     PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
@@ -451,7 +452,7 @@ fun PlayerScreen(
         PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
-        PlaybackEngine.AUTO -> PlaybackEngine.AUTO.resolvePlayerEngine(context, playbackScope, playbackDomain)
+        PlaybackEngine.AUTO -> PlaybackEngine.AUTO.resolvePlayerEngine(context, playbackScope, playbackDomain, media.catalogType == CatalogType.LIVE_TV)
     }
 
     val requestedEngine = sessionEngineOverride ?: configuredEngine
@@ -805,7 +806,8 @@ fun PlayerScreen(
             else DefaultRenderersFactory(context)).apply {
             if (effectiveEngine.isMedia3Player()) {
                 setEnableDecoderFallback(true)
-                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope, media.decoderSessionId))
+                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope, media.decoderSessionId,
+                    live = media.catalogType == CatalogType.LIVE_TV))
             }
         }
         val builder = ExoPlayer.Builder(context, renderersFactory)
@@ -1273,7 +1275,8 @@ fun PlayerScreen(
                         context,
                         error,
                         playbackScope,
-                        media.decoderSessionId
+                        media.decoderSessionId,
+                        rememberFailure = media.catalogType != CatalogType.LIVE_TV
                     )
 
                 val authorizationFailure = httpStatus in setOf(401, 403)
@@ -2967,7 +2970,7 @@ fun PlayerScreen(
                 playerPickerFromError = false
                 playerPickerVisible = false
                 controlsVisible = true
-                if (fromError && selectedEngine.resolvePlayerEngine(context, playbackScope, playbackDomain) == effectiveEngine) {
+                if (fromError && selectedEngine.resolvePlayerEngine(context, playbackScope, playbackDomain, media.catalogType == CatalogType.LIVE_TV) == effectiveEngine) {
                     selectedPlayerChoice = selectedEngine
                     onPlaybackEngineChanged(selectedEngine)
                     (onManualRetry ?: onRetry)(playbackRestartPosition(media.catalogType, player.currentPosition))
@@ -2977,7 +2980,7 @@ fun PlayerScreen(
                     modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
                     engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
                     onPlaybackEngineChanged(selectedEngine)
-                    sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope, playbackDomain)
+                    sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope, playbackDomain, media.catalogType == CatalogType.LIVE_TV)
                     if (fromError) onManualRetry?.invoke(playbackRestartPosition(media.catalogType, player.currentPosition))
                 } else if (fromError) {
                     (onManualRetry ?: onRetry)(playbackRestartPosition(media.catalogType, player.currentPosition))
@@ -3255,7 +3258,8 @@ private object FailedDecoderRegistry {
     fun selector(
         context: Context,
         playbackScope: String,
-        sessionId: String
+        sessionId: String,
+        live: Boolean
     ): MediaCodecSelector {
         val rememberedMtk = context
                 .getSharedPreferences(
@@ -3307,7 +3311,7 @@ private object FailedDecoderRegistry {
             // Preserve IPTV's committed MTK fallback policy. Sports owns an
             // independent native-order selector and cannot update this registry.
             val ordered = iptvDecoderCandidateOrder(candidates.map { it.name }, rememberedMtk, sessions.failed(sessionId),
-                preferSoftware = mtkAvcPreviouslyFailed)
+                preferSoftware = mtkAvcPreviouslyFailed, live = live)
                 .mapNotNull(candidatesByName::get)
 
             // Exhaustion is final for this selection: do not restore failed candidates.
@@ -3319,7 +3323,8 @@ private object FailedDecoderRegistry {
         context: Context,
         error: Throwable,
         playbackScope: String,
-        sessionId: String
+        sessionId: String,
+        rememberFailure: Boolean
     ): String? {
         val messages =
             generateSequence(
@@ -3341,7 +3346,7 @@ private object FailedDecoderRegistry {
 
         sessions.record(sessionId, normalized, retryRuntimeOnce = recreateSoftwareDecoderOnce(error, normalized))
 
-        if (normalized == "omx.mtk.video.decoder.avc") {
+        if (rememberFailure && normalized == "omx.mtk.video.decoder.avc") {
             context
                 .getSharedPreferences(
                     "player_decoder_fallbacks",
