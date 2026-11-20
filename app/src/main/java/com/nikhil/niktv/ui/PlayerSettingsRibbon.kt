@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.dp
 
 internal enum class PlayerSettingKind(val title: String, val primaryOrder: Int? = null) {
     SUBTITLES("Subtitles", 0), AUDIO("Audio", 1), SPEED("Speed", 2), FIT("Video fit", 3),
-    PICTURE("Picture", 4), PLAYER("Player", 5), DOWNLOAD("Download", 6), SOURCE("Source", 7), REFRESH("Refresh", 0),
+    PICTURE("Picture", 4), PLAYER("Player", 5), DECODER("Decoder"), DOWNLOAD("Download", 6), SOURCE("Source", 7), REFRESH("Refresh", 0),
     INTRO("Intro timing"), TIMEOUT("Controls timeout"), CRICKET("Cricket scores"), INFORMATION("Stream info"), PIP("Mini player")
 }
 

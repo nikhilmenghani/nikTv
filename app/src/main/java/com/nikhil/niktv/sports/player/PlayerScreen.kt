@@ -424,6 +424,9 @@ fun PlayerScreen(
     }
     val displayedDownloadInProgress = offlineDownloadInProgress || downloadRequested
     val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
+    var videoDecoderMode by remember(context) { mutableStateOf(VideoDecoderPreferences.read(context)) }
+    var manualDecoderSession by remember(media.decoderSessionId) { mutableStateOf<String?>(null) }
+    val activeDecoderSession = manualDecoderSession ?: media.decoderSessionId
     var sessionEngineOverride by remember(media.media.id) { mutableStateOf<PlaybackEngine?>(null) }
     var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(0L) }
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf<File?>(null) }
@@ -452,7 +455,8 @@ fun PlayerScreen(
         PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
-        PlaybackEngine.AUTO -> PlaybackEngine.AUTO.resolvePlayerEngine(context, playbackScope, playbackDomain, media.catalogType == CatalogType.LIVE_TV)
+        PlaybackEngine.AUTO -> if (videoDecoderMode != VideoDecoderMode.AUTO) PlaybackEngine.MEDIA3
+            else PlaybackEngine.AUTO.resolvePlayerEngine(context, playbackScope, playbackDomain, media.catalogType == CatalogType.LIVE_TV)
     }
 
     val requestedEngine = sessionEngineOverride ?: configuredEngine
@@ -596,13 +600,15 @@ fun PlayerScreen(
     var pictureEditorVisible by remember { mutableStateOf(false) }
     var pictureModePickerVisible by remember { mutableStateOf(false) }
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var decoderPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    val decoderFocusRequester = remember(media.progressKey) { FocusRequester() }
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = extraControlsOpen || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
+    val playerOptionsOpen = extraControlsOpen || playerPickerVisible || decoderPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
@@ -790,6 +796,7 @@ fun PlayerScreen(
     val detectedManifestMime = remember(media.url, media.playbackAttemptId) {
         java.util.concurrent.atomic.AtomicReference<String?>(null)
     }
+    val decoderTelemetry = remember(media.playbackAttemptId, activeDecoderSession, videoDecoderMode, effectiveEngine) { VideoDecoderTelemetry() }
     val createLocalPlayer: (Long?) -> Player = { resumePosition ->
         if (effectiveEngine == PlaybackEngine.MPV && mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) {
             MpvPlayerAdapter(context, media, playbackRestartPosition(media.catalogType,
@@ -800,14 +807,16 @@ fun PlayerScreen(
             }
         } else {
         val renderersFactory = if (playbackDomain == PlaybackDomain.SPORTS)
-            com.nikhil.niktv.sports.SportsPlaybackPolicy.renderers(context, effectiveEngine, media.decoderSessionId)
+            com.nikhil.niktv.sports.SportsPlaybackPolicy.renderers(context, effectiveEngine, activeDecoderSession).apply {
+                setMediaCodecSelector(decoderTelemetry.selector(com.nikhil.niktv.sports.SportsDecoderPolicy.selector(activeDecoderSession), videoDecoderMode))
+            }
         else (if (effectiveEngine == PlaybackEngine.FLOW)
             com.nikhil.niktv.ui.flowInspiredRenderers(context)
             else DefaultRenderersFactory(context)).apply {
             if (effectiveEngine.isMedia3Player()) {
                 setEnableDecoderFallback(true)
-                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope, media.decoderSessionId,
-                    live = media.catalogType == CatalogType.LIVE_TV))
+                setMediaCodecSelector(decoderTelemetry.selector(FailedDecoderRegistry.selector(context, playbackScope, activeDecoderSession,
+                    live = media.catalogType == CatalogType.LIVE_TV || videoDecoderMode != VideoDecoderMode.AUTO), videoDecoderMode))
             }
         }
         val builder = ExoPlayer.Builder(context, renderersFactory)
@@ -865,6 +874,7 @@ fun PlayerScreen(
             val startPosition = playbackRestartPosition(media.catalogType,
                 resumePosition ?: engineSwitchResumePosition)
             if (startPosition > 0L) seekTo(startPosition)
+            decoderTelemetry.attach(this)
             prepare()
             playWhenReady = playbackRequested && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             repeatMode = Player.REPEAT_MODE_OFF
@@ -884,6 +894,8 @@ fun PlayerScreen(
         media.progressKey,
         playbackDomain,
         effectiveEngine,
+        videoDecoderMode,
+        activeDecoderSession,
         media.url,
         media.playbackAttemptId,
         castSessionActive
@@ -1269,13 +1281,13 @@ fun PlayerScreen(
                 }
                 val failedDecoder =
                     if (playbackDomain == PlaybackDomain.SPORTS)
-                        com.nikhil.niktv.sports.SportsDecoderPolicy.record(error, media.decoderSessionId)
+                        com.nikhil.niktv.sports.SportsDecoderPolicy.record(error, activeDecoderSession)
                     else
                     FailedDecoderRegistry.record(
                         context,
                         error,
                         playbackScope,
-                        media.decoderSessionId,
+                        activeDecoderSession,
                         rememberFailure = media.catalogType != CatalogType.LIVE_TV
                     )
 
@@ -2289,6 +2301,7 @@ fun PlayerScreen(
             val controlRowScrollState = rememberScrollState()
             val playbackDetailLines = buildList {
                 videoDetails.takeIf { it.isNotBlank() }?.let { add(it) }
+                decoderTelemetry.active?.let { add("Video decoder · ${it.description}") }
                 add("${if (media.offlinePlayback) "Offline" else if (onChooseAlternateSource != null) "Alternate source" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · ${effectiveEngine.playerEngineLabel()} · Video fit · ${resizeMode.label}")
                 add("Picture · ${activeAppearanceProfile.name} · Controls · ${controlsTimeoutSeconds}s")
@@ -2459,6 +2472,11 @@ fun PlayerScreen(
                                 onClick = { playerPickerVisible = true },
                                 selected = false
                             ))
+                        if (localPlayer is ExoPlayer && !castSessionActive) add(PlayerSettingAction(
+                            kind = PlayerSettingKind.DECODER, requester = decoderFocusRequester,
+                            icon = Icons.Default.Memory, badgeText = decoderTelemetry.active?.badge ?: "…",
+                            contentDescription = "Video decoder", value = decoderTelemetry.active?.description ?: "Starting",
+                            onClick = { runCatching { decoderFocusRequester.requestFocus() }; decoderPickerVisible = true }))
                         if (onChooseAlternateSource != null) {
                             add(PlayerSettingAction(
                                     kind = PlayerSettingKind.SOURCE,
@@ -2955,6 +2973,20 @@ fun PlayerScreen(
                 VideoAppearancePreferences.setActive(context, it)
             }
         )
+        if (decoderPickerVisible) VideoDecoderQuickOverlay(videoDecoderMode, decoderTelemetry.active,
+            onDismiss = { decoderPickerVisible = false; controlsVisible = true; settingsRibbon.restore(decoderFocusRequester) },
+            onSelect = { choice ->
+                if (choice != videoDecoderMode || (choice == VideoDecoderMode.HARDWARE && decoderTelemetry.active?.hardware != true)) {
+                    engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
+                    pendingLocalResumePosition = engineSwitchResumePosition
+                    videoDecoderMode = choice
+                    VideoDecoderPreferences.save(context, choice)
+                    manualDecoderSession = java.util.UUID.randomUUID().toString()
+                    playbackError = null; startupTimedOut = false
+                    modeFeedback = "Decoder · ${choice.label}"
+                }
+                decoderPickerVisible = false; controlsVisible = true; settingsRibbon.restore(decoderFocusRequester)
+            })
         if (playerPickerVisible) PlayerEngineQuickOverlay(
             selectedEngine = displayedPlayerChoice,
             allowedEngines = if (media.streamDrm != null || playbackDataSourceFactory != null) PROTECTED_PLAYER_ENGINES else null,
