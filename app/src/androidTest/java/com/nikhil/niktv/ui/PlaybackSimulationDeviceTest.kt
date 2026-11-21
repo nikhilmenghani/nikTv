@@ -2,22 +2,22 @@ package com.nikhil.niktv.ui
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.view.KeyEvent
-import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.sports.PlaybackSimulationActivity
+import com.nikhil.niktv.sports.SportsActivity
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
-import java.util.concurrent.CopyOnWriteArrayList
 
 /** Exercises the exported debug entry and actual popup player with deterministic local media. */
 class PlaybackSimulationDeviceTest {
@@ -44,6 +44,26 @@ class PlaybackSimulationDeviceTest {
             return null
         }
         return find(instrumentation.uiAutomation.rootInActiveWindow)
+    }
+
+    private fun labelled(label: String): AccessibilityNodeInfo? {
+        if (Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        fun find(current: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            current ?: return null
+            if (current.text?.toString() == label || current.contentDescription?.toString() == label) return current
+            for (index in 0 until current.childCount) find(current.getChild(index))?.let { return it }
+            return null
+        }
+        return find(instrumentation.uiAutomation.rootInActiveWindow)
+    }
+
+    private fun clickLabel(label: String) {
+        await("The production menu exposes $label") { labelled(label) != null }
+        await("The production $label action can be activated") {
+            var current = labelled(label)
+            repeat(8) { if (current?.isClickable != true) current = current?.parent }
+            current?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        }
     }
 
     private fun text(tag: String): String? {
@@ -85,11 +105,17 @@ class PlaybackSimulationDeviceTest {
     private fun frameCount(): Int = Regex("(\\d+) frames")
         .find(text("playbackFrames").orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-    private fun launch(uri: Uri): PlaybackSimulationActivity {
+    private fun launch(uri: Uri, landscape: Boolean = false): PlaybackSimulationActivity {
         val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/dash+xml")
             .setClass(context, PlaybackSimulationActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         val activity = instrumentation.startActivitySync(intent) as PlaybackSimulationActivity
+        if (landscape) {
+            instrumentation.runOnMainSync { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            await("The real popup supports phone landscape") {
+                activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            }
+        }
         await("The actual handoff opens its player popup") { node("playbackPopup") != null }
         return activity
     }
@@ -102,14 +128,36 @@ class PlaybackSimulationDeviceTest {
             audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
             PlaybackEngineFixtureTest().FixtureServer().use(test)
         } finally {
-            instrumentation.uiAutomation.setOnAccessibilityEventListener(null)
             instrumentation.setInTouchMode(true)
             audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
         }
     }
 
-    @Test fun viewHandoffRendersAndAdvancesThenClosesDirectlyToItsOrigin() = withLocalPlayer { server ->
-        val activity = launch(Uri.parse("${server.base}/manifest.mpd"))
+    @Test fun viewHandoffRendersAndAdvancesThenClosesDirectlyToItsOrigin() = exerciseViewHandoff()
+
+    @Test fun landscapeViewHandoffRendersAndClosesDirectlyToItsOrigin() = exerciseViewHandoff(landscape = true)
+
+    @Test fun sportsOptionsOpensTheRealPlaybackTestPageWithoutAutoplay() {
+        check(context.packageName.endsWith(".regression"))
+        val activity = instrumentation.startActivitySync(Intent(context, SportsActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as SportsActivity
+        try {
+            clickLabel("Options")
+            clickLabel("Playback test")
+            await("The production Sports action opens the actual playback test page") {
+                node("playbackSimulation") != null && node("playExternal") != null
+            }
+            assertTrue("Opening the test page must not autoplay", node("playbackPopup") == null)
+            NavigationAuditEvidence.capture("playback-simulation-sports-entry")
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("Back returns to the Sports options entry") { labelled("Options") != null }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun exerciseViewHandoff(landscape: Boolean = false) = withLocalPlayer { server ->
+        val activity = launch(Uri.parse("${server.base}/manifest.mpd"), landscape)
         try {
             await("A real decoded frame reaches the popup") {
                 text("playbackFirstFrame") == "First frame: verified by the player" && frameCount() > 0
@@ -122,27 +170,22 @@ class PlaybackSimulationDeviceTest {
             assertEquals(0, server.rejected.get())
             assertTrue("Popup has reachable retry", node("retryPlayback") != null)
             focus("closePlayback")
-            NavigationAuditEvidence.capture("playback-simulation-popup-focused")
-
-            val focusEvents = CopyOnWriteArrayList<String>()
-            instrumentation.uiAutomation.setOnAccessibilityEventListener { event ->
-                if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
-                    val source = event.source
-                    val identifier = source?.viewIdResourceName?.substringAfter(":id/")
-                    val label = event.contentDescription ?: source?.contentDescription
-                        ?: event.text.firstOrNull() ?: source?.text
-                    (identifier ?: label?.toString())?.let(focusEvents::add)
-                }
-            }
+            assertTrue("The popup control reports actual Compose focus", activity.focusEvents.contains("closePlayback"))
+            val mode = if (landscape) "landscape" else "portrait"
+            NavigationAuditEvidence.capture("playback-simulation-popup-focused-$mode")
+            val focusStart = activity.focusEvents.size
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Close removes the popup and directly restores its origin") {
                 node("playbackPopup") == null && focused("playExternal")
             }
-            assertTrue("Origin is present in the focus transition: $focusEvents",
-                focusEvents.any { it == "playExternal" || it == "Play supplied URL" })
-            assertFalse("Closing must not focus Back, Home, or an unrelated source: $focusEvents",
-                focusEvents.any { it in setOf("Back", "Home", "Close", "Retry", "retryPlayback", "playbackUrl") || it.startsWith("sample:") })
-            NavigationAuditEvidence.capture("playback-simulation-closed-origin")
+            val closeFocus = activity.focusEvents.drop(focusStart)
+            java.io.File(context.externalCacheDir, "navigation-audit").apply { mkdirs() }.let { folder ->
+                java.io.File(folder, "playback-simulation-focus-$mode.txt").writeText(
+                    "Before close: ${activity.focusEvents.take(focusStart)}\nAfter close: $closeFocus\nFinal origin focus: ${focused("playExternal")}\n")
+            }
+            assertTrue("Only the origin may acquire focus while closing: $closeFocus",
+                closeFocus.all { it == "playExternal" })
+            NavigationAuditEvidence.capture("playback-simulation-closed-origin-$mode")
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
         }

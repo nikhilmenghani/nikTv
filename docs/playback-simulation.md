@@ -26,7 +26,8 @@ Build the isolated test package with `-PregressionBuild=true`, which produces
 ```
 
 Run `com.nikhil.niktv.ui.PlaybackSimulationDeviceTest` with the Android test runner.
-It uses bundled local DASH media to verify advancing decoded frames, popup focus
-return, HTTP 403 recovery through Retry, and rejected input. It does not contact
-HD Streamz or a sports provider. Release builds contain neither the page nor its
-fixtures or Android intent filters.
+Its playback cases use bundled local DASH media to verify advancing decoded frames,
+popup focus return in both orientations, HTTP 403 recovery through Retry, and rejected
+input. A separate navigation case opens the real Sports menu, whose ordinary startup
+may load sports metadata. None of these cases contacts HD Streamz. Release builds
+contain neither the page nor its fixtures or Android intent filters.

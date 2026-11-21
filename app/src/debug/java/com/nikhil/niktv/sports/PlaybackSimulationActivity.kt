@@ -25,6 +25,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -52,9 +53,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** Debug-only player for an ordinary Android video handoff or controlled public samples. */
 class PlaybackSimulationActivity : ComponentActivity() {
+    internal val focusEvents = CopyOnWriteArrayList<String>()
+    internal val focusedControls: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private var incoming by mutableStateOf<PlaybackHandoff?>(null)
     private var sequence = 0
 
@@ -64,7 +69,7 @@ class PlaybackSimulationActivity : ComponentActivity() {
         receive(intent)
         setContent {
             MaterialTheme(colorScheme = NikColors) {
-                PlaybackSimulationScreen(incoming, ::finish)
+                PlaybackSimulationScreen(incoming, ::finish, ::trackFocus)
             }
         }
     }
@@ -90,6 +95,14 @@ class PlaybackSimulationActivity : ComponentActivity() {
             incoming = PlaybackHandoff(++sequence, Intent(intent))
         }
     }
+
+    private fun trackFocus(control: String, focused: Boolean) {
+        if (focused) {
+            if (focusedControls.add(control)) focusEvents.add(control)
+        } else {
+            focusedControls.remove(control)
+        }
+    }
 }
 
 private data class PlaybackHandoff(val sequence: Int, val intent: Intent)
@@ -102,7 +115,8 @@ private sealed interface PlaybackTestRequest {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun PlaybackSimulationScreen(incoming: PlaybackHandoff?, close: () -> Unit) {
+private fun PlaybackSimulationScreen(incoming: PlaybackHandoff?, close: () -> Unit,
+    focusChanged: (String, Boolean) -> Unit) {
     val context = LocalContext.current
     val repository = remember(context) { PlaybackSimulationRepository(context) }
     val scope = rememberCoroutineScope()
@@ -230,20 +244,24 @@ private fun PlaybackSimulationScreen(incoming: PlaybackHandoff?, close: () -> Un
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Playback test", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                DiscoveryAction("Close", Icons.Default.Close, onClick = close)
+                DiscoveryAction("Close", Icons.Default.Close, modifier = Modifier
+                    .playbackFocus("pageClose", focusChanged), onClick = close)
             }
             Text("Open the source app’s external player or Share action and choose NikTV playback test, or paste its video URL.",
                 color = SportsMuted, style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(url, { url = it; if (!popup) failure = null }, Modifier.fillMaxWidth()
-                .focusRequester(inputFocus).testTag("playbackUrl"), singleLine = true,
+                .focusRequester(inputFocus).testTag("playbackUrl")
+                .playbackFocus("playbackUrl", focusChanged), singleLine = true,
                 label = { Text("Supplied video URL") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = { playInput() }), shape = SportsShape)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 DiscoveryAction("Play supplied URL", Icons.Default.PlayArrow, modifier = Modifier
-                    .focusRequester(playFocus).testTag("playExternal"), onClick = { playInput() })
+                    .focusRequester(playFocus).testTag("playExternal")
+                    .playbackFocus("playExternal", focusChanged), onClick = { playInput() })
                 Text("Live stream", style = MaterialTheme.typography.bodyMedium)
                 Switch(live, { live = it }, modifier = Modifier.testTag("externalLive")
+                    .playbackFocus("externalLive", focusChanged)
                     .semantics { contentDescription = "Treat supplied URL as live stream" })
             }
             if (!popup) failure?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("playbackInputError")) }
@@ -254,14 +272,15 @@ private fun PlaybackSimulationScreen(incoming: PlaybackHandoff?, close: () -> Un
             catalogueError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             events.forEach { event ->
                 key(event.id) {
-                    Surface(color = SportsSurface, shape = SportsShape) {
+                    Surface(color = SportsSurface, contentColor = Color.White, shape = SportsShape) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(event.title, style = MaterialTheme.typography.titleSmall)
                             Text(event.description, color = SportsMuted, style = MaterialTheme.typography.bodySmall)
                             event.sources.forEach { source ->
                                 val focus = sourceFocus.getOrPut("${event.id}:${source.id}") { FocusRequester() }
                                 DiscoveryAction(source.title, Icons.Default.PlayArrow, modifier = Modifier
-                                    .focusRequester(focus).testTag("sample:${event.id}:${source.id}"),
+                                    .focusRequester(focus).testTag("sample:${event.id}:${source.id}")
+                                    .playbackFocus("sample:${event.id}:${source.id}", focusChanged),
                                     onClick = { start(PlaybackTestRequest.Sample(event, source), focus) })
                             }
                         }
@@ -275,7 +294,7 @@ private fun PlaybackSimulationScreen(incoming: PlaybackHandoff?, close: () -> Un
 
     if (popup) {
         val attempt = epoch
-        PlaybackTestPopup(media, preparing, failure, firstFrame, frames, position, stages,
+        PlaybackTestPopup(media, preparing, failure, firstFrame, frames, position, stages, focusChanged,
             dismiss = ::dismissPlayer,
             retry = { request?.let { start(it, origin, media?.decoderRecoveryCount ?: 0) } },
             retryDecoder = { request?.let { start(it, origin, ((media?.decoderRecoveryCount ?: 0) + 1).coerceAtMost(3)) } },
@@ -294,6 +313,10 @@ private fun PlaybackSimulationScreen(incoming: PlaybackHandoff?, close: () -> Un
     }
 }
 
+/** Observe the real control focus, including cases where the underlying page retains it. */
+private fun Modifier.playbackFocus(control: String, changed: (String, Boolean) -> Unit): Modifier =
+    onFocusChanged { changed(control, it.isFocused) }
+
 /** Text shares use the same validated request reader as ordinary Android video intents. */
 private fun normalizeHandoff(intent: Intent): Intent {
     if (intent.action != Intent.ACTION_SEND || intent.hasExtra(Intent.EXTRA_STREAM)) return intent
@@ -310,7 +333,8 @@ private fun normalizeHandoff(intent: Intent): Intent {
 @Composable
 private fun PlaybackTestPopup(
     media: PlayingMedia?, preparing: Boolean, failure: String?, firstFrame: Boolean, frames: Int, position: Long,
-    stages: List<String>, dismiss: () -> Unit, retry: () -> Unit, retryDecoder: () -> Unit,
+    stages: List<String>, focusChanged: (String, Boolean) -> Unit,
+    dismiss: () -> Unit, retry: () -> Unit, retryDecoder: () -> Unit,
     firstRendered: () -> Unit, rendered: (Int) -> Unit, progress: (Long) -> Unit,
     rejected: () -> Unit, failed: () -> Unit,
 ) {
@@ -320,16 +344,18 @@ private fun PlaybackTestPopup(
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.padding(horizontal = 12.dp).widthIn(max = 1040.dp).fillMaxWidth().height(height)
             .semantics { testTagsAsResourceId = true }
-            .initialFocusEntry(closeFocus).testTag("playbackPopup"), shape = RoundedCornerShape(14.dp), color = SportsSurface) {
+            .initialFocusEntry(closeFocus).testTag("playbackPopup"), shape = RoundedCornerShape(14.dp),
+            color = SportsSurface, contentColor = Color.White) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("${if (firstFrame) "Video rendered" else "Waiting for video"} · $frames frames",
                         Modifier.weight(1f).testTag("playbackFrames"), style = MaterialTheme.typography.titleSmall,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                     DiscoveryAction("Retry", Icons.Default.Refresh,
-                        modifier = Modifier.focusRequester(retryFocus).testTag("retryPlayback"), onClick = retry)
+                        modifier = Modifier.focusRequester(retryFocus).testTag("retryPlayback")
+                            .playbackFocus("retryPlayback", focusChanged), onClick = retry)
                     DiscoveryAction("Close", Icons.Default.Close, modifier = Modifier.focusRequester(closeFocus)
-                        .testTag("closePlayback"), onClick = dismiss)
+                        .testTag("closePlayback").playbackFocus("closePlayback", focusChanged), onClick = dismiss)
                 }
                 Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black, SportsShape)) {
                     if (media != null) key(media.playbackAttemptId) {
