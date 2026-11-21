@@ -4,11 +4,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.Key
 import com.nikhil.niktv.data.ParentalControls
+import com.nikhil.niktv.data.UserScope
+import com.nikhil.niktv.data.UserSyncStore
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -17,10 +15,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -31,6 +30,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nikhil.niktv.data.validParentalPin
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun ParentalPinPrompt(vm: NikTvViewModel) {
@@ -38,7 +39,10 @@ internal fun ParentalPinPrompt(vm: NikTvViewModel) {
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner, vm) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) { vm.cancelParentalPin() }
+            if (event == Lifecycle.Event.ON_STOP) {
+                vm.cancelParentalPin()
+                vm.lockAdultContent()
+            }
         }
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }
@@ -66,15 +70,70 @@ internal fun ParentalPinPrompt(vm: NikTvViewModel) {
 }
 
 @Composable
-internal fun ParentalControlsSettings(vm: NikTvViewModel = viewModel()) {
-    val state by vm.state.collectAsStateWithLifecycle()
-    var changingPin by remember { mutableStateOf(false) }
-    SettingsControlRow("Protect sensitive content", checked = state.parentalControlsEnabled,
-        onToggle = vm::setParentalControlsEnabled, description = "Require a PIN for sensitive channels, movies and series.")
-    if (state.parentalControlsEnabled) SettingsPickerRow("Lock again after", ParentalControls.relockOptions,
-        state.parentalRelockMinutes, vm::setParentalRelockMinutes,
-        "Sensitive content also locks when NikTV goes into the background.")
-    SettingsControlRow("Change PIN", onClick = { vm.authorizeParentalSettings { changingPin = true } })
+internal fun ParentalControlsSettings(profileId: String?, vm: NikTvViewModel = viewModel()) {
+    val context = LocalContext.current
+    val users = remember(context) { UserSyncStore.get(context) }
+    val account by users.selectedAccount.collectAsStateWithLifecycle()
+    val profiles by users.profiles.collectAsStateWithLifecycle(emptyList())
+    val profile = profiles.firstOrNull { it.id == profileId }
+    val owner = account?.let { id -> profile?.let { UserScope(id, it.id) } }
+    if (owner == null) {
+        Text("Choose a viewing profile first.", Modifier.padding(16.dp))
+        return
+    }
+    val policy by remember(context, owner) { ParentalControls.observe(context, owner) }
+        .collectAsStateWithLifecycle(initialValue = null)
+    val rules = policy ?: return
+    val scope = rememberCoroutineScope()
+    val protectFocus = remember(owner) { FocusRequester() }
+    val visibilityFocus = remember(owner) { FocusRequester() }
+    val relockFocus = remember(owner) { FocusRequester() }
+    val pinFocus = remember(owner) { FocusRequester() }
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    var returnFocus by remember(owner) { mutableStateOf<FocusRequester?>(null) }
+    var changingPin by remember(owner) { mutableStateOf(false) }
+    var saveError by remember(owner) { mutableStateOf<String?>(null) }
+    LaunchedEffect(windowFocused, changingPin, owner) {
+        if (windowFocused && !changingPin) {
+            returnFocus?.requestFocus()
+            returnFocus = null
+        }
+    }
+    fun authorize(origin: FocusRequester, onAuthorized: () -> Unit) {
+        origin.requestFocus()
+        returnFocus = origin
+        vm.authorizeParentalSettings(onAuthorized)
+    }
+    fun update(origin: FocusRequester, edit: suspend () -> Unit) {
+        authorize(origin) {
+            scope.launch {
+                try {
+                    if (users.selectedScope.value == owner) vm.lockAdultContent()
+                    edit()
+                    saveError = null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    saveError = "Could not save parental controls. Please try again."
+                }
+            }
+        }
+    }
+    SettingsControlRow("Protect sensitive content", checked = rules.protectionEnabled,
+        modifier = Modifier.focusRequester(protectFocus),
+        onToggle = { enabled -> update(protectFocus) { ParentalControls.setProtection(context, owner, enabled) } },
+        description = "Require a PIN for sensitive channels, movies and series on this profile.")
+    SettingsControlRow("Show sensitive IPTV categories", checked = rules.showSensitiveIptv,
+        modifier = Modifier.focusRequester(visibilityFocus),
+        onToggle = { visible -> update(visibilityFocus) { ParentalControls.setCategoryVisibility(context, owner, visible) } },
+        description = "Show sensitive categories and their titles when browsing or searching IPTV.")
+    SettingsPickerRow("Lock again after", ParentalControls.relockOptions, rules.relockMinutes,
+        { minutes -> update(relockFocus) { ParentalControls.setRelockMinutes(context, owner, minutes) } },
+        "Sensitive content also locks when NikTV goes into the background.", Modifier.focusRequester(relockFocus))
+    SettingsControlRow("Change shared PIN", description = "All profiles on this device use this PIN.",
+        modifier = Modifier.focusRequester(pinFocus),
+        onClick = { authorize(pinFocus) { changingPin = true } })
+    saveError?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
     if (changingPin) {
         var pin by remember { mutableStateOf("") }
         var confirmation by remember { mutableStateOf("") }
@@ -104,36 +163,49 @@ internal fun ParentalPinDialog(
     val focus = remember { FocusRequester() }
     val confirmationFocus = remember { FocusRequester() }
     val cancelFocus = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
     var editingField by remember { mutableStateOf<Int?>(null) }
     val pinInteraction = remember { MutableInteractionSource() }
     val confirmationInteraction = remember { MutableInteractionSource() }
-    val pinPressed by pinInteraction.collectIsPressedAsState()
-    val confirmationPressed by confirmationInteraction.collectIsPressedAsState()
-    LaunchedEffect(pinPressed, confirmationPressed) {
-        if (pinPressed) editingField = 0
-        if (confirmationPressed) editingField = 1
+    LaunchedEffect(pinInteraction) {
+        pinInteraction.interactions.collect { if (it is PressInteraction.Press) editingField = 0 }
     }
-    LaunchedEffect(editingField) {
-        if (editingField != null) { withFrameNanos { }; keyboard?.show() }
+    LaunchedEffect(confirmationInteraction) {
+        confirmationInteraction.interactions.collect { if (it is PressInteraction.Press) editingField = 1 }
     }
-    fun Modifier.pinKeyboard(field: Int, next: FocusRequester): Modifier = onFocusChanged {
-        if (!it.isFocused && editingField == field) { editingField = null; keyboard?.hide() }
-    }.onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) false
-        else when (event.key) {
-            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { editingField = field; keyboard?.show(); true }
-            Key.DirectionDown -> { editingField = null; keyboard?.hide(); next.requestFocus(); true }
-            else -> false
-        }
-    }
-    LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
         shape = RoundedCornerShape(10.dp),
         onDismissRequest = dismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val keyboard = LocalSoftwareKeyboardController.current
+            LaunchedEffect(editingField) {
+                if (editingField != null) {
+                    withFrameNanos { }
+                    keyboard?.show()
+                }
+            }
+            fun Modifier.pinKeyboard(field: Int, next: FocusRequester): Modifier = onFocusChanged {
+                if (!it.isFocused && editingField == field) {
+                    editingField = null
+                    keyboard?.hide()
+                }
+            }.onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false
+                else when (event.key) {
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                        if (editingField == field) keyboard?.show() else editingField = field
+                        true
+                    }
+                    Key.DirectionDown -> {
+                        editingField = null
+                        keyboard?.hide()
+                        next.requestFocus()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            Column(Modifier.initialFocusEntry(focus), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = pin, onValueChange = { onPin(it.filter { c -> c in '0'..'9' }.take(4)) },
                     label = { Text(if (confirmation == null) "PIN" else "New PIN") },

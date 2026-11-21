@@ -75,9 +75,7 @@ internal fun NikTvState.easyHomeRecents(): List<RecentItem> {
             }
             val media = recent.lastPlayed ?: recent.media
             (recent.kind != FavoriteKind.SERIES || recent.lastPlayed != null) &&
-                !recent.media.isAdult && !media.isAdult &&
-                !recent.media.id.startsWith("tmdb-", ignoreCase = true) &&
-                !media.id.startsWith("tmdb-", ignoreCase = true) &&
+                recent.media.isEasyIptvTitle() && media.isEasyIptvTitle() && gate.allows(media, type, recent.categoryTitle) &&
                 gate.allows(recent.series ?: recent.media, type, recent.categoryTitle)
         }
         .toList().distinctRecentContent()

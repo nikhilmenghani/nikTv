@@ -56,7 +56,7 @@ internal fun ProviderDiscoveryCollectionRoute(type: CatalogType, categories: Lis
     val vm: ProviderDiscoveryViewModel = viewModel(key = "provider-collection:$profile:$type:${categories.map { it.id }}")
     val loaded by vm.state.collectAsStateWithLifecycle()
     val selected = remember(type, categories) { mapOf(type to providerDiscoverySources(categories)).filterValues { it.isNotEmpty() } }
-    val state = remember(loaded, profile, selected, app.xtreamContentPolicy, app.contentPolicyCategories) {
+    val state = remember(loaded, profile, selected, app.xtreamContentPolicy, app.hideSensitiveIptv, app.contentPolicyCategories) {
         (loaded.takeIf { it.profile == profile && it.categories == selected }
             ?: ProviderDiscoveryState(profile = profile, categories = selected)).withContentPolicy(app)
     }

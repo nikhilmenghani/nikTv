@@ -25,6 +25,30 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
+    @Test fun parentalPolicyDefaultsToProtectedAndDoesNotSync() = runBlocking {
+        val locked = ProfileParentalPolicy()
+        assertEquals(locked, ParentalControls.observe(context, family()).first())
+        assertEquals(locked, ParentalControls.observe(context, kids()).first())
+        users.selectProfile(kids().profileId)
+        ParentalControls.setProtection(context, family(), false)
+        ParentalControls.setCategoryVisibility(context, family(), true)
+        ParentalControls.setRelockMinutes(context, family(), 15)
+        assertEquals(ProfileParentalPolicy(false, true, 15), ParentalControls.observe(context, family()).first())
+        assertEquals(locked, ParentalControls.policy(context, kids()))
+        assertFalse(users.snapshot("101").any { "profile_parental_v1" in it.payload })
+    }
+
+    @Test fun parentalUnlockBelongsToTheViewerAndUsesTheirTimer() = runBlocking {
+        val app = context
+        ParentalControls.setRelockMinutes(app, family(), 1)
+        ParentalControls.unlock(app, family())
+        assertTrue(ParentalControls.unlocked(app, family()))
+        assertFalse(ParentalControls.unlocked(app, kids()))
+        assertFalse(ParentalControls.unlocked(app, null))
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMinutes(1))
+        assertFalse(ParentalControls.unlocked(app, family()))
+    }
+
     @Test fun easyLayoutIsOptInAndAppliesOnlyToTheEditedProfile() = runBlocking {
         val legacy = UserProfilePreferences.get(context, ProfileBrowsePreferences.DOMAIN, owner = family())
         assertTrue(legacy.edit().putBoolean("show_home", false).commit())

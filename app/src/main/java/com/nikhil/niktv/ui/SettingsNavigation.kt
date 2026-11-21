@@ -78,7 +78,7 @@ internal enum class SettingsPage(val destination: SettingsDestination, val title
     MANAGE_PROFILES(SettingsDestination.PROFILES, "Portal connections", PROFILES),
     PROFILE_DETAILS(SettingsDestination.PROFILES, "Connection details", MANAGE_PROFILES),
     CONNECTION(SettingsDestination.PROFILES, "Connection", PROFILES),
-    PARENTAL(SettingsDestination.PROFILES, "Parental controls", PROFILES),
+    PARENTAL(SettingsDestination.PROFILES, "Parental controls", VIEWER_PORTALS),
     PRIVATE_CONFIGURATION(SettingsDestination.PROFILES, "Private configuration", PROFILES),
     PAIRING(SettingsDestination.PROFILES, "Pair a device", PROFILES),
     CATALOG_UPDATES(SettingsDestination.CATALOG, "Catalog updates", LIBRARY),

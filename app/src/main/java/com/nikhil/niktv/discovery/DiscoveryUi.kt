@@ -227,7 +227,7 @@ private fun DiscoveryPreviewContent(
     }
     val providerRawState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
         ?: ProviderDiscoveryState(profile = profile, categories = expectedProviderCategories)
-    val providerState = remember(providerRawState, app.xtreamContentPolicy, app.contentPolicyCategories) {
+    val providerState = remember(providerRawState, app.xtreamContentPolicy, app.hideSensitiveIptv, app.contentPolicyCategories) {
         providerRawState.withContentPolicy(app)
     }
     val providerRawQueues by produceState(providerVm.retainedRows.takeIf { it.first == profile }
@@ -252,7 +252,7 @@ private fun DiscoveryPreviewContent(
             profile to (values.filterKeys { it in hot } + values.filter { it.key !in hot && it.value.isNotEmpty() }).entries.take(100).associate { it.toPair() }
         }
     } }
-    val providerQueues = remember(providerRawQueues, app.xtreamContentPolicy, app.contentPolicyCategories) {
+    val providerQueues = remember(providerRawQueues, app.xtreamContentPolicy, app.hideSensitiveIptv, app.contentPolicyCategories) {
         val gate = com.nikhil.niktv.ui.XtreamContentGate(app)
         if (!gate.active) providerRawQueues else providerRawQueues.first to providerRawQueues.second.mapValues { (key, items) ->
             val type = if (key.startsWith("provider:SERIES:")) CatalogType.SERIES else CatalogType.MOVIES

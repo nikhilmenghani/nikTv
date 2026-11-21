@@ -44,6 +44,31 @@ class XtreamContentProjectionTest {
         assertEquals(listOf(hidden), flow.value.items)
         assertEquals(2, source.value.items.size)
     }
+    @Test fun sensitiveIptvCategoriesRequireProfileOptInForBothPortalTypes() {
+        val explicit = Category("3", "Restricted", CatalogType.MOVIES, isAdult = true)
+        val labeled = Category("4", "18+ Movies", CatalogType.MOVIES)
+        val categories = listOf(english, explicit, labeled)
+        val titles = listOf(allowed, hidden.copy(portalCategoryId = explicit.id),
+            hidden.copy(id = "c", portalCategoryId = labeled.id),
+            hidden.copy(id = "d", isAdult = true, portalCategoryId = english.id))
+        PortalType.entries.forEach { type ->
+            val source = MutableStateFlow(snapshot().copy(
+                savedProfile = portal.copy(portalType = type), xtreamContentPolicy = XtreamContentPolicy(),
+                hideSensitiveIptv = true, rawCategoriesByType = mapOf(CatalogType.MOVIES to categories),
+                categories = categories, searchCategories = categories, searchResults = titles, items = titles
+            ))
+            val flow = ContentFilteredStateFlow(source)
+            assertEquals(listOf(english), flow.value.categories)
+            assertEquals(listOf(english), flow.value.searchCategories)
+            assertEquals(listOf(allowed), flow.value.items)
+            assertEquals(listOf(allowed), flow.value.searchResults)
+            source.value = source.value.copy(hideSensitiveIptv = false)
+            assertEquals(categories, flow.value.categories)
+            assertEquals(titles, flow.value.searchResults)
+            source.value = source.value.copy(hideSensitiveIptv = true)
+            assertEquals(listOf(english), flow.value.rawCategoriesByType[CatalogType.MOVIES])
+        }
+    }
     @Test fun progressOnlyUpdatesReuseFilteredListInstances() {
         val projection = XtreamContentProjection()
         val raw = snapshot()

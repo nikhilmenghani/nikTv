@@ -685,7 +685,6 @@ internal fun ModernSettingsScreen(
             SettingsSection("Portals & access", page = SettingsPage.PROFILES) {
                 SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "${state.profiles.size} saved")
                 if (profile != null) SettingsLinkRow(SettingsPage.CONNECTION, profile.displayName)
-                SettingsLinkRow(SettingsPage.PARENTAL, if (state.parentalControlsEnabled) "On" else "Off")
                 SettingsLinkRow(SettingsPage.PRIVATE_CONFIGURATION, if (RemoteCredentials.configured(context)) "Configured" else "Set up")
                 SettingsLinkRow(SettingsPage.PAIRING, "Nearby, remote or file")
             }
@@ -858,8 +857,8 @@ internal fun ModernSettingsScreen(
             )
 
         }
-        SettingsSection("Parental controls") {
-            ParentalControlsSettings()
+        if (activePage == SettingsPage.PARENTAL) SettingsSection("Parental controls", page = SettingsPage.PARENTAL) {
+            ParentalControlsSettings(managedViewerId)
         }
         if (activePage in setOf(SettingsPage.CATALOG_UPDATES, SettingsPage.CATALOG_MEDIA_TYPES, SettingsPage.CATALOG_TOOLS)) {
             SettingsSection("Data and sync", page = activePage) {
@@ -1940,6 +1939,7 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
             if (portals.any { it.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
                 SettingsLinkRow(SettingsPage.XTREAM_CONTENT, "Xtream · Languages, content & sports")
             }
+            SettingsLinkRow(SettingsPage.PARENTAL)
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             Text("Playback", Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

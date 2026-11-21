@@ -11,6 +11,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.nikhil.niktv.data.ProfileStore
+import com.nikhil.niktv.data.ParentalControls
+import com.nikhil.niktv.data.isSensitiveIptvCategory
 import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.data.AccountSyncManager
@@ -63,8 +65,7 @@ data class NikTvState(
     val watchProvidersOpen: Boolean = false,
     val discoveryNavigationId: Long = 0,
     val discoveryMatchCounts: Map<String, Int> = emptyMap(),
-    val parentalControlsEnabled: Boolean = true,
-    val parentalRelockMinutes: Int = 5,
+    internal val hideSensitiveIptv: Boolean = false,
     val parentalPrompt: String? = null,
     val parentalPinError: Boolean = false,
     val profiles: List<PortalProfile> = emptyList(),
@@ -235,7 +236,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private val categoryRefreshAttempts = mutableMapOf<Pair<String, CatalogType>, Long>()
     private val categoryRefreshSlots = kotlinx.coroutines.sync.Semaphore(1)
     internal var categoryMetadataLookup: suspend (PortalSession, CatalogType, Boolean) -> List<Category> = { session, type, background -> portal.categories(session, type, background) }
-    private val _state = MutableStateFlow(NikTvState(parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(application), parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(application)))
+    private val _state = MutableStateFlow(NikTvState())
     val state: StateFlow<NikTvState> = ContentFilteredStateFlow(_state)
     private val channelAvailability = IptvAvailabilityStore(application)
     private var remoteFrameAttempt: String? = null
@@ -328,6 +329,16 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     init {
         viewModelScope.launch {
             userSyncStore.selectedScope.collectLatest { owner ->
+                _state.update { it.copy(hideSensitiveIptv = sensitiveIptvHidden(owner)) }
+                ParentalControls.observe(getApplication(), owner).collect { policy ->
+                    if (owner == userSyncStore.selectedScope.value) {
+                        _state.update { it.copy(hideSensitiveIptv = owner != null && !policy.showSensitiveIptv) }
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            userSyncStore.selectedScope.collectLatest { owner ->
                 com.nikhil.niktv.data.XtreamContentPreferences.observe(getApplication(), owner).collect { policy ->
                     _state.update { it.copy(xtreamContentPolicy = policy) }
                 }
@@ -350,6 +361,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             userSyncStore.selectedScope.collect { selected ->
                 if (selected != previous) {
                     previous = selected
+                    cancelParentalPin()
+                    lockAdultContent()
                     viewerJobs.toList().forEach { it.cancel() }
                     viewerJobs.clear()
                     // A portal can exist in several user profiles. Its cache key alone
@@ -1708,13 +1721,17 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         else _state.update { it.copy(parentalPinError = true) }
     }
     private suspend fun authorizeParental(force: Boolean = false): Boolean {
-        if (!force && (!com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) || com.nikhil.niktv.data.ParentalControls.unlocked(getApplication()))) return true
+        val app = getApplication<Application>()
+        val owner = userSyncStore.selectedScope.value
+        if (!force && (!ParentalControls.enabled(app, owner) || ParentalControls.unlocked(app, owner))) return true
         parentalRequest?.complete(false)
         val request = kotlinx.coroutines.CompletableDeferred<Boolean>()
         parentalRequest = request
         _state.update { it.copy(parentalPrompt = "Enter parental PIN", parentalPinError = false) }
         return try {
-            request.await().also { if (it) com.nikhil.niktv.data.ParentalControls.unlock(getApplication()) }
+            val accepted = request.await() && owner == userSyncStore.selectedScope.value
+            if (accepted && !force) ParentalControls.unlock(app, owner)
+            accepted
         } finally {
             if (parentalRequest === request) {
                 parentalRequest = null
@@ -1728,42 +1745,36 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         return item.isAdult || com.nikhil.niktv.data.adultContentLabel(item.title) ||
             com.nikhil.niktv.data.ParentalControls.adultCategory(getApplication(), profile, type, item.portalCategoryId) ||
             (snapshot.rawCategoriesByType[type].orEmpty() + snapshot.categories).any {
-                it.type == type && it.id == item.portalCategoryId && (it.isAdult || com.nikhil.niktv.data.adultContentLabel(it.title))
+                it.type == type && it.id == item.portalCategoryId && it.isSensitiveIptvCategory()
             }
     }
     private fun gateAdultAction(item: MediaItem, type: CatalogType, action: () -> Unit): Boolean {
-        if (!guardXtreamContent(item, type)) return true
+        if (!guardProfileContent(item, type)) return true
         if (!isAdultMedia(item, type) || !com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) ||
             com.nikhil.niktv.data.ParentalControls.unlocked(getApplication())) return false
         launchForViewer launch@ { if (authorizeParental()) action() }
         return true
     }
+    private fun sensitiveIptvHidden(owner: UserScope?) =
+        owner != null && !ParentalControls.policy(getApplication(), owner).showSensitiveIptv
+
     private fun contentGate(): XtreamContentGate {
         val snapshot = _state.value
-        val policy = com.nikhil.niktv.data.XtreamContentPreferences.read(getApplication(), userSyncStore.selectedScope.value)
-        return XtreamContentGate(if (policy == snapshot.xtreamContentPolicy) snapshot else snapshot.copy(xtreamContentPolicy = policy))
+        val owner = userSyncStore.selectedScope.value
+        val policy = com.nikhil.niktv.data.XtreamContentPreferences.read(getApplication(), owner)
+        return XtreamContentGate(snapshot.copy(xtreamContentPolicy = policy, hideSensitiveIptv = sensitiveIptvHidden(owner)))
     }
-    private fun guardXtreamContent(item: MediaItem, type: CatalogType): Boolean {
+    private fun guardProfileContent(item: MediaItem, type: CatalogType): Boolean {
         // Public TMDB details may be opened to resolve an allowed provider variant.
         // The selected IPTV occurrence is always checked again before playback/download.
         if (item.id.startsWith("tmdb-")) return true
-        if (contentGate().allows(item, type)) return true
-        _state.update { it.copy(error = "This content is hidden by this profile’s Xtream preferences.") }
+        if ((!sensitiveIptvHidden(userSyncStore.selectedScope.value) || !isAdultMedia(item, type)) &&
+            contentGate().allows(item, type)) return true
+        _state.update { it.copy(error = "This content is hidden by this profile’s settings.") }
         return false
-    }
-    fun setParentalControlsEnabled(enabled: Boolean) = launchForViewer launch@ {
-        if (!authorizeParental(force = true)) return@launch
-        com.nikhil.niktv.data.ParentalControls.setEnabled(getApplication(), enabled)
-        lockAdultContent()
-        _state.update { it.copy(parentalControlsEnabled = enabled) }
     }
     fun authorizeParentalSettings(onAuthorized: () -> Unit) = launchForViewer launch@ {
         if (authorizeParental(force = true)) onAuthorized()
-    }
-    fun setParentalRelockMinutes(minutes: Int) = launchForViewer launch@ {
-        if (!authorizeParental(force = true)) return@launch
-        com.nikhil.niktv.data.ParentalControls.setRelockMinutes(getApplication(), minutes)
-        _state.update { it.copy(parentalRelockMinutes = minutes) }
     }
     fun changeParentalPin(pin: String) {
         com.nikhil.niktv.data.ParentalControls.setPin(getApplication(), pin)
@@ -1772,7 +1783,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
     fun loadCategory(category: Category) = task {
         searchSeriesReturn = null
-        if ((category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title)) && !authorizeParental()) return@task
+        if (category.isSensitiveIptvCategory() &&
+            (sensitiveIptvHidden(userSyncStore.selectedScope.value) || !authorizeParental())) return@task
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null,
@@ -3979,10 +3991,14 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
     fun openModernIptvCategory(category: Category) {
         searchSeriesReturn = null
-        if (com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) && !com.nikhil.niktv.data.ParentalControls.unlocked(getApplication()) &&
-            (category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title))) {
-            launchForViewer launch@ { if (authorizeParental()) openModernIptvCategory(category) }
-            return
+        if (category.isSensitiveIptvCategory()) {
+            val app = getApplication<Application>()
+            val owner = userSyncStore.selectedScope.value
+            if (sensitiveIptvHidden(owner)) return
+            if (ParentalControls.enabled(app, owner) && !ParentalControls.unlocked(app, owner)) {
+                launchForViewer { if (authorizeParental()) openModernIptvCategory(category) }
+                return
+            }
         }
         tmdbAvailabilityJob?.cancel()
         cancelPendingPlayback()
@@ -5611,7 +5627,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
                 current.copy(
                     searchCategories = filtered,
-                    searchCategoryId = categoryId
+                    searchCategoryId = categoryId,
+                    rawCategoriesByType = if (raw.isNotEmpty() && current.rawCategoriesByType[catalogType].isNullOrEmpty())
+                        current.rawCategoriesByType + (catalogType to raw) else current.rawCategoriesByType
                 )
             }
         }
@@ -6883,7 +6901,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         queueFilter: PlaybackQueueFilter? = null,
         resetDecoderSession: Boolean = false
     ) = latestPlaybackRequest.run(requestId) {
-        if (!guardXtreamContent(series ?: item, type)) return@run
+        if (!guardProfileContent(series ?: item, type)) return@run
         val userScope = store.captureScope()
         if (navigationCursor.pendingRequest != requestId) navigationCursor.select(requestId,
             _state.value.nowPlaying?.let(::playbackNavigationQueue).orEmpty().map { it.id }, item.id,
@@ -7998,17 +8016,26 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
         val origin = settingsReturnSurface
         settingsReturnSurface = null
-        val policy = com.nikhil.niktv.data.XtreamContentPreferences.read(getApplication(), userSyncStore.selectedScope.value)
-        _state.update { (origin?.restore(it) ?: it.copy(settingsOpen = false)).copy(xtreamContentPolicy = policy) }
+        val owner = userSyncStore.selectedScope.value
+        val policy = com.nikhil.niktv.data.XtreamContentPreferences.read(getApplication(), owner)
+        _state.update { (origin?.restore(it) ?: it.copy(settingsOpen = false)).copy(
+            xtreamContentPolicy = policy, hideSensitiveIptv = sensitiveIptvHidden(owner)) }
         val snapshot = _state.value
         val gate = contentGate()
-        if (snapshot.selectedCategory?.let { !gate.allowsCategory(it) } == true && snapshot.nowPlaying == null) {
-            val raw = snapshot.rawCategoriesByType[snapshot.selectedType].orEmpty()
-            val next = filterCategories(raw, snapshot.savedProfile?.cacheKey(), snapshot.selectedType, snapshot.categoryFilters).firstOrNull()
-            _state.update { it.copy(selectedCategory = next, selectedSeries = null, providerMovieDetails = null,
+        val raw = snapshot.rawCategoriesByType[snapshot.selectedType]
+        val categories = if (raw.isNullOrEmpty()) snapshot.categories.filter(gate::allowsCategory)
+            else filterCategories(raw, snapshot.savedProfile?.cacheKey(), snapshot.selectedType, snapshot.categoryFilters)
+        val selectedHidden = snapshot.selectedCategory?.let { !gate.allowsCategory(it) } == true
+        val modernHidden = snapshot.modernIptvCategory?.let { !gate.allowsCategory(it) } == true
+        if ((selectedHidden || modernHidden) && snapshot.nowPlaying == null) {
+            val next = categories.firstOrNull()
+            _state.update { it.copy(categories = categories, selectedCategory = next, selectedSeries = null, providerMovieDetails = null,
                 modernIptvCategory = null, items = emptyList()) }
             if (next != null && !snapshot.homeOpen && !snapshot.favoritesOpen && !snapshot.searchOpen) loadCategory(next)
+        } else if (categories != snapshot.categories) {
+            _state.update { it.copy(categories = categories) }
         }
+        if (snapshot.searchOpen) loadSearchCategories(snapshot.searchType)
     }
     private var manualReauthenticationJob: Job? = null
     private var manualReauthenticationGeneration = 0L
@@ -8111,8 +8138,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         AppUpdates.refreshPreferences()
         val profiles = store.profiles.first()
         return NikTvState(
-            parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(app),
-            parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(app),
+            hideSensitiveIptv = sensitiveIptvHidden(userSyncStore.selectedScope.value),
             profiles = profiles, savedProfile = store.activeProfile.first(), profileEditorOpen = false, restoring = false,
             favorites = store.favorites.first(), recentlyPlayed = store.recentlyPlayed.first(),
             playbackProgress = store.playbackProgress.first(), playbackEngine = store.playbackEngine.first(),
@@ -8169,8 +8195,15 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val snapshot = _state.value
         val session = snapshot.session ?: return@launch
         val profileKey = session.profile.cacheKey()
-        val normalized = selections.mapValues { (_, ids) ->
-            ids.distinct()
+        val hideSensitive = sensitiveIptvHidden(userSyncStore.selectedScope.value)
+        val normalized = selections.mapValues { (type, ids) ->
+            val raw = snapshot.rawCategoriesByType[type] ?: snapshot.browseCachesByType[type]?.categories.orEmpty()
+            if (!hideSensitive) ids.distinct()
+            else {
+                val hidden = raw.filter(Category::isSensitiveIptvCategory).mapTo(mutableSetOf()) { it.id }
+                val prior = snapshot.categoryFilters[filterKey(profileKey, type)] ?: raw.map { it.id }
+                (ids.filterNot { it in hidden } + prior.filter { it in hidden }).distinct()
+            }
         }
         if (normalized.isEmpty()) return@launch
 
@@ -8621,7 +8654,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     }
 
     fun openSeriesFromHome(series: MediaItem) = task {
-        if (!guardXtreamContent(series, CatalogType.SERIES)) return@task
+        if (!guardProfileContent(series, CatalogType.SERIES)) return@task
         searchSeriesReturn = null
         discoveryMetadataRequests.cancel()
         if (isAdultMedia(series, CatalogType.SERIES) && !authorizeParental()) return@task

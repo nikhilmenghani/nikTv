@@ -5,11 +5,13 @@ import com.nikhil.niktv.ui.NikTvState
 import com.nikhil.niktv.ui.XtreamContentGate
 
 internal fun ProviderDiscoveryState.withContentPolicy(app: NikTvState): ProviderDiscoveryState {
-    val gate = XtreamContentGate(app)
+    val gate = XtreamContentGate(app.copy(contentPolicyCategories = app.contentPolicyCategories + categories))
     if (!gate.active) return this
     fun allowed(item: MediaItem, type: CatalogType) = gate.allows(item, type,
         categories[type].orEmpty().firstOrNull { it.id == item.portalCategoryId }?.title)
-    return copy(items = items.mapValues { (type, rows) -> rows.filter { allowed(it, type) } },
+    return copy(
+        categories = categories.mapValues { (_, rows) -> rows.filter(gate::allowsCategory) },
+        items = items.mapValues { (type, rows) -> rows.filter { allowed(it, type) } },
         pages = pages.mapValues { (type, pages) -> pages.mapValues { (_, page) ->
             page.copy(items = page.items.filter { allowed(it, type) })
         } })

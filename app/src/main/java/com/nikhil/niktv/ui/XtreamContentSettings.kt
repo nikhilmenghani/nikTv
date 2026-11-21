@@ -53,6 +53,8 @@ internal fun XtreamContentSettings(profileId: String?, portals: List<PortalProfi
     val stored by produceState<XtreamContentPolicy?>(null, owner) {
         XtreamContentPreferences.observe(context, owner).collect { value = it }
     }
+    val parental by remember(context, owner) { ParentalControls.observe(context, owner) }
+        .collectAsStateWithLifecycle(initialValue = null)
     var draft by remember(owner) { mutableStateOf<XtreamContentPolicy?>(null) }
     var dirty by remember(owner) { mutableStateOf(false) }
     var busy by remember(owner) { mutableStateOf(false) }
@@ -146,7 +148,10 @@ internal fun XtreamContentSettings(profileId: String?, portals: List<PortalProfi
                                 ContentFilterTabs(listOf("Live TV", "Movies", "Series"), listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).indexOf(categoryType)) {
                                     categoryType = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)[it]; categoryKey = ""
                                 }
-                                val rows = available.flatMap { (portal, categories) -> categories.filter { it.type == categoryType }.map { portal to it } }
+                                val rows = available.flatMap { (portal, categories) ->
+                                    categories.filter { it.type == categoryType &&
+                                        (parental?.showSensitiveIptv == true || !it.isSensitiveIptvCategory()) }.map { portal to it }
+                                }
                                 if (rows.isEmpty()) Text("Open this portal’s ${categoryType.title} page once to load its categories.", style = MaterialTheme.typography.bodySmall, color = SettingsMuted)
                                 val choices = rows.map { (portal, category) -> XtreamContentPolicy.overrideKey(ProfilePortalAccess.key(portal), category.type, category.id) to category.title }
                                 val selectedKey = categoryKey.takeIf { saved -> choices.any { it.first == saved } } ?: choices.firstOrNull()?.first

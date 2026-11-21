@@ -18,7 +18,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.nikhil.niktv.data.ParentalControls
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.ui.*
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -39,7 +38,7 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
     var entered by rememberSaveable(profile, category.id) { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val items = remember(app.items, query, profile) {
-        app.items.filter { (!it.isAdult || ParentalControls.unlocked(context)) && (query.isBlank() || it.title.matchesTitleKeywords(query.trim())) }
+        app.items.filter { query.isBlank() || it.title.matchesTitleKeywords(query.trim()) }
     }
     val selection = items.getOrNull(selected) ?: items.firstOrNull()
     val grid = rememberLazyGridState()

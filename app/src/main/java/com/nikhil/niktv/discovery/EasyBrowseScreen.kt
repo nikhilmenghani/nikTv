@@ -35,7 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.nikhil.niktv.data.adultContentLabel
 import com.nikhil.niktv.discovery.components.modernVisibleIptvCategories
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.Category
@@ -77,7 +76,7 @@ internal fun FavoriteKind.easyDestination() = when (this) {
     FavoriteKind.SERIES, FavoriteKind.EPISODE -> EasyHomeAction.SERIES
 }
 
-internal fun MediaItem.isEasyIptvTitle() = !isAdult && !id.startsWith("tmdb-", ignoreCase = true)
+internal fun MediaItem.isEasyIptvTitle() = !id.startsWith("tmdb-", ignoreCase = true)
 
 @Composable
 internal fun EasyPage(
@@ -396,7 +395,7 @@ internal fun EasyCategoriesPage(state: NikTvState, type: CatalogType, home: () -
     val pinned = rememberIptvPins(portalKey).pinnedCategories(type)
     val gate = XtreamContentGate(state)
     val categories = state.modernVisibleIptvCategories(type, requireExplicitSelection = false)
-        .filter { !it.isAdult && !adultContentLabel(it.title) && gate.allowsCategory(it) }
+        .filter(gate::allowsCategory)
         .distinctBy(Category::id).sortedBy { it.id !in pinned }
     val loading = (portalKey to type) in state.categoryRefreshes
     val destination = type.easyDestination()
@@ -432,7 +431,7 @@ internal fun EasyTitlesPage(state: NikTvState, category: Category, home: () -> U
         CatalogType.SERIES -> FavoriteKind.SERIES
     }
     val pins = rememberIptvPins(portalKey).pinnedChannelOrder(category.id)
-    val items = remember(state.items, state.xtreamContentPolicy, state.contentPolicyCategories, state.session, category, pins) {
+    val items = remember(state.items, state.xtreamContentPolicy, state.hideSensitiveIptv, state.contentPolicyCategories, state.session, category, pins) {
         val gate = XtreamContentGate(state)
         val order = pins.withIndex().associate { (index, id) -> id to index }
         state.items.filter { it.isEasyIptvTitle() && gate.allows(it, category.type, category.title) }
@@ -587,7 +586,7 @@ internal fun EasyMyListPage(state: NikTvState, home: () -> Unit, downloads: () -
             FavoriteKind.SERIES, FavoriteKind.EPISODE -> CatalogType.SERIES
         }
         (favorite.profileKey == portal || favorite.profileKey.isEmpty()) && favorite.media.isEasyIptvTitle() &&
-            favorite.series?.isEasyIptvTitle() != false && !adultContentLabel(favorite.categoryTitle.orEmpty()) &&
+            favorite.series?.isEasyIptvTitle() != false &&
             gate.allows(favorite.series ?: favorite.media, type, favorite.categoryTitle)
     }.distinctBy(FavoriteItem::key)
     EasyBrowsePage("My List", saved.map { favorite ->

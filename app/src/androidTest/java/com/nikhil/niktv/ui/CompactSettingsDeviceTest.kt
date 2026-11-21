@@ -9,11 +9,17 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.nikhil.niktv.data.ParentalControls
+import com.nikhil.niktv.data.UserScope
+import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.update.DownloadedApkCleanup
@@ -21,6 +27,7 @@ import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
 import com.nikhil.niktv.update.UpdatePackage
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicBoolean
@@ -50,6 +57,16 @@ class CompactSettingsDeviceTest {
     private fun activeRoot(): AccessibilityNodeInfo? {
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
         return instrumentation.uiAutomation.rootInActiveWindow
+    }
+    private fun focusedPinField(): AccessibilityNodeInfo? {
+        val focused = activeRoot()?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return null
+        if (!focused.isFocused) return null
+        if (focused.isPassword) return focused
+        // Compose can expose a read-only input as a view rather than an EditText.
+        val label = find("PIN") ?: return null
+        val labelBounds = Rect().also(label::getBoundsInScreen)
+        val fieldBounds = Rect().also(focused::getBoundsInScreen)
+        return focused.takeIf { Rect.intersects(fieldBounds, labelBounds) }
     }
     private fun find(text: String): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -102,6 +119,7 @@ class CompactSettingsDeviceTest {
     private fun fixture(
         tv: Boolean,
         cleanup: DownloadedApkCleanup? = null,
+        parental: Boolean = false,
         test: (AtomicReference<PlaybackEngine>, AtomicBoolean, AtomicInteger) -> Unit,
     ) {
         val context = instrumentation.targetContext
@@ -135,6 +153,7 @@ class CompactSettingsDeviceTest {
                 CompositionLocalProvider(LocalConfiguration provides config, LocalSettingsUpdateStreams provides updates,
                     LocalOpenUserProfiles provides { accountNavigation.set("profiles") },
                     LocalOpenAccountScreen provides { accountNavigation.set("account") }) { MaterialTheme(colorScheme = NikColors) {
+                    if (parental) ParentalPinPrompt(viewModel<NikTvViewModel>())
                     Surface(Modifier.fillMaxSize()) {
                     ModernSettingsScreen(
                         state = state, closeSettings = { closed.set(true) }, reauthenticate = {}, editProfile = {}, addProfile = {},
@@ -408,6 +427,60 @@ class CompactSettingsDeviceTest {
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }
 
+    @Test fun profileParentalControlsRequirePinAndKeepVisibilityLocalToTheProfile() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val users = UserSyncStore.get(context)
+        val previousAccount = users.selectedAccount.value
+        val previousViewer = users.selectedScope.value
+        val account = "90000007319"
+        val (profile, other) = runBlocking {
+            users.selectAccount(account)
+            users.createProfile("Parental fixture") to users.createProfile("Other fixture")
+        }
+        val owner = UserScope(account, profile.id)
+        val otherOwner = UserScope(account, other.id)
+        val toggle = "Show sensitive IPTV categories"
+        val pin = "7319"
+        ParentalControls.setPin(context, pin)
+        try {
+            fixture(tv = false, parental = true) { _, _, _ ->
+                click("Profiles & portals")
+                click(profile.name)
+                click("Parental controls")
+                await("Profile parental options are displayed") { button(toggle) != null }
+                assertFalse(ParentalControls.policy(context, owner).showSensitiveIptv)
+                assertTrue(ParentalControls.policy(context, owner).protectionEnabled)
+                click(toggle)
+                await("PIN prompt opens") { find("Enter parental PIN") != null }
+                await("The first PIN prompt focuses its field") { focusedPinField() != null }
+                assertFalse(keyboardVisible())
+                key(KeyEvent.KEYCODE_BACK)
+                await("Cancel leaves the profile setting off") { find("Enter parental PIN") == null && button(toggle) != null }
+                assertFalse(ParentalControls.policy(context, owner).showSensitiveIptv)
+                click(toggle)
+                await("PIN field receives focus") { focusedPinField() != null }
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Explicit activation shows the keyboard") { keyboardVisible() }
+                instrumentation.sendStringSync(pin)
+                await("Correct PIN enables visibility for the edited profile only") {
+                    ParentalControls.policy(context, owner).showSensitiveIptv && find("Enter parental PIN") == null
+                }
+                await("Focus returns to the setting that opened the PIN prompt") { focused(toggle) }
+                assertFalse(ParentalControls.policy(context, otherOwner).showSensitiveIptv)
+                assertFalse(ParentalControls.unlocked(context, owner))
+                screenshot("settings-profile-parental.png")
+            }
+        } finally {
+            runBlocking {
+                users.deleteProfile(profile.id)
+                users.deleteProfile(other.id)
+                if (previousAccount == null) users.disconnect() else users.selectAccount(previousAccount)
+                previousViewer?.let { users.selectProfile(it.profileId) }
+            }
+        }
+    }
+
     @Test fun tabletPinFocusKeepsKeyboardHiddenUntilOk() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
@@ -426,10 +499,17 @@ class CompactSettingsDeviceTest {
         try {
             instrumentation.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
                 var pin by remember { mutableStateOf("") }
-                ParentalPinDialog("PIN fixture", pin, { pin = it }, null, { cancelled.set(true) }, {})
+                var open by remember { mutableStateOf(false) }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    NikTvPrimaryActionButton(onClick = { open = true }) { androidx.compose.material3.Text("Open PIN") }
+                }
+                if (open) ParentalPinDialog("PIN fixture", pin, { pin = it }, null,
+                    { open = false; cancelled.set(true) }, {})
             } } }
+            click("Open PIN")
+            await("PIN fixture opens") { find("PIN fixture") != null }
             await("PIN input receives focus") {
-                automation.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.className == "android.widget.EditText"
+                focusedPinField() != null
             }
             instrumentation.waitForIdleSync()
             assertFalse("PIN focus must not open the keyboard", keyboardVisible())
@@ -439,11 +519,11 @@ class CompactSettingsDeviceTest {
             await("Moving to Cancel hides the keyboard") { !keyboardVisible() }
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Up returns to the read-only PIN input") {
-                automation.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.className == "android.widget.EditText"
+                focusedPinField() != null
             }
             assertFalse("Returning focus must keep the keyboard hidden", keyboardVisible())
             val bounds = Rect().also {
-                requireNotNull(automation.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)).getBoundsInScreen(it)
+                requireNotNull(focusedPinField()).getBoundsInScreen(it)
             }
             val downAt = SystemClock.uptimeMillis()
             for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {

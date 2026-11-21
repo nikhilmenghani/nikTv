@@ -1,6 +1,8 @@
 package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.data.ProfilePortalAccess
+import com.nikhil.niktv.data.adultContentLabel
+import com.nikhil.niktv.data.isSensitiveIptvCategory
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
@@ -26,15 +28,16 @@ internal class ContentFilteredStateFlow(private val source: StateFlow<NikTvState
 internal class XtreamContentProjection {
     private var previous: NikTvState? = null
     private var projected: NikTvState? = null
-    private var identity: Pair<String, XtreamContentPolicy>? = null
+    private var identity: Triple<String, XtreamContentPolicy, Boolean>? = null
     private var cachedGate: XtreamContentGate? = null
     private val lists = IdentityHashMap<List<*>, MutableMap<String, List<*>>>()
     @Synchronized fun project(state: NikTvState): NikTvState {
         if (state === previous) return projected ?: state
-        val profile = state.session?.profile ?: state.savedProfile
-        if (profile?.portalType != PortalType.XTREAM || !state.xtreamContentPolicy.enabled) return state
-        val nextIdentity = profile.cacheKey() to state.xtreamContentPolicy
+        val profile = state.session?.profile ?: state.savedProfile ?: return state
+        if (!state.hideSensitiveIptv && (profile.portalType != PortalType.XTREAM || !state.xtreamContentPolicy.enabled)) return state
+        val nextIdentity = Triple(profile.cacheKey(), state.xtreamContentPolicy, state.hideSensitiveIptv)
         if (nextIdentity != identity || state.rawCategoriesByType !== previous?.rawCategoriesByType ||
+            state.categories !== previous?.categories ||
             state.browseCachesByType.mapValues { it.value.categories } != previous?.browseCachesByType?.mapValues { it.value.categories }) {
             lists.clear(); identity = nextIdentity; cachedGate = null
         }
@@ -85,7 +88,7 @@ internal class XtreamContentProjection {
                     else -> gate.inferType(item)
                 })
             } },
-            searchResults = filtered(state.searchResults, "search") { gate.allows(it, when (it.searchResultType ?: state.searchType) {
+            searchResults = filtered(state.searchResults, "search:${state.searchType}") { gate.allows(it, when (it.searchResultType ?: state.searchType) {
                 SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
                 SearchContentType.SERIES, SearchContentType.EPISODES -> CatalogType.SERIES
                 SearchContentType.MOVIES -> CatalogType.MOVIES
@@ -124,20 +127,24 @@ internal class XtreamContentProjection {
 /** Shared by presentation, fresh provider results and final playback authorization. */
 internal class XtreamContentGate(private val state: NikTvState) {
     private val profile = state.session?.profile ?: state.savedProfile
-    val active = profile?.portalType == PortalType.XTREAM && state.xtreamContentPolicy.enabled
-    private val filter = if (active) XtreamContentFilter(state.xtreamContentPolicy, ProfilePortalAccess.key(profile!!)) else null
+    private val filter = profile?.takeIf { it.portalType == PortalType.XTREAM && state.xtreamContentPolicy.enabled }
+        ?.let { XtreamContentFilter(state.xtreamContentPolicy, ProfilePortalAccess.key(it)) }
+    val active = filter != null || state.hideSensitiveIptv
     private val categories = buildMap<Pair<CatalogType, String>, Category> {
         state.contentPolicyCategories.forEach { (type, cats) -> cats.forEach { put(type to it.id, it) } }
         state.browseCachesByType.forEach { (type, cache) -> cache.categories.forEach { put(type to it.id, it) } }
         state.rawCategoriesByType.forEach { (type, cats) -> cats.forEach { put(type to it.id, it) } }
         state.categories.forEach { put(it.type to it.id, it) }
     }
-    fun allowsCategory(category: Category) = filter?.allowsCategory(category) != false
+    fun allowsCategory(category: Category) =
+        (!state.hideSensitiveIptv || !category.isSensitiveIptvCategory()) && filter?.allowsCategory(category) != false
     fun allows(item: MediaItem, type: CatalogType, categoryTitle: String? = null): Boolean {
-        if (filter == null) return true
+        if (!active) return true
         val category = item.portalCategoryId?.let { categories[type to it] }
             ?: categoryTitle?.let { Category(item.portalCategoryId.orEmpty(), it, type) }
-        return filter.allows(item, type, category)
+        if (state.hideSensitiveIptv && !item.id.startsWith("tmdb-") &&
+            (item.isAdult || category?.isSensitiveIptvCategory() == true || adultContentLabel(item.title))) return false
+        return filter?.allows(item, type, category) != false
     }
     fun inferType(item: MediaItem): CatalogType = when {
         item.id.startsWith("tmdb-series:") || item.command?.contains("/series/") == true -> CatalogType.SERIES
