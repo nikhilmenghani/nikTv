@@ -231,6 +231,19 @@ internal fun ModernSettingsScreen(
         )
     }
     val scope = rememberCoroutineScope()
+    val connectionStore = remember(context) { com.nikhil.niktv.data.ProfileStore(context) }
+    val deviceConnections by connectionStore.connections.collectAsStateWithLifecycle(emptyList())
+    var editingSharedConnection by remember { mutableStateOf<com.nikhil.niktv.model.PortalProfile?>(null) }
+    editingSharedConnection?.let { connection ->
+        androidx.compose.ui.window.Dialog(onDismissRequest = { editingSharedConnection = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+            PortalConnectionEditor(connection, false, connect = { updated -> scope.launch {
+                try { connectionStore.saveConnection(updated); editingSharedConnection = null }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Leave the editor open for retry. */ }
+            } }, cancelEditor = { editingSharedConnection = null }, importBackup = {}, confirmLabel = "Save connection", showImport = false)
+        }
+    }
 
     // GITHUB_BACKUP_V2
     val githubBackupManager = remember(context) {
@@ -768,12 +781,12 @@ internal fun ModernSettingsScreen(
             if (profile != null) SettingsPickerRow("Initial category load", listOf(14, 28, 42, 56).map { it to "$it items" },
                 state.initialCatalogItems, setInitialCatalogItems, "How many IPTV items load when a category opens.")
         }
-        val knownProfiles = (state.profiles + preconfiguredProfiles).distinctBy { it.cacheKey() }
+        val knownProfiles = (deviceConnections + preconfiguredProfiles).distinctBy { it.cacheKey() }
         SettingsSection("Portals") {
             knownProfiles.forEach { entry ->
-                val saved = state.profiles.any { it.cacheKey() == entry.cacheKey() }
+                val saved = deviceConnections.any { it.cacheKey() == entry.cacheKey() }
                 SettingsControlRow(entry.displayName,
-                    if (entry.cacheKey() == profile?.cacheKey()) "Active" else if (saved) "Enabled" else "Set up / enable",
+                    if (entry.cacheKey() == profile?.cacheKey()) "Active" else if (saved) "Saved on this device" else "Set up connection",
                     modifier = if (entry.cacheKey() == managedProfileId) Modifier.focusRequester(settingsPageRequesters.getValue(SettingsPage.PROFILE_DETAILS)) else Modifier,
                     onClick = { managedProfileId = entry.cacheKey(); openSettingsPage(SettingsPage.PROFILE_DETAILS) })
             }
@@ -782,17 +795,14 @@ internal fun ModernSettingsScreen(
         SettingsSection("Portal details", page = SettingsPage.PROFILE_DETAILS) {
             val managed = knownProfiles.firstOrNull { it.cacheKey() == managedProfileId }
             if (managed != null) {
-                val saved = state.profiles.firstOrNull { it.cacheKey() == managed.cacheKey() }
+                val saved = deviceConnections.firstOrNull { it.cacheKey() == managed.cacheKey() }
                 val builtIn = preconfiguredProfiles.firstOrNull { it.cacheKey() == managed.cacheKey() }
                 SettingsControlRow(managed.displayName, managed.portalType.displayName())
                 if (builtIn != null) {
-                    val available = builtIn.portalUrl.isNotBlank() && (builtIn.portalType == PortalType.STALKER ||
-                        (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
-                    SettingsControlRow("Configure connection on this device", checked = saved != null, onToggle = { enabled ->
-                        if (available || !enabled) setPreconfiguredProfileEnabled(builtIn, enabled)
-                        else profileSetupExplanation = "Sync private configuration before enabling ${builtIn.displayName}."
-                    })
+                    SettingsControlRow("Connection on this device", if (saved != null) "Saved" else "Not saved")
                 }
+                SettingsControlRow("Edit connection", description = "Credentials are shared on this device. Choose profile access in profile setup.",
+                    onClick = { editingSharedConnection = managed })
                 if (saved != null && saved.cacheKey() != profile?.cacheKey()) SettingsControlRow("Open portal", onClick = { switchProfile(saved) })
                 if (saved != null && saved.cacheKey() == profile?.cacheKey()) SettingsLinkRow(SettingsPage.CONNECTION, "Active portal")
                 if (saved != null) SettingsControlRow("Remove portal", danger = true, onClick = { pendingRemoval = saved })
@@ -1904,6 +1914,20 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
     val viewerLayout by rememberViewerLayout(owner)
     val scope = rememberCoroutineScope()
     var error by remember(owner) { mutableStateOf<String?>(null) }
+    var editingProfile by remember(owner) { mutableStateOf(false) }
+    var setupConnection by remember(owner) { mutableStateOf<com.nikhil.niktv.model.PortalProfile?>(null) }
+    val connections by remember(context) { com.nikhil.niktv.data.ProfileStore(context).connections }
+        .collectAsStateWithLifecycle(emptyList())
+    val associations by remember(owner) { owner?.let { users.portalAssociations(it) }
+        ?: kotlinx.coroutines.flow.flowOf(emptySet()) }.collectAsStateWithLifecycle(emptySet())
+    val choices by produceState<List<com.nikhil.niktv.data.ProfilePortalChoice>>(emptyList(), connections) {
+        value = com.nikhil.niktv.data.ProfileSetupStore.choices(context)
+    }
+    val assigned by produceState<Set<String>>(emptySet(), owner, choices, associations, hidden) {
+        value = owner?.let { viewer -> choices.filter {
+            users.hasPortalAssociation(viewer, it.portal) && it.key !in hidden
+        }.mapTo(mutableSetOf()) { it.key } }.orEmpty()
+    }
     fun update(action: suspend () -> Unit) { scope.launch {
         try { action(); error = null }
         catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -1911,6 +1935,7 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
     } }
     SettingsSection(profile?.name ?: "Profile", page = SettingsPage.VIEWER_PORTALS) {
         if (profile != null && owner != null) {
+            SettingsControlRow("Manage profile", description = "Name, layout, portals, content, playback and safety in one place.", onClick = { editingProfile = true })
             SettingsPickerRow("App layout", com.nikhil.niktv.data.ViewerLayout.entries.map { it to it.label }, viewerLayout,
                 onSelect = { layout -> update { com.nikhil.niktv.data.ProfileBrowsePreferences.setLayout(context, owner, layout) } },
                 description = "Easy gives this profile a simpler Home with large, labeled shortcuts for watching IPTV.")
@@ -1928,15 +1953,18 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
                 Text("Choose which portals this profile can open. Access choices sync with the profile.",
                     style = MaterialTheme.typography.bodySmall, color = SettingsMuted)
             }
-            portals.forEach { portal ->
-                val key = com.nikhil.niktv.data.ProfilePortalAccess.key(portal)
-                SettingsControlRow(portal.displayName, checked = key !in hidden,
-                    onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner, key, checked) } })
+            choices.forEach { choice ->
+                SettingsControlRow(choice.portal.displayName, checked = choice.key in assigned,
+                    description = if (choice.ready) "Ready" else "Needs connection setup",
+                    onToggle = { checked ->
+                        if (checked && !choice.ready) setupConnection = choice.portal
+                        else update { com.nikhil.niktv.data.ProfileSetupStore.setPortalAllowed(context, owner, choice.portal, checked) }
+                    })
             }
             SettingsControlRow("Sports", checked = com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hidden,
                 onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
                     com.nikhil.niktv.data.ProfilePortalAccess.SPORTS, checked) } })
-            if (portals.any { it.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
+            if (choices.any { it.portal.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
                 SettingsLinkRow(SettingsPage.XTREAM_CONTENT, "Xtream · Languages, content & sports")
             }
             SettingsLinkRow(SettingsPage.PARENTAL)
@@ -1953,6 +1981,19 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
             error?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error) }
         } else Text("This profile is no longer available.")
     }
+    if (editingProfile && profile != null) androidx.compose.ui.window.Dialog(
+        onDismissRequest = { editingProfile = false }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        ProfileSetupEditor(profile, { editingProfile = false }, onSave = { draft ->
+            com.nikhil.niktv.data.ProfileSetupStore.save(context, draft); editingProfile = false
+        }, onDelete = null, load = { com.nikhil.niktv.data.ProfileSetupStore.load(context, profile) })
+    }
+    setupConnection?.let { connection -> androidx.compose.ui.window.Dialog(
+        onDismissRequest = { setupConnection = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        PortalConnectionEditor(connection, false, connect = { portal -> update {
+            if (owner != null) com.nikhil.niktv.data.ProfileSetupStore.setPortalAllowed(context, owner, portal, true)
+            setupConnection = null
+        } }, cancelEditor = { setupConnection = null }, importBackup = {}, confirmLabel = "Use connection", showImport = false)
+    } }
 }
 
 private fun updateCheckFailureMessage(error: Throwable): String {

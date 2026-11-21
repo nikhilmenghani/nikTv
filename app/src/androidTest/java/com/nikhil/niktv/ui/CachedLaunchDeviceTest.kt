@@ -109,10 +109,19 @@ class CachedLaunchDeviceTest {
                 }
                 click("Add profile")
                 val field = awaitNode { it.className?.toString() == "android.widget.EditText" }
-                check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply {
+                val rect = android.graphics.Rect().also(field::getBoundsInScreen)
+                val time = android.os.SystemClock.uptimeMillis()
+                listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP).forEach { action ->
+                    val event = android.view.MotionEvent.obtain(time, android.os.SystemClock.uptimeMillis(), action, rect.exactCenterX(), rect.exactCenterY(), 0)
+                    instrumentation.uiAutomation.injectInputEvent(event, true); event.recycle()
+                }
+                val editable = awaitNode { it.className?.toString() == "android.widget.EditText" && it.isEditable }
+                check(editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "Created here fixture")
                 }))
-                click("Create profile")
+                click("Next")
+                awaitNode { it.text?.toString() == "Set up later" }
+                click("Set up later")
                 awaitNode { it.text?.toString() == "Who's watching?" }
                 awaitNode { it.text?.toString() == "Created here fixture" }
                 val created = runBlocking { users.profiles.first().first { it.name == "Created here fixture" } }

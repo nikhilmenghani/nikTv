@@ -95,16 +95,26 @@ class UserProfileManagementDeviceTest {
             val add = find("Add user profile")!!
             assertFalse("Add is not a selected person", add.isSelected || add.isChecked)
             click("Add user profile")
-            await("Creation form explains the empty starting state") { find("Start with an empty viewing space. Configure portals after creating it.") != null }
-            val input = roots().firstNotNullOfOrNull { root -> walk(root) { it.isEditable } }
+            await("Creation starts with profile details") { find("1 of 2 · Profile details") != null }
+            var input = roots().firstNotNullOfOrNull { root -> walk(root) { it.className == "android.widget.EditText" } }
             assertNotNull(input)
             assertTrue("Another person's name is never prefilled", input?.text.isNullOrEmpty())
-            assertNotNull("New profile defaults to General", find("✓  General"))
+            assertNotNull("New profile defaults to General", find("General"))
+            val rect = android.graphics.Rect().also(input!!::getBoundsInScreen)
+            val time = SystemClock.uptimeMillis()
+            listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP).forEach { action ->
+                val event = android.view.MotionEvent.obtain(time, SystemClock.uptimeMillis(), action, rect.exactCenterX(), rect.exactCenterY(), 0)
+                i.uiAutomation.injectInputEvent(event, true); event.recycle()
+            }
+            await("Touch activates name editing") { roots().any { root -> walk(root) { it.isEditable } != null } }
+            input = roots().firstNotNullOfOrNull { root -> walk(root) { it.isEditable } }
             assertTrue(input!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "New viewer")
             }))
             if (i.uiAutomation.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }) i.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-            click("Create profile")
+            click("Next")
+            await("Portal setup is the second step") { find("Set up later") != null }
+            click("Set up later")
             await("A separate profile is created") { created.get() != null }
             assertNotEquals(original.id, created.get().id)
             assertEquals(UserProfileType.GENERAL, created.get().type)
@@ -126,7 +136,7 @@ class UserProfileManagementDeviceTest {
             await("Profile tile is visible") { find("Watch as Existing viewer") != null }
             manage("Watch as Existing viewer")
             click("Manage profile")
-            await("Identity editor is available") { find("Save changes") != null }
+            await("Identity editor is available") { find("Next") != null }
             click("Delete profile")
             await("Deletion scope is explicit") { find("Delete Existing viewer across devices?") != null }
             assertNull("Opening confirmation is not deletion", deleted.get())
@@ -208,8 +218,10 @@ class UserProfileManagementDeviceTest {
             await("Remote Menu exposes management") { find("Manage profile") != null }
             assertEquals(0, selected.get())
             click("Manage profile")
-            await("Identity editor opens") { find("Save changes") != null }
+            await("Identity editor opens") { find("Next") != null }
             assertNotNull(find("Kids profile"))
+            click("Next")
+            await("Profile preferences open") { find("Save changes") != null }
             click("Save changes")
             await("Identity changes save to the existing UUID") { saved.get() != null }
             assertEquals(existing.id, saved.get().id)

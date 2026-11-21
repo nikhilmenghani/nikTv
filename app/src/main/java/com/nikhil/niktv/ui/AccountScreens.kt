@@ -378,6 +378,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                             openPeople = ::openProfiles, resumeContent = { choosingProfile = false })
                         UserProfilesScreen(
                         profiles = enabledProfiles,
+                        allProfiles = profiles,
                         state = if (!account.syncing && pendingCount > 0 && account.error == null)
                             account.copy(message = "Changes saved on this device") else account,
                         error = profileError,
@@ -397,6 +398,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                                 } else store.updateProfile(existing.copy(name = name, color = color, avatar = avatar))
                             }
                         } },
+                        onSaveSetup = { draft ->
+                            com.nikhil.niktv.data.ProfileSetupStore.save(context, draft)
+                        },
                         onDelete = { profile -> scope.launch { profileAction("Could not delete this profile. Retry from this screen.") { store.deleteProfile(profile.id) } } },
                         onManagePortals = { mappingProfile = it },
                         onImportLegacy = if (hasLegacy) { profile -> scope.launch {
@@ -584,6 +588,8 @@ internal fun UserProfilesScreen(
     onSettings: (() -> Unit)? = null,
     updateVersion: String? = null,
     onUpdate: (() -> Unit)? = null,
+    onSaveSetup: (suspend (com.nikhil.niktv.data.ProfileSetupDraft) -> Unit)? = null,
+    allProfiles: List<UserProfile> = profiles,
 ) {
     var editing by remember { mutableStateOf<UserProfile?>(null) }
     var editorOpen by remember { mutableStateOf(false) }
@@ -604,9 +610,13 @@ internal fun UserProfilesScreen(
     val preferred = entryProfileId?.takeIf { id -> profiles.any { it.id == id } } ?: profiles.firstOrNull()?.id
     fun edit(profile: UserProfile?) { editing = profile; editorOpen = true; managing = null; managementPicker = false }
 
-    if (editorOpen) UserProfileEditor(editing, onDismiss = { editorOpen = false }, onSave = { name, type, color, avatar ->
-        onSave(editing, name, type, color, avatar); editorOpen = false
-    }, onDelete = editing?.let { profile -> { deleting = profile } })
+    if (editorOpen) ProfileSetupEditor(editing, onDismiss = { editorOpen = false }, onSave = { draft ->
+        if (onSaveSetup != null) onSaveSetup(draft)
+        else onSave(editing, draft.profile.name, draft.profile.type, draft.profile.color, draft.profile.avatar)
+        editorOpen = false
+        if (onSaveSetup != null && !draft.existing && draft.canOpen) onSelect(draft.profile)
+    }, onDelete = editing?.let { profile -> { deleting = profile } },
+        load = { com.nikhil.niktv.data.ProfileSetupStore.load(context, editing) })
     else BoxWithConstraints(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(
         listOf(Color(0xFF111318), Color(0xFF090A0C), Color(0xFF060606)))).safeDrawingPadding()) {
         val shortWide = maxWidth >= 600.dp && maxHeight < 600.dp
@@ -653,8 +663,8 @@ internal fun UserProfilesScreen(
                 color = Color(0xFF9699A2), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
             val actions = buildList<Triple<String, ImageVector, () -> Unit>> {
+                if (allProfiles.isNotEmpty()) add(Triple("Manage profiles", Icons.Default.People) { managementPicker = true })
                 if (profiles.isNotEmpty()) {
-                    add(Triple("Manage profiles", Icons.Default.People) { managementPicker = true })
                     onOfflineDownloads?.let { open -> add(Triple("Offline downloads", Icons.Default.Download) {
                         if (profiles.size == 1) open(profiles.single()) else offlinePicker = true
                     }) }
@@ -691,7 +701,12 @@ internal fun UserProfilesScreen(
     if (managementPicker) AlertDialog(onDismissRequest = { managementPicker = false },
         title = { Text("Manage profiles", style = MaterialTheme.typography.titleLarge) },
         text = { Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            profiles.forEach { profile -> NikTvSecondaryActionButton(onClick = { managing = profile; managementPicker = false }, modifier = Modifier.fillMaxWidth()) { Text(profile.name) } }
+            allProfiles.forEach { profile -> NikTvSecondaryActionButton(onClick = { edit(profile) }, modifier = Modifier.fillMaxWidth()) {
+                Column {
+                    Text(profile.name)
+                    if (profiles.none { it.id == profile.id }) Text("Not shown on this device", style = MaterialTheme.typography.labelSmall)
+                }
+            } }
         } }, confirmButton = { NikTvTextActionButton(onClick = { managementPicker = false }) { Text("Done") } })
     if (offlinePicker && onOfflineDownloads != null) AlertDialog(
         modifier = Modifier.initialFocusEntry(offlineEntry, remote),
@@ -759,6 +774,15 @@ private fun UserProfileTile(profile: UserProfile?, width: Dp, selected: Boolean,
     var focused by remember { mutableStateOf(false) }
     var activationDownTime by remember { mutableStateOf<Long?>(null) }
     val interaction = remember { MutableInteractionSource() }
+    val keyScope = rememberCoroutineScope()
+    var holdJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var held by remember { mutableStateOf(false) }
+    var keyPress by remember { mutableStateOf<androidx.compose.foundation.interaction.PressInteraction.Press?>(null) }
+    fun finishKey() {
+        holdJob?.cancel(); holdJob = null
+        keyPress?.let { interaction.tryEmit(androidx.compose.foundation.interaction.PressInteraction.Release(it)) }
+        keyPress = null; activationDownTime = null; held = false
+    }
     val pressed by interaction.collectIsPressedAsState()
     val label = profile?.let { "Watch as ${it.name}" } ?: "Add user profile"
     val shape = RoundedCornerShape(12.dp)
@@ -766,19 +790,40 @@ private fun UserProfileTile(profile: UserProfile?, width: Dp, selected: Boolean,
         if (focused) com.nikhil.niktv.discovery.DiscoveryPosterFocusScale else 1f,
         tween(if (focused) 380 else 320, easing = CubicBezierEasing(.2f, 0f, 0f, 1f)),
         label = "profileFocusScale")
-    Column(modifier.width(width).onFocusChanged { focused = it.isFocused }
+    Column(modifier.width(width).onFocusChanged { focused = it.isFocused; if (!it.isFocused) finishKey() }
         .onPreviewKeyEvent { event ->
             val native = event.nativeKeyEvent
             val activation = native.keyCode in setOf(android.view.KeyEvent.KEYCODE_DPAD_CENTER, android.view.KeyEvent.KEYCODE_ENTER, android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)
-            if (activation && event.type == KeyEventType.KeyDown) activationDownTime = native.downTime
-            if (activation && event.type == KeyEventType.KeyUp) activationDownTime = null
             when {
                 profile != null && native.keyCode == android.view.KeyEvent.KEYCODE_MENU -> {
                     if (event.type == KeyEventType.KeyDown) manage(native.downTime)
                     true
                 }
-                profile != null && activation && event.type == KeyEventType.KeyDown && (native.repeatCount > 0 || native.isLongPress) -> { manage(native.downTime); true }
-                activation && event.type == KeyEventType.KeyUp && native.eventTime - native.downTime >= android.view.ViewConfiguration.getLongPressTimeout() -> true
+                activation && event.type == KeyEventType.KeyDown -> {
+                    if (activationDownTime == null && native.repeatCount == 0) {
+                        activationDownTime = native.downTime; held = false
+                        keyPress = androidx.compose.foundation.interaction.PressInteraction.Press(androidx.compose.ui.geometry.Offset.Zero)
+                            .also { interaction.tryEmit(it) }
+                        if (profile != null) holdJob = keyScope.launch {
+                            kotlinx.coroutines.delay(android.view.ViewConfiguration.getLongPressTimeout().toLong())
+                            held = true; manage(native.downTime)
+                        }
+                    }
+                    // Consume every remote activation; combinedClickable handles touch only.
+                    // Its internal keyboard press must never remain down behind the popup.
+                    true
+                }
+                activation && event.type == KeyEventType.KeyUp -> {
+                    val matches = activationDownTime == native.downTime && !native.isCanceled
+                    val long = held || native.eventTime - native.downTime >= android.view.ViewConfiguration.getLongPressTimeout()
+                    val opened = held
+                    finishKey()
+                    if (matches) {
+                        if (profile != null && long) { if (!opened) manage(native.downTime) }
+                        else select()
+                    }
+                    true
+                }
                 else -> false
             }
         }.semantics(mergeDescendants = true) {
@@ -826,7 +871,7 @@ private fun PortalMappingsDialog(owner: UserScope, name: String, store: UserSync
     val scope = rememberCoroutineScope()
     LaunchedEffect(owner) {
         runCatching {
-            local = legacy.profiles.first()
+            local = legacy.connections.first()
             remote = store.snapshot(owner.accountId).filter { it.profileId == owner.profileId && it.collection == "portals" && !it.deleted }.map {
                 val payload = JSONObject(it.payload)
                 SyncedPortalChoice(it.recordId, payload.optString("name", "Portal"), payload.optString("type"))
@@ -851,71 +896,4 @@ private fun PortalMappingsDialog(owner: UserScope, name: String, store: UserSync
             }
         } },
         confirmButton = { NikTvTextActionButton(onClick = onDismiss) { Text("Done") } })
-}
-
-@Composable
-private fun UserProfileEditor(profile: UserProfile?, onDismiss: () -> Unit, onSave: (String, UserProfileType, Long, String) -> Unit, onDelete: (() -> Unit)?) {
-    var name by remember(profile?.id) { mutableStateOf(profile?.name.orEmpty()) }
-    var type by remember(profile?.id) { mutableStateOf(profile?.type ?: UserProfileType.GENERAL) }
-    var color by remember(profile?.id) { mutableStateOf(profile?.color ?: 0xFFE50914L) }
-    var avatar by remember(profile?.id) { mutableStateOf(profile?.avatar.orEmpty()) }
-    val muted = Color(0xFF9A9DA7)
-    val shape = RoundedCornerShape(12.dp)
-    val fieldColors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFE50914),
-        unfocusedBorderColor = Color(0xFF343842), focusedContainerColor = Color(0xFF171A20),
-        unfocusedContainerColor = Color(0xFF171A20), focusedLabelColor = Color.White, unfocusedLabelColor = muted)
-    BackHandler(onBack = onDismiss)
-    Surface(Modifier.fillMaxSize(), color = Color(0xFF090B10), contentColor = Color.White) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("NIKTV", color = Color(0xFFE50914), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
-                    NikTvTextActionButton(onClick = onDismiss) { Text("Cancel") }
-                }
-                Text(if (profile == null) "Add user profile" else "Edit profile", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(if (profile == null) "Start with an empty viewing space. Configure portals after creating it." else "Your name and avatar, on every device.", color = muted, style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(76.dp).background(Color(color), shape), contentAlignment = Alignment.Center) {
-                        Text(avatar.ifBlank { name.take(1).uppercase().ifBlank { "N" } }, fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    OutlinedTextField(name, { name = it.take(60) }, label = { Text("Display name") }, singleLine = true,
-                        shape = shape, colors = fieldColors, modifier = Modifier.weight(1f))
-                }
-                OutlinedTextField(avatar, { avatar = it.take(8) }, label = { Text("Initials or emoji") }, singleLine = true,
-                    placeholder = { Text("Use an initial or emoji") }, shape = shape, colors = fieldColors, modifier = Modifier.fillMaxWidth())
-                Text("Avatar color", style = MaterialTheme.typography.labelLarge, color = muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    listOf("Red" to 0xFFE50914L, "Blue" to 0xFF1565C0L, "Green" to 0xFF2E7D32L, "Purple" to 0xFF7B1FA2L).forEach { (label, value) ->
-                        val chosen = color == value
-                        Box(Modifier.size(48.dp).border(if (chosen) 2.dp else 1.dp, if (chosen) Color.White else Color(0xFF343842), CircleShape)
-                            .remoteFocusFrame(CircleShape).selectable(chosen, role = Role.RadioButton, onClick = { color = value })
-                            .semantics { contentDescription = "$label avatar color" }.padding(5.dp).background(Color(value), CircleShape), contentAlignment = Alignment.Center) {
-                            if (chosen) Text("✓", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                if (profile == null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    listOf(UserProfileType.GENERAL to "General", UserProfileType.KIDS to "Kids").forEach { (choice, label) ->
-                        val chosen = type == choice
-                        Surface(modifier = Modifier.weight(1f).remoteFocusFrame(shape)
-                            .selectable(chosen, role = Role.RadioButton, onClick = { type = choice }), shape = shape,
-                            color = if (chosen) Color(0xFF32191E) else Color(0xFF171A20),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, if (chosen) Color(0xFFE50914) else Color(0xFF343842))) {
-                            Box(Modifier.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                                Text(if (chosen) "✓  $label" else label, style = MaterialTheme.typography.labelLarge)
-                            }
-                        }
-                    }
-                } else Text(if (profile.type == UserProfileType.KIDS) "Kids profile" else "General profile", color = muted, style = MaterialTheme.typography.labelMedium)
-                HorizontalDivider(color = Color(0xFF282B33))
-                NikTvPrimaryActionButton(onClick = { onSave(name.trim(), type, color, avatar.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-                    Text(if (profile == null) "Create profile" else "Save changes")
-                }
-                onDelete?.let { NikTvTextActionButton(onClick = it, modifier = Modifier.fillMaxWidth()) { Text("Delete profile", color = Color(0xFFFF727C)) } }
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-    }
 }

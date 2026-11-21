@@ -130,6 +130,31 @@ internal object UserProfilePreferences {
         })
     }
 
+    internal data class Change(val domain: String, val key: String, val value: Any, val portable: Boolean = true)
+
+    /** Commit a profile form and its portable/local preferences in one Room transaction. */
+    internal suspend fun saveBatch(context: Context, owner: UserScope, changes: List<Change>,
+        editProfile: suspend () -> Unit = {}) = withContext(Dispatchers.IO) {
+        val users = UserSyncStore.get(context)
+        changes.forEach { require(!it.portable || it.domain in portableDomains) }
+        snapshot(context, owner)
+        users.withEditLock { users.db.withTransaction {
+            editProfile()
+            val rows = users.dao.preferences(owner.accountId, owner.profileId)
+            val before = mutablePreferencesOf()
+            val after = mutablePreferencesOf()
+            changes.groupBy { if (it.portable) PORTABLE else LOCAL }.forEach { (name, edits) ->
+                val key = stringPreferencesKey(name)
+                val raw = rows.firstOrNull { it.name == name }?.value
+                if (raw != null) before[key] = raw
+                val values = decodeMap(raw).toMutableMap()
+                edits.forEach { change -> values["${change.domain}|${change.key}"] = encoded(change.value) }
+                after[key] = JsonObject(values).toString()
+            }
+            users.persist(owner, before, after)
+        } }
+    }
+
     /** Both preference maps and their migration marker commit together; interruptions retry safely. */
     suspend fun importLegacy(context: Context, owner: UserScope,
         migrationId: String = "legacy-browsing-import", overrideExisting: Boolean = false, portalKeysOverride: List<String>? = null) {

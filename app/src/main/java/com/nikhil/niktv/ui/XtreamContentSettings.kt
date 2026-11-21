@@ -229,7 +229,7 @@ private fun ContentFilterTabs(labels: List<String>, selected: Int, choose: (Int)
 }
 
 @Composable
-private fun ContentFilterChoices(options: List<Pair<String, String>>, selected: Set<String>, change: (Set<String>) -> Unit) {
+internal fun ContentFilterChoices(options: List<Pair<String, String>>, selected: Set<String>, change: (Set<String>) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val columns = if (maxWidth >= 600.dp) 3 else 2
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

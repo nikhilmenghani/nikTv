@@ -123,9 +123,11 @@ class ProfileStore @JvmOverloads constructor(
     private val portalRecordChanges = users.selectedAccount.flatMapLatest { accountId ->
         if (accountId == null) flowOf(emptyList()) else users.dao.observeRecords(accountId)
     }.map { records -> records.filter { it.collection == "portals" } }
-    val profiles: Flow<List<PortalProfile>> = this@ProfileStore.preferences.data.decodedProfilePreference(
+    /** Device connections are shared; profile assignment is a separate, explicit choice. */
+    val connections: Flow<List<PortalProfile>> = this@ProfileStore.preferences.data.decodedProfilePreference(
         select = { it[profilesKey] to it[key] }, decode = { (raw, legacy) -> decodeProfiles(raw, legacy) },
-    ).combine(users.selectedScope) { portals, selected -> portals to (fixedUserScope ?: selected) }
+    )
+    val profiles: Flow<List<PortalProfile>> = connections.combine(users.selectedScope) { portals, selected -> portals to (fixedUserScope ?: selected) }
     .combine(portalRecordChanges) { (portals, owner), _ ->
         if (owner == null) portals else portals.filter { users.hasPortalAssociation(owner, it) }
     }
@@ -292,11 +294,15 @@ class ProfileStore @JvmOverloads constructor(
     }
     suspend fun addProfile(profile: PortalProfile): Preferences {
         captureScope()?.let { users.associatePortal(it, profile) }
+        return saveConnection(profile)
+    }
+    /** Save credentials once on this device without assigning them to the active viewer. */
+    suspend fun saveConnection(profile: PortalProfile): Preferences {
         return preferences.editProfileMetadata { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
-        if (profiles.none { it.identity() == profile.identity() }) {
-            prefs[profilesKey] = Json.encodeToString(profiles + profile)
-        }
+        val next = if (profiles.any { it.identity() == profile.identity() })
+            profiles.map { if (it.identity() == profile.identity()) profile else it } else profiles + profile
+        prefs[profilesKey] = Json.encodeToString(next)
         }
     }
     suspend fun activate(profile: PortalProfile) = preferences.editProfileMetadata { prefs ->
