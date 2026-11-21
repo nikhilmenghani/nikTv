@@ -84,5 +84,9 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
         toggleFavourite = vm::toggleFavourite, toggleFavourites = vm::toggleFavourites, adjacentChannel = vm::adjacentChannel,
         addPlaylist = vm::addPlaylist, importPlaylist = vm::importPlaylist, removePlaylist = vm::removePlaylist,
         dismissLibraryError = vm::dismissLibraryError,
-        toggleChannelFlag = vm::toggleChannelFlag, setAvailabilityFilter = vm::setAvailabilityFilter) }
+        toggleChannelFlag = vm::toggleChannelFlag, setAvailabilityFilter = vm::setAvailabilityFilter,
+        openSimulation = if (com.nikhil.niktv.BuildConfig.DEBUG) ({
+            context.startActivity(android.content.Intent().setClassName(context.packageName,
+                "com.nikhil.niktv.sports.PlaybackSimulationActivity"))
+        }) else null) }
 }

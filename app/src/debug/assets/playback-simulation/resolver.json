@@ -1,0 +1,6 @@
+{
+  "responses": {
+    "shaka-live:live-dash": "eyJ1cmwiOiJodHRwczovL3N0b3JhZ2UuZ29vZ2xlYXBpcy5jb20vc2hha2EtbGl2ZS1hc3NldHMvcGxheWVyLXNvdXJjZS5tcGQifQ==",
+    "angel-one:angel-dash": "eyJ1cmwiOiJodHRwczovL3N0b3JhZ2UuZ29vZ2xlYXBpcy5jb20vc2hha2EtZGVtby1hc3NldHMvYW5nZWwtb25lL2Rhc2gubXBkIn0="
+  }
+}

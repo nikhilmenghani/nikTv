@@ -49,7 +49,8 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     toggleFavourites: () -> Unit = {}, adjacentChannel: (Int) -> Unit = {},
     addPlaylist: (String, String) -> Unit = { _, _ -> }, importPlaylist: (android.net.Uri, String) -> Unit = { _, _ -> },
     removePlaylist: (SportsCategory) -> Unit = {}, dismissLibraryError: () -> Unit = {},
-    toggleChannelFlag: (SportsChannel) -> Unit = {}, setAvailabilityFilter: (SportsAvailabilityFilter) -> Unit = {}) {
+    toggleChannelFlag: (SportsChannel) -> Unit = {}, setAvailabilityFilter: (SportsAvailabilityFilter) -> Unit = {},
+    openSimulation: (() -> Unit)? = null) {
     val compact = sportsPhoneLayout()
     val scope = rememberCoroutineScope()
     val tabFocus = remember { SportsTab.entries.associateWith { FocusRequester() } }
@@ -134,6 +135,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 add(SportsHeaderAction("Group: $group", Icons.Default.FilterList, group != "All groups") { groupsOpen = true })
             add(SportsHeaderAction("Refresh sports", Icons.Default.Refresh, onClick = refresh))
             add(SportsHeaderAction("Stream compatibility: ${resolverMode.title}", Icons.Default.Settings) { resolverOpen = true })
+            openSimulation?.let { add(SportsHeaderAction("Playback test", Icons.Default.PlayArrow, onClick = it)) }
         }
         SportsHeader("Sports", back, headerActions, backFocus, optionsAction,
             downFocus = if (selected != null) sourceFocus.firstOrNull() else gridEntry) { modifier ->

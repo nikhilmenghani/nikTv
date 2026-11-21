@@ -1,0 +1,18 @@
+{
+  "events": [
+    {
+      "id": "shaka-live",
+      "title": "Shaka live sample",
+      "description": "Public Shaka DASH test stream",
+      "isLive": true,
+      "sources": [{ "id": "live-dash", "title": "DASH live sample" }]
+    },
+    {
+      "id": "angel-one",
+      "title": "Angel One sample",
+      "description": "Public Shaka DASH video on demand",
+      "isLive": false,
+      "sources": [{ "id": "angel-dash", "title": "DASH video sample" }]
+    }
+  ]
+}
