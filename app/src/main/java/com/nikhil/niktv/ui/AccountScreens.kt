@@ -113,7 +113,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     val profiles by store.profiles.collectAsStateWithLifecycle(emptyList())
     val enabledIds by store.enabledProfiles.collectAsStateWithLifecycle(emptySet())
     val enabledProfiles = profiles.filter { it.id in enabledIds }
-    val selectedScope by store.selectedScope.collectAsStateWithLifecycle()
+    // Startup restoration can finish before STARTED. Keep this lightweight gate
+    // observable whenever composed, so a validated viewer never falls back to the chooser.
+    val selectedScope by store.selectedScope.collectAsState()
     val pendingCount by store.pendingChanges.collectAsStateWithLifecycle(0)
     val appState by vm.state.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
@@ -340,7 +342,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     }
     // Profile names and enabled tiles load independently from selection. The live
     // selection has already been validated and is cleared when disabled/deleted.
-    val activeOwner = store.selectedScope.value
+    val activeOwner = selectedScope
     val selectedViewerAvailable = activeOwner != null && activeOwner.profileId == selectedUser &&
         activeOwner.accountId == account.accountId
     CompositionLocalProvider(LocalOpenAccountScreen provides ::openAccount, LocalOpenUserProfiles provides ::openProfiles,
