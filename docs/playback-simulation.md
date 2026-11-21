@@ -31,3 +31,17 @@ popup focus return in both orientations, HTTP 403 recovery through Retry, and re
 input. A separate navigation case opens the real Sports menu, whose ordinary startup
 may load sports metadata. None of these cases contacts HD Streamz. Release builds
 contain neither the page nor its fixtures or Android intent filters.
+
+### Device results, 2026-11-21
+
+- Three repository unit tests passed.
+- Xiaomi Pad 5 passed both popup orientations, real Sports menu entry, HTTP 403
+  recovery, and invalid input. Poco passed the two popup orientation cases.
+- Real decoded frames advanced. Close returned to the originating control, with
+  no unrelated gains in the instrumented control-focus history.
+- Focused-popup screenshots showed readable, reachable controls. The immediate
+  close captures include Android's dialog fade, so they do not prove that every
+  rendered transition frame is free of a focus flash.
+- No HD Streamz live match was played in NiKTV. The inspected tablet app logs and
+  Android media session did not expose a manifest URL. The page is ready for a
+  source supplied through an ordinary external-video handoff or URL input.
