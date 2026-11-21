@@ -59,6 +59,7 @@ data class NikTvState(
     internal val contentPolicyCategories: Map<CatalogType, List<Category>> = emptyMap(),
     val profileSwitcherOpen: Boolean = false,
     val alternateSources: AlternateSourcePickerState? = null,
+    val portalQualityPicker: PortalQualityPickerState? = null,
     val tmdbIptvLookupMiss: TmdbIptvLookupMiss? = null,
     val discoverySurface: DashboardSurface? = null,
     val discoveryExperiment: Boolean = false,
@@ -6865,6 +6866,68 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
     }
 
+    private var portalQualityPositionReader: (() -> Long)? = null
+
+    fun openPortalQuality(position: Long, playing: PlayingMedia, positionReader: () -> Long) {
+        if (_state.value.nowPlaying?.playbackAttemptId != playing.playbackAttemptId ||
+            playing.portalQuality?.variants?.size?.let { it > 1 } != true) return
+        portalQualityPositionReader = positionReader
+        _state.update { it.copy(portalQualityPicker = PortalQualityPickerState(playing, position.coerceAtLeast(0))) }
+    }
+
+    fun closePortalQuality() {
+        portalQualityPositionReader = null
+        _state.update { it.copy(portalQualityPicker = null) }
+    }
+
+    fun choosePortalQuality(variantId: String?) {
+        val picker = _state.value.portalQualityPicker ?: return
+        if (picker.loading) return
+        val playing = picker.playing
+        val quality = playing.portalQuality ?: return
+        val selected = quality.variants.firstOrNull { it.id == variantId }
+        if (variantId != null && selected == null) return
+        val session = _state.value.session ?: return
+        val owner = store.captureScope()
+        if (playing.userScope != owner || _state.value.nowPlaying?.playbackAttemptId != playing.playbackAttemptId) return
+        val preferredHeight = selected?.height ?: 0
+        val positionReader = portalQualityPositionReader
+        val requestId = latestPlaybackRequest.begin()
+        _state.update { it.copy(portalQualityPicker = picker.copy(loading = true, error = null)) }
+        launchForViewer {
+            latestPlaybackRequest.run(requestId) {
+                var phase = "resolve"
+                try {
+                    val result = portal.resolvePlayback(session, playing.media, playing.catalogType,
+                        preferredHeight, variantId, quality.variants.takeIf { picker.error == null })
+                    if (!latestPlaybackRequest.isCurrent(requestId) || store.captureScope() != owner ||
+                        _state.value.nowPlaying?.playbackAttemptId != playing.playbackAttemptId || _state.value.session != session ||
+                        _state.value.portalQualityPicker?.id != picker.id) return@run
+                    phase = "preference"
+                    owner?.let { com.nikhil.niktv.data.PortalQualityPreferences.save(getApplication(), it, preferredHeight) }
+                    phase = "position"
+                    val position = runCatching { positionReader?.invoke() }.getOrNull()?.coerceAtLeast(0) ?: picker.positionMillis
+                    _state.update { state ->
+                        val active = state.nowPlaying
+                        if (active?.playbackAttemptId != playing.playbackAttemptId || !latestPlaybackRequest.isCurrent(requestId) ||
+                            state.portalQualityPicker?.id != picker.id || store.captureScope() != owner) state
+                        else state.copy(nowPlaying = active.copy(url = result.url, portalQuality = result,
+                            playbackFormat = mediaFormatLabel(result.url),
+                            resumePositionMillis = position, playbackAttemptId = java.util.UUID.randomUUID().toString(),
+                            decoderSessionId = java.util.UUID.randomUUID().toString(), decoderRecoveryCount = 0),
+                            portalQualityPicker = null)
+                    }
+                    portalQualityPositionReader = null
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    Log.w("NikTvQuality", "Switch failed phase=$phase error=${failure.javaClass.simpleName}")
+                    _state.update { state -> if (state.portalQualityPicker?.id == picker.id)
+                        state.copy(portalQualityPicker = picker.copy(error = "Could not switch. Try again.")) else state }
+                }
+            }
+        }
+    }
+
     private val latestPlaybackRequest = LatestPlaybackRequest()
     private val navigationCursor = PlaybackNavigationCursor()
     private val pendingNavigationId: String? get() = navigationCursor.pendingId
@@ -6874,6 +6937,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private fun beginPlaybackRequest(): Long {
+        closePortalQuality()
         movieStructureJob?.cancel()
         categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
         categoryMetadataRefreshJobs.clear()
@@ -6999,8 +7063,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val metadataResolvedAt = SystemClock.elapsedRealtime()
         // Xtream URLs are cheaply built from current credentials. Stalker links are session-bound.
         // Offline downloads never require a provider request, even when provider-first is selected.
-        val url = offlineUrl ?: try {
-            portal.playableUrl(session, item, type)
+        val preferredHeight = com.nikhil.niktv.data.PortalQualityPreferences.height(getApplication(), userScope)
+        val resolution = if (offlineUrl != null) PortalPlaybackResolution(offlineUrl) else try {
+            portal.resolvePlayback(session, item, type, preferredHeight)
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (container: com.nikhil.niktv.data.PortalVodSeriesContainerException) { throw container }
         catch (failure: Exception) {
@@ -7008,8 +7073,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             // authorization and hides the original failure behind another lookup.
             if (forceFreshUrl || failure.isAuthenticationFailure()) throw failure
             item = portal.refreshPlaybackItem(session, item, type, series)
-            portal.playableUrl(session, item, type)
+            portal.resolvePlayback(session, item, type, preferredHeight)
         }
+        val url = resolution.url
         val linkResolvedAt = SystemClock.elapsedRealtime()
         Log.i(
             "NikTvPlayback",
@@ -7217,6 +7283,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 nowPlaying = PlayingMedia(
                     media = item,
                     url = url,
+                    portalQuality = resolution.takeIf { it.variants.isNotEmpty() },
                     catalogType = type,
                     previousEpisode = previousItem,
                     nextEpisode = nextItem,
@@ -7807,6 +7874,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     }
 
     fun closePlayer() {
+        closePortalQuality()
         _state.value.nowPlaying?.userScope?.let { flushProgressScopes += it }
         accountSync.requestSync("playback-stop", immediate = true)
         releaseAlternatePlaybackLease()

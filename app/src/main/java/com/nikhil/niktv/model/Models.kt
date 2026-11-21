@@ -412,7 +412,8 @@ data class PlayingMedia(
     /** Immutable owner captured when playback starts; late callbacks retain it. */
     val userScope: com.nikhil.niktv.data.UserScope? = null,
     /** Stable logical portal association, independent of its local credentials. */
-    val logicalPortalId: String = ""
+    val logicalPortalId: String = "",
+    val portalQuality: PortalPlaybackResolution? = null
 )
 
 class PlaybackStreamDrm(

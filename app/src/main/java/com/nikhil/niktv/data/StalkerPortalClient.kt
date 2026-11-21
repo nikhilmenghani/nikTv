@@ -452,12 +452,20 @@ class StalkerPortalClient(private val context: Context) {
         return item.takeIf { !it.command.isNullOrBlank() } ?: error("Item is not available locally or in provider search.")
     }
 
-    suspend fun playableUrl(session: PortalSession, item: MediaItem, type: CatalogType): String = withContext(Dispatchers.IO) {
+    suspend fun playableUrl(session: PortalSession, item: MediaItem, type: CatalogType): String =
+        resolvePlayback(session, item, type).url
+
+    suspend fun resolvePlayback(session: PortalSession, item: MediaItem, type: CatalogType,
+        preferredHeight: Int = 0, preferredId: String? = null,
+        availableVariants: List<PortalPlaybackVariant>? = null): PortalPlaybackResolution = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
-            return@withContext xtreamPlaybackUrl(session.profile, item, type)
+            return@withContext PortalPlaybackResolution(xtreamPlaybackUrl(session.profile, item, type))
         }
         val cmd = item.command ?: error("This item has no playback command")
-        val playbackCommands = if (type == CatalogType.SERIES) {
+        var variants = availableVariants.orEmpty()
+        val playbackCommands = if (!availableVariants.isNullOrEmpty()) {
+            availableVariants.map { it.command }
+        } else if (type == CatalogType.SERIES) {
             val movieId = item.id.substringBefore(':')
             val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
                 "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
@@ -465,12 +473,9 @@ class StalkerPortalClient(private val context: Context) {
                 "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
                 "hd" to "0", "ended" to "0", "p" to "1"
             ))).payload().arrayFromData().mapNotNull { it as? JsonObject }
-            // Some portals ignore the episode filter and return several files.
-            // Their first row is not necessarily the selected episode. Retain
-            // single-detail compatibility (the detail can have its own file ID).
-            val detail = details.firstOrNull { it.string("id") == item.portalEpisodeId }
-                ?: details.singleOrNull()
-            listOf(detail?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd)
+            val commands = episodePlaybackCommands(movieId, item.portalEpisodeId, cmd, details)
+            variants = portalPlaybackVariants(details).filter { it.command in commands }
+            commands
         } else if (type == CatalogType.MOVIES) {
             val root = vodRoot(session, item)
             if (portalVodHasEpisodes(root)) throw PortalVodSeriesContainerException()
@@ -486,11 +491,18 @@ class StalkerPortalClient(private val context: Context) {
             }
             val detail = details.firstOrNull()
                 ?: error("Wio returned no playback detail for IPTV ID ${item.id} in category ${item.portalCategoryId ?: "unknown"}.")
-            listOf("/media/file_${detail.id}.mpg")
+            variants = portalPlaybackVariants(root.arrayFromData().mapNotNull { it as? JsonObject }.filter { row ->
+                row.boolish("is_file") && row.string("video_id") == item.id
+            })
+            variants.map { it.command }.ifEmpty { listOf("/media/file_${detail.id}.mpg") }
         } else listOf(cmd)
 
         var lastPortalError: String? = null
-        playbackCommands.distinct().forEach { playbackCommand ->
+        val ranked = rankedPortalVariants(variants, preferredHeight, preferredId)
+        val language = ranked.firstOrNull()?.language
+        val commands = (if (ranked.isNotEmpty()) ranked.filter { it.language == language }.map { it.command }
+            else playbackCommands).distinct()
+        commands.forEach { playbackCommand ->
             val payload = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
                 "type" to if (type == CatalogType.SERIES) "vod" else type.apiType,
                 "action" to "create_link", "cmd" to playbackCommand,
@@ -499,7 +511,8 @@ class StalkerPortalClient(private val context: Context) {
             ))).payload()
             val playbackUrl = payload.string("cmd")
                 ?.removePrefix("ffmpeg ")?.removePrefix("ffrt ")?.trim()
-            if (!playbackUrl.isNullOrBlank()) return@withContext playbackUrl
+            if (!playbackUrl.isNullOrBlank()) return@withContext PortalPlaybackResolution(playbackUrl, ranked,
+                variants.firstOrNull { it.command == playbackCommand }?.id, preferredHeight)
             lastPortalError = payload.string("error")?.takeIf { it.isNotBlank() && it != "0" }
         }
         error(when (lastPortalError) {
@@ -1397,6 +1410,26 @@ class StalkerPortalClient(private val context: Context) {
                 }
                 .distinct()
                 .take(5)
+        }
+
+        internal fun episodePlaybackCommands(
+            movieId: String,
+            episodeId: String?,
+            originalCommand: String,
+            details: List<JsonObject>
+        ): List<String> {
+            fun JsonObject.value(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
+            // An episode can contain multiple quality/language files. Their
+            // series_id identifies the episode, while video_id identifies the
+            // show. Require both before using several returned file rows.
+            val scopedFiles = details.filter { row ->
+                !episodeId.isNullOrBlank() && row.value("is_file")?.lowercase() in setOf("1", "true", "yes") &&
+                    row.value("series_id") == episodeId && row.value("video_id") == movieId
+            }
+            val legacyDetail = details.firstOrNull { it.value("id") == episodeId } ?: details.singleOrNull()
+            val selected = scopedFiles.ifEmpty { listOfNotNull(legacyDetail) }
+            return selected.mapNotNull { row -> row.value("id")?.let { "/media/file_$it.mpg" } }
+                .distinct().ifEmpty { listOf(originalCommand) }
         }
 
         internal fun moviePlaybackCommands(

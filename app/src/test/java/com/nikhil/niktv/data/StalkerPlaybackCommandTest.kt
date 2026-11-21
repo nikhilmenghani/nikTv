@@ -2,8 +2,36 @@ package com.nikhil.niktv.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 class StalkerPlaybackCommandTest {
+    @Test fun episodeWithSeveralQualityFilesUsesItsOwnFiles() {
+        val rows = listOf(
+            """{"id":"3466197","is_file":true,"video_id":"93826","series_id":"3070139"}""",
+            """{"id":"3466317","is_file":true,"video_id":"93826","series_id":"3070139"}""",
+            """{"id":"other-episode","is_file":true,"video_id":"93826","series_id":"other"}""",
+            """{"id":"other-show","is_file":true,"video_id":"different","series_id":"3070139"}"""
+        ).map { Json.parseToJsonElement(it).jsonObject }
+        assertEquals(listOf("/media/file_3466197.mpg", "/media/file_3466317.mpg"),
+            StalkerPortalClient.episodePlaybackCommands("93826", "3070139", "/media/93826.mpg", rows))
+    }
+
+    @Test fun ignoredEpisodeFilterDoesNotPickAnotherEpisodesFile() {
+        val rows = listOf(
+            """{"id":"first","is_file":true,"video_id":"93826","series_id":"other"}""",
+            """{"id":"second","is_file":true,"video_id":"93826","series_id":"another"}"""
+        ).map { Json.parseToJsonElement(it).jsonObject }
+        assertEquals(listOf("/media/93826.mpg"),
+            StalkerPortalClient.episodePlaybackCommands("93826", "3070139", "/media/93826.mpg", rows))
+    }
+
+    @Test fun singleLegacyEpisodeDetailKeepsItsFileId() {
+        val row = Json.parseToJsonElement("""{"id":"legacy-file"}""").jsonObject
+        assertEquals(listOf("/media/file_legacy-file.mpg"),
+            StalkerPortalClient.episodePlaybackCommands("93826", "3070139", "/media/93826.mpg", listOf(row)))
+    }
+
     @Test
     fun searchResultProducesWioVodCommandFallbacksWithoutDetailRows() {
         val commands = StalkerPortalClient.moviePlaybackCommands(

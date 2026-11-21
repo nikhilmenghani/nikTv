@@ -27,6 +27,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.semantics
@@ -61,6 +63,8 @@ import com.nikhil.niktv.ui.rememberIptvPins
 import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.ui.remoteFocusFrame
 import com.nikhil.niktv.ui.usesRemoteNavigation
+import com.nikhil.niktv.data.artworkRequest
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -94,9 +98,11 @@ internal fun EasyPage(
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize().safeDrawingPadding().then(if (keyboardInsets) Modifier.imePadding() else Modifier),
             contentAlignment = Alignment.TopCenter) {
+            Column(Modifier.fillMaxSize()) {
             CompositionLocalProvider(LocalRemoteFocusMargin provides 4.dp) {
                 Column(
-                    Modifier.widthIn(max = 960.dp).fillMaxSize().padding(horizontal = 12.dp, vertical = if (compact) 6.dp else 12.dp)
+                    Modifier.widthIn(max = 960.dp).fillMaxWidth().weight(1f).align(Alignment.CenterHorizontally)
+                        .padding(horizontal = 12.dp, vertical = if (compact) 6.dp else 12.dp)
                         .then(modifier),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -119,6 +125,8 @@ internal fun EasyPage(
                     content()
                 }
             }
+            LocalEasyNavigation.current?.let { EasyBottomNavigation(it) }
+            }
         }
     }
 }
@@ -137,7 +145,9 @@ internal data class EasyBrowseEntry(
     val opensList: Boolean = false,
     val progress: Float? = null,
     val status: String? = null,
-    val kindLabel: String? = null
+    val kindLabel: String? = null,
+    val artwork: MediaItem? = null,
+    val logoArtwork: Boolean = false
 )
 
 internal data class EasyMediaAction(
@@ -177,6 +187,9 @@ internal fun EasyBrowseTile(
         border = BorderStroke(if (focused) 2.dp else 1.dp,
             if (focused) LocalRemoteFocusColor.current else palette.onSurface.copy(alpha = .12f))
     ) {
+        if (entry.artwork != null) {
+            EasyArtworkCardContent(entry)
+        } else {
         Row(Modifier.heightIn(min = if (compact) 48.dp else 58.dp).padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Surface(shape = RoundedCornerShape(8.dp), color = palette.onSurface.copy(alpha = .08f),
@@ -192,7 +205,7 @@ internal fun EasyBrowseTile(
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp),
                     itemVerticalAlignment = Alignment.CenterVertically
                 ) {
-                    entry.kindLabel?.let { EasyMediaBadge(it, emphasized = false) }
+                    entry.kindLabel?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant) }
                     entry.subtitle?.let { Text(it, style = MaterialTheme.typography.bodyMedium,
                         color = palette.onSurfaceVariant) }
                     entry.status?.let { EasyMediaBadge(it, emphasized = entry.progress != null) }
@@ -204,6 +217,57 @@ internal fun EasyBrowseTile(
             }
             if (entry.opensList) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(22.dp))
         }
+        }
+    }
+}
+
+/** One measured media-card template: artwork/loading, long titles and progress never resize it. */
+@Composable
+private fun EasyArtworkCardContent(entry: EasyBrowseEntry) {
+    val config = LocalConfiguration.current
+    val compact = config.screenHeightDp < 440
+    val palette = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val artwork = requireNotNull(entry.artwork)
+    val width = if (compact) 52.dp else 60.dp
+    val height = if (compact) 64.dp else 76.dp
+    val widthPx = with(density) { width.roundToPx() }
+    val heightPx = with(density) { height.roundToPx() }
+    val request = remember(artwork.id, artwork.title, artwork.logo, widthPx, heightPx) {
+        artworkRequest(context, artwork, widthPx, heightPx)
+    }
+    var artworkLoaded by remember(request) { mutableStateOf(false) }
+    Row(Modifier.height((if (compact) 80.dp else 88.dp) * config.fontScale.coerceAtLeast(1f))
+        .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(Modifier.size(width, height), shape = RoundedCornerShape(8.dp),
+            color = palette.onSurface.copy(alpha = .08f)) {
+            Box(contentAlignment = Alignment.Center) {
+                if (!artworkLoaded) Icon(entry.icon, null, Modifier.size(24.dp), tint = palette.onSurfaceVariant)
+                AsyncImage(request, contentDescription = null,
+                    modifier = Modifier.fillMaxSize().then(if (entry.logoArtwork) Modifier.padding(4.dp) else Modifier),
+                    contentScale = if (entry.logoArtwork) ContentScale.Fit else ContentScale.Crop,
+                    onLoading = { artworkLoaded = false }, onSuccess = { artworkLoaded = true }, onError = { artworkLoaded = false })
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(entry.title, style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium, color = palette.onBackground,
+                minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.fillMaxWidth().heightIn(min = 22.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(listOfNotNull(entry.kindLabel, entry.subtitle).filter { it.isNotBlank() }.joinToString(" · "),
+                    Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                    color = palette.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                entry.status?.let { EasyMediaBadge(it, emphasized = entry.progress != null) }
+            }
+            if (entry.progress != null) {
+                Spacer(Modifier.height(2.dp))
+                LinearProgressIndicator(progress = { entry.progress }, Modifier.fillMaxWidth().height(4.dp))
+            }
+        }
+        if (entry.opensList) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(22.dp))
     }
 }
 
@@ -442,7 +506,7 @@ internal fun EasyTitlesPage(state: NikTvState, category: Category, home: () -> U
     }
     EasyBrowsePage(category.title, items.map { media ->
         EasyBrowseEntry(media.id, media.title, if (opensList) destination.icon else Icons.Default.PlayArrow,
-            opensList = opensList)
+            opensList = opensList, artwork = media, logoArtwork = category.type == CatalogType.LIVE_TV)
     }, if (state.loading) "Loading ${destination.label.lowercase()}…" else "No titles available in this category.",
         home = home, back = back, loading = state.loading || state.catalogLoadingMore,
         hasMore = state.catalogHasMore, loadMore = loadMore,
@@ -495,7 +559,8 @@ internal fun EasySeriesPage(state: NikTvState, series: MediaItem, home: () -> Un
         val label = episode.easyEpisodeLabel()
         val heading = episodeTitle.ifBlank { label ?: episode.title }
         EasyBrowseEntry(episode.id, heading, if (status == "Watched") Icons.Default.Check else Icons.Default.PlayArrow,
-            label?.takeUnless { it == heading }, progress = saved.easyProgressFraction(), status = status)
+            label?.takeUnless { it == heading }, progress = saved.easyProgressFraction(), status = status,
+            artwork = episode.takeUnless { it.logo.isNullOrBlank() } ?: series)
     }, if (state.loading) "Loading episodes…" else "No episodes available for this season.",
         home = home, back = back, loading = state.loading || state.episodeLoadingMore,
         hasMore = state.episodeHasMore, loadMore = loadMore,
@@ -593,7 +658,9 @@ internal fun EasyMyListPage(state: NikTvState, home: () -> Unit, downloads: () -
         val destination = favorite.kind.easyDestination()
         val opensList = favorite.kind == FavoriteKind.SERIES
         EasyBrowseEntry(favorite.key, favorite.media.title, if (opensList) destination.icon else Icons.Default.PlayArrow,
-            favorite.media.easyEpisodeLabel(), opensList, kindLabel = destination.label)
+            favorite.media.easyEpisodeLabel(), opensList, kindLabel = destination.label,
+            artwork = favorite.media.takeUnless { it.logo.isNullOrBlank() } ?: favorite.series ?: favorite.media,
+            logoArtwork = favorite.kind == FavoriteKind.CHANNEL)
     }, "No saved IPTV titles yet.", home = home,
         open = { key -> saved.firstOrNull { it.key == key }?.let(openFavorite) },
         actions = { key -> saved.firstOrNull { it.key == key }?.let { favorite ->

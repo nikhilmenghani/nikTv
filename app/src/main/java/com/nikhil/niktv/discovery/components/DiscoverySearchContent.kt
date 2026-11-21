@@ -73,6 +73,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -160,6 +162,14 @@ internal fun DiscoverySearchContent(
         mutableStateOf(false)
     }
     var searchEditing by remember { mutableStateOf(false) }
+    var queryEditor by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(state.searchQuery, TextRange(state.searchQuery.length)))
+    }
+    LaunchedEffect(state.searchQuery) {
+        if (state.searchQuery != queryEditor.text) {
+            queryEditor = TextFieldValue(state.searchQuery, TextRange(state.searchQuery.length))
+        }
+    }
     var editSessionSawIme by remember { mutableStateOf(false) }
     var restoreQueryFocus by rememberSaveable { mutableStateOf(false) }
     var queryFocused by remember { mutableStateOf(false) }
@@ -470,8 +480,12 @@ internal fun DiscoverySearchContent(
                         Spacer(Modifier.width(8.dp))
 
                         BasicTextField(
-                            value = state.searchQuery,
-                            onValueChange = setQuery,
+                            value = queryEditor,
+                            onValueChange = { value ->
+                                val textChanged = queryEditor.text != value.text
+                                queryEditor = value
+                                if (textChanged) setQuery(value.text)
+                            },
                             readOnly = !searchEditing,
                             singleLine = true,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -616,9 +630,12 @@ internal fun DiscoverySearchContent(
                                 right = submitSearchRequester
                                 down = typeBelowSearch
                             }
-                    if (easy) NikTvSecondaryActionButton(clear, clearModifier, contentPadding = PaddingValues(0.dp)) {
+                    if (easy) NikTvSecondaryActionButton(clear, clearModifier.height(controlHeight), contentPadding = PaddingValues(0.dp)) {
                         Icon(Icons.Default.Close, "Clear search", Modifier.size(20.dp))
                     } else SearchIconControl("Clear search", Icons.Default.Close, clear, clearModifier)
+                } else {
+                    // Keep the editor's bounds unchanged when Clear appears.
+                    Spacer(Modifier.width(controlHeight))
                 }
                 val submit: () -> Unit = {
                     searchEditing = false
@@ -632,13 +649,14 @@ internal fun DiscoverySearchContent(
                     headerRequester?.let { up = it }
                 }
                 val canSubmit = state.searchQuery.isNotBlank() && !state.searchServerLoading
-                if (easy) NikTvPrimaryActionButton(submit, submitModifier) {
+                if (easy) NikTvPrimaryActionButton(submit,
+                    Modifier.size(controlHeight).then(submitModifier)
+                        .semantics { contentDescription = if (searching) "Searching" else "Search" },
+                    contentPadding = PaddingValues(0.dp)) {
                     Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
                         if (searching) SearchButtonProgress(state.searchActivityProgress)
                         else Icon(Icons.Default.Search, null, Modifier.size(19.dp))
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (searching) "Searching" else "Search")
                 } else SearchControl(submit, Modifier.width(controlHeight).then(submitModifier)
                     .semantics { contentDescription = if (searching) "Searching" else "Search" },
                     selected = canSubmit, contentPadding = PaddingValues(0.dp)) {
@@ -1608,7 +1626,8 @@ private fun SearchResultsContent(
                     val isSeries = type == SearchContentType.SERIES
                     EasyMediaTile(
                         EasyBrowseEntry(entry.key, item.title, if (isSeries) Icons.Default.Tv else Icons.Default.PlayArrow,
-                            item.easyEpisodeLabel(), opensList = isSeries, kindLabel = type.title),
+                            item.easyEpisodeLabel(), opensList = isSeries, kindLabel = type.title,
+                            artwork = item, logoArtwork = type == SearchContentType.LIVE_TV),
                         { openResult(item) }, buildList {
                             add(easySaveAction(state.isSearchFavorite(item), toggle = toggle))
                             if (type == SearchContentType.MOVIES) add(EasyMediaAction("Download", Icons.Default.Download) {

@@ -2488,6 +2488,8 @@ fun PlayerScreen(
                                     requester = sourceFocusRequester,
                                     icon = Icons.Default.VideoSettings,
                                     contentDescription = "Source and quality",
+                                    value = media.portalQuality?.variants?.firstOrNull { it.id == media.portalQuality?.selectedId }
+                                        ?.height?.takeIf { it > 0 }?.let { "${it}p" },
                                     onClick = {
                                         onChooseAlternateSource(player.currentPosition.coerceAtLeast(0L)) {
                                             player.currentPosition.coerceAtLeast(0L)

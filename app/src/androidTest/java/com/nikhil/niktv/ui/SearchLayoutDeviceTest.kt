@@ -10,11 +10,14 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.test.platform.app.InstrumentationRegistry
@@ -31,6 +34,183 @@ import org.junit.Test
 class SearchLayoutDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
+
+    @Test fun easyArtworkCardsKeepEqualBoundsForLongTitlesAndProgress() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val poster = File(host.cacheDir, "easy-artwork-fixture.png")
+        android.graphics.Bitmap.createBitmap(60, 80, android.graphics.Bitmap.Config.ARGB_8888).also { bitmap ->
+            bitmap.eraseColor(android.graphics.Color.rgb(40, 110, 160))
+            poster.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
+        val titles = listOf("Short title", "A much longer provider title that needs two lines and should never make its card taller than its neighbours", "Missing artwork")
+        try {
+            for (compact in listOf(false, true)) {
+                val focus = FocusRequester()
+                instrumentation.setInTouchMode(false)
+                instrumentation.runOnMainSync { host.setContent { MaterialTheme {
+                    val config = Configuration(LocalConfiguration.current).apply {
+                        screenHeightDp = if (compact) 360 else 780
+                        screenWidthDp = if (compact) 800 else 390
+                    }
+                    CompositionLocalProvider(LocalConfiguration provides config) {
+                        Column(Modifier.width(if (compact) 800.dp else 390.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            titles.forEachIndexed { index, title ->
+                                EasyBrowseTile(EasyBrowseEntry("card-$index", title, Icons.Default.PlayArrow,
+                                    kindLabel = listOf("Series", "Movies", "Live TV")[index],
+                                    progress = if (index == 1) .6f else null, status = if (index == 1) "4 mins left" else null,
+                                    artwork = MediaItem("media-$index", title, if (index < 2) poster.toURI().toString() else null, null)),
+                                    {}, if (index == 0) Modifier.focusRequester(focus) else Modifier)
+                            }
+                        }
+                    }
+                } } }
+                await("All artwork cards appear") { titles.all { label(it) != null } }
+                val cards = titles.map { bounds(clickable(label(it)!!)) }
+                assertEquals("All titles, artwork fallbacks and progress use the same card height", 1, cards.map { it.height() }.distinct().size)
+                assertEquals(1, cards.map { it.width() }.distinct().size)
+                instrumentation.runOnMainSync { focus.requestFocus() }
+                await("First media card accepts focus") { focused(titles[0]) }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("D-pad reaches long-title card") { focused(titles[1]) }
+                assertEquals("Focus must not resize a card", cards[1], bounds(clickable(label(titles[1])!!)))
+                Thread.sleep(250) // Let the local fixture image finish before the visual reference.
+                screenshot(host, "easy-artwork-cards-${if (compact) "landscape" else "portrait"}")
+            }
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            poster.delete()
+            currentHost = null
+            instrumentation.setInTouchMode(true)
+        }
+    }
+
+    @Test fun queryAndSubmitBoundsStayStableAcrossTypingAndLoading() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val profile = PortalProfile("Search fixture", "https://search.invalid", "")
+        val initial = NikTvState(savedProfile = profile, restoring = false,
+            session = PortalSession(profile, "fixture", "https://search.invalid", "", "", ""), searchOpen = true)
+        val state = mutableStateOf(initial)
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        try {
+            for (easy in listOf(true, false)) for (mode in 0..3) {
+                val query = FocusRequester()
+                instrumentation.setInTouchMode(false)
+                instrumentation.runOnMainSync {
+                    state.value = initial
+                    host.setContent { MaterialTheme {
+                        val width = when (mode) { 0 -> 390; 1 -> 800; 2 -> 960; else -> 800 }
+                        val height = if (mode == 3) 360 else 540
+                        val config = Configuration(LocalConfiguration.current).apply {
+                            screenWidthDp = width; screenHeightDp = height
+                            smallestScreenWidthDp = if (mode == 0 || mode == 3) 390 else 600
+                            uiMode = (uiMode and Configuration.UI_MODE_TYPE_MASK.inv()) or
+                                if (mode == 2) Configuration.UI_MODE_TYPE_TELEVISION else Configuration.UI_MODE_TYPE_NORMAL
+                        }
+                        CompositionLocalProvider(LocalConfiguration provides config) {
+                            Box(Modifier.width(width.dp).height(height.dp)) {
+                                DiscoverySearchContent(state.value, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
+                                    queryFocusRequester = query, easyHome = if (easy) ({}) else null)
+                            }
+                        }
+                    } }
+                }
+                fun editor() = find(root()) { it.className == "android.widget.EditText" }
+                fun action(loading: Boolean): AccessibilityNodeInfo? {
+                    val title = if (loading) "Searching" else "Search"
+                    return find(root()) { node ->
+                        (node.text?.toString() == title || node.contentDescription?.toString() == title) &&
+                            generateSequence(node) { it.parent }.any { it.isClickable }
+                    }
+                }
+                await("Search controls appear in mode $mode, easy=$easy") { editor() != null && action(false) != null }
+                instrumentation.runOnMainSync { query.requestFocus() }
+                await("Query receives D-pad focus") { editor()?.isFocused == true }
+                val fieldBounds = bounds(editor()!!)
+                val submitBounds = bounds(clickable(action(false)!!))
+                val stages = listOf(
+                    initial.copy(searchQuery = "bigg"),
+                    initial.copy(searchQuery = "bigg", searchLocalLoading = true),
+                    initial.copy(searchQuery = "bigg", searchServerLoading = true,
+                        searchActivityTitle = "Searching IPTV", searchActivityProgress = .5f),
+                    initial.copy(searchQuery = "bigg", searchUsedServer = true), initial)
+                for ((index, stage) in stages.withIndex()) {
+                    instrumentation.runOnMainSync { state.value = stage }
+                    val loading = stage.searchLocalLoading || stage.searchServerLoading
+                    await("Loading label settles") { action(loading) != null && editor()?.text?.toString() == stage.searchQuery }
+                    assertEquals("Query moved at stage $index, mode $mode, easy=$easy", fieldBounds, bounds(editor()!!))
+                    assertEquals("Submit moved at stage $index, mode $mode, easy=$easy", submitBounds, bounds(clickable(action(loading)!!)))
+                    assertTrue("Loading must preserve editor focus", editor()!!.isFocused)
+                }
+                // Empty Clear is a reserved layout slot, never a remote focus stop.
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right skips the empty Clear slot") { focused("Search") }
+                assertEquals(submitBounds, bounds(clickable(action(false)!!)))
+                screenshot(host, "stable-search-${if (easy) "easy" else "standard"}-$mode")
+            }
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            currentHost = null
+            instrumentation.setInTouchMode(true)
+        }
+    }
+
+    @Test fun spacedTypingKeepsCaretAtEndWhileSearchResultsUpdate() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val profile = PortalProfile("Search fixture", "https://search.invalid", "")
+        val flow = kotlinx.coroutines.flow.MutableStateFlow(NikTvState(savedProfile = profile,
+            session = PortalSession(profile, "fixture", "https://search.invalid", "", "", ""), searchOpen = true))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        try {
+            instrumentation.setInTouchMode(true)
+            instrumentation.runOnMainSync { host.setContent {
+                val state by flow.collectAsState()
+                MaterialTheme { DiscoverySearchContent(state, {}, {}, {}, { query ->
+                    flow.value = flow.value.copy(searchQuery = query, searchResults = emptyList(), searchLocalLoading = true)
+                }, {}, {}, {}, {}, {}, {}, easyHome = {}) }
+            } }
+            await("Search editor is present") { find(root()) { it.className == "android.widget.EditText" } != null }
+            val field = find(root()) { it.className == "android.widget.EditText" }!!
+            val rect = bounds(field)
+            val now = SystemClock.uptimeMillis()
+            listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP).forEach { action ->
+                val event = android.view.MotionEvent.obtain(now, SystemClock.uptimeMillis(), action,
+                    rect.exactCenterX(), rect.exactCenterY(), 0)
+                instrumentation.uiAutomation.injectInputEvent(event, true)
+                event.recycle()
+            }
+            await("Touch opens the editor") { find(root()) { it.className == "android.widget.EditText" && it.isFocused } != null }
+            var prefix = ""
+            for (letter in "bigg") {
+                instrumentation.sendStringSync(letter.toString())
+                prefix += letter
+                await("Typed prefix remains in order") { find(root()) { it.className == "android.widget.EditText" && it.text?.toString() == prefix } != null }
+                instrumentation.runOnMainSync { flow.value = flow.value.copy(searchLocalLoading = false,
+                    searchResults = listOf(MediaItem("result-$prefix", "Bigg Boss result", null, null, searchResultType = SearchContentType.SERIES))) }
+                Thread.sleep(1100)
+                val editor = find(root()) { it.className == "android.widget.EditText" }!!
+                assertEquals(prefix, editor.text.toString())
+                // Android can omit the selection range from accessibility (-1).
+                // Each following insertion must still append to the same prefix.
+                assertTrue(editor.isFocused)
+            }
+            screenshot(host, "search-spaced-typing-caret")
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            currentHost = null
+            instrumentation.setInTouchMode(true)
+        }
+    }
 
     @Test fun underlineTabsShowMixedResultsAndKeepSearchActionsSeparate() {
         val context = instrumentation.targetContext

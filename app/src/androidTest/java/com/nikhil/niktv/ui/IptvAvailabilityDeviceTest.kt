@@ -92,16 +92,26 @@ class IptvAvailabilityDeviceTest {
             await("Manual marker appears and tile focus returns") { find("Flagged unavailable") != null && focused(rows.first().title) }
             assertEquals(IptvFlagReason.MANUAL, IptvAvailabilityStore(ins.targetContext).flags(profile.cacheKey())["one"]?.reason)
             click("Availability: All channels")
-            await("Chooser initially focuses current filter") { focused("All channels") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Chooser initially focuses current filter") {
+                find("Channel availability") != null && focused("All channels")
+            }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down focuses Hide flagged") { focused("Hide flagged") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Hide flagged preserves the other tile") { find(rows.first().title) == null && find(rows.last().title) != null && focused("Availability: Hide flagged") }
             assertEquals(IptvAvailabilityFilter.HIDE_FLAGGED, IptvAvailabilityStore(ins.targetContext).filter(profile.cacheKey()))
             click("Availability: Hide flagged")
-            await("Filter chooser starts on saved selection") { focused("Hide flagged") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Filter chooser starts on saved selection") {
+                find("Channel availability") != null && focused("Hide flagged")
+            }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down focuses Flagged only") { focused("Flagged only") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Flagged only shows the flagged tile") { find(rows.first().title) != null && find(rows.last().title) == null && focused("Availability: Flagged only") }
-            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down through search enters channel results") { focused(rows.first().title) }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches the active All tab") { focused("All") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down from All enters channel results") { focused(rows.first().title) }
             hold(); menuAction("Remove flag"); key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Removing last flagged tile restores filter focus") { store.flags(profile.cacheKey()).isEmpty() && find(rows.first().title) == null && focused("Availability: Flagged only") }
             click("Availability: Flagged only")

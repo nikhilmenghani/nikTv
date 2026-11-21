@@ -481,21 +481,21 @@ internal fun VlcPlayerScreen(
     val libVlc = preparedSession.lib
     val player = preparedSession.player
     val restoringInitialPosition = media.catalogType != CatalogType.LIVE_TV && pendingInitialResumePosition > 0L
-    var nativeClockSequence by remember(player) { mutableLongStateOf(0L) }
-    var nativeClockPosition by remember(player) { mutableLongStateOf(0L) }
-    var nativeFrameAvailable by remember(player) { mutableStateOf(false) }
-    var resumeSeekJob by remember(player) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var nativeClockSequence by remember(preparedSession) { mutableLongStateOf(0L) }
+    var nativeClockPosition by remember(preparedSession) { mutableLongStateOf(0L) }
+    var nativeFrameAvailable by remember(preparedSession) { mutableStateOf(false) }
+    var resumeSeekJob by remember(preparedSession) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var downloadedNativeTrackIds by remember(player) { mutableStateOf(emptySet<Int>()) }
     var attachedDownloadedTrackId by remember(player, externalSubtitleFile) { mutableStateOf<Int?>(null) }
     var nativeSubtitleAttached by remember(player, externalSubtitleFile) { mutableStateOf(false) }
     var nativeSubtitleBeforeIds by remember(player, externalSubtitleFile) { mutableStateOf(emptySet<Int>()) }
     val downloadedUsesOverlay = externalSubtitleFile?.extension?.let(::downloadedSubtitleUsesOverlay) != false
 
-    var streamTerminated by remember(player) { mutableStateOf(false) }
-    var streamWasPlaying by remember(player) { mutableStateOf(false) }
-    var refreshPending by remember(player) { mutableStateOf(false) }
+    var streamTerminated by remember(preparedSession) { mutableStateOf(false) }
+    var streamWasPlaying by remember(preparedSession) { mutableStateOf(false) }
+    var refreshPending by remember(preparedSession) { mutableStateOf(false) }
     val currentRetry by rememberUpdatedState(onRetry)
-    val focus = remember(player) {
+    val focus = remember(preparedSession) {
         VlcAudioFocus(context,
             play = { play -> preparedSession.command { if (play) it.play() else it.pause() } },
             volume = { gain -> preparedSession.command {
@@ -979,7 +979,7 @@ internal fun VlcPlayerScreen(
             }
         }
     }
-    LaunchedEffect(player, media.progressKey) {
+    LaunchedEffect(preparedSession, media.progressKey) {
         var lastProgressSave = android.os.SystemClock.elapsedRealtime()
         val resume = VlcResumeSeekPolicy(pendingInitialResumePosition)
         var resumeTraceSamples = 0
@@ -992,7 +992,7 @@ internal fun VlcPlayerScreen(
                 LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis, owner = media.userScope)
             }
             val knownDuration = player.length.coerceAtLeast(0L)
-            duration = knownDuration
+            if (knownDuration > 0 || media.catalogType == CatalogType.LIVE_TV) duration = knownDuration
 
             if (player.isPlaying) {
                 playing = true
@@ -1845,6 +1845,8 @@ internal fun VlcPlayerScreen(
                                     requester = sourceRequester,
                                     icon = Icons.Default.VideoSettings,
                                     contentDescription = "Source and quality",
+                                    value = media.portalQuality?.variants?.firstOrNull { it.id == media.portalQuality?.selectedId }
+                                        ?.height?.takeIf { it > 0 }?.let { "${it}p" },
                                     onClick = ::chooseAlternateSource
                                 ))
                         }

@@ -40,6 +40,7 @@ import com.nikhil.niktv.ui.XtreamContentGate
 import com.nikhil.niktv.ui.continueWatchingSubtitle
 import com.nikhil.niktv.ui.episodeRemainingLabel
 import com.nikhil.niktv.ui.episodeTitleWithoutIdentity
+import com.nikhil.niktv.ui.episodeIdentityLabel
 import com.nikhil.niktv.ui.initialFocusEntry
 import com.nikhil.niktv.ui.newEpisodeGroups
 import com.nikhil.niktv.ui.seriesEpisodeProgress
@@ -123,7 +124,7 @@ internal fun easyHomeMedia(
         val favorite = FavoriteItem(FavoriteKind.EPISODE, episode, watched.series, profileKey = profile,
             categoryTitle = watched.categoryTitle)
         EasyHomeMedia(
-            EasyBrowseEntry(key, watched.series.title, Icons.Default.PlayArrow, detail, kindLabel = "Series"),
+            EasyBrowseEntry(key, watched.series.title, Icons.Default.PlayArrow, detail, kindLabel = "Series", artwork = watched.series),
             { returnTo(key); openEpisode(watched, episode) },
             listOf(
                 EasyMediaAction("Open series", Icons.Default.Tv) { returnTo(key); openSeries(watched.series) },
@@ -143,11 +144,15 @@ internal fun easyHomeMedia(
             seriesEpisodeProgress(state.playbackProgress, profile, series, recent.media)
         else discoveryRecentProgress(recent, state.playbackProgress)
         val key = "recent:${recent.key}"
+        val episodeLabel = if (series != null) (recent.lastPlayed ?: recent.media).episodeIdentityLabel()
+            ?: recent.continueWatchingSubtitle().takeIf { it.isNotBlank() } else null
         val favorite = FavoriteItem(recent.kind, recent.media, recent.series, profileKey = profile, categoryTitle = recent.categoryTitle)
         EasyHomeMedia(
             EasyBrowseEntry(key, series?.title ?: recent.media.title, Icons.Default.PlayArrow,
-                recent.continueWatchingSubtitle().takeIf { it.isNotBlank() }, progress = progress.easyProgressFraction(),
-                status = episodeRemainingLabel(progress), kindLabel = recent.kind.easyDestination().label),
+                episodeLabel, progress = progress.easyProgressFraction(),
+                status = episodeRemainingLabel(progress), kindLabel = recent.kind.easyDestination().label,
+                artwork = series?.takeUnless { it.logo.isNullOrBlank() } ?: recent.media,
+                logoArtwork = recent.kind == FavoriteKind.CHANNEL),
             { returnTo(key); openRecent(recent) },
             buildList {
                 if (series != null) add(EasyMediaAction("Open series", Icons.Default.Tv) { returnTo(key); openSeries(series) })
@@ -168,6 +173,7 @@ internal fun easyHomeMedia(
 @Composable
 internal fun EasyHomeScreen(sections: Map<EasyHomeSection, List<EasyHomeMedia>>, returnTo: EasyHomeAction,
     returningKey: String?, onAction: (EasyHomeAction) -> Unit, viewAll: (EasyHomeSection) -> Unit) {
+    val navigation = LocalEasyNavigation.current
     val keys = buildList {
         add("home-shortcuts")
         EasyHomeSection.entries.forEach { section ->
@@ -179,7 +185,8 @@ internal fun EasyHomeScreen(sections: Map<EasyHomeSection, List<EasyHomeMedia>>,
             }
         }
     }
-    val requesters = remember { EasyHomeAction.entries.associateWith { FocusRequester() } }
+    val localRequesters = remember { EasyHomeAction.entries.associateWith { FocusRequester() } }
+    val requesters = navigation?.requesters ?: localRequesters
     val restoredRequester = remember { FocusRequester() }
     val restored = remember {
         returningKey?.takeIf { it in keys } ?: EasyHomeSection.entries
@@ -198,9 +205,10 @@ internal fun EasyHomeScreen(sections: Map<EasyHomeSection, List<EasyHomeMedia>>,
     val spacing = if (configuration.screenHeightDp < 440) 10.dp else 16.dp
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
+            Column(Modifier.fillMaxSize()) {
             CompositionLocalProvider(LocalRemoteFocusMargin provides 6.dp) {
                 LazyColumn(
-                    Modifier.widthIn(max = 960.dp).fillMaxWidth()
+                    Modifier.widthIn(max = 960.dp).fillMaxWidth().weight(1f).align(Alignment.CenterHorizontally)
                         .initialFocusEntry(initialTarget, remote),
                     state = list,
                     contentPadding = PaddingValues(spacing),
@@ -219,7 +227,7 @@ internal fun EasyHomeScreen(sections: Map<EasyHomeSection, List<EasyHomeMedia>>,
                                     }
                                 }
                             }
-                            BoxWithConstraints {
+                            if (navigation == null) BoxWithConstraints {
                                 val columns = if (maxWidth >= 560.dp) 3 else 2
                                 Column(verticalArrangement = Arrangement.spacedBy(spacing)) {
                                     easyHomeDestinations.chunked(columns).forEach { actions ->
@@ -264,6 +272,8 @@ internal fun EasyHomeScreen(sections: Map<EasyHomeSection, List<EasyHomeMedia>>,
                         }
                     }
                 }
+            }
+            navigation?.let { EasyBottomNavigation(it) }
             }
         }
     }

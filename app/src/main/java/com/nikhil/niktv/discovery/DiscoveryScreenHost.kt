@@ -292,6 +292,36 @@ internal fun DiscoveryScreenHost(
     }
     val easyCategoryRoot = easyCatalogType != null && !modernSectionOpen && !state.searchOpen &&
         !state.favoritesOpen && !state.offlineDownloadsOpen && state.selectedSeries == null
+    val easyNavigationRequesters = remember { EasyHomeAction.entries.associateWith { FocusRequester() } }
+    fun selectEasyAction(action: EasyHomeAction) {
+        easyHomeReturn = action
+        easyActivityReturn = null
+        if (action in easyBottomDestinations) easyHomeCollection = null
+        when (action) {
+            EasyHomeAction.LIVE -> selectType(CatalogType.LIVE_TV)
+            EasyHomeAction.MOVIES -> openTrial(DashboardSurface.MOVIES)
+            EasyHomeAction.SERIES -> openTrial(DashboardSurface.SERIES)
+            EasyHomeAction.SEARCH -> (openGlobalSearch ?: openSearch)()
+            EasyHomeAction.SAVED -> openFavorites()
+            EasyHomeAction.RESUME -> Unit
+            EasyHomeAction.PROFILES -> openProfileSwitcher()
+            EasyHomeAction.SETTINGS -> openSettings()
+        }
+    }
+    // Landscape uses the tablet content layout, but remains a phone for its navigation dock.
+    val easyMobileNavigation = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    val easyNavigation = if (easyLayout && easyMobileNavigation && !state.settingsOpen && !providersVisible &&
+        !discoveryMatches && !state.offlineDownloadsOpen && state.selectedSeries == null) {
+        val selected = when {
+            state.searchOpen -> EasyHomeAction.SEARCH
+            state.favoritesOpen -> EasyHomeAction.SAVED
+            easyCatalogType == CatalogType.LIVE_TV -> EasyHomeAction.LIVE
+            easyCatalogType == CatalogType.MOVIES -> EasyHomeAction.MOVIES
+            easyCatalogType == CatalogType.SERIES -> EasyHomeAction.SERIES
+            else -> null
+        }
+        EasyNavigation(selected, easyNavigationRequesters, ::selectEasyAction)
+    } else null
     fun closeMatches() { if (state.movieMatchSelection != null) closeTmdbMovieMatches() else closeTmdbSeriesMatches() }
     val discoverySearch = com.nikhil.niktv.discovery.usesDiscoverySearchShell(
         state.searchOpen, state.settingsOpen, state.offlineDownloadsOpen,
@@ -596,6 +626,7 @@ internal fun DiscoveryScreenHost(
         }
         }
     }
+    CompositionLocalProvider(LocalEasyNavigation provides easyNavigation) {
     if (state.settingsOpen) {
         // Settings owns its header, navigation and system insets on every layout.
         MainContent(Modifier.fillMaxSize())
@@ -614,20 +645,7 @@ internal fun DiscoveryScreenHost(
                     home = ::landingHome, back = ::closeEasyHomeCollection,
                     open = { key -> byKey[key]?.open?.invoke() }, actions = { key -> byKey[key]?.actions.orEmpty() })
             }
-        } else EasyHomeScreen(sections, easyHomeReturn, easyActivityReturn, onAction = { action ->
-            easyHomeReturn = action
-            easyActivityReturn = null
-            when (action) {
-                EasyHomeAction.LIVE -> selectType(CatalogType.LIVE_TV)
-                EasyHomeAction.MOVIES -> openTrial(DashboardSurface.MOVIES)
-                EasyHomeAction.SERIES -> openTrial(DashboardSurface.SERIES)
-                EasyHomeAction.SEARCH -> (openGlobalSearch ?: openSearch)()
-                EasyHomeAction.SAVED -> openFavorites()
-                EasyHomeAction.RESUME -> Unit
-                EasyHomeAction.PROFILES -> openProfileSwitcher()
-                EasyHomeAction.SETTINGS -> openSettings()
-            }
-        }, viewAll = { section ->
+        } else EasyHomeScreen(sections, easyHomeReturn, easyActivityReturn, onAction = ::selectEasyAction, viewAll = { section ->
             easyHomeReturn = EasyHomeAction.RESUME
             easyActivityReturn = section.viewAllKey()
             easyHomeCollection = section
@@ -750,6 +768,7 @@ internal fun DiscoveryScreenHost(
         }
     }
 
+    }
     state.providerMovieDetails?.takeIf { it.profile == state.savedProfile?.cacheKey() && it.profile == state.session?.profile?.cacheKey() && state.nowPlaying == null &&
         state.movieMatchSelection == null && state.seriesMatchSelection == null && (state.selectedSeries == null || state.searchOpen || state.favoritesOpen) }?.let { selected ->
         com.nikhil.niktv.discovery.ProviderMovieDetailDialog(state, selected, playProviderMovie, closeProviderMovie,

@@ -43,6 +43,18 @@ class PlaybackTimingPreferencesTest {
         UserProfilePreferences.warm(context, family)
     }
 
+    @Test fun portalQualityPreferenceBelongsToEachViewer(): Unit = runBlocking {
+        assertEquals(0, PortalQualityPreferences.height(context, family))
+        PortalQualityPreferences.save(context, family, 720)
+        assertEquals(720, PortalQualityPreferences.height(context, family))
+        assertEquals(0, PortalQualityPreferences.height(context, kids))
+        PortalQualityPreferences.save(context, kids, 1080)
+        assertEquals(720, PortalQualityPreferences.height(context, family))
+        assertEquals(1080, PortalQualityPreferences.height(context, kids))
+        PortalQualityPreferences.save(context, family, 0)
+        assertEquals(0, PortalQualityPreferences.height(context, family))
+    }
+
     @Test fun timingReplicatesPerKeyWithoutEngineOrHistoryChanges(): Unit = runBlocking {
         val media = MediaItem("movie", "Existing history", null, null)
         store.saveRecentlyPlayed(listOf(RecentItem(FavoriteKind.MOVIE, media)))

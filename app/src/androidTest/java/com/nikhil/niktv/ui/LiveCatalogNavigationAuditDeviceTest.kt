@@ -88,7 +88,7 @@ class LiveCatalogNavigationAuditDeviceTest {
         val profile = PortalProfile("Live navigation", "https://live-audit.invalid", "00:00:00:00:00:31")
         val category = Category("live-audit-news", "Audit news", CatalogType.LIVE_TV)
         val now = System.currentTimeMillis()
-        val channels = (1..9).map { index ->
+        val channels = (1..13).map { index ->
             MediaItem("audit-channel-$index", "Audit channel $index", null, null,
                 portalCategoryId = category.id, liveSchedule = listOf(
                     LiveProgramme("Audit programme $index", now - 300_000, now + 1_800_000),
@@ -149,7 +149,7 @@ class LiveCatalogNavigationAuditDeviceTest {
             await("Category opens from feed") { node("Refresh category") != null }
             assertEquals(1, categoryVisits.get())
             seedFocus("Audit programme 1")
-            val phone = activity.resources.configuration.smallestScreenWidthDp < 600
+            val phone = activity.resources.configuration.usesPhoneLayout()
             key(if (phone) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Category grid enters adjacent channel") { focused("Audit programme 2") }
             NavigationAuditEvidence.capture("live-category-channel-grid")

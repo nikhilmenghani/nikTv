@@ -507,6 +507,7 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
         com.nikhil.niktv.discovery.LocalPortalFocusReturn provides portalFocusReturn) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
+        state.portalQualityPicker?.let { PortalQualityDialog(it, vm::closePortalQuality, vm::choosePortalQuality) }
         if (state.profileSwitcherOpen) ModernProfileSwitchDialog(accessiblePortals, state.savedProfile,
             close = vm::closeProfileSwitcher, select = vm::switchProfile,
             openChooser = { vm.closeProfileSwitcher(); openUserProfiles() },
@@ -563,8 +564,12 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = { key, position, duration -> vm.savePlaybackProgress(playback, key, position, duration) },
-                    onChooseAlternateSource = playback.alternateSource?.let { { position, positionReader -> vm.openPlayingAlternateSources(position, playback, positionReader) } },
-                    alternateSourceChooserOpen = state.alternateSources != null,
+                    onChooseAlternateSource = when {
+                        playback.alternateSource != null -> { position, positionReader -> vm.openPlayingAlternateSources(position, playback, positionReader) }
+                        playback.portalQuality?.variants?.size?.let { it > 1 } == true -> { position, positionReader -> vm.openPortalQuality(position, playback, positionReader) }
+                        else -> null
+                    },
+                    alternateSourceChooserOpen = state.alternateSources != null || state.portalQualityPicker != null,
                     onPlaybackIntentChanged = { vm.setPlaybackIntent(playback.playbackAttemptId, it) },
                     onDownload = {
                         val present = state.offlineDownloads.any { download ->

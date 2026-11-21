@@ -6,3 +6,7 @@ import com.nikhil.niktv.model.PortalProfile
  * connection falls back directly to an available one instead of a landing page. */
 internal fun preferredViewerPortal(available: List<PortalProfile>, rememberedKey: String?): PortalProfile? =
     available.firstOrNull { it.cacheKey() == rememberedKey } ?: available.firstOrNull()
+
+internal fun NikTvState.isViewerPortalReady(portalKey: String, waitForHome: Boolean): Boolean =
+    session?.profile?.cacheKey() == portalKey &&
+        (!waitForHome || !restoring && profileLoadProgress == null && !loading)

@@ -7,13 +7,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.discovery.DiscoveryAction
 import com.nikhil.niktv.model.CatalogType
@@ -111,9 +115,16 @@ internal fun rememberIptvAvailability(profile: String): IptvAvailabilityState {
 }
 
 @Composable
-internal fun IptvAvailabilityControl(state: IptvAvailabilityState, modifier: Modifier = Modifier, changed: () -> Unit = {}) {
-    val entry = remember { FocusRequester() }
+internal fun IptvAvailabilityControl(
+    state: IptvAvailabilityState,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    changed: () -> Unit = {}
+) {
     val action = remember { FocusRequester() }
+    val options = IptvAvailabilityFilter.entries
+    val optionFocus = remember { options.associateWith { FocusRequester() } }
+    val closeFocus = remember { FocusRequester() }
     var open by remember { mutableStateOf(false) }
     var restore by remember { mutableStateOf(false) }
     val windowFocused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
@@ -123,20 +134,48 @@ internal fun IptvAvailabilityControl(state: IptvAvailabilityState, modifier: Mod
             if (runCatching { action.requestFocus() }.getOrDefault(false)) restore = false
         }
     }
-    DiscoveryAction("Availability: ${state.filter.title}", Icons.Default.Flag,
-        selected = state.filter != IptvAvailabilityFilter.ALL, modifier = modifier.focusRequester(action)) { open = true }
+    val openPicker = {
+        action.requestFocus()
+        open = true
+    }
+    if (compact) {
+        NikTvSecondaryActionButton(
+            onClick = openPicker,
+            modifier = modifier.focusRequester(action)
+                .semantics { contentDescription = "Availability: ${state.filter.title}" },
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp)
+        ) {
+            Icon(Icons.Default.Flag, null, Modifier.size(15.dp),
+                tint = if (state.filter == IptvAvailabilityFilter.ALL) SettingsMuted else IptvAvailabilityAmber)
+            Spacer(Modifier.width(6.dp))
+            Text(state.filter.title, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Default.ExpandMore, null, Modifier.size(15.dp))
+        }
+    } else {
+        DiscoveryAction("Availability: ${state.filter.title}", Icons.Default.Flag,
+            selected = state.filter != IptvAvailabilityFilter.ALL, modifier = modifier.focusRequester(action), onClick = openPicker)
+    }
     if (open) AlertDialog(onDismissRequest = { open = false; restore = true },
-        containerColor = Color(0xFF181D26), shape = RoundedCornerShape(10.dp), modifier = Modifier.initialFocusEntry(entry),
+        containerColor = Color(0xFF181D26), shape = RoundedCornerShape(10.dp),
         title = { Text("Channel availability") }, text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.initialFocusEntry(optionFocus.getValue(state.filter)),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Flags remember a previous playback failure or your own report in this profile. Unflagged channels have not necessarily been tested.", color = Color(0xFFB5BBC7))
-                IptvAvailabilityFilter.entries.forEach { value ->
+                options.forEachIndexed { index, value ->
                     NikTvSecondaryActionButton({ state.select(value); open = false; restore = true; changed() },
-                        Modifier.fillMaxWidth().then(if (value == state.filter) Modifier.focusRequester(entry) else Modifier)) {
+                        Modifier.fillMaxWidth().focusRequester(optionFocus.getValue(value)).focusProperties {
+                            up = options.getOrNull(index - 1)?.let(optionFocus::getValue) ?: FocusRequester.Cancel
+                            down = options.getOrNull(index + 1)?.let(optionFocus::getValue) ?: closeFocus
+                        }) {
                         if (value == state.filter) { Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
                         Text(value.title)
                     }
                 }
             }
-        }, confirmButton = { NikTvSecondaryActionButton({ open = false; restore = true }, Modifier.fillMaxWidth()) { Text("Close") } })
+        }, confirmButton = {
+            NikTvSecondaryActionButton({ open = false; restore = true }, Modifier.fillMaxWidth().focusRequester(closeFocus)
+                .focusProperties { up = optionFocus.getValue(options.last()) }) { Text("Close") }
+        })
 }
