@@ -200,7 +200,20 @@ class CricketScoreOverlayDeviceTest {
             show()
             await("Video renders") { frames.get() > 0 }
             showControls(activity)
-            click("Live cricket scores")
+            instrumentation.setInTouchMode(false)
+            await("Cricket scores accepts remote focus") {
+                var target = node("Live cricket scores")
+                repeat(8) { if (target?.isFocusable != true) target = target?.parent }
+                focused("Live cricket scores") || target?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true
+            }
+            await("Cricket scores is focused before opening") { focused("Live cricket scores") }
+            key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Remote opens the match picker") { node("IND vs AUS") != null }
+            key(android.view.KeyEvent.KEYCODE_BACK)
+            await("Back restores the cricket action in the open settings row") {
+                node("IND vs AUS") == null && focused("Live cricket scores") && node("Hide extra controls") != null
+            }
+            key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
             await("Match choices are visible before the landscape screenshot") { node("IND vs AUS") != null }
             screenshot("landscape-match-picker-$sports-$engine")
             instrumentation.setInTouchMode(false)

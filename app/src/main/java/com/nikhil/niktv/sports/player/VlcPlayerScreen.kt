@@ -281,6 +281,7 @@ internal fun VlcPlayerScreen(
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
     var pictureModePickerVisible by remember { mutableStateOf(false) }
+    var returnToPictureSettings by remember { mutableStateOf(false) }
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
@@ -1796,7 +1797,10 @@ internal fun VlcPlayerScreen(
                                 requester = pictureModeRequester,
                                 icon = videoAppearanceIcon(activeAppearanceProfile.id),
                                 contentDescription = "Choose picture mode: ${activeAppearanceProfile.name}",
-                                onClick = { pictureModePickerVisible = true }
+                                onClick = {
+                                    returnToPictureSettings = false
+                                    pictureModePickerVisible = true
+                                }
                             ))
                         add(PlayerSettingAction(
                                 kind = PlayerSettingKind.PLAYER,
@@ -1834,7 +1838,7 @@ internal fun VlcPlayerScreen(
                                 requester = cricketScoreRequester,
                                 icon = Icons.Default.SportsCricket,
                                 contentDescription = "Live cricket scores",
-                                onClick = { extraControlsOpen = false; cricketScores.pickerOpen = true },
+                                onClick = { cricketScores.pickerOpen = true },
                                 modifier = Modifier.cricketScoreEntry(cricketScores, true, enter = { action ->
                                         extraControlsOpen = false
                                         scope.launch { delay(80L); action() }
@@ -2270,6 +2274,7 @@ internal fun VlcPlayerScreen(
             selectedId = activeAppearanceProfile.id,
             onDismiss = {
                 pictureEditorVisible = false
+                returnToPictureSettings = true
                 pictureModePickerVisible = true
             },
             onPreview = { appearancePreview = it },
@@ -2322,6 +2327,7 @@ internal fun VlcPlayerScreen(
         if (pictureModePickerVisible) PictureModeQuickOverlay(
             profiles = appearanceProfiles,
             preview = activeAppearanceProfile,
+            focusSettingsOnEnter = returnToPictureSettings,
             onPreview = { appearancePreview = it },
             onSettings = {
                 pictureModePickerVisible = false

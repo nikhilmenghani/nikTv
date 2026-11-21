@@ -67,6 +67,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -599,6 +600,7 @@ fun PlayerScreen(
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
     var pictureModePickerVisible by remember { mutableStateOf(false) }
+    var returnToPictureSettings by remember { mutableStateOf(false) }
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var decoderPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     val decoderFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -2461,7 +2463,10 @@ fun PlayerScreen(
                                 requester = pictureModeFocusRequester,
                                 icon = videoAppearanceIcon(activeAppearanceProfile.id),
                                 contentDescription = "Choose picture mode: ${activeAppearanceProfile.name}",
-                                onClick = { pictureModePickerVisible = true }
+                                onClick = {
+                                    returnToPictureSettings = false
+                                    pictureModePickerVisible = true
+                                }
                             ))
                         add(PlayerSettingAction(
                                 kind = PlayerSettingKind.PLAYER,
@@ -2508,7 +2513,7 @@ fun PlayerScreen(
                                 requester = cricketScoreFocusRequester,
                                 icon = Icons.Default.SportsCricket,
                                 contentDescription = "Live cricket scores",
-                                onClick = { extraControlsOpen = false; cricketScores.pickerOpen = true },
+                                onClick = { cricketScores.pickerOpen = true },
                                 modifier = Modifier.cricketScoreEntry(cricketScores, true, enter = { action ->
                                         extraControlsOpen = false
                                         coroutineScope.launch { delay(80L); action() }
@@ -2966,6 +2971,7 @@ fun PlayerScreen(
             selectedId = activeAppearanceProfile.id,
             onDismiss = {
                 pictureEditorVisible = false
+                returnToPictureSettings = true
                 pictureModePickerVisible = true
             },
             onPreview = { appearancePreview = it },
@@ -3041,6 +3047,7 @@ fun PlayerScreen(
         if (pictureModePickerVisible) PictureModeQuickOverlay(
             profiles = appearanceProfiles,
             preview = activeAppearanceProfile,
+            focusSettingsOnEnter = returnToPictureSettings,
             onPreview = { appearancePreview = it },
             onSettings = {
                 pictureModePickerVisible = false
@@ -3751,6 +3758,7 @@ private fun PlayerPictureModeActionButton(
 internal fun PictureModeQuickOverlay(
     profiles: List<VideoAppearanceProfile>,
     preview: VideoAppearanceProfile,
+    focusSettingsOnEnter: Boolean,
     onPreview: (VideoAppearanceProfile) -> Unit,
     onSettings: () -> Unit,
     onApply: () -> Unit,
@@ -3768,8 +3776,11 @@ internal fun PictureModeQuickOverlay(
     val skipRequester = remember { FocusRequester() }
     val settingsRequester = remember { FocusRequester() }
     val applyRequester = remember { FocusRequester() }
+    val entry = if (focusSettingsOnEnter) settingsRequester
+        else modeRequesters.getOrNull(profiles.indexOfFirst { it.id == preview.id }.coerceAtLeast(0)) ?: settingsRequester
     AlertDialog(
         onDismissRequest = onSkip,
+        modifier = Modifier.playerChoiceFocusEntry(entry),
         shape = RoundedCornerShape(20.dp),
         containerColor = Color(0xF21A1A1A),
         title = {
@@ -3788,7 +3799,7 @@ internal fun PictureModeQuickOverlay(
         },
         text = {
             Column(
-                Modifier.playerChoiceFocusEntry(modeRequesters.getOrNull(profiles.indexOfFirst { it.id == preview.id }.coerceAtLeast(0)) ?: settingsRequester).then(
+                Modifier.then(
                     if (compactPhone) {
                         Modifier.widthIn(min = 260.dp, max = 330.dp)
                     } else {
@@ -4108,7 +4119,7 @@ internal fun Modifier.playerControlFocus(
     val context = LocalContext.current
     val isTv = rememberPlayerTvDevice()
     val directionalInput = playerUsesDirectionalInput()
-    val showFocus = focused && directionalInput
+    val showFocus = focused && directionalInput && LocalWindowInfo.current.isWindowFocused
     LaunchedEffect(showFocus) { onFocused(showFocus) }
     val minimumSize = when {
         isTv -> 56.dp

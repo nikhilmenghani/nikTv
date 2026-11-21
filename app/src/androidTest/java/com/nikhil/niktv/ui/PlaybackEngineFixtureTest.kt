@@ -64,6 +64,17 @@ class PlaybackEngineFixtureTest {
     }
     private fun shownPosition(): Long? = control("Current playback time ", true)?.contentDescription?.toString()
         ?.removePrefix("Current playback time ")?.split(':')?.mapNotNull { it.toLongOrNull() }?.fold(0L) { total, v -> total * 60 + v }
+    private fun observeControlFocus(): List<String> {
+        val events = java.util.concurrent.CopyOnWriteArrayList<String>()
+        instrumentation.uiAutomation.setOnAccessibilityEventListener { event ->
+            if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                val label = event.contentDescription ?: event.source?.contentDescription
+                    ?: event.text.firstOrNull() ?: event.source?.getChild(0)?.text
+                if (label != null) events.add(label.toString())
+            }
+        }
+        return events
+    }
     private fun await(label: String, limit: Long = 20_000L, condition: () -> Boolean) {
         val until = SystemClock.elapsedRealtime() + limit
         while (SystemClock.elapsedRealtime() < until) {
@@ -191,6 +202,85 @@ class PlaybackEngineFixtureTest {
         finally { instrumentation.uiAutomation.setRotation(android.app.UiAutomation.ROTATION_UNFREEZE) }
     }
 
+    @Test fun media3BackUnwindsPlayerControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MEDIA3)
+    @Test fun vlcBackUnwindsPlayerControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.VLC)
+
+    private fun exerciseBackLayers(engine: com.nikhil.niktv.model.PlaybackEngine) {
+        check(context.packageName.endsWith(".regression"))
+        fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
+        fun focused(label: String): Boolean {
+            var node = control(label)
+            while (node != null && !node.isFocusable) node = node.parent
+            return node?.isFocused == true
+        }
+        fun activate(label: String) {
+            await("$label accepts focus") {
+                var node = control(label)
+                while (node != null && !node.isFocusable) node = node.parent
+                focused(label) || node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS) == true
+            }
+            await("$label owns focus before activation") { focused(label) }
+            key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+        }
+        FixtureServer().use { server ->
+            val activity = host()
+            val frames = AtomicInteger()
+            val exits = AtomicInteger()
+            val focusEvents = observeControlFocus()
+            val item = NikItem("back-current", "Player Back fixture", null, null)
+            val next = NikItem("back-next", "Next fixture episode", null, null)
+            try {
+                instrumentation.setInTouchMode(false)
+                main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                    CompositionLocalProvider(LocalViewerLayout provides com.nikhil.niktv.data.ViewerLayout.EASY) {
+                        val media = remember { PlayingMedia(item, "${server.base}/movie.mp4", CatalogType.SERIES,
+                            episodeQueue = listOf(item, next), progressKey = "back-$engine", profileKey = "isolated-back") }
+                        PlayerScreen(media, onBack = { exits.incrementAndGet() }, onRetry = {}, onRetryAlternateDecoder = {},
+                            onPlaybackAuthorizationFailure = {}, onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
+                            playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = true,
+                            onVideoFrameRendered = { frames.incrementAndGet() })
+                    }
+                } } }
+                await("The local video renders") { frames.get() > 0 }
+                key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                await("D-pad OK reveals the player controls") { control("More controls") != null }
+                activate("Episodes")
+                await("Episodes opens a separate queue") { control("Next fixture episode") != null }
+                val beforeQueueBack = focusEvents.size
+                key(android.view.KeyEvent.KEYCODE_BACK)
+                await("Back from Episodes returns to Episodes with settings closed") {
+                    control("Next fixture episode") == null && focused("Episodes") && control("More controls") != null
+                }
+                assertTrue("Back from Episodes must not move through transport controls: ${focusEvents.drop(beforeQueueBack)}",
+                    focusEvents.drop(beforeQueueBack).none { it in listOf("Back", "Play", "Pause", "More controls") })
+                assertEquals(0, exits.get())
+                key(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right returns to More controls immediately") { focused("More controls") }
+                key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                await("More controls opens over the transport") { control("Hide extra controls") != null }
+                key(android.view.KeyEvent.KEYCODE_BACK)
+                await("Back closes settings without hiding the transport") { focused("More controls") }
+                NavigationAuditEvidence.capture("player-back-transport-$engine")
+                key(android.view.KeyEvent.KEYCODE_BACK)
+                await("Next Back hides the transport while staying in playback") { control("More controls") == null }
+                assertEquals(0, exits.get())
+                key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                await("OK reopens controls on Play or Pause") { focused("Pause") || focused("Play") }
+                key(android.view.KeyEvent.KEYCODE_BACK)
+                await("Back hides reopened controls") { control("More controls") == null }
+                key(android.view.KeyEvent.KEYCODE_BACK)
+                await("Back from the bare video leaves playback") { exits.get() == 1 }
+            } catch (failure: AssertionError) {
+                NavigationAuditEvidence.capture("player-back-failure-$engine")
+                throw failure
+            } finally {
+                main { activity.finish() }
+                instrumentation.uiAutomation.setOnAccessibilityEventListener(null)
+                instrumentation.setInTouchMode(true)
+            }
+        }
+    }
+
     @Test fun bottomSettingsUseRealIptvAndSportsPlayersAcrossEngines() {
         check(context.packageName.endsWith(".regression"))
         val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
@@ -259,16 +349,33 @@ class PlaybackEngineFixtureTest {
                     }
                     clickControl("Video fit:", true)
                     await("Real resize picker opens") { control("Video resize") != null }
-                    clickControl("Skip")
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
                     await("Real picker returns to its exact origin") { control("Video resize") == null && focused("Video fit:", true) }
                     instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
                     await("Right immediately reaches Picture") { focused("Choose picture mode:", true) }
                     Thread.sleep(200)
                     assertTrue("Dialog handoff never corrects a subsequent arrow", focused("Choose picture mode:", true))
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("Picture mode picker opens") { control("Picture mode") != null }
+                    await("Picture settings accepts remote focus") {
+                        var node = control("Settings")
+                        while (node != null && !node.isFocusable) node = node.parent
+                        focused("Settings") || node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS) == true
+                    }
+                    await("Settings is focused in the picture picker") { focused("Settings") }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("The detailed picture editor opens") { control("Adjust while watching the video.") != null }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    await("Back from the editor restores its Settings button") { control("Picture mode") != null && focused("Settings") }
+                    NavigationAuditEvidence.capture("picture-editor-back-$sports-$engine")
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("Right after Back goes straight to Skip") { focused("Skip") }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    await("Back from the picker restores Picture") { control("Picture mode") == null && focused("Choose picture mode:", true) }
                     await("Inline controls include existing stream info and timeout") { control("Playback information") != null && control("Controls timeout:", true) != null }
                     clickControl("Playback information")
                     await("Real information dialog opens") { control("Details for the current stream") != null }
-                    clickControl("Close")
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
                     await("Info returns to its tool") { control("Details for the current stream") == null && focused("Playback information") }
                     NavigationAuditEvidence.capture("bottom-settings-${if (sports) "sports" else "iptv"}-${engine.name.lowercase()}")
                     instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
