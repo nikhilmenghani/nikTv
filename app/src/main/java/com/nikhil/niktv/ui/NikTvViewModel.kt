@@ -4019,7 +4019,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             current.copy(
                 modernTmdbSection = null,
                 modernIptvCategory = category,
-                modernIptvCategoryOpenId = current.modernIptvCategoryOpenId + 1,
+                modernIptvCategoryOpenId = com.nikhil.niktv.discovery.CatalogVisitIds.next(),
                 categoryFindQuery = "",
                 categoryFindPage = 0,
                 categoryFindTotalPages = null,

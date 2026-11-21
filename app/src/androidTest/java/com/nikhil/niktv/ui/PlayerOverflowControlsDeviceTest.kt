@@ -109,6 +109,9 @@ class PlayerOverflowControlsDeviceTest {
             val seekBefore = bounds("Seek fixture")
             val openedAt = history.size
             key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Opening retains Settings") { focused("Settings fixture") && find("Subtitles") != null }
+            assertTrue("Opening must not move focus", history.drop(openedAt).isEmpty())
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Opening enters the first quick control") { focused("Subtitles") }
             assertEquals("Opening must not visit another main control", listOf("Subtitles"), history.drop(openedAt))
             assertEquals("Opening leaves Play anchored", playBefore, bounds("Play fixture"))
@@ -151,6 +154,8 @@ class PlayerOverflowControlsDeviceTest {
             assertEquals("Close transfers directly to the surviving trigger", listOf("Toggle"), history.drop(closedAt))
             assertEquals(listOf("Speed"), activations)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Reopening retains Settings") { focused("Settings fixture") && find("Subtitles") != null }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Reopening remains reachable") { focused("Subtitles") }
             assertEquals("Focus outline does not resize its cell", subtitlesBefore.width(), bounds("Subtitles").width())
             NavigationAuditEvidence.capture("player-bottom-settings-${if (narrow) "narrow" else "wide"}")

@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
@@ -18,6 +21,25 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
+
+/** Route remote Back before a native video child can consume it to drop focus. */
+@Composable
+internal fun Modifier.playerRemoteBack(controlsVisible: Boolean): Modifier {
+    val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    var ownsBackPress by remember { mutableStateOf(false) }
+    return onPreviewKeyEvent { event ->
+        if ((controlsVisible || ownsBackPress) && dispatcher != null && event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && !ownsBackPress) {
+                ownsBackPress = true
+                dispatcher.onBackPressed()
+            } else if (event.type == KeyEventType.KeyUp) ownsBackPress = false
+            true
+        } else false
+    }
+}
 
 private val LocalPlayerTvDevice = staticCompositionLocalOf<Boolean?> { null }
 

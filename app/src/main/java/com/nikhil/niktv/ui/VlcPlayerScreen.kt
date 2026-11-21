@@ -795,14 +795,14 @@ internal fun VlcPlayerScreen(
                 appearancePreview = null
             }
             controlsVisible -> {
-                controlsVisible = false
-                controlsFocused = false
                 if (embeddedMode && videoView != null) {
                     suppressNextEmbeddedPlayerFocusHandoff = true
                     videoView?.requestFocus()
                 } else {
-                    scope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
+                    runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
+                controlsVisible = false
+                controlsFocused = false
             }
             // Match Media3/ExoPlayer: hide controls before leaving playback.
             startFullscreen -> onBack()
@@ -1219,6 +1219,7 @@ internal fun VlcPlayerScreen(
                     queueVisible = true
                 }
             )
+            .playerRemoteBack(controlsVisible)
             .playerActivityObserver {
                 dpadInteraction++
                 watching.interact()

@@ -119,6 +119,7 @@ internal fun IptvAvailabilityControl(
     state: IptvAvailabilityState,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    iconOnly: Boolean = false,
     changed: () -> Unit = {}
 ) {
     val action = remember { FocusRequester() }
@@ -138,20 +139,22 @@ internal fun IptvAvailabilityControl(
         action.requestFocus()
         open = true
     }
-    if (compact) {
+    if (compact || iconOnly) {
         NikTvSecondaryActionButton(
             onClick = openPicker,
             modifier = modifier.focusRequester(action)
                 .semantics { contentDescription = "Availability: ${state.filter.title}" },
             shape = RoundedCornerShape(10.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp)
+            contentPadding = if (iconOnly) PaddingValues(0.dp) else PaddingValues(horizontal = 10.dp)
         ) {
-            Icon(Icons.Default.Flag, null, Modifier.size(15.dp),
+            Icon(Icons.Default.Flag, null, Modifier.size(if (iconOnly) 20.dp else 15.dp),
                 tint = if (state.filter == IptvAvailabilityFilter.ALL) SettingsMuted else IptvAvailabilityAmber)
+            if (!iconOnly) {
             Spacer(Modifier.width(6.dp))
             Text(state.filter.title, style = MaterialTheme.typography.labelLarge, maxLines = 1)
             Spacer(Modifier.width(4.dp))
             Icon(Icons.Default.ExpandMore, null, Modifier.size(15.dp))
+            }
         }
     } else {
         DiscoveryAction("Availability: ${state.filter.title}", Icons.Default.Flag,

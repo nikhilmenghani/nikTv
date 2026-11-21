@@ -94,6 +94,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
@@ -214,21 +215,8 @@ private val ModernChromeSurface = Color(0xFF101116)
 private val ModernCardSurface = Color(0xFF151720)
 private val ModernOutline = Color(0xFF2A2D36)
 
-private data class ModernCollectionViewport(val index: Int, val offset: Int)
-
 /** Keeps category viewports alive while the fullscreen player replaces browse UI. */
-private object ModernCollectionViewportMemory {
-    private val viewports = mutableMapOf<String, ModernCollectionViewport>()
-
-    fun get(key: String): ModernCollectionViewport? = viewports[key]
-
-    fun put(key: String, index: Int, offset: Int) {
-        viewports[key] = ModernCollectionViewport(
-            index = index.coerceAtLeast(0),
-            offset = offset.coerceAtLeast(0)
-        )
-    }
-}
+private val ModernCollectionViewportMemory = com.nikhil.niktv.discovery.CollectionVisitViewportMemory()
 private val ModernBrandAccent = Color(0xFF7C8CFF)
 private val ModernBrandViolet = Color(0xFFA275FF)
 
@@ -3038,6 +3026,7 @@ internal fun ModernIptvCollection(
     val isLiveTv = category.type == CatalogType.LIVE_TV
     val isPhone = configuration.usesPhoneLayout(isTv)
     val wideLiveCollection = isLiveTv && !isPhone
+    val compactPhoneHeader = isLiveTv && isPhone
     val shortWide = configuration.usesShortWideLayout(isTv)
     val localTitleSearch = state.savedProfile?.portalType == PortalType.XTREAM
     val canSearchCollection = isLiveTv || localTitleSearch
@@ -3067,10 +3056,24 @@ internal fun ModernIptvCollection(
         }
     }
     val keyboard = LocalSoftwareKeyboardController.current
-    val remoteNavigationActive = isTv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val channelInputMode = LocalInputModeManager.current
+    val remoteNavigationActive = isTv || channelInputMode.inputMode == InputMode.Keyboard
     var channelSearchEditing by rememberSaveable(category.id) { mutableStateOf(false) }
     var channelSearchSawIme by remember { mutableStateOf(false) }
     val channelSearchRequester = remember(category.id) { FocusRequester() }
+    val channelSearchAction = remember(category.id) { FocusRequester() }
+    var channelSearchExpanded by rememberSaveable(category.id) { mutableStateOf(false) }
+    fun closeChannelSearch() {
+        // The trigger survives editor removal; transfer focus before collapsing.
+        if (compactPhoneHeader) {
+            collectionControlsOwnNavigation = true
+            channelInputMode.requestInputMode(InputMode.Keyboard)
+            channelSearchAction.requestFocus()
+        }
+        channelSearchEditing = false
+        channelSearchExpanded = false
+        keyboard?.hide()
+    }
     LaunchedEffect(channelSearchEditing) {
         if (channelSearchEditing) {
             withFrameNanos { }
@@ -3080,9 +3083,8 @@ internal fun ModernIptvCollection(
         }
     }
     val backFromCollection: () -> Unit = {
-        if (channelSearchEditing) {
-            channelSearchEditing = false
-            keyboard?.hide()
+        if (channelSearchEditing || (compactPhoneHeader && channelSearchExpanded)) {
+            closeChannelSearch()
         } else {
             close()
         }
@@ -3095,7 +3097,7 @@ internal fun ModernIptvCollection(
             // Fire TV's floating keyboard can report hidden insets while its
             // editor is still open. Making the field read-only then disables
             // the keyboard's Search action and lets Back leave the category.
-            channelSearchSawIme && !isTv -> channelSearchEditing = false
+            channelSearchSawIme && !isTv -> closeChannelSearch()
         }
     }
     val guideClock = produceState(System.currentTimeMillis(), category.id) {
@@ -3124,7 +3126,11 @@ internal fun ModernIptvCollection(
     val allChannelsFocus = remember(profileKey, category.id) { FocusRequester() }
     val pinnedChannelsFocus = remember(profileKey, category.id) { FocusRequester() }
     val channelViewFocus = if (pinnedOnly) pinnedChannelsFocus else allChannelsFocus
-    var collectionProjectionReady by remember(pinnedOnly) { mutableStateOf(!isLiveTv) }
+    // A previous empty projection is not the result for newly delivered channels.
+    // Otherwise the footer can be laid out first and become their scroll anchor.
+    var collectionProjectionReady by remember(state.items, pinnedOnly, trimmedChannelQuery, sourceFilter, availabilityToken) {
+        mutableStateOf(!isLiveTv)
+    }
     val matchingOccurrences by androidx.compose.runtime.key(pinnedOnly) {
         produceState(
             if (isLiveTv) emptyList() else providerCollectionOccurrences(emptyList(), state.items),
@@ -3207,18 +3213,18 @@ internal fun ModernIptvCollection(
             }
         }
     }
-    val viewportKey = "$profileKey:${category.type.name}:${category.id}"
+    val viewer = LocalViewingOwner.current
+    val viewportKey = "$viewer:$profileKey:${category.type.name}:${category.id}:$visitId"
     // Opening from the category hub is a new visit. Returning from playback keeps
     // the same visit, so its position must survive without restoring a loading row.
-    var initialTilesPositioned by rememberSaveable(viewportKey, visitId) { mutableStateOf(false) }
-    val restoredViewport = remember(viewportKey, visitId) {
-        if (initialTilesPositioned) ModernCollectionViewportMemory.get(viewportKey) else null
-    }
+    val restoredViewport = remember(viewportKey) { ModernCollectionViewportMemory.entry(viewportKey) }
+    var initialTilesPositioned by remember(viewportKey) { mutableStateOf(restoredViewport.ready) }
     // Use standard prefetching: the cache-window strategy crashes when visible rows become empty.
-    val gridState = androidx.compose.runtime.key(viewportKey, visitId) { rememberLazyGridState(
-        initialFirstVisibleItemIndex = restoredViewport?.index
-            ?: 0,
-        initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
+    // Saved LazyGridState can override its initializer, even for a fresh opening.
+    // The visit memory owns restoration; a new visit always constructs position 0.
+    val gridState = remember(viewportKey) { androidx.compose.foundation.lazy.grid.LazyGridState(
+        firstVisibleItemIndex = restoredViewport.index,
+        firstVisibleItemScrollOffset = restoredViewport.offset
     ) }
     LaunchedEffect(focusIds) {
         if (focusedPosterIndex >= 0) restoredChannelIndex()?.let { focusedPosterIndex = it }
@@ -3237,12 +3243,19 @@ internal fun ModernIptvCollection(
     }
     LaunchedEffect(viewportKey, visitId, displayedItems.isNotEmpty(), state.loading) {
         if (!initialTilesPositioned && displayedItems.isNotEmpty() && !state.loading) {
-            gridState.scrollToItem(0, 0)
+            lastFocusedOccurrenceKey = null
+            lastFocusedMediaId = null
+            focusedPosterIndex = -1
+            // Apply on the next measure so a temporary loading/footer key cannot
+            // retain its bottom position when the first channel batch is inserted.
+            gridState.requestScrollToItem(0, 0)
+            ModernCollectionViewportMemory.markReady(viewportKey)
             initialTilesPositioned = true
         }
     }
     LaunchedEffect(isLiveTv, availability.filter, collectionProjectionReady, displayedItems.isEmpty(), remoteNavigationActive, state.loading) {
         if (isLiveTv && !initialTilesPositioned && collectionProjectionReady && displayedItems.isEmpty() && !state.loading) {
+            ModernCollectionViewportMemory.markReady(viewportKey)
             initialTilesPositioned = true
             collectionControlsOwnNavigation = true
             if (remoteNavigationActive) {
@@ -3485,17 +3498,26 @@ internal fun ModernIptvCollection(
         IptvAvailabilityControl(
             availability,
             Modifier.focusRequester(availabilityFocus)
-                .then(if (wideLiveCollection) Modifier.height(toolbarHeight) else Modifier)
+                .then(when {
+                    compactPhoneHeader -> Modifier.size(42.dp)
+                    wideLiveCollection -> Modifier.height(toolbarHeight)
+                    else -> Modifier
+                })
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) false
                     else when (event.key) {
-                        Key.DirectionDown -> if (wideLiveCollection) focusChannelView() else channelSearchRequester.requestFocus()
+                        Key.DirectionDown -> if (isLiveTv) focusChannelView() else channelSearchRequester.requestFocus()
                         Key.DirectionLeft -> wideLiveCollection && channelSearchRequester.requestFocus()
-                        Key.DirectionRight -> wideLiveCollection && refreshFocus.requestFocus()
+                        Key.DirectionRight -> when {
+                            compactPhoneHeader -> channelSearchAction.requestFocus()
+                            wideLiveCollection -> refreshFocus.requestFocus()
+                            else -> false
+                        }
                         else -> false
                     }
                 },
-            compact = wideLiveCollection
+            compact = wideLiveCollection,
+            iconOnly = compactPhoneHeader
         ) {
             collectionControlsOwnNavigation = true
             availabilityFocusPending = true
@@ -3532,12 +3554,12 @@ internal fun ModernIptvCollection(
             textStyle = if (wideLiveCollection) MaterialTheme.typography.bodySmall else LocalTextStyle.current,
             shape = RoundedCornerShape(if (wideLiveCollection) 10.dp else 14.dp),
             colors = collectionFieldColors(),
-            label = if (wideLiveCollection) null else ({ Text(searchLabel) }),
-            placeholder = if (wideLiveCollection) ({
+            label = if (wideLiveCollection || compactPhoneHeader) null else ({ Text(searchLabel) }),
+            placeholder = if (wideLiveCollection || compactPhoneHeader) ({
                 Text(searchLabel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }) else null,
-            leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(if (wideLiveCollection) 18.dp else 24.dp)) },
-            trailingIcon = if (channelQuery.isNotEmpty()) {{
+            leadingIcon = { Icon(if (isLiveTv) Icons.Default.ManageSearch else Icons.Default.Search, null, Modifier.size(if (wideLiveCollection) 18.dp else 24.dp)) },
+            trailingIcon = if (channelQuery.isNotEmpty() && !compactPhoneHeader) {{
                 IconButton(onClick = {
                     if (state.categoryFindSearching) cancelCategoryFind()
                     channelQuery = ""
@@ -3584,6 +3606,41 @@ internal fun ModernIptvCollection(
                     content = { refreshIcon() }
                 )
             }
+        } else if (compactPhoneHeader) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = collectionInset, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(category.title, color = Color.White, style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Live TV · ${state.items.size} channels", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
+                }
+                Box(Modifier.size(42.dp)) { availabilityControl() }
+                NikTvSecondaryActionButton(
+                    onClick = { collectionControlsOwnNavigation = true; channelSearchExpanded = true; channelSearchEditing = true },
+                    modifier = Modifier.size(42.dp).focusRequester(channelSearchAction)
+                        .semantics { contentDescription = "Find channel or programme" }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                Key.DirectionLeft -> availabilityFocus.requestFocus()
+                                Key.DirectionRight -> refreshFocus.requestFocus()
+                                Key.DirectionDown -> focusChannelView()
+                                else -> false
+                            }
+                        },
+                    shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(0.dp)
+                ) { Icon(Icons.Default.ManageSearch, null, Modifier.size(22.dp),
+                    tint = if (channelSearchExpanded || channelQuery.isNotBlank()) NikColors.primary else Color.White) }
+                NikTvSecondaryActionButton(onClick = refreshCategory,
+                    modifier = Modifier.size(42.dp).focusRequester(refreshFocus).semantics { contentDescription = "Refresh category" }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                Key.DirectionLeft -> channelSearchAction.requestFocus()
+                                Key.DirectionDown -> focusChannelView()
+                                else -> false
+                            }
+                        },
+                    shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(0.dp)) { refreshIcon() }
+            }
         } else {
             ModernCollectionHeader(
                 title = category.title,
@@ -3600,7 +3657,20 @@ internal fun ModernIptvCollection(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (sources.isNotEmpty()) CollectionSourceFilter(sources, sourceFilter) { sourceFilter = it }
-                if (!wideLiveCollection) {
+                if (compactPhoneHeader && channelSearchExpanded) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        collectionSearch(Modifier.weight(1f).height(48.dp))
+                        NikTvSecondaryActionButton(onClick = {
+                            closeChannelSearch()
+                            if (state.categoryFindSearching) cancelCategoryFind()
+                            channelQuery = ""
+                        }, modifier = Modifier.size(42.dp).semantics { contentDescription = "Close channel search" },
+                            shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(0.dp)) {
+                            Icon(Icons.Default.Close, null, Modifier.size(20.dp))
+                        }
+                    }
+                } else if (!wideLiveCollection && !compactPhoneHeader) {
                     if (isLiveTv) availabilityControl()
                     collectionSearch(Modifier.fillMaxWidth())
                 }
@@ -3615,7 +3685,7 @@ internal fun ModernIptvCollection(
                             val tabKeys = Modifier.onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) false
                                 else when (event.key) {
-                                    Key.DirectionUp -> channelSearchRequester.requestFocus()
+                                    Key.DirectionUp -> if (compactPhoneHeader) channelSearchAction.requestFocus() else channelSearchRequester.requestFocus()
                                     Key.DirectionDown -> focusFirstChannel()
                                     else -> false
                                 }
@@ -3867,7 +3937,7 @@ internal fun ModernIptvCollection(
 
         val moreProviderChannels = state.catalogHasMore &&
             (!pinnedOnly || pinnedChannelIds.any { id -> state.items.none { it.id == id } })
-        if (collectionProjectionReady && !(state.loading && state.items.isEmpty()) &&
+        if (initialTilesPositioned && collectionProjectionReady && !(state.loading && state.items.isEmpty()) &&
             (trimmedChannelQuery.isEmpty() || hasLocalMore) &&
             (hasLocalMore || moreProviderChannels || state.catalogLoadingMore || appendPage.pending)) {
             item("iptv-load-more", span = fullSpan) {
@@ -4168,12 +4238,13 @@ internal fun ModernLiveChannelTile(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
                 .then(
-                    Modifier.heightIn(min = (when {
-                        compact && shortWide -> if (xtream) 70f else 56f
-                        compact -> if (xtream) 82f else 66f
-                        isPhone -> if (xtream) 94f else 82f
-                        xtream -> if (isTv) 100f else 104f
-                        else -> if (isTv) 80f else 84f
+                    // Programme delivery must never change row geometry or its
+                    // scroll/focus anchor. Reserve room before guide data arrives.
+                    Modifier.height((when {
+                        compact && shortWide -> 84f
+                        compact -> 92f
+                        isPhone -> 100f
+                        else -> 112f
                     } * configuration.fontScale.coerceAtLeast(1f)).dp)
                 )
                 .onFocusChanged {
@@ -4229,22 +4300,14 @@ internal fun ModernLiveChannelTile(
                         start = if (compact) 10.dp else 12.dp,
                         end = if (compact) 10.dp else 12.dp,
                         top = 6.dp,
-                        // The progress track occupies the bottom 10dp. Reserve
-                        // a separate gap and let wrapped text grow the tile.
-                        bottom = if (programmeProgress != null && currentProgrammeTitle != null) 22.dp else 12.dp
+                        // Keep the track's space even while EPG is missing.
+                        bottom = 18.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        availabilityFlag?.let { flag ->
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Icon(Icons.Default.Flag, null, Modifier.size(14.dp), tint = IptvAvailabilityAmber)
-                                Text(flag.label, color = IptvAvailabilityAmber, style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                        presentation.context?.let {
+                        presentation.context?.takeUnless { compact || currentProgrammeTitle != null }?.let {
                             Text(
                                 it,
                                 color = Color(0xFFB9BDD0),
@@ -4269,7 +4332,7 @@ internal fun ModernLiveChannelTile(
                                     else -> MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp)
                                 },
                                 fontWeight = FontWeight.SemiBold,
-                                maxLines = 2,
+                                maxLines = if (compact) 1 else 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Row(verticalAlignment = Alignment.CenterVertically,
@@ -4351,9 +4414,14 @@ internal fun ModernLiveChannelTile(
                                     style = MaterialTheme.typography.labelSmall)
                             }
                         }
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (availabilityFlag != null) {
+                            Icon(Icons.Default.Flag, availabilityFlag.label, Modifier.size(14.dp), tint = IptvAvailabilityAmber)
+                        }
                         if (isPinned) {
                             Icon(Icons.Default.PushPin, "Pinned channel", Modifier.size(16.dp),
                                 tint = ModernBrandAccent)
+                        }
                         }
 
                     }

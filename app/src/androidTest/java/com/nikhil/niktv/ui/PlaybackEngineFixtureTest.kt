@@ -205,7 +205,12 @@ class PlaybackEngineFixtureTest {
     @Test fun media3BackUnwindsPlayerControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MEDIA3)
     @Test fun vlcBackUnwindsPlayerControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.VLC)
 
-    private fun exerciseBackLayers(engine: com.nikhil.niktv.model.PlaybackEngine) {
+    @Test fun mpvBackUnwindsPlayerControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MPV)
+    @Test fun liveMedia3DownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MEDIA3, true)
+    @Test fun liveVlcDownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.VLC, true)
+    @Test fun liveMpvDownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MPV, true)
+
+    private fun exerciseBackLayers(engine: com.nikhil.niktv.model.PlaybackEngine, live: Boolean = false) {
         check(context.packageName.endsWith(".regression"))
         fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
         fun focused(label: String): Boolean {
@@ -233,7 +238,7 @@ class PlaybackEngineFixtureTest {
                 instrumentation.setInTouchMode(false)
                 main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
                     CompositionLocalProvider(LocalViewerLayout provides com.nikhil.niktv.data.ViewerLayout.EASY) {
-                        val media = remember { PlayingMedia(item, "${server.base}/movie.mp4", CatalogType.SERIES,
+                        val media = remember { PlayingMedia(item, "${server.base}/movie.mp4", if (live) CatalogType.LIVE_TV else CatalogType.SERIES,
                             episodeQueue = listOf(item, next), progressKey = "back-$engine", profileKey = "isolated-back") }
                         PlayerScreen(media, onBack = { exits.incrementAndGet() }, onRetry = {}, onRetryAlternateDecoder = {},
                             onPlaybackAuthorizationFailure = {}, onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
@@ -244,6 +249,18 @@ class PlaybackEngineFixtureTest {
                 await("The local video renders") { frames.get() > 0 }
                 key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
                 await("D-pad OK reveals the player controls") { control("More controls") != null }
+                key(android.view.KeyEvent.KEYCODE_BACK)
+                await("Initial Back hides controls") { control("More controls") == null }
+                key(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down focuses Pause") { focused("Pause") }
+                val downBackAt = focusEvents.size
+                key(android.view.KeyEvent.KEYCODE_BACK)
+                await("One Back after Down hides controls") { control("More controls") == null }
+                assertEquals(0, exits.get())
+                assertTrue("Dismissal must not visit Previous", focusEvents.drop(downBackAt).none { it.contains("Previous", true) })
+                key(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down reopens controls") { focused("Pause") }
+                if (live) return
                 activate("Episodes")
                 await("Episodes opens a separate queue") { control("Next fixture episode") != null }
                 val beforeQueueBack = focusEvents.size

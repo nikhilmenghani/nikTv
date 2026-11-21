@@ -72,7 +72,9 @@ internal class PlayerSettingsRibbonState {
         this.actions = actions
         lastFocused = null
         revealOnOpen = !directional
-        target = if (directional) actions.firstOrNull()?.requester else null
+        // Opening only reveals options. The persistent Settings trigger retains
+        // focus until the user deliberately enters the row with Left.
+        target = null
     }
     fun restore(requester: FocusRequester) {
         revealOnOpen = false
