@@ -142,7 +142,7 @@ class PlaybackSimulationDeviceTest {
         val activity = instrumentation.startActivitySync(Intent(context, SportsActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as SportsActivity
         try {
-            clickLabel("Options")
+            clickLabel("Sports options")
             clickLabel("Playback test")
             await("The production Sports action opens the actual playback test page") {
                 node("playbackSimulation") != null && node("playExternal") != null
@@ -150,7 +150,7 @@ class PlaybackSimulationDeviceTest {
             assertTrue("Opening the test page must not autoplay", node("playbackPopup") == null)
             NavigationAuditEvidence.capture("playback-simulation-sports-entry")
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-            await("Back returns to the Sports options entry") { labelled("Options") != null }
+            await("Back returns to the Sports options entry") { labelled("Sports options") != null }
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
         }
