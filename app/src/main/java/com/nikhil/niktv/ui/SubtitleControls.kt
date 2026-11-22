@@ -140,11 +140,11 @@ internal fun SubtitleSelectionDialog(
     // Keep the focus owner for each track even when selection or the list changes.
     val retainedTrackRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val trackFocusRequesters = listOf(offFocusRequester) + tracks.map {
-        retainedTrackRequesters.getOrPut(it.id) { FocusRequester() }
+        remember(retainedTrackRequesters, it.id) { retainedTrackRequesters.getOrPut(it.id) { FocusRequester() } }
     }
     val retainedResultRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val resultFocusRequesters = results.map {
-        retainedResultRequesters.getOrPut(it.id) { FocusRequester() }
+        remember(retainedResultRequesters, it.id) { retainedResultRequesters.getOrPut(it.id) { FocusRequester() } }
     }
     val trackHeaderFocusRequester = if (canSearch) modeFocusRequester else closeFocusRequester
     val afterTracksFocusRequester = when {
