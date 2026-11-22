@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -1515,7 +1516,15 @@ private fun SearchResultsContent(
     val gridState = if (easy) key(state.searchQuery) {
         rememberLazyGridState(initialFirstVisibleItemIndex = lazyIndices[restoreResult] ?: 0)
     } else rememberLazyGridState()
-    LaunchedEffect(state.searchType, state.searchQuery, state.searchCategoryId) { if (!easy) gridState.scrollToItem(0) }
+    val resultScope = Triple(state.searchType, state.searchQuery, state.searchCategoryId)
+    var browsingResults by remember(resultScope) { mutableStateOf(restoreResult != null) }
+    val draggingResults by gridState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(draggingResults) { if (draggingResults) browsingResults = true }
+    LaunchedEffect(resultScope, keys) {
+        // Reset on the measure that applies the new batch, not against the old
+        // loading/footer layout. Stop pinning as soon as the user browses results.
+        if (!easy && !browsingResults) gridState.requestScrollToItem(0)
+    }
     PrefetchCatalogPage(
         scope = "search:${state.session?.profile?.cacheKey()}:${state.searchQuery}:${state.searchType}:${state.searchCategoryId}",
         ids = keys,
@@ -1621,6 +1630,7 @@ private fun SearchResultsContent(
                 val badge = type.title.takeIf { all }
                 val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
                 val itemModifier = Modifier.focusRequester(requesterAt(index))
+                    .onFocusChanged { if (it.hasFocus) browsingResults = true }
                     .then(navigation(index))
                 if (easy) {
                     val isSeries = type == SearchContentType.SERIES
@@ -1648,7 +1658,7 @@ private fun SearchResultsContent(
         }
         if (footer) item(key = footerKey, span = { GridItemSpan(maxLineSpan) }) {
             val footerModifier = Modifier.focusRequester(requesterAt(results.size))
-                .onFocusChanged { footerFocused = it.hasFocus }
+                .onFocusChanged { footerFocused = it.hasFocus; if (it.hasFocus) browsingResults = true }
                 .then(navigation(results.size))
             val click: () -> Unit = {
                 if (!state.searchServerLoading && !state.searchLocalLoading) {

@@ -69,6 +69,8 @@ class PlayerQueueOrientationDeviceTest {
         check(context.packageName.endsWith(".regression"))
         org.junit.Assume.assumeFalse(context.isTvLikeDevice(context.resources.configuration))
         val oldLayout = PlayerQueuePreferences.layout(context)
+        val oldWidth = PlayerQueuePreferences.width(context)
+        PlayerQueuePreferences.setWidth(context, PlayerQueueWidth.MEDIUM)
         PlayerQueuePreferences.setLayout(context, PlayerQueueLayout.GRID)
         val landscape = mutableStateOf(initialLandscape)
         val plays = CopyOnWriteArrayList<String>()
@@ -96,9 +98,33 @@ class PlayerQueueOrientationDeviceTest {
             body({ next -> ins.runOnMainSync { landscape.value = next } }, plays, dismissals)
         } finally {
             ins.runOnMainSync { host.finish() }
+            PlayerQueuePreferences.setWidth(context, oldWidth)
             PlayerQueuePreferences.setLayout(context, oldLayout)
             ins.setInTouchMode(true)
         }
+    }
+
+    @Test fun listWidthRetainsFocusAndAlignsPlayingTitle() = fixture(true) { _, plays, dismissals ->
+        assertTrue(owner("List")?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
+        key(KeyEvent.KEYCODE_DPAD_CENTER)
+        await("List opens with its layout trigger focused") { focused("Tiles") }
+        val medium = bounds(requireNotNull(owner("Orientation episode 61")))
+        val currentTitle = bounds(requireNotNull(find("Orientation episode 61")))
+        val nextTitle = bounds(requireNotNull(find("Orientation episode 62")))
+        assertEquals("Playing and other titles share their left edge", currentTitle.left, nextTitle.left)
+        assertNotNull(find("Playing"))
+        key(KeyEvent.KEYCODE_DPAD_RIGHT)
+        await("Right enters the size button") { focused("Medium") }
+        key(KeyEvent.KEYCODE_DPAD_CENTER)
+        await("Large retains focus and widens the same list") {
+            focused("Large") && owner("Orientation episode 61")?.let { bounds(it).width() > medium.width() } == true
+        }
+        assertEquals(PlayerQueueWidth.LARGE, PlayerQueuePreferences.width(ins.targetContext))
+        NavigationAuditEvidence.capture("player-queue-wide-playing")
+        key(KeyEvent.KEYCODE_DPAD_LEFT)
+        await("Left returns to Tiles") { focused("Tiles") }
+        assertTrue("Resizing never starts playback", plays.isEmpty())
+        assertEquals(0, dismissals.get())
     }
 
     @Test fun portraitRailAndLandscapeGridKeepDeepEpisodeAndListPreference() = fixture(false) { rotate, plays, dismissals ->

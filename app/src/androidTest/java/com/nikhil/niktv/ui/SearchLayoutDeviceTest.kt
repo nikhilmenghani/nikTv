@@ -35,6 +35,58 @@ class SearchLayoutDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
 
+    @Test fun incomingResultsStayAtTopUntilRemoteBrowsingStarts() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val profile = PortalProfile("Search offset fixture", "https://search.invalid", "")
+        val state = mutableStateOf(NikTvState(savedProfile = profile, restoring = false, searchOpen = true,
+            session = PortalSession(profile, "fixture", "https://search.invalid", "", "", ""),
+            searchQuery = "rrr", searchType = SearchContentType.ALL, searchServerLoading = true, searchUsedServer = true))
+        fun rows(range: IntRange) = range.map { MediaItem("result-$it", "Offset result $it", null, null, searchResultType = SearchContentType.MOVIES) }
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val query = FocusRequester()
+        instrumentation.setInTouchMode(false)
+        try {
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
+                val config = Configuration(LocalConfiguration.current).apply {
+                    screenWidthDp = 960; screenHeightDp = 540; smallestScreenWidthDp = 600
+                    uiMode = (uiMode and Configuration.UI_MODE_TYPE_MASK.inv()) or Configuration.UI_MODE_TYPE_TELEVISION
+                }
+                CompositionLocalProvider(LocalConfiguration provides config) {
+                    Box(Modifier.width(960.dp).height(540.dp)) {
+                        DiscoverySearchContent(state.value, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, queryFocusRequester = query)
+                    }
+                }
+            } } }
+            instrumentation.runOnMainSync { query.requestFocus() }
+            instrumentation.runOnMainSync { state.value = state.value.copy(searchResults = rows(3..63)) }
+            await("First batch appears") { label("Offset result 3") != null }
+            val firstTop = bounds(clickable(label("Offset result 3")!!)).top
+            instrumentation.runOnMainSync { state.value = state.value.copy(searchResults = rows(0..63), searchServerLoading = false) }
+            await("Earlier matches appear fully at the top") {
+                label("Offset result 0")?.let { bounds(clickable(it)).top == firstTop } == true
+            }
+            NavigationAuditEvidence.capture("search-incoming-batches-top")
+            assertTrue(clickable(label("Offset result 0")!!).performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+            await("Results take focus") { focused("Offset result 0") }
+            repeat(8) { index ->
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Down browses result ${(index + 1) * 2}") { focused("Offset result ${(index + 1) * 2}") }
+            }
+            val browsed = bounds(clickable(label("Offset result 16")!!))
+            instrumentation.runOnMainSync { state.value = state.value.copy(searchResults = rows(0..80)) }
+            instrumentation.waitForIdleSync()
+            assertTrue(focused("Offset result 16"))
+            assertEquals("Appending must preserve the browsed viewport", browsed, bounds(clickable(label("Offset result 16")!!)))
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            currentHost = null
+            instrumentation.setInTouchMode(true)
+        }
+    }
+
     @Test fun easyArtworkCardsKeepEqualBoundsForLongTitlesAndProgress() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))

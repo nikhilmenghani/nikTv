@@ -70,6 +70,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -708,11 +711,11 @@ internal fun PlayerQueueOverlay(
     val listQueue = queueLayout == PlayerQueueLayout.LIST
     val phoneQueue = configuration.usesPhoneLayout(tvQueueGrid)
     val shortWideQueue = configuration.usesShortWideLayout(tvQueueGrid)
-    val listPanelWidth = if (phoneQueue) {
-        configuration.screenWidthDp.dp * if (configuration.screenWidthDp < 600) .86f else .38f
-    } else {
-        (configuration.screenWidthDp.dp * .30f).coerceIn(260.dp, 330.dp)
-    }
+    val panelWidth = rememberPlayerQueueWidth()
+    val widthRequester = remember { FocusRequester() }
+    var widthFocused by remember { mutableStateOf(false) }
+    val listPanelWidth = configuration.screenWidthDp.dp *
+        if (phoneQueue) panelWidth.phoneFraction else panelWidth.wideFraction
     val touchQueueRail = phoneQueue && !listQueue
     val liveChannelQueue = catalogType?.let { it == com.nikhil.niktv.model.CatalogType.LIVE_TV } ?: (onTogglePin != null)
     val compactQueueGrid = touchQueueRail
@@ -1209,6 +1212,7 @@ internal fun PlayerQueueOverlay(
                     )
                     .height(queueCardHeight)
                     .clip(cardShape)
+                    .semantics { if (current) stateDescription = "Now playing" }
                     .focusRequester(requester)
                     .onFocusChanged {
                         focused = it.isFocused
@@ -1223,6 +1227,7 @@ internal fun PlayerQueueOverlay(
                     )
                     .focusable(),
                 color = when {
+                    current -> Color(0x665D1825)
                     else -> if (listQueue) Color(0x66171A20) else Color(0xFF171A20)
                 },
                 border = if (focused) {
@@ -1280,11 +1285,19 @@ internal fun PlayerQueueOverlay(
                     if (event.type == KeyEventType.KeyUp) onDismiss()
                     return@onPreviewKeyEvent true
                 }
+                if (widthFocused && event.type == KeyEventType.KeyDown && favoriteMenuItemId == null) {
+                    return@onPreviewKeyEvent when (event.key) {
+                        Key.DirectionLeft -> { layoutToggleRequester.requestFocus(); true }
+                        Key.DirectionDown -> { focusAt(focusedIndex.coerceAtLeast(0)); true }
+                        Key.DirectionUp, Key.DirectionRight -> true
+                        else -> false
+                    }
+                }
                 if (layoutToggleFocused && event.type == KeyEventType.KeyDown && favoriteMenuItemId == null) {
                     return@onPreviewKeyEvent when (event.key) {
                         Key.DirectionDown -> { focusAt(focusedIndex); true }
                         Key.DirectionUp, Key.DirectionLeft -> { onDismiss(); true }
-                        Key.DirectionRight -> true
+                        Key.DirectionRight -> { if (listQueue) widthRequester.requestFocus(); true }
                         else -> false
                     }
                 }
@@ -1479,9 +1492,11 @@ internal fun PlayerQueueOverlay(
                             MaterialTheme.typography.titleMedium
                         },
                         color = Color.White,
+                        modifier = if (listQueue) Modifier.weight(1f) else Modifier,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )
-                    if (listQueue || phoneQueue || shortWideQueue) Spacer(Modifier.weight(1f)) else Text(
+                    if (listQueue) Unit else if (phoneQueue || shortWideQueue) Spacer(Modifier.weight(1f)) else Text(
                         when {
                             listQueue -> if (tvQueueGrid) "↑↓ browse · ← closes" else "Tap to play · Hold for options"
                             tvQueueGrid -> "D-pad browse  •  → View at row end  •  Back closes"
@@ -1499,6 +1514,7 @@ internal fun PlayerQueueOverlay(
                         icon = if (listQueue) Icons.Default.GridView else Icons.Default.ViewList,
                         modifier = Modifier.width(if (listQueue) 76.dp else 92.dp).height(if (listQueue) 40.dp else 44.dp)
                             .focusRequester(layoutToggleRequester)
+                            .focusProperties { if (listQueue) right = widthRequester }
                             .onFocusChanged { layoutToggleFocused = it.isFocused },
                         onClick = {
                             // Claim focus before replacing the grid. Touch clicks do not
@@ -1508,6 +1524,24 @@ internal fun PlayerQueueOverlay(
                             layoutToggleRequester.requestFocus()
                             PlayerQueuePreferences.setLayout(context,
                                 if (listQueue) PlayerQueueLayout.GRID else PlayerQueueLayout.LIST)
+                        }
+                    )
+                    if (listQueue) NikTvActionButton(
+                        label = panelWidth.label,
+                        icon = Icons.Default.SwapHoriz,
+                        modifier = Modifier.width(94.dp).height(40.dp).focusRequester(widthRequester)
+                            .onFocusChanged { widthFocused = it.isFocused }
+                            .semantics { contentDescription = "List width: ${panelWidth.label}. Select to change size" }
+                            .focusProperties { left = layoutToggleRequester; right = FocusRequester.Cancel }
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                    focusAt(focusedIndex.coerceAtLeast(0)); true
+                                } else false
+                            },
+                        onClick = {
+                            focusMoveJob?.cancel()
+                            widthRequester.requestFocus()
+                            PlayerQueuePreferences.setWidth(context, panelWidth.next())
                         }
                     )
                     if (!isEpisodeQueue && (loadingMore || autoAppendPending)) {

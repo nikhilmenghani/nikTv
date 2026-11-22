@@ -726,7 +726,7 @@ private fun ModernDestinationHub(
                 else if (isTablet) 24.dp
                 else 14.dp,
             top = 0.dp,
-            bottom = 72.dp
+            bottom = maxOf(72.dp, com.nikhil.niktv.discovery.LocalPhoneBottomChromeHeight.current + 16.dp)
         ),
         verticalArrangement = Arrangement.spacedBy(
             if (isTv) 16.dp
@@ -3790,7 +3790,8 @@ internal fun ModernIptvCollection(
             start = collectionInset,
             end = collectionInset,
             top = if (isLiveTv) 8.dp else 16.dp,
-            bottom = if (isLiveTv) 16.dp else 54.dp
+            bottom = (if (isLiveTv) 16.dp else 54.dp) +
+                if (isPhone) com.nikhil.niktv.discovery.LocalPhoneBottomChromeHeight.current else 0.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
             if (isLiveTv) { if (isTv) 8.dp else 6.dp } else if (isTv) 28.dp else 16.dp

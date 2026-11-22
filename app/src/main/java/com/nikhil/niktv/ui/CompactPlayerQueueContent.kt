@@ -32,11 +32,14 @@ internal fun CompactPlayerQueueContent(
     val progress = if (start != null && end != null && end > start) ((now - start).toFloat() / (end - start)).coerceIn(0f, 1f) else null
     Column(Modifier.fillMaxSize().padding(horizontal = if (compactList) 10.dp else 12.dp, vertical = if (compactList) 4.dp else 8.dp), verticalArrangement = Arrangement.Center) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (current) Icon(Icons.Default.PlayArrow, "Now playing", Modifier.size(16.dp), tint = Color(0xFFFF4D57))
             Text(if (live) title.title else item.title, Modifier.weight(1f),
                 style = if (programme == null) MaterialTheme.typography.bodyMedium.copy(fontSize = if (compactList) 12.sp else 14.sp, lineHeight = if (compactList) 15.sp else 20.sp) else MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, lineHeight = 14.sp),
                 color = if (programme == null) Color.White else Color(0xFFB9BDCA),
                 fontWeight = FontWeight.SemiBold, maxLines = if (programme == null) 2 else 1, overflow = TextOverflow.Ellipsis)
+            if (current) Surface(color = Color(0x995D1825), shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)) {
+                Text("Playing", Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp), color = Color(0xFFFFB3B9))
+            }
             if (pinned) Icon(Icons.Default.PushPin, "Pinned", Modifier.size(14.dp), tint = Color.LightGray)
             if (favorite) Icon(Icons.Default.Favorite, "Favorite", Modifier.size(14.dp), tint = Color(0xFFFF727A))
             availabilityFlag?.let { Icon(Icons.Default.Flag, it.label, Modifier.size(14.dp), tint = IptvAvailabilityAmber) }
