@@ -51,13 +51,37 @@ internal data class SportsState(
 internal class SportsViewModel(application: Application) : AndroidViewModel(application) {
     private val users = com.nikhil.niktv.data.UserSyncStore.get(application)
     private val owner = users.selectedScope.value
-    private val repository = SportsRepository(country = { sportsDeviceCountry(application) })
+    private val repository = SportsRepository(country = { sportsDeviceCountry(application) },
+        endpointStore = SportsEndpointPreferences(application))
+    val servers = repository.servers
+    private var serverCheckJob: Job? = null
     private val resolver = SportsStreamResolver(repository.transport, SportsWebResolver(application)::resolve)
     private val library = SportsLibraryStore(application)
     private val availability = SportsAvailabilityStore(application)
     private val mutable = MutableStateFlow(SportsState(favourites = library.favourites(), customPlaylists = library.playlists(),
         channelFlags = availability.flags(), availabilityFilter = availability.filter()))
     val state = mutable.asStateFlow()
+
+    fun checkServers() {
+        if (serverCheckJob?.isActive == true) return
+        serverCheckJob = viewModelScope.launch {
+            try { repository.checkServers() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Keep the last check results; normal catalogue errors remain actionable. */ }
+        }
+    }
+
+    fun closeServerChecks() { serverCheckJob?.cancel() }
+
+    fun selectServer(base: String?) {
+        serverCheckJob?.cancel()
+        catalogueJob?.cancel()
+        viewModelScope.launch {
+            try { repository.selectServer(base); refresh() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Could not select the sports server.") } }
+        }
+    }
     private var catalogueJob: Job? = null
     private var selectionJob: Job? = null
     private var catalogueGeneration = 0L

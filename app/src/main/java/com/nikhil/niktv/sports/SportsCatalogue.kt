@@ -185,4 +185,4 @@ internal object SportsCatalogue {
 }
 
 internal fun JsonObject.text(key: String): String = (get(key) as? JsonPrimitive)?.contentOrNull.orEmpty().takeUnless { it == "null" }.orEmpty()
-internal class SportsException(message: String) : java.io.IOException(message)
+internal class SportsException(message: String, cause: Throwable? = null) : java.io.IOException(message, cause)

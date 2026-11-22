@@ -74,6 +74,7 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
     }
     pages.SaveableStateProvider(state.route) {
         var search by rememberSaveable { mutableStateOf("") }
+        val servers by vm.servers.collectAsState()
         SportsBrowseContent(state, now, sport, { sport = it }, status, { status = it }, search, { search = it },
         back, { vm.refresh() }, vm::open,
         { lastSource = it; vm.play(it) }, lastSource = lastSource,
@@ -84,5 +85,6 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
         toggleFavourite = vm::toggleFavourite, toggleFavourites = vm::toggleFavourites, adjacentChannel = vm::adjacentChannel,
         addPlaylist = vm::addPlaylist, importPlaylist = vm::importPlaylist, removePlaylist = vm::removePlaylist,
         dismissLibraryError = vm::dismissLibraryError,
-        toggleChannelFlag = vm::toggleChannelFlag, setAvailabilityFilter = vm::setAvailabilityFilter) }
+        toggleChannelFlag = vm::toggleChannelFlag, setAvailabilityFilter = vm::setAvailabilityFilter,
+        servers = servers, checkServers = vm::checkServers, selectServer = vm::selectServer, closeServerChecks = vm::closeServerChecks) }
 }

@@ -49,7 +49,9 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     toggleFavourites: () -> Unit = {}, adjacentChannel: (Int) -> Unit = {},
     addPlaylist: (String, String) -> Unit = { _, _ -> }, importPlaylist: (android.net.Uri, String) -> Unit = { _, _ -> },
     removePlaylist: (SportsCategory) -> Unit = {}, dismissLibraryError: () -> Unit = {},
-    toggleChannelFlag: (SportsChannel) -> Unit = {}, setAvailabilityFilter: (SportsAvailabilityFilter) -> Unit = {}) {
+    toggleChannelFlag: (SportsChannel) -> Unit = {}, setAvailabilityFilter: (SportsAvailabilityFilter) -> Unit = {},
+    servers: SportsServersState = SportsServersState(), checkServers: () -> Unit = {},
+    selectServer: (String?) -> Unit = {}, closeServerChecks: () -> Unit = {}) {
     val compact = sportsPhoneLayout()
     val scope = rememberCoroutineScope()
     val tabFocus = remember { SportsTab.entries.associateWith { FocusRequester() } }
@@ -73,6 +75,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     var statusOpen by remember { mutableStateOf(false) }
     var sportOpen by remember { mutableStateOf(false) }
     var resolverOpen by remember { mutableStateOf(false) }
+    var serversOpen by remember { mutableStateOf(false) }
     val resolverContext = LocalContext.current
     val resolverPreferences = remember(resolverContext) { SportsResolverPreferences(resolverContext) }
     var resolverMode by remember { mutableStateOf(resolverPreferences.read()) }
@@ -133,6 +136,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             if (selected == null && (state.favouritesOnly || state.collection != null || state.tab == SportsTab.CHANNELS) && groups.size > 1)
                 add(SportsHeaderAction("Group: $group", Icons.Default.FilterList, group != "All groups") { groupsOpen = true })
             add(SportsHeaderAction("Refresh sports", Icons.Default.Refresh, onClick = refresh))
+            add(SportsHeaderAction("Sports servers", Icons.Default.Dns) { serversOpen = true; checkServers() })
             add(SportsHeaderAction("Stream compatibility: ${resolverMode.title}", Icons.Default.Settings) { resolverOpen = true })
         }
         SportsHeader("Sports", back, headerActions, backFocus, optionsAction,
@@ -264,6 +268,13 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     if (resolverOpen) SportsResolverModeDialog(resolverMode, {
         resolverPreferences.set(it); resolverMode = it; resolverOpen = false; restore(optionsAction)
     }, { resolverOpen = false; restore(optionsAction) })
+    if (serversOpen) SportsServersDialog(servers, checkServers, { base ->
+        runCatching { optionsAction.requestFocus() }
+        closeServerChecks(); serversOpen = false; selectServer(base)
+    }, {
+        runCatching { optionsAction.requestFocus() }
+        closeServerChecks(); serversOpen = false
+    })
     if (statusOpen) SportsBrowseChoiceDialog("Live events", status, SPORTS_STATUS_FILTERS, {
         closeFilters { setStatus(it); saveDefaultStatus(it) }
     }, { closeFilters() })
