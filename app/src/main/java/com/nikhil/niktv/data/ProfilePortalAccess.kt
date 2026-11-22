@@ -15,6 +15,7 @@ internal object ProfilePortalAccess {
     private val edits = kotlinx.coroutines.sync.Mutex()
     private const val DOMAIN = "profile_portal_access_v1"
     const val SPORTS = "sports"
+    const val PLAYFY = "playfy"
     fun key(portal: PortalProfile): String = MessageDigest.getInstance("SHA-256")
         .digest(portal.cacheKey().toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     private fun preferences(context: Context, owner: UserScope) = UserProfilePreferences.get(context, DOMAIN, owner = owner)

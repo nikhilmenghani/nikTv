@@ -34,7 +34,7 @@ import javax.crypto.spec.GCMParameterSpec
 object RemoteCredentials {
     private const val PREFS = "github_remote_credentials"
     private const val KEY_ALIAS = "niktv_github_remote_credentials_v1"
-    private const val CREDENTIAL_SCHEMA = 2 // Includes remotely configured Cricfy decryption keys.
+    private const val CREDENTIAL_SCHEMA = 3 // Includes provider-specific Sports decoding configuration.
     private const val REFRESH_MILLIS = 24 * 60 * 60 * 1000L
     private val mutex = Mutex()
     private val http = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
@@ -106,6 +106,7 @@ object RemoteCredentials {
         importEmbeddedDebugToken(context)
         values = effectiveValues(context, parseKnownValues(decrypt(prefs.getString("cached_values", null))))
         importLocalDebugCricketConfiguration(context)
+        importLocalDebugSportsConfiguration(context)
         lastUpdatedAt = prefs.getLong("updated_at", 0L)
     }
 
@@ -157,7 +158,26 @@ object RemoteCredentials {
             "NIKTV_CRICBUZZ_AUTH_MODE" to BuildConfig.NIKTV_CRICBUZZ_AUTH_MODE,
             "NIKTV_CRICBUZZ_APP_VERSION" to BuildConfig.NIKTV_CRICBUZZ_APP_VERSION,
         ) else emptyMap()
-        return mergeCredentialValues(embedded, localCricketValues(context), remote)
+        val sports = parseKnownValues(decrypt(preferences(context).getString("local_sports_values", null)))
+            .filterKeys { it in SPORTS_KEYS }
+        return mergeCredentialValues(embedded, localCricketValues(context) + sports, remote)
+    }
+
+    /** Local Sports decoder provisioning follows the same encrypted, account-scoped storage as remote values. */
+    private fun importLocalDebugSportsConfiguration(context: Context) {
+        if (!BuildConfig.DEBUG) return
+        val file = context.applicationContext.filesDir.resolve("local_sports_configuration_import")
+        if (!file.isFile) return
+        try {
+            require(file.length() <= 65_536)
+            val local = parseKnownValues(file.readText(Charsets.UTF_8)).filterKeys { it in SPORTS_KEYS }
+            require(local.isNotEmpty())
+            val prefs = preferences(context)
+            prefs.edit().putString("local_sports_values", encrypt(JSONObject(local).toString())).commit()
+            values = effectiveValues(context, parseKnownValues(decrypt(prefs.getString("cached_values", null))))
+        } catch (_: Exception) {
+            Log.w("NikTvLocalCredentials", "Could not import Sports configuration")
+        } finally { file.delete() }
     }
 
     /** Synced nonblank values replace legacy imports; local builds work before the first sync. */
@@ -382,7 +402,8 @@ object RemoteCredentials {
         }.generateKey()
     }
 
-    private val KNOWN_KEYS = setOf(
+    private val SPORTS_KEYS = setOf("NIKTV_PLAYFY_AES_KEY", "NIKTV_PLAYFY_AES_IV", "NIKTV_PLAYFY_API_URL")
+    private val KNOWN_KEYS = SPORTS_KEYS + setOf(
         "NIKTV_DEFAULT_PROFILE_NAME", "NIKTV_DEFAULT_PORTAL_URL", "NIKTV_DEFAULT_MAC_ADDRESS",
         "NIKTV_DEFAULT_SERIAL_NUMBER", "NIKTV_XTREAM_PROFILE_NAME", "NIKTV_XTREAM_PORTAL_URL",
         "NIKTV_XTREAM_USERNAME", "NIKTV_XTREAM_PASSWORD", "NIKTV_TMDB_API_KEY",

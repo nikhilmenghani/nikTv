@@ -33,6 +33,7 @@ internal class SportsStreamResolver(
                     ?: throw SportsException("This source did not provide a media URL. Choose another stream.")
                 stream.copy(link = Json.decodeFromString<String>(encoded))
             }
+            103 -> resolvePlayfyYoutube(stream)
             9 -> {
                 val lookup = "https://dokoplay.xyz/server_lookup.php".toHttpUrlOrNull()!!.newBuilder()
                     .addQueryParameter("channel_id", "premium${stream.link}").build()
@@ -60,6 +61,22 @@ internal class SportsStreamResolver(
         val body = if (embed != null) { url = embed.replace("&amp;", "&"); transport.get(url, stream.headers).body } else page.body
         val encoded = Regex("\"(?:hls|hls_ondemand)\"\\s*:\\s*(\"(?:\\\\.|[^\"])*\")").find(body)?.groupValues?.get(1)
         return if (encoded != null) stream.copy(link = Json.decodeFromString<String>(encoded)) else webResolve(stream.copy(link = url))
+    }
+    private suspend fun resolvePlayfyYoutube(stream: SportsStream): SportsStream {
+        val parsed = stream.link.toHttpUrlOrNull()
+        val id = when {
+            stream.link.matches(Regex("[A-Za-z0-9_-]{11}")) -> stream.link
+            parsed?.host == "youtu.be" -> parsed.pathSegments.firstOrNull()
+            parsed?.host in setOf("youtube.com", "www.youtube.com", "m.youtube.com") ->
+                parsed?.queryParameter("v") ?: parsed?.pathSegments?.takeIf { it.firstOrNull() in setOf("embed", "shorts", "live") }?.getOrNull(1)
+            else -> null
+        }?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+            ?: throw SportsException("This Playfy video address is unsupported.")
+        val page = "https://www.youtube.com/watch?v=$id"
+        val body = transport.get(page, stream.headers).body
+        val encoded = Regex("\"hlsManifestUrl\"\\s*:\\s*(\"(?:\\\\.|[^\"])*\")").find(body)?.groupValues?.get(1)
+        return if (encoded != null) stream.copy(link = Json.decodeFromString<String>(encoded), type = 0)
+            else webResolve(stream.copy(link = page, type = 4))
     }
     private fun objectBody(body: String): JsonObject = SportsCatalogue.document(body) as? JsonObject
         ?: throw SportsException("This source returned an unreadable response.")

@@ -1964,6 +1964,9 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
             SettingsControlRow("Sports", checked = com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hidden,
                 onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
                     com.nikhil.niktv.data.ProfilePortalAccess.SPORTS, checked) } })
+            SettingsControlRow("Playfy TV", checked = com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hidden,
+                onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
+                    com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY, checked) } })
             if (choices.any { it.portal.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
                 SettingsLinkRow(SettingsPage.XTREAM_CONTENT, "Xtream · Languages, content & sports")
             }

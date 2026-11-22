@@ -15,10 +15,10 @@ import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlin.coroutines.resume
 
-internal class SportsWebResolver(private val context: Context) {
+internal class SportsWebResolver(private val context: Context, private val namespace: String = "sports") {
     private val extractionScript by lazy { context.assets.open("sports/extract-media.js").bufferedReader().use { it.readText() } }
 
-    suspend fun resolve(stream: SportsStream): SportsStream = resolve(stream, SportsResolverPreferences(context).read())
+    suspend fun resolve(stream: SportsStream): SportsStream = resolve(stream, SportsResolverPreferences(context, namespace).read())
 
     internal suspend fun resolve(stream: SportsStream, mode: SportsResolverMode): SportsStream {
         if (stream.link.toHttpUrlOrNull()?.let { it.username.isEmpty() && it.password.isEmpty() } != true) {

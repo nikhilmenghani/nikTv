@@ -58,7 +58,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
     }
     @Composable fun options() {
             Box {
-                DiscoveryAction("Sports options", Icons.Default.MoreHoriz, iconOnly = true,
+                DiscoveryAction(if (title == "Playfy TV") "Playfy options" else "Sports options", Icons.Default.MoreHoriz, iconOnly = true,
                     focusHint = false,
                     selected = actions.any { it.label == "Categories" && it.selected },
                     modifier = Modifier.size(if (phone) 48.dp else 44.dp).focusRequester(menuFocus)

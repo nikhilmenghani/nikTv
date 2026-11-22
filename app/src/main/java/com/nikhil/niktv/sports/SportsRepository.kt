@@ -61,11 +61,11 @@ internal class SportsHttpTransport : SportsTransport {
 }
 
 internal class SportsRepository(
-    val transport: SportsTransport = SportsHttpTransport(),
+    override val transport: SportsTransport = SportsHttpTransport(),
     private val now: () -> Long = System::currentTimeMillis,
     private val country: () -> String = { java.util.Locale.getDefault().country },
     private val endpointStore: SportsEndpointStore? = null,
-) {
+) : SportsCatalogueRepository {
     private val configuration = Mutex()
     private var config = SportsConfiguration()
     private var advertisedConfig = config
@@ -75,7 +75,7 @@ internal class SportsRepository(
     private var activeBase: String? = null
     private val health = mutableMapOf<String, SportsServerHealth>()
     private val serverState = MutableStateFlow(SportsServersState())
-    val servers = serverState.asStateFlow()
+    override val servers = serverState.asStateFlow()
     private var preferWorking = false
     private var configuredAt = 0L
     private var configuredCountry: String? = null
@@ -86,7 +86,7 @@ internal class SportsRepository(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedBody>?) = size > 16
     })
 
-    suspend fun events(refresh: Boolean = false): List<SportsEvent> {
+    override suspend fun events(refresh: Boolean): List<SportsEvent> {
         val region = sportsCountry(country())
         cachedEvents?.takeIf { !refresh && it.country == region && now() - it.time in 0 until 120_000 }?.let { return it.events }
         val result = catalogue("categories/live-events.txt", refresh, decode = SportsCatalogue::events).filter { sportsGeoAvailable(it.geo, region) }.map { event ->
@@ -101,7 +101,7 @@ internal class SportsRepository(
         return detail(slug).streams
     }
 
-    suspend fun detail(slug: String, refresh: Boolean = false): SportsChannelDetail {
+    override suspend fun detail(slug: String, refresh: Boolean): SportsChannelDetail {
         require(sportsSlug(slug))
         val detail = catalogue("channels/${slug.lowercase(java.util.Locale.ROOT)}.txt", refresh, decode = SportsCatalogue::detail)
         val region = sportsCountry(country())
@@ -113,12 +113,12 @@ internal class SportsRepository(
         return detail.copy(streams = available, related = detail.related.filter { sportsGeoAvailable(it.geo, region) })
     }
 
-    suspend fun categories(refresh: Boolean = false): List<SportsCategory> = catalogue("cats.txt", refresh, cached = true, decode = SportsCatalogue::categories)
+    override suspend fun categories(refresh: Boolean): List<SportsCategory> = catalogue("cats.txt", refresh, cached = true, decode = SportsCatalogue::categories)
         .filter { sportsGeoAvailable(it.geo, country()) }
 
-    suspend fun eventFilters(refresh: Boolean = false): List<SportsEventFilter> = catalogue("eventCats.txt", refresh, cached = true, decode = SportsCatalogue::filters)
+    override suspend fun eventFilters(refresh: Boolean): List<SportsEventFilter> = catalogue("eventCats.txt", refresh, cached = true, decode = SportsCatalogue::filters)
 
-    suspend fun channels(category: SportsCategory = SportsCategory("sports", "Sports"), refresh: Boolean = false): List<SportsChannel> {
+    override suspend fun channels(category: SportsCategory, refresh: Boolean): List<SportsChannel> {
         if (!sportsGeoAvailable(category.geo, country())) throw SportsException("This category is not available in your region.")
         val channels = if (category.isPlaylist) {
             configure(false)
@@ -237,7 +237,7 @@ internal class SportsRepository(
             preferredBase, activeBase, checking)
     }
 
-    suspend fun checkServers() {
+    override suspend fun checkServers() {
         configure(true)
         val region = sportsCountry(country())
         val pending = configuration.withLock { publishServers(checking = true); candidates() }
@@ -266,7 +266,7 @@ internal class SportsRepository(
         }
     }
 
-    suspend fun selectServer(base: String?) {
+    override suspend fun selectServer(base: String?) {
         configure(false)
         val region = sportsCountry(country())
         configuration.withLock {

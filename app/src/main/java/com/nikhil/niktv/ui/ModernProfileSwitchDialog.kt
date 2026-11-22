@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.sports.openSports
+import com.nikhil.niktv.sports.openPlayfy
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -12,6 +13,7 @@ import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.SportsCricket
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -21,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.model.PortalProfile
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /** Switching is explicit; opening or dismissing this modal leaves the active session intact. */
 @Composable
@@ -29,6 +32,8 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
     openOffline: () -> Unit = {}) {
     val context = LocalContext.current
     val owner = LocalViewingOwner.current
+    val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
+        .collectAsStateWithLifecycle(emptySet())
     val scope = rememberCoroutineScope()
     val entry = remember { FocusRequester() }
     val selected = profiles.indexOfFirst { it.cacheKey() == current?.cacheKey() }.coerceAtLeast(0)
@@ -48,7 +53,7 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                         if (profile.cacheKey() == current?.cacheKey()) Text("Current")
                     }
                 }
-                NikTvSecondaryActionButton(onClick = {
+                if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hidden) NikTvSecondaryActionButton(onClick = {
                     scope.launch {
                         owner?.let { captured -> com.nikhil.niktv.data.UserSyncStore.get(context).rememberDestination(captured,
                             com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS))
@@ -60,6 +65,19 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                     Icon(Icons.Default.SportsCricket, null)
                     Spacer(Modifier.width(12.dp))
                     Text("Sports")
+                }
+                if (com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hidden) NikTvSecondaryActionButton(onClick = {
+                    scope.launch {
+                        owner?.let { captured -> com.nikhil.niktv.data.UserSyncStore.get(context).rememberDestination(captured,
+                            com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.PLAYFY))
+                        }
+                        close()
+                        context.openPlayfy()
+                    }
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.LiveTv, null)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Playfy TV")
                 }
             }
         }, confirmButton = {

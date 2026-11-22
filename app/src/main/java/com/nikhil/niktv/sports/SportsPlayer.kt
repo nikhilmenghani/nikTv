@@ -7,6 +7,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import com.nikhil.niktv.model.CatalogType
@@ -30,8 +32,10 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     onVideoFramesRendered: ((Int) -> Unit)? = null,
     sourceAttemptId: Long = 0L, onRetryFresh: (() -> Unit)? = null,
     onTerminalFailure: (() -> Unit)? = null, onCancelPendingFallback: (() -> Unit)? = null,
-    onAuthorizationFailure: (() -> Unit)? = null) {
-    val preferences: SportsPlaybackSettingsViewModel = viewModel()
+    onAuthorizationFailure: (() -> Unit)? = null, source: SportsCatalogueSource = SportsCatalogueSource.CRICFY) {
+    val application = LocalContext.current.applicationContext as android.app.Application
+    val factory = remember(application, source) { viewModelFactory { initializer { SportsPlaybackSettingsViewModel(application, source.storagePrefix) } } }
+    val preferences: SportsPlaybackSettingsViewModel = viewModel(key = "playback-${source.name}", factory = factory)
     val settings by preferences.settings.collectAsStateWithLifecycle()
     val currentSettings = settings
     if (currentSettings == null) {
@@ -184,7 +188,7 @@ internal fun SportsStream.asPlayingMedia(title: String): PlayingMedia {
     val path = link.substringBefore('?').lowercase(java.util.Locale.ROOT)
     return PlayingMedia(com.nikhil.niktv.model.MediaItem("sports:$identity", title.ifBlank { this.title }, null, null),
         link, if (isLive) CatalogType.LIVE_TV else CatalogType.MOVIES, progressKey = "sports:$identity", directFullscreen = true, streamRequestHeaders = headers,
-        playbackFormat = when { path.endsWith(".mpd") -> "DASH"; path.endsWith(".m3u8") -> "HLS"; else -> "" },
+        playbackFormat = playbackFormat.ifBlank { when { path.endsWith(".mpd") -> "DASH"; path.endsWith(".m3u8") -> "HLS"; else -> "" } },
         streamDrm = playbackDrm(), allowLiveWindowSeeking = isLive)
 }
 

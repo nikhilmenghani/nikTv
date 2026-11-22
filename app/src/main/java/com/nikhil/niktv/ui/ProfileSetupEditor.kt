@@ -186,9 +186,13 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
                                     SettingsControlRow("Sports", checked = ProfilePortalAccess.SPORTS in draft.selected,
                                         modifier = if (draft.portals.isEmpty()) Modifier.focusRequester(portalFocus) else Modifier,
                                         onToggle = { change(draft.copy(selected = if (it) draft.selected + ProfilePortalAccess.SPORTS else draft.selected - ProfilePortalAccess.SPORTS)) })
+                                    SettingsControlRow("Playfy TV", checked = ProfilePortalAccess.PLAYFY in draft.selected,
+                                        onToggle = { change(draft.copy(selected = if (it) draft.selected + ProfilePortalAccess.PLAYFY else draft.selected - ProfilePortalAccess.PLAYFY)) })
                                     NikTvSecondaryActionButton({ connection = null; editConnection = true }, Modifier.fillMaxWidth().focusRequester(connectionFocus)) { Text("Add connection") }
                                     val starts = draft.portals.filter { it.key in draft.selected }.map { it.key to it.portal.displayName } +
-                                        if (ProfilePortalAccess.SPORTS in draft.selected) listOf(ProfilePortalAccess.SPORTS to "Sports") else emptyList()
+                                        listOfNotNull(
+                                            (ProfilePortalAccess.SPORTS to "Sports").takeIf { ProfilePortalAccess.SPORTS in draft.selected },
+                                            (ProfilePortalAccess.PLAYFY to "Playfy TV").takeIf { ProfilePortalAccess.PLAYFY in draft.selected })
                                     if (starts.size > 1) SettingsPickerRow("Open first", starts, draft.start ?: starts.first().first, { change(draft.copy(startingPortal = it)) })
                                     else Text(starts.firstOrNull()?.let { "Opens ${it.second}" } ?: "Choose a portal, or set it up later.", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
                                 }

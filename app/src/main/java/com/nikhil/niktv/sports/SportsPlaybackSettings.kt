@@ -18,11 +18,11 @@ internal data class SportsPlaybackSettings(val timeout: Int = 3, val engine: Pla
 
 /** Sports timing is portable per person; the engine remains a device setting. */
 internal class SportsPlaybackPreferences(context: Context,
-    private val owner: UserScope? = UserSyncStore.get(context).selectedScope.value) {
-    private val prefs = context.applicationContext.getSharedPreferences("sports_playback_settings", Context.MODE_PRIVATE)
+    private val owner: UserScope? = UserSyncStore.get(context).selectedScope.value, private val namespace: String = "sports") {
+    private val prefs = context.applicationContext.getSharedPreferences("${namespace}_playback_settings", Context.MODE_PRIVATE)
     private val timing = UserProfilePreferences.get(context, "niktv_playback_ui", owner = owner)
     private fun read() = SportsPlaybackSettings(normalizeTimeout(if (owner == null) prefs.getInt("controls_timeout", 3)
-        else timing.getInt("sports_controls_timeout", 3)),
+        else timing.getInt("${namespace}_controls_timeout", 3)),
         runCatching { PlaybackEngine.valueOf(prefs.getString("engine", PlaybackEngine.MEDIA3.name)!!) }
             .getOrDefault(PlaybackEngine.MEDIA3).let { if (it == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else it })
     val settings: Flow<SportsPlaybackSettings> = callbackFlow {
@@ -35,16 +35,16 @@ internal class SportsPlaybackPreferences(context: Context,
     val playbackEngine = settings.map { it.engine }
     val playerControlsTimeoutSeconds = settings.map { it.timeout }
     fun setPlayerControlsTimeoutSeconds(seconds: Int) = (if (owner == null) prefs else timing).edit()
-        .putInt(if (owner == null) "controls_timeout" else "sports_controls_timeout", normalizeTimeout(seconds)).apply()
+        .putInt(if (owner == null) "controls_timeout" else "${namespace}_controls_timeout", normalizeTimeout(seconds)).apply()
     fun setPlaybackEngine(engine: PlaybackEngine) = prefs.edit().putString("engine",
         (if (engine == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else engine).name).apply()
 
     private fun normalizeTimeout(seconds: Int) = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
 }
 
-internal class SportsPlaybackSettingsViewModel(application: Application) : AndroidViewModel(application) {
+internal class SportsPlaybackSettingsViewModel(application: Application, namespace: String = "sports") : AndroidViewModel(application) {
     private val owner = UserSyncStore.get(application).selectedScope.value
-    private val store = SportsPlaybackPreferences(application, owner)
+    private val store = SportsPlaybackPreferences(application, owner, namespace)
     private val mutable = MutableStateFlow<SportsPlaybackSettings?>(null)
     val settings = mutable.asStateFlow()
     init {

@@ -55,6 +55,7 @@ internal data class SportsStream(
     val isLive: Boolean = true,
     val contentId: String = "",
     val edgeTokenApi: String = "",
+    val playbackFormat: String = "",
 )
 
 internal object SportsCatalogue {

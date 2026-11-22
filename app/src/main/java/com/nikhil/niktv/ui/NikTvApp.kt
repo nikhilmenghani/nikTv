@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.sports.openSports
+import com.nikhil.niktv.sports.openPlayfy
 
 import com.nikhil.niktv.discovery.components.LocalRefreshProviderCategories
 import com.nikhil.niktv.discovery.DiscoveryScreenHost
@@ -493,7 +494,7 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
             selected = portal.cacheKey() == state.savedProfile?.cacheKey(), id = portal.cacheKey(), open = {
                 if (portal.cacheKey() != state.savedProfile?.cacheKey()) vm.switchProfile(portal)
             })
-    } + listOfNotNull(com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, open = {
+    } + listOfNotNull(com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, id = "sports", open = {
         directPortalScope.launch {
             directPortalOwner?.let { owner ->
                 com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
@@ -501,7 +502,17 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
             }
             appContext.openSports()
         }
-    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals })
+    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals },
+        com.nikhil.niktv.discovery.DirectPortalAction("Playfy TV", androidx.compose.material.icons.Icons.Default.LiveTv,
+            id = "playfy", open = {
+                directPortalScope.launch {
+                    directPortalOwner?.let { owner ->
+                        com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
+                            com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.PLAYFY))
+                    }
+                    appContext.openPlayfy()
+                }
+            }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
         LocalViewerLayout provides viewerLayout,
         com.nikhil.niktv.discovery.LocalPortalFocusReturn provides portalFocusReturn) {

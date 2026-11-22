@@ -101,6 +101,7 @@ internal object UserProfilePreferences {
     }
     private val portableDomains = setOf("iptv_playback_quality", "profile_portal_access_v1", ProfileBrowsePreferences.DOMAIN, "xtream_content_policy_v1", "iptv_pin_preferences", "browse_collections", "player_media_browser",
         "sports_browse", "sports_availability_v1", "iptv_channel_availability_v1", "sports_favorites_v2",
+        "playfy_browse", "playfy_availability_v1", "playfy_favorites_v2",
         "home2_presentation", "discovery_trial_v1", "watch_providers", "discovery_experience", "niktv_playback_ui", "player_intro_timings")
 
     fun hasLegacy(context: Context): Boolean = (portableDomains - "sports_favorites_v2" + "sports_library_v1")

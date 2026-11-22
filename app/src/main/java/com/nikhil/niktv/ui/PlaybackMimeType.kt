@@ -6,5 +6,6 @@ internal fun playbackMimeType(format: String, url: String): String? = when {
     format.trim().equals("HLS → MP4", true) -> "video/mp4"
     format.contains("HLS", true) || format.equals("m3u8", true) || url.substringBefore('?').endsWith(".m3u8", true) -> "application/x-mpegURL"
     format.contains("DASH", true) || format.equals("mpd", true) || url.substringBefore('?').endsWith(".mpd", true) -> "application/dash+xml"
+    format.equals("SS", true) || format.equals("ism", true) || format.equals("ismv", true) -> "application/vnd.ms-sstr+xml"
     else -> null
 }

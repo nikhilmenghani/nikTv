@@ -27,6 +27,7 @@
     <application android:name=".NikTvApplication" android:allowBackup="false" android:largeHeap="true" android:icon="${appIcon}" android:roundIcon="${appIcon}" android:label="${appLabel}" android:theme="@style/Theme.NikTv" android:usesCleartextTraffic="true" android:banner="${appBanner}">
         <meta-data android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME" android:value="com.nikhil.niktv.cast.CastOptionsProvider" />
         <activity android:name=".sports.SportsActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
+        <activity android:name=".sports.PlayfyActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
         <activity android:name=".TrailerPlayerActivity" android:exported="false" android:screenOrientation="userLandscape" />
         <activity android:name=".ExternalVideoActivity" android:exported="true"
             android:label="${appLabel}" android:launchMode="singleTop"

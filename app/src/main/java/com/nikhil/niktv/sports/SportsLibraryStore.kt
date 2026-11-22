@@ -8,10 +8,10 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 /** Private Sports-only storage. Never reads or changes an IPTV profile or its favourites. */
-internal class SportsLibraryStore(private val context: Context) {
+internal class SportsLibraryStore(private val context: Context, private val namespace: String = "sports") {
     private val owner = com.nikhil.niktv.data.UserSyncStore.get(context).selectedScope.value
-    private val prefs = com.nikhil.niktv.data.UserProfilePreferences.get(context, "sports_library_v1", portable = false, owner = owner)
-    private val portable = com.nikhil.niktv.data.UserProfilePreferences.get(context, "sports_favorites_v2", owner = owner)
+    private val prefs = com.nikhil.niktv.data.UserProfilePreferences.get(context, "${namespace}_library_v1", portable = false, owner = owner)
+    private val portable = com.nikhil.niktv.data.UserProfilePreferences.get(context, "${namespace}_favorites_v2", owner = owner)
     private val json = Json { ignoreUnknownKeys = true }
     private fun localFavourites(): List<SportsChannel> = runCatching { json.decodeFromString<List<SportsChannel>>(prefs.getString("favourites", "[]")!!) }.getOrDefault(emptyList())
     fun favourites(): List<SportsChannel> {
@@ -78,12 +78,12 @@ internal class SportsLibraryStore(private val context: Context) {
     private fun save(item: SportsCategory) { prefs.edit().putString("playlists", json.encodeToString(playlists().filterNot { it.id == item.id } + item)).apply() }
     private fun localFile(category: SportsCategory): File {
         if (!category.id.matches(Regex("local-[a-f0-9]{24}"))) throw SportsException("This imported playlist is invalid.")
-        val directory = owner?.let { "sports-playlists/${it.accountId}/${it.profileId}" } ?: "sports-playlists"
+        val directory = owner?.let { "$namespace-playlists/${it.accountId}/${it.profileId}" } ?: "$namespace-playlists"
         val selected = File(context.filesDir, "$directory/${category.id}.m3u")
         // Explicitly assigned legacy playlists are copied on first use; removing one
         // viewer's copy cannot delete another person's imported playlist.
         if (owner != null && !selected.exists()) {
-            val legacy = File(context.filesDir, "sports-playlists/${category.id}.m3u")
+            val legacy = File(context.filesDir, "$namespace-playlists/${category.id}.m3u")
             if (legacy.isFile) { selected.parentFile?.mkdirs(); legacy.copyTo(selected) }
         }
         return selected

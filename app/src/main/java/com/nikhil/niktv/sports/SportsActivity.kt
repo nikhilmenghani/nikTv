@@ -16,6 +16,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material.icons.filled.*
 
 open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPictureHost {
+    protected open val isPlayfyPortal: Boolean = false
     private var playerActive = false
     override var pipModeListener: ((Boolean) -> Unit)? = null
     private val pipSupported: Boolean get() = android.os.Build.VERSION.SDK_INT >= 26 &&
@@ -110,8 +111,23 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
                 if (portal.portalType == com.nikhil.niktv.model.PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
                 open = {
                     openMainPortal(portal.cacheKey())
-                }) } + com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, selected = true, open = {})
-            if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS in hiddenPortals) {
+                }) } + listOfNotNull(
+                com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket,
+                    selected = !isPlayfyPortal, id = "sports", open = {
+                        if (isPlayfyPortal) lifecycleScope.launch {
+                            viewerScope?.let { users.rememberDestination(it, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS)) }
+                            openSports(); finish()
+                        }
+                    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals },
+                com.nikhil.niktv.discovery.DirectPortalAction("Playfy TV", androidx.compose.material.icons.Icons.Default.LiveTv,
+                    selected = isPlayfyPortal, id = "playfy", open = {
+                        if (!isPlayfyPortal) lifecycleScope.launch {
+                            viewerScope?.let { users.rememberDestination(it, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.PLAYFY)) }
+                            openPlayfy(); finish()
+                        }
+                    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
+            val portalAccess = if (isPlayfyPortal) com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY else com.nikhil.niktv.data.ProfilePortalAccess.SPORTS
+            if (portalAccess in hiddenPortals) {
                 androidx.compose.runtime.LaunchedEffect(viewerScope) {
                     openMainPortal(com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER)
                 }
@@ -123,7 +139,7 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
                 }) {
             androidx.compose.material3.Surface(color = NikColors.background, contentColor = NikColors.onBackground) {
                 com.nikhil.niktv.ui.LanPlaybackHost(com.nikhil.niktv.data.LanPlaybackSessions.get(applicationContext)) {
-                    SportsScreen(onClose = ::finish)
+                    SportsScreen(onClose = ::finish, source = if (isPlayfyPortal) SportsCatalogueSource.PLAYFY else SportsCatalogueSource.CRICFY)
                 }
             }
             }
@@ -133,6 +149,12 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
 
 internal fun Context.openSports() {
     val intent = Intent(this, SportsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+    if (findActivity() == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    startActivity(intent, android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
+}
+
+internal fun Context.openPlayfy() {
+    val intent = Intent(this, PlayfyActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
     if (findActivity() == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     startActivity(intent, android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
 }

@@ -41,6 +41,7 @@ internal data class SportsState(
     val restoreBrowseFocus: Boolean = false,
     val channelFlags: Map<String, SportsChannelFlag> = emptyMap(),
     val availabilityFilter: SportsAvailabilityFilter = SportsAvailabilityFilter.ALL,
+    val source: SportsCatalogueSource = SportsCatalogueSource.CRICFY,
 ) {
     val navigationIndex: Int? get() = resolving ?: playingIndex
     val selected: SportsChannel? get() = channel ?: event?.asChannel()
@@ -48,17 +49,19 @@ internal data class SportsState(
         ?: if (favouritesOnly) "favourites:${tab.name}" else collection?.let { "collection:${it.id}" } ?: "tab:${tab.name}"
 }
 
-internal class SportsViewModel(application: Application) : AndroidViewModel(application) {
+internal class SportsViewModel(application: Application, val source: SportsCatalogueSource = SportsCatalogueSource.CRICFY) : AndroidViewModel(application) {
     private val users = com.nikhil.niktv.data.UserSyncStore.get(application)
     private val owner = users.selectedScope.value
-    private val repository = SportsRepository(country = { sportsDeviceCountry(application) },
-        endpointStore = SportsEndpointPreferences(application))
+    private val repository: SportsCatalogueRepository = if (source == SportsCatalogueSource.PLAYFY)
+        PlayfyRepository(country = { sportsDeviceCountry(application) },
+            endpointStore = SportsEndpointPreferences(application, "playfy_catalogue_endpoints_v1"))
+    else SportsRepository(country = { sportsDeviceCountry(application) }, endpointStore = SportsEndpointPreferences(application))
     val servers = repository.servers
     private var serverCheckJob: Job? = null
-    private val resolver = SportsStreamResolver(repository.transport, SportsWebResolver(application)::resolve)
-    private val library = SportsLibraryStore(application)
-    private val availability = SportsAvailabilityStore(application)
-    private val mutable = MutableStateFlow(SportsState(favourites = library.favourites(), customPlaylists = library.playlists(),
+    private val resolver = SportsStreamResolver(repository.transport, SportsWebResolver(application, source.storagePrefix)::resolve)
+    private val library = SportsLibraryStore(application, source.storagePrefix)
+    private val availability = SportsAvailabilityStore(application, source.storagePrefix)
+    private val mutable = MutableStateFlow(SportsState(source = source, favourites = library.favourites(), customPlaylists = library.playlists(),
         channelFlags = availability.flags(), availabilityFilter = availability.filter()))
     val state = mutable.asStateFlow()
 
@@ -184,12 +187,12 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
     fun dismissLibraryError() { mutable.update { it.copy(libraryError = null) } }
 
     fun refresh(force: Boolean = true) {
-        if (mutable.value.tab == SportsTab.HIGHLIGHTS) {
+        if (mutable.value.tab == SportsTab.HIGHLIGHTS && source == SportsCatalogueSource.CRICFY) {
             mutable.update { it.copy(loading = false, error = null) }
             return
         }
         val selected = mutable.value.selected
-        if (selected != null) { openChannel(selected, mutable.value.event); return }
+        if (selected != null) { openChannel(selected, mutable.value.event, fresh = force); return }
         if (mutable.value.favouritesOnly) { mutable.update { it.copy(favourites = library.favourites(), error = null, loading = false) }; return }
         catalogueJob?.cancel()
         val generation = ++catalogueGeneration
@@ -212,6 +215,7 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
                         origin.copy(events = events, filters = filters)
                     }
                     origin.tab == SportsTab.CHANNELS -> origin.copy(channels = repository.channels(refresh = force))
+                    origin.tab == SportsTab.HIGHLIGHTS -> origin.copy(channels = repository.highlights(refresh = force))
                     else -> origin.copy(categories = repository.categories(refresh = force))
                 }
                 if (generation == catalogueGeneration) {
@@ -230,7 +234,7 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
 
     fun openChannel(channel: SportsChannel) = openChannel(channel, mutable.value.events.firstOrNull { it.slug == channel.slug })
 
-    private fun openChannel(channel: SportsChannel, event: SportsEvent?) {
+    private fun openChannel(channel: SportsChannel, event: SportsEvent?, fresh: Boolean = false) {
         val generation = ++selectionGeneration
         selectionJob?.cancel()
         catalogueJob?.cancel(); catalogueGeneration++
@@ -239,7 +243,7 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
             loading = false, streamError = null, resolving = null, playing = null, playingIndex = null, playback = playback.state.value) }
         selectionJob = viewModelScope.launch {
             try {
-                val detail = loadDetail(channel)
+                val detail = loadDetail(channel, fresh)
                 if (generation == selectionGeneration && mutable.value.selected?.key == channel.key)
                     mutable.update { it.copy(streams = detail.streams, detail = detail, loadingStreams = false) }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -255,7 +259,10 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
         else repository.channels(category, refresh)
 
     private suspend fun loadDetail(channel: SportsChannel, fresh: Boolean = false): SportsChannelDetail {
-        val category = channel.playlist ?: return repository.detail(channel.slug, refresh = fresh)
+        val category = channel.playlist ?: return repository.detail(channel.slug, refresh = fresh).let { detail ->
+            if (source == SportsCatalogueSource.PLAYFY && channel.category == "Highlights")
+                detail.copy(streams = detail.streams.map { it.copy(isLive = false) }) else detail
+        }
         val item = if (fresh || mutable.value.collection?.id != category.id) {
             val currentCategory = if (category.custom) category else repository.categories(refresh = fresh).firstOrNull { it.id == category.id } ?: category
             collectionChannels(currentCategory, fresh).firstOrNull { it.key == channel.key }

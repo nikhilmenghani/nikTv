@@ -7,8 +7,8 @@ internal enum class SportsResolverMode(val title: String) {
 }
 
 /** Sports-only, read once per source attempt. Does not alter an active player. */
-internal class SportsResolverPreferences(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("sports_resolver_settings", Context.MODE_PRIVATE)
+internal class SportsResolverPreferences(context: Context, namespace: String = "sports") {
+    private val prefs = context.applicationContext.getSharedPreferences("${namespace}_resolver_settings", Context.MODE_PRIVATE)
     fun read(): SportsResolverMode = runCatching {
         SportsResolverMode.valueOf(prefs.getString("mode", SportsResolverMode.TOKEN_AWARE.name)!!)
     }.getOrDefault(SportsResolverMode.TOKEN_AWARE)

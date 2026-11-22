@@ -33,6 +33,7 @@ internal data class ProfileSetupDraft(
     val canOpen get() = enabled && selected.isNotEmpty()
     val start get() = startingPortal?.takeIf { it in selected } ?: portals.firstOrNull { it.key in selected }?.key
         ?: ProfilePortalAccess.SPORTS.takeIf { it in selected }
+        ?: ProfilePortalAccess.PLAYFY.takeIf { it in selected }
 }
 
 /** Setup operates on the edited owner, never on the profile currently watching. */
@@ -65,10 +66,14 @@ internal object ProfileSetupStore {
             users.hasPortalAssociation(owner, it.portal) && it.key !in hidden
         }.mapTo(mutableSetOf()) { it.key }.also {
             if (ProfilePortalAccess.SPORTS !in hidden) it.add(ProfilePortalAccess.SPORTS)
+            if (ProfilePortalAccess.PLAYFY !in hidden) it.add(ProfilePortalAccess.PLAYFY)
         }
         val destination = owner?.let { users.rememberedDestination(it) }
-        val start = if (destination?.kind == ViewerDestinationKind.SPORTS) ProfilePortalAccess.SPORTS
-            else portals.firstOrNull { it.portal.cacheKey() == destination?.portalKey }?.key
+        val start = when (destination?.kind) {
+            ViewerDestinationKind.SPORTS -> ProfilePortalAccess.SPORTS
+            ViewerDestinationKind.PLAYFY -> ProfilePortalAccess.PLAYFY
+            else -> portals.firstOrNull { it.portal.cacheKey() == destination?.portalKey }?.key
+        }
         ProfileSetupDraft(profile ?: UserProfile(UUID.randomUUID().toString(), "", 0xFFE50914, "", UserProfileType.GENERAL),
             account, profile != null, owner?.let { it.profileId in users.enabledProfileIds(it.accountId) } ?: true,
             ProfileBrowsePreferences.layout(context, owner), portals, selected, start,
@@ -83,7 +88,7 @@ internal object ProfileSetupStore {
         require(draft.profile.name.isNotBlank()) { "Enter a profile name." }
         val chosen = draft.portals.filter { it.key in draft.selected }
         require(chosen.all { it.ready }) { "Set up the selected connection first." }
-        require(draft.selected.all { key -> key == ProfilePortalAccess.SPORTS || chosen.any { it.key == key } })
+        require(draft.selected.all { key -> key in setOf(ProfilePortalAccess.SPORTS, ProfilePortalAccess.PLAYFY) || chosen.any { it.key == key } })
         val owner = UserScope(account, draft.profile.id)
         val connections = ProfileStore(context).scoped(owner)
         // Credentials are device-owned. No association is made with the watching profile.
@@ -91,6 +96,7 @@ internal object ProfileSetupStore {
         val hidden = ProfilePortalAccess.hidden(context, owner).toMutableSet().apply {
             draft.portals.forEach { if (it.key in draft.selected) remove(it.key) else add(it.key) }
             if (ProfilePortalAccess.SPORTS in draft.selected) remove(ProfilePortalAccess.SPORTS) else add(ProfilePortalAccess.SPORTS)
+            if (ProfilePortalAccess.PLAYFY in draft.selected) remove(ProfilePortalAccess.PLAYFY) else add(ProfilePortalAccess.PLAYFY)
         }
         UserProfilePreferences.saveBatch(context, owner, listOf(
             UserProfilePreferences.Change("profile_portal_access_v1", "hidden", hidden),
@@ -113,6 +119,7 @@ internal object ProfileSetupStore {
         users.setProfileEnabled(owner.profileId, draft.enabled)
         when (val start = draft.start) {
             ProfilePortalAccess.SPORTS -> users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.SPORTS))
+            ProfilePortalAccess.PLAYFY -> users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.PLAYFY))
             null -> Unit
             else -> chosen.firstOrNull { it.key == start }?.let {
                 users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.PORTAL, it.portal.cacheKey()))

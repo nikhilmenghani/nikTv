@@ -26,7 +26,7 @@ import java.util.UUID
     val type: UserProfileType = UserProfileType.GENERAL,
 )
 @Serializable data class UserScope(val accountId: String, val profileId: String)
-@Serializable enum class ViewerDestinationKind { PORTAL, SPORTS, OFFLINE }
+@Serializable enum class ViewerDestinationKind { PORTAL, SPORTS, OFFLINE, PLAYFY }
 /** A device navigation preference. Portal cache keys never enter the sync document. */
 @Serializable data class ViewerDestination(val kind: ViewerDestinationKind, val portalKey: String = "")
 

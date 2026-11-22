@@ -16,9 +16,9 @@ internal interface SportsEndpointStore {
 }
 
 /** Read and written by the repository on Dispatchers.IO, including the first preferences load. */
-internal class SportsEndpointPreferences(context: Context) : SportsEndpointStore {
+internal class SportsEndpointPreferences(context: Context, private val preferencesName: String = "sports_catalogue_endpoints_v1") : SportsEndpointStore {
     private val application = context.applicationContext
-    private val preferences by lazy { application.getSharedPreferences("sports_catalogue_endpoints_v1", Context.MODE_PRIVATE) }
+    private val preferences by lazy { application.getSharedPreferences(preferencesName, Context.MODE_PRIVATE) }
 
     override fun load(country: String): SportsConfiguration? = runCatching {
         preferences.getString(key(country), null)?.let { sportsConfiguration(it, country) }

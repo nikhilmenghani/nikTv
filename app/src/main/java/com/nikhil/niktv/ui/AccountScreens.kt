@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.sports.openSports
+import com.nikhil.niktv.sports.openPlayfy
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.CubicBezierEasing
@@ -210,8 +211,11 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             activateViewerPortal(owner, portal, waitForHome = atLaunch)
             if (atLaunch && launchBranding != null) snapshotFlow { launchBranding.value }.first { it >= 1f }
         }
-        val sportsDestination = destination?.kind == ViewerDestinationKind.SPORTS &&
-            com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner)
+        val sportsDestination = when (destination?.kind) {
+            ViewerDestinationKind.SPORTS -> com.nikhil.niktv.data.ProfilePortalAccess.SPORTS
+            ViewerDestinationKind.PLAYFY -> com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY
+            else -> null
+        }?.let { it !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner) } == true
         if (portals.isEmpty() && !sportsDestination) {
             selectedUser = profileId
             choosingProfile = false
@@ -238,6 +242,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             }
             ViewerDestinationKind.SPORTS -> if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner))
                 context.openSports()
+                else portals.firstOrNull()?.let { openPortal(it) }
+            ViewerDestinationKind.PLAYFY -> if (com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner))
+                context.openPlayfy()
                 else portals.firstOrNull()?.let { openPortal(it) }
             ViewerDestinationKind.PORTAL -> preferredViewerPortal(portals, destination.portalKey)?.let { openPortal(it) }
             null -> {

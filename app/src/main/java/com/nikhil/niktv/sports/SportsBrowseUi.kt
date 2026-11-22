@@ -77,7 +77,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     var resolverOpen by remember { mutableStateOf(false) }
     var serversOpen by remember { mutableStateOf(false) }
     val resolverContext = LocalContext.current
-    val resolverPreferences = remember(resolverContext) { SportsResolverPreferences(resolverContext) }
+    val resolverPreferences = remember(resolverContext, state.source) { SportsResolverPreferences(resolverContext, state.source.storagePrefix) }
     var resolverMode by remember { mutableStateOf(resolverPreferences.read()) }
     var group by rememberSaveable { mutableStateOf("All groups") }
     var contextItem by remember { mutableStateOf<SportsChannel?>(null) }
@@ -102,7 +102,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val availableKeys = if (state.favouritesOnly) state.favourites.map { it.key }
         else when { state.collection != null -> state.collectionChannels.map { it.key }
             state.tab == SportsTab.EVENTS -> state.events.filter { sportsEventMatches(it, sport, status, query, now) }.map { it.slug }
-            state.tab == SportsTab.CHANNELS -> state.channels.map { it.key }
+            state.tab == SportsTab.CHANNELS || state.tab == SportsTab.HIGHLIGHTS -> state.channels.map { it.key }
             else -> (state.categories + state.customPlaylists).map { it.id } }
     val showsAvailability = selected == null && (state.tab != SportsTab.CATEGORIES || state.collection != null || state.favouritesOnly)
     val originKey = if (state.tab == SportsTab.EVENTS) lastTile?.substringAfterLast(':') else lastTile
@@ -135,11 +135,11 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 state.availabilityFilter != SportsAvailabilityFilter.ALL) { availabilityOpen = true })
             if (selected == null && (state.favouritesOnly || state.collection != null || state.tab == SportsTab.CHANNELS) && groups.size > 1)
                 add(SportsHeaderAction("Group: $group", Icons.Default.FilterList, group != "All groups") { groupsOpen = true })
-            add(SportsHeaderAction("Refresh sports", Icons.Default.Refresh, onClick = refresh))
-            add(SportsHeaderAction("Sports servers", Icons.Default.Dns) { serversOpen = true; checkServers() })
+            add(SportsHeaderAction(if (state.source == SportsCatalogueSource.PLAYFY) "Refresh Playfy" else "Refresh sports", Icons.Default.Refresh, onClick = refresh))
+            add(SportsHeaderAction(if (state.source == SportsCatalogueSource.PLAYFY) "Playfy servers" else "Sports servers", Icons.Default.Dns) { serversOpen = true; checkServers() })
             add(SportsHeaderAction("Stream compatibility: ${resolverMode.title}", Icons.Default.Settings) { resolverOpen = true })
         }
-        SportsHeader("Sports", back, headerActions, backFocus, optionsAction,
+        SportsHeader(state.source.title, back, headerActions, backFocus, optionsAction,
             downFocus = if (selected != null) sourceFocus.firstOrNull() else gridEntry) { modifier ->
             Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 sportsMainTabs.forEach { tab ->
@@ -274,7 +274,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     }, {
         runCatching { optionsAction.requestFocus() }
         closeServerChecks(); serversOpen = false
-    })
+    }, title = if (state.source == SportsCatalogueSource.PLAYFY) "Playfy servers" else "Sports servers")
     if (statusOpen) SportsBrowseChoiceDialog("Live events", status, SPORTS_STATUS_FILTERS, {
         closeFilters { setStatus(it); saveDefaultStatus(it) }
     }, { closeFilters() })

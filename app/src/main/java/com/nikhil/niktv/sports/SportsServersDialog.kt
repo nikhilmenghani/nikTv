@@ -26,7 +26,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun SportsServersDialog(state: SportsServersState, check: () -> Unit, choose: (String?) -> Unit, close: () -> Unit) {
+internal fun SportsServersDialog(state: SportsServersState, check: () -> Unit, choose: (String?) -> Unit, close: () -> Unit,
+    title: String = "Sports servers") {
     val entry = remember { FocusRequester() }
     val initialChoice = remember { state.preferred }
     val initialIndex = remember { state.servers.indexOfFirst { it.base == initialChoice }.let { if (it < 0) 0 else it + 1 } }
@@ -41,7 +42,7 @@ internal fun SportsServersDialog(state: SportsServersState, check: () -> Unit, c
     AlertDialog(onDismissRequest = close, containerColor = SportsSurface, shape = SportsShape,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth(.92f).initialFocusEntry(entry),
-        title = { Text("Sports servers") }, text = {
+        title = { Text(title) }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(if (shortWide) "Choose a catalogue server. Other servers are tried if it fails."
                     else "Choose a preferred catalogue server. If it stops working, another known server will be tried.", color = SportsMuted)
