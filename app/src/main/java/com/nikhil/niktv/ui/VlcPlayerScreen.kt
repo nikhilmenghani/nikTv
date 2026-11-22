@@ -44,6 +44,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
@@ -1268,7 +1270,7 @@ internal fun VlcPlayerScreen(
         // burst during rapid channel switching.
             AndroidView(
                 factory = { ctx ->
-                    VLCVideoLayout(ctx).also { layout ->
+                    VlcCaptionSafeLayout(ctx).also { layout ->
                     var gestureStartY = 0f
                     var gestureStartX = 0f
                     var gestureStartValue = 0f
@@ -1555,6 +1557,11 @@ internal fun VlcPlayerScreen(
                     layout.scaleX = zoom
                     layout.scaleY = zoom
                     player.updateVideoSurfaces()
+                    layout.setCaptionSafeArea(
+                        controlsShown = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture,
+                        fallbackTopDp = if (compactPlayerSpacing) 52 else 76,
+                        fallbackBottomDp = 118
+                    )
                 },
                 onRelease = { layout ->
                     // Removing the video view must not wait for a network read or
@@ -1648,6 +1655,11 @@ internal fun VlcPlayerScreen(
 
         }
         PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+            DisposableEffect(videoView) {
+                val captionLayout = videoView as? VlcCaptionSafeLayout
+                captionLayout?.setControlsMounted(true)
+                onDispose { captionLayout?.setControlsMounted(false) }
+            }
             val topDownRequester = if (seekable) progressRequester else playRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseRequester
@@ -1703,7 +1715,9 @@ internal fun VlcPlayerScreen(
                         .padding(
                             horizontal = if (compactPlayerSpacing) 10.dp else 20.dp,
                             vertical = if (compactPlayerSpacing) 4.dp else 14.dp
-                        ),
+                        ).onGloballyPositioned { coordinates ->
+                            (videoView as? VlcCaptionSafeLayout)?.setTopControlsBottom(coordinates.boundsInWindow().bottom)
+                        },
                     verticalAlignment = Alignment.Top
                 ) {
                     PlayerChromeIconButton(
@@ -1989,7 +2003,9 @@ internal fun VlcPlayerScreen(
                         .padding(
                             horizontal = if (compactPlayerSpacing) 10.dp else 24.dp,
                             vertical = if (compactPlayerSpacing) 8.dp else 14.dp
-                        ),
+                        ).onGloballyPositioned { coordinates ->
+                            (videoView as? VlcCaptionSafeLayout)?.setBottomControlsTop(coordinates.boundsInWindow().top)
+                        },
                     shape = RoundedCornerShape(if (compactPlayerSpacing) 18.dp else 22.dp),
                     color = Color.Black.copy(alpha = 0.58f),
                     contentColor = Color.White,

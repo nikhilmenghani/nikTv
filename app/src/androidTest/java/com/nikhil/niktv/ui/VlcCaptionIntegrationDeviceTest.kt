@@ -4,7 +4,9 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -35,6 +37,9 @@ class VlcCaptionIntegrationDeviceTest {
     private val ins get() = InstrumentationRegistry.getInstrumentation()
     private data class Settings(val enabled: Boolean, val delay: Long, val appearance: SubtitleAppearancePreset)
     private var lastSubtitleCopy = "not sampled"
+    private var subtitleBoundsInScreen: RectF? = null
+    private var topSubtitlePixels = 0
+    private var bottomSubtitlePixels = 0
 
     @Test fun embeddedSelectionPaintsNativeSubtitleSurfaceAndOffClearsIt() = fixture(false) { host, player, folder, _ ->
         pauseAt(player, 3_000, decodeFromStart = true)
@@ -52,6 +57,7 @@ class VlcCaptionIntegrationDeviceTest {
         await("Native popup returns to Subtitles") { node("Close") == null && focused("Subtitles") }
         pauseAt(player, 3_000, decodeFromStart = true)
         await("The selected native track paints subtitle pixels") { (subtitlePixels(host) ?: 0) > 12 }
+        assertCaptionsAvoidControls()
         screenshot(File(folder, "vlc-native-french-visible.png"))
 
         openCaptions()
@@ -61,6 +67,54 @@ class VlcCaptionIntegrationDeviceTest {
         await("Off clears the native subtitle surface") { subtitlePixels(host)?.let { it <= 3 } == true }
         assertTrue("Dismissal restores the mounted caption origin", focused("Subtitles"))
         screenshot(File(folder, "vlc-native-off.png"))
+    }
+
+    @Test fun authoredTopAndBottomCaptionsFitBetweenControlsWithoutResizingVideo() = fixture(
+        downloaded = true, authoredTop = true
+    ) { host, player, folder, _ ->
+        await("The authored ASS file is selected natively") {
+            val tracks = player.spuTracks.orEmpty().filter { it.id >= 0 }
+            tracks.size >= 3 && tracks.any { it.id == player.spuTrack && it.name?.contains("Case07") != true }
+        }
+        pauseAt(player, 3_000, decodeFromStart = true)
+        openCaptions()
+        key(KeyEvent.KEYCODE_BACK)
+        await("Both authored top and bottom captions paint") {
+            subtitlePixels(host)
+            topSubtitlePixels > 12 && bottomSubtitlePixels > 12
+        }
+        assertCaptionsAvoidControls()
+        val video = requireNotNull(host.findViewById<SurfaceView>(org.videolan.R.id.surface_video))
+        val before = surfaceBounds(video)
+        val subtitleSurface = requireNotNull(host.findViewById<SurfaceView>(org.videolan.R.id.surface_subtitles))
+        val controlsScale = subtitleSurface.scaleY
+        screenshot(File(folder, "vlc-authored-top-bottom-controls.png"))
+
+        if (node("Hide extra controls") != null) {
+            activate("Hide extra controls")
+            await("The settings ribbon collapses before hiding playback controls") { node("More controls") != null }
+        }
+        // One Back hides controls. Their nodes remain during the exit fade;
+        // another Back in that interval would leave the playback screen.
+        key(KeyEvent.KEYCODE_BACK)
+        await("Controls hide and restore the larger caption plane") {
+            node("Back") == null && subtitleSurface.scaleY > controlsScale
+        }
+        assertEquals("Caption placement must leave the video bounds untouched", before, surfaceBounds(video))
+        assertFalse("Placement must preserve the paused input", player.isPlaying)
+        await("Authored top and bottom captions remain present with controls hidden") {
+            subtitlePixels(host)
+            topSubtitlePixels > 12 && bottomSubtitlePixels > 12
+        }
+        screenshot(File(folder, "vlc-authored-top-bottom-hidden.png"))
+        key(KeyEvent.KEYCODE_DPAD_DOWN)
+        await("Controls return") { node("Back") != null }
+        await("Returning controls restore their safe caption plane") {
+            subtitlePixels(host)
+            kotlin.math.abs(subtitleSurface.scaleY - controlsScale) < .01f
+        }
+        assertCaptionsAvoidControls()
+        assertEquals(before, surfaceBounds(video))
     }
 
     @Test fun downloadedOverlayTimingAppearanceAndOffUseProductionVlcControls() = fixture(true) { _, player, _, settings ->
@@ -107,7 +161,8 @@ class VlcCaptionIntegrationDeviceTest {
         assertTrue("Overlay popup restores Subtitles", focused("Subtitles"))
     }
 
-    private fun fixture(downloaded: Boolean, verify: (PlaybackFixtureHostActivity, MediaPlayer, File, AtomicReference<Settings>) -> Unit) {
+    private fun fixture(downloaded: Boolean, authoredTop: Boolean = false,
+        verify: (PlaybackFixtureHostActivity, MediaPlayer, File, AtomicReference<Settings>) -> Unit) {
         val context = ins.targetContext
         check(context.packageName.endsWith(".regression"))
         val folder = File(context.filesDir, "vlc-caption-integration").apply { mkdirs() }
@@ -118,9 +173,25 @@ class VlcCaptionIntegrationDeviceTest {
                 if (entry.name == "case07-multi-en-fr.mkv") File(folder, entry.name).outputStream().use { zip.copyTo(it) }
             }
         }
-        val subtitle = if (downloaded) File(folder, "overlay-timing.srt").apply {
-            writeText("1\n00:00:02,000 --> 00:00:07,000\nOverlay timing cue\n")
-        } else null
+        val subtitle = when {
+            authoredTop -> File(folder, "authored-top-bottom.ass").apply { writeText("""
+                [Script Info]
+                ScriptType: v4.00+
+                PlayResX: 320
+                PlayResY: 180
+                [V4+ Styles]
+                Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+                Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1
+                [Events]
+                Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+                Dialogue: 0,0:00:00.50,0:00:07.00,Default,,0,0,0,,{\an8}Native top title
+                Dialogue: 0,0:00:00.50,0:00:07.00,Default,,0,0,0,,{\an2}Native bottom dialogue
+            """.trimIndent()) }
+            downloaded -> File(folder, "overlay-timing.srt").apply {
+                writeText("1\n00:00:02,000 --> 00:00:07,000\nOverlay timing cue\n")
+            }
+            else -> null
+        }
         val media = PlayingMedia(MediaItem("vlc-caption-$downloaded", "VLC caption fixture", null, null),
             android.net.Uri.fromFile(File(folder, "case07-multi-en-fr.mkv")).toString(), CatalogType.MOVIES,
             progressKey = "vlc-caption-$downloaded", profileKey = "caption-fixture")
@@ -186,6 +257,9 @@ class VlcCaptionIntegrationDeviceTest {
 
     /** PixelCopy reads only VLC's subtitle plane, so video and Compose controls cannot satisfy this assertion. */
     private fun subtitlePixels(host: PlaybackFixtureHostActivity): Int? {
+        topSubtitlePixels = 0
+        bottomSubtitlePixels = 0
+        subtitleBoundsInScreen = null
         var surface: SurfaceView? = null
         main { surface = host.findViewById(org.videolan.R.id.surface_subtitles) }
         val view = surface ?: run { lastSubtitleCopy = "subtitle surface absent"; return 0 }
@@ -205,10 +279,58 @@ class VlcCaptionIntegrationDeviceTest {
             if (status.get() != PixelCopy.SUCCESS) return null
             val pixels = IntArray(bitmap.width * bitmap.height)
             bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-            val white = pixels.count { Color.alpha(it) > 32 && Color.red(it) > 160 && Color.green(it) > 160 && Color.blue(it) > 160 }
+            var left = bitmap.width; var top = bitmap.height; var right = -1; var bottom = -1
+            topSubtitlePixels = 0; bottomSubtitlePixels = 0
+            val white = pixels.countIndexed { index, color ->
+                val painted = Color.alpha(color) > 32 && Color.red(color) > 160 && Color.green(color) > 160 && Color.blue(color) > 160
+                if (painted) {
+                    val x = index % bitmap.width; val y = index / bitmap.width
+                    left = minOf(left, x); top = minOf(top, y); right = maxOf(right, x); bottom = maxOf(bottom, y)
+                    if (y < bitmap.height / 2) topSubtitlePixels++ else bottomSubtitlePixels++
+                }
+                painted
+            }
+            subtitleBoundsInScreen = if (white > 0) RectF(
+                left * view.width.toFloat() / bitmap.width, top * view.height.toFloat() / bitmap.height,
+                (right + 1) * view.width.toFloat() / bitmap.width, (bottom + 1) * view.height.toFloat() / bitmap.height
+            ).also { bounds -> main { mapToScreen(view, bounds) } } else null
             lastSubtitleCopy += ", white=$white, maxAlpha=${pixels.maxOfOrNull(Color::alpha)}"
             return white
         } finally { bitmap.recycle() }
+    }
+
+    private inline fun IntArray.countIndexed(predicate: (Int, Int) -> Boolean): Int {
+        var count = 0
+        for (index in indices) if (predicate(index, this[index])) count++
+        return count
+    }
+
+    private fun assertCaptionsAvoidControls() {
+        val captions = requireNotNull(subtitleBoundsInScreen)
+        val header = Rect().also { requireNotNull(node("Back")).getBoundsInScreen(it) }
+        val dock = listOf("Forward 10 seconds", "Hide extra controls", "More controls").mapNotNull { label ->
+            node(label)?.let { Rect().also(it::getBoundsInScreen) }?.takeUnless(Rect::isEmpty)
+        }.minByOrNull { it.top } ?: error("A visible playback dock action is required")
+        assertTrue("Authored top captions remain below the header: $captions vs $header", captions.top >= header.bottom)
+        assertTrue("Native dialogue remains above the dock: $captions vs $dock", captions.bottom <= dock.top)
+    }
+
+    private fun surfaceBounds(view: SurfaceView): RectF = RectF(0f, 0f, view.width.toFloat(), view.height.toFloat()).also {
+        main { mapToScreen(view, it) }
+    }
+
+    private fun mapToScreen(view: SurfaceView, bounds: RectF) {
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val matrix = Matrix()
+            view.transformMatrixToGlobal(matrix)
+            matrix.mapRect(bounds)
+        } else {
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            bounds.left *= view.scaleX; bounds.right *= view.scaleX
+            bounds.top *= view.scaleY; bounds.bottom *= view.scaleY
+            bounds.offset(location[0].toFloat(), location[1].toFloat())
+        }
     }
 
     private fun openCaptions() {

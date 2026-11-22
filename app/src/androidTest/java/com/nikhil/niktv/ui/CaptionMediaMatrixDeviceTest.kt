@@ -155,28 +155,20 @@ class CaptionMediaMatrixDeviceTest {
                 if (image != null) { File(folder, "$token-visible.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }; image.recycle() }
                 main { active.seekTo(7_500) }
                 await("Caption clears after its end") { captionText(active).isBlank() }
-                if (name.endsWith(".mkv")) {
-                    // These deliberately sparse files have one long subtitle packet
-                    // in the first cluster. A direct seek into a later cluster omits
-                    // it in Media3 (and FFmpeg). Keep the fixture and verify recovery
-                    // from the packet rather than claiming arbitrary-seek support.
-                    main { active.seekTo(0); active.play() }
-                    await("Sparse MKV caption returns when its packet is decoded") { captionText(active).contains(token) }
-                    main { active.pause() }
-                    result.put("seek", "end clears; start/preroll restores; direct active-cue seek limited by MKV demux")
-                } else {
-                    main { active.seekTo(3_000) }
-                    await("Caption returns after backward seek") { captionText(active).contains(token) }
-                    result.put("seek", "passed")
+                main { active.seekTo(3_000) }
+                await("Caption returns after an exact paused backward seek") { captionText(active).contains(token) }
+                main {
+                    assertFalse("Caption recovery must not start playback", active.playWhenReady)
+                    assertEquals("Caption recovery preserves the requested timestamp", 3_000L, active.currentPosition)
                 }
+                result.put("seek", "passed")
                 if (case.getInt("subtitleCount") > 1) {
                     openCaptions()
                     key(KeyEvent.KEYCODE_DPAD_DOWN)
                     key(KeyEvent.KEYCODE_DPAD_CENTER)
                     key(KeyEvent.KEYCODE_BACK)
-                    main { active.seekTo(0); active.play() }
+                    main { active.seekTo(3_000) }
                     await("Switching embedded languages renders French") { captionText(active).contains("Case07FR") }
-                    main { active.pause() }
                     result.put("languageSwitch", "passed")
                 }
                 openCaptions()

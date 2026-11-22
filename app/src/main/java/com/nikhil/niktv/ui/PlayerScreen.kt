@@ -826,9 +826,11 @@ fun PlayerScreen(
                 playWhenReady = playbackRequested && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             }
         } else {
-        val renderersFactory = (if (effectiveEngine == PlaybackEngine.FLOW)
-            com.nikhil.niktv.ui.flowInspiredRenderers(context)
-            else DefaultRenderersFactory(context)).apply {
+        val captionRecovery = SparseSubtitleCueRecovery()
+        val captionSeek = MkvSubtitleSeekSupport(captionRecovery)
+        val renderersFactory = CaptionSeekRenderersFactory(context, captionRecovery).apply {
+            if (effectiveEngine == PlaybackEngine.FLOW)
+                setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             if (effectiveEngine.isMedia3Player()) {
                 setEnableDecoderFallback(true)
                 setMediaCodecSelector(decoderTelemetry.selector(FailedDecoderRegistry.selector(context, playbackScope, activeDecoderSession,
@@ -852,17 +854,23 @@ fun PlayerScreen(
                 .setTargetBufferBytes(16 * 1024 * 1024)
                 .build())
         }
-        if (media.offlinePlayback) {
+        val offlineDataSources = if (media.offlinePlayback) OfflineMediaDownloads.cacheDataSourceFactory(context) else null
+        if (offlineDataSources != null) {
             builder.setMediaSourceFactory(
-                DefaultMediaSourceFactory(OfflineMediaDownloads.cacheDataSourceFactory(context))
+                DefaultMediaSourceFactory(offlineDataSources, captionSeek.extractorsFactory)
             )
         }
         val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(media.streamRequestHeaders)
         val upstream = androidx.media3.datasource.DefaultDataSource.Factory(context, http)
+        val captionUpstream = androidx.media3.datasource.DefaultDataSource.Factory(context,
+            androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(media.streamRequestHeaders)
+                .setConnectTimeoutMs(2_500).setReadTimeoutMs(1_000))
+        captionSeek.configureSource(android.net.Uri.parse(media.url), offlineDataSources ?: captionUpstream)
         val signedStreamSources = DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
             ManifestMimeDataSource(upstream.createDataSource(), android.net.Uri.parse(media.url), detectedManifestMime::set)
-        })
+        }, captionSeek.extractorsFactory)
         if (!media.offlinePlayback) builder.setMediaSourceFactory(signedStreamSources.apply {
             if (media.catalogType == CatalogType.LIVE_TV)
                 setLoadErrorHandlingPolicy(LiveSegmentLoadErrorPolicy { playbackHasBeenReady })
