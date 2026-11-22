@@ -71,7 +71,7 @@ internal fun SportsEventRows(sections: List<SportsEventSection>, modifier: Modif
         }
     }
     com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(coordinator) {
-    LazyColumn(modifier.fillMaxWidth(), state = vertical, verticalArrangement = Arrangement.spacedBy(20.dp),
+    LazyColumn(modifier.fillMaxWidth(), state = vertical, verticalArrangement = Arrangement.spacedBy(18.dp),
         contentPadding = PaddingValues(bottom = 18.dp)) {
         itemsIndexed(sections, key = { _, section -> section.title }) { row, section ->
             val savedState = rememberLazyListState()
@@ -79,9 +79,9 @@ internal fun SportsEventRows(sections: List<SportsEventSection>, modifier: Modif
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(section.title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 LazyRow(Modifier.fillMaxWidth().focusGroup(), state = horizontal,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
+                    horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(4.dp)) {
                     itemsIndexed(section.events, key = { _, event -> event.slug }) { index, event ->
-                        val tileModifier = Modifier.width(if (phone) 268.dp else 300.dp)
+                        val tileModifier = Modifier.width(if (phone) 248.dp else 272.dp)
                             .then(if (row == 0 && index == 0) Modifier.focusRequester(entry) else Modifier)
                             .focusRequester(requester("${section.title}:${event.slug}"))
                             .onPreviewKeyEvent {

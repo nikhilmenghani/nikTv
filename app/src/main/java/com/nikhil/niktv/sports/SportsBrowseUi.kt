@@ -244,7 +244,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                         (activeQuery.isBlank() || it.title.contains(activeQuery.trim(), true) || it.group.contains(activeQuery.trim(), true))
                 } }
                 SportsBrowseStatus(state, visible.size, "channel", refresh)
-                SportsGrid(visible, { it.key }, eventsScroll, 170, Modifier.weight(1f), headerFocus,
+                SportsGrid(visible, { it.key }, eventsScroll, 190, Modifier.weight(1f), headerFocus,
                     entry = gridEntry, requester = { index -> tileRequester(visible[index].key) }) { item, _, modifier ->
                     SportsChannelTile(item, state.favourites.any { it.key == item.key }, modifier,
                         click = { lastTile = item.key; openChannel(item) }, menu = { contextItem = item; restoreTile = tileRequester(item.key) }, flag = state.channelFlags[item.key])
@@ -316,9 +316,9 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val scope = rememberCoroutineScope()
     var movement by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     BoxWithConstraints(modifier) {
-        val columns = ((maxWidth.value + 10) / (minWidth + 10)).toInt().coerceIn(1, 8)
+        val columns = ((maxWidth.value + 12) / (minWidth + 12)).toInt().coerceIn(1, 8)
         LazyVerticalGrid(GridCells.Fixed(columns), state = scroll, modifier = Modifier.fillMaxSize().focusGroup(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(5.dp, 4.dp, 5.dp, 18.dp)) {
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(5.dp, 4.dp, 5.dp, 18.dp)) {
             itemsIndexed(rows, key = { index, item -> "${key(item)}:$index" }) { index, item ->
                 tile(item, index, Modifier.fillMaxWidth().then(if (index == 0 && entry != null) Modifier.focusRequester(entry) else Modifier)
                     .focusRequester(requester(index)).onPreviewKeyEvent { event ->

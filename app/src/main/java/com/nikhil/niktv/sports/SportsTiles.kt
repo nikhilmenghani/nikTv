@@ -40,27 +40,32 @@ internal val SportsWarning = Color(0xFFF3BE62)
         .remoteCombinedClickable(click, menu, showIndication = false), shape = SportsShape,
         color = if (focused) Color(0xFF292F3B) else SportsSurface, contentColor = Color.White,
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else if (flagged) SportsWarning else Color(0xFF353C49))) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp), content = content)
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
     }
 }
 
 @Composable internal fun SportsChannelTile(channel: SportsChannel, favourite: Boolean, modifier: Modifier,
     click: () -> Unit, menu: () -> Unit, flag: SportsChannelFlag? = null) {
     SportsTile(modifier, channel.title, click, menu, flagged = flag != null) {
-        Box(Modifier.fillMaxWidth().height(78.dp).clip(SportsShape).background(Color(0xFFF1F3F6)), contentAlignment = Alignment.Center) {
-            SportsLogo(channel.image, "", Modifier.fillMaxSize().padding(8.dp))
-            if (favourite) Icon(Icons.Default.Favorite, "Favourite", Modifier.align(Alignment.TopEnd).padding(4.dp).size(16.dp), tint = MaterialTheme.colorScheme.primary)
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(52.dp).clip(SportsShape).background(Color(0xFFF1F3F6)), contentAlignment = Alignment.Center) {
+                SportsLogo(channel.image, "", Modifier.fillMaxSize().padding(5.dp))
+                if (favourite) Icon(Icons.Default.Favorite, "Favourite", Modifier.align(Alignment.TopEnd).padding(2.dp).size(14.dp), tint = MaterialTheme.colorScheme.primary)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(channel.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (flag != null) SportsFlagLabel(flag) else Text(channel.group.ifBlank { channel.category }.ifBlank { "Channel" }, color = SportsMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
-        Text(channel.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (flag != null) SportsFlagLabel(flag) else Text(channel.group.ifBlank { channel.category }.ifBlank { "Channel" }, color = SportsMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable internal fun SportsCategoryTile(category: SportsCategory, modifier: Modifier, click: () -> Unit, menu: () -> Unit) {
     SportsTile(modifier, category.title, click, menu) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.size(52.dp).clip(SportsShape).background(Color(0xFFF1F3F6))) { SportsLogo(category.image, "", Modifier.fillMaxSize().padding(5.dp)) }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(48.dp).clip(SportsShape).background(Color(0xFFF1F3F6))) { SportsLogo(category.image, "", Modifier.fillMaxSize().padding(5.dp)) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(category.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(if (category.custom) "Your playlist" else if (category.isPlaylist) "Playlist" else "Channels", color = SportsMuted, style = MaterialTheme.typography.labelSmall)
             }
@@ -72,7 +77,7 @@ internal val SportsWarning = Color(0xFFF3BE62)
     click: () -> Unit, menu: () -> Unit, flag: SportsChannelFlag? = null) {
     SportsTile(modifier, event.title, click, menu, flagged = flag != null) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            SportsLogo(event.image, "", Modifier.size(24.dp))
+            SportsLogo(event.image, "", Modifier.size(20.dp))
             Text(listOf(event.sport, event.competition).filter(String::isNotBlank).joinToString(" · "), Modifier.weight(1f),
                 color = SportsMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (event.isHot) Icon(Icons.Default.LocalFireDepartment, "Featured", Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
@@ -118,9 +123,9 @@ internal fun sportsFlagDescription(flag: SportsChannelFlag): String {
 }
 
 @Composable private fun TeamBadge(url: String, name: String, modifier: Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        SportsLogo(url, "", Modifier.size(40.dp))
-        Text(name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        SportsLogo(url, "", Modifier.size(28.dp))
+        Text(name, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
