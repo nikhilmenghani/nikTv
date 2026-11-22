@@ -314,43 +314,44 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     modifier: Modifier, above: FocusRequester, below: FocusRequester? = null, entry: FocusRequester? = null,
     requester: (Int) -> FocusRequester, footer: (@Composable () -> Unit)? = null, tile: @Composable (T, Int, Modifier) -> Unit) {
     val scope = rememberCoroutineScope()
+    val coordinator = remember(scope) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(scope) }
     var movement by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    DisposableEffect(coordinator) { onDispose { movement?.cancel(); coordinator.cancel() } }
     BoxWithConstraints(modifier) {
         val columns = ((maxWidth.value + 12) / (minWidth + 12)).toInt().coerceIn(1, 8)
-        LazyVerticalGrid(GridCells.Fixed(columns), state = scroll, modifier = Modifier.fillMaxSize().focusGroup(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(5.dp, 4.dp, 5.dp, 18.dp)) {
-            itemsIndexed(rows, key = { index, item -> "${key(item)}:$index" }) { index, item ->
-                tile(item, index, Modifier.fillMaxWidth().then(if (index == 0 && entry != null) Modifier.focusRequester(entry) else Modifier)
-                    .focusRequester(requester(index)).onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown || event.key !in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) return@onPreviewKeyEvent false
-                        val target = sportsGridTarget(index, columns, rows.size, event.key)
-                        when {
-                            target == -1 -> { movement?.cancel(); runCatching { above.requestFocus() } }
-                            target == rows.size -> {
-                                movement?.cancel()
-                                if (below != null) movement = scope.launch {
-                                    if (footer != null) scroll.scrollToItem(rows.size)
-                                    withFrameNanos { }; runCatching { below.requestFocus() }
-                                }
-                            }
-                            target != index -> {
-                                movement?.cancel()
-                                movement = scope.launch {
-                                    val visible = scroll.layoutInfo.visibleItemsInfo
-                                    if (visible.none { it.index == target }) {
-                                        val rowCount = visible.map { it.row }.distinct().size.coerceAtLeast(1)
-                                        val first = if (target > (visible.lastOrNull()?.index ?: -1))
-                                            ((target / columns - rowCount + 1).coerceAtLeast(0) * columns) else target
-                                        scroll.scrollToItem(first)
+        com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(coordinator) {
+            // Keep entry attached to the viewport, including while item zero is offscreen.
+            LazyVerticalGrid(GridCells.Fixed(columns), state = scroll, modifier = Modifier.fillMaxSize()
+                .then(if (entry != null) Modifier.focusRequester(entry) else Modifier)
+                .onFocusChanged { if (!it.hasFocus) { movement?.cancel(); coordinator.cancel() } }.focusGroup(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(5.dp, 4.dp, 5.dp, 18.dp)) {
+                itemsIndexed(rows, key = { index, item -> "${key(item)}:$index" }) { index, item ->
+                    tile(item, index, Modifier.fillMaxWidth()
+                        .focusRequester(requester(index)).onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown || event.key !in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) return@onPreviewKeyEvent false
+                            val target = sportsGridTarget(index, columns, rows.size, event.key)
+                            when {
+                                target == -1 -> { movement?.cancel(); coordinator.cancel(); runCatching { above.requestFocus() } }
+                                target == rows.size -> {
+                                    movement?.cancel()
+                                    coordinator.cancel()
+                                    if (below != null) movement = scope.launch {
+                                        if (footer != null) scroll.scrollToItem(rows.size)
+                                        withFrameNanos { }; runCatching { below.requestFocus() }
                                     }
-                                    withFrameNanos { }; runCatching { requester(target).requestFocus() }
+                                }
+                                target != index -> {
+                                    movement?.cancel()
+                                    movement = coordinator.moveGrid(scroll, target, columns, alignRow = false, reduceMotion = false) {
+                                        runCatching { requester(target).requestFocus() }.getOrDefault(false)
+                                    }
                                 }
                             }
-                        }
-                        true
-                    })
+                            true
+                        })
+                }
+                if (footer != null) item(key = "sports-grid-footer", span = { GridItemSpan(maxLineSpan) }) { footer() }
             }
-            if (footer != null) item(key = "sports-grid-footer", span = { GridItemSpan(maxLineSpan) }) { footer() }
         }
     }
 }

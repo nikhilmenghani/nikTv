@@ -47,6 +47,8 @@ import com.nikhil.niktv.discovery.DiscoveryAction
 import com.nikhil.niktv.ui.initialFocusEntry
 import com.nikhil.niktv.ui.remoteFocusFrame
 import com.nikhil.niktv.ui.NikTvSecondaryActionButton
+import com.nikhil.niktv.ui.isTvLikeDevice
+import com.nikhil.niktv.ui.usesShortWideLayout
 import com.nikhil.niktv.data.RemoteCredentials
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -106,7 +108,7 @@ internal fun CricketHighlightsScreen(onClose: () -> Unit, selectTab: (SportsTab)
         SportsPlayer(playing, state.selected?.title.orEmpty(), vm::stopPlayback,
             sourceAttemptId = state.attempt, onRetryFresh = vm::retryPlayback,
             onTerminalFailure = { vm.playbackFailed(state.attempt) })
-    } else browseState.SaveableStateProvider("cricket-browse:${state.region}:${state.appVersion}") { CricketHighlightsContent(state, onClose, selectTab, vm::refresh, vm::play, vm::retryPlayback, vm::stopPlayback,
+    } else browseState.SaveableStateProvider("cricket-browse") { CricketHighlightsContent(state, onClose, selectTab, vm::refresh, vm::play, vm::retryPlayback, vm::stopPlayback,
         importConfiguration = { import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
         selectCollection = vm::selectCollection, loadMore = vm::loadMore,
         selectRegion = { region -> preferences.setRegion(region); vm.selectRegion(region) },
@@ -119,9 +121,14 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
     retryPlayback: () -> Unit = {}, dismissPlayback: () -> Unit = {}, importConfiguration: () -> Unit = {},
     selectCollection: (Int?) -> Unit = {}, loadMore: () -> Unit = {}, selectRegion: (String) -> Unit = {}, selectAppVersion: (String) -> Unit = {}) {
     val compact = sportsPhoneLayout()
+    val configuration = LocalConfiguration.current
+    val gridMinWidth = if (compact) 160 else if (configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))) 240 else 280
     val tabFocus = remember { SportsTab.entries.associateWith { FocusRequester() } }
     val header = tabFocus.getValue(SportsTab.HIGHLIGHTS)
     val entry = remember { FocusRequester() }
+    val versionFocus = remember { FocusRequester() }
+    val regionFocus = remember { FocusRequester() }
+    var lastFilterFocus by remember { mutableStateOf(versionFocus) }
     val search = remember { FocusRequester() }
     val more = remember { FocusRequester() }
     val backFocus = remember { FocusRequester() }
@@ -132,9 +139,13 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
     var searchVisible by rememberSaveable { mutableStateOf(false) }
     var lastFocusKey by rememberSaveable { mutableStateOf<String?>(null) }
     var previousCollection by rememberSaveable { mutableStateOf(state.collectionId) }
-    LaunchedEffect(state.collectionId) {
-        if (previousCollection != state.collectionId) {
-            query = ""; lastFocusKey = null; scroll.scrollToItem(0); previousCollection = state.collectionId
+    var previousCatalogue by rememberSaveable { mutableStateOf("${state.region}:${state.appVersion}") }
+    LaunchedEffect(state.collectionId, state.region, state.appVersion) {
+        val catalogue = "${state.region}:${state.appVersion}"
+        if (previousCollection != state.collectionId || previousCatalogue != catalogue) {
+            query = ""; lastFocusKey = null
+            if (previousCatalogue != catalogue) searchVisible = false
+            scroll.scrollToItem(0); previousCollection = state.collectionId; previousCatalogue = catalogue
         }
     }
     LaunchedEffect(searchVisible) { if (searchVisible) { withFrameNanos { }; runCatching { search.requestFocus() } } }
@@ -146,7 +157,10 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
     }
     val validFocus = if (state.collectionId == null) sections.any { row -> row.videos.any { "${row.id}:${it.id}" == lastFocusKey } }
         else visible.any { "grid:${it.id}" == lastFocusKey }
-    val initial = lastFocusKey?.takeIf { validFocus }?.let { requesters.getOrPut(it) { FocusRequester() } } ?: header
+    // Choose entry once. A tile receiving focus must not schedule another initial-focus request.
+    val initial = remember {
+        lastFocusKey?.takeIf { validFocus }?.let { requesters.getOrPut(it) { FocusRequester() } } ?: header
+    }
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
         .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp)) {
       Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -160,15 +174,14 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
             add(SportsHeaderAction("Cricbuzz configuration", Icons.Default.Key, onClick = importConfiguration))
         }
         SportsHeader(title, { if (state.collectionId != null) selectCollection(null) else onClose() },
-            headerActions, backFocus, menuFocus) { modifier ->
+            headerActions, backFocus, menuFocus, downFocus = versionFocus) { modifier ->
             Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 sportsMainTabs.forEach { tab ->
                     DiscoveryAction(tab.title, horizontalPadding = 12.dp, selected = tab == SportsTab.HIGHLIGHTS,
                         modifier = Modifier.focusRequester(tabFocus.getValue(tab))
                             .onPreviewKeyEvent {
-                                if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown &&
-                                    (visible.isNotEmpty() || sections.isNotEmpty())) {
-                                    runCatching { entry.requestFocus() }; true
+                                if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) {
+                                    versionFocus.requestFocus()
                                 } else false
                             }, onClick = { selectTab(tab) })
                 }
@@ -176,11 +189,22 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
         }
         if (!compact && state.collectionId != null) Text(title, color = Color.White,
             style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        fun Modifier.filterNavigation(requester: FocusRequester): Modifier = focusRequester(requester)
+            .onFocusChanged { if (it.isFocused) lastFilterFocus = requester }
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                    Key.DirectionUp -> if (!compact) header.requestFocus() else false
+                    Key.DirectionDown -> runCatching {
+                        (if (searchVisible) search else entry).requestFocus()
+                    }.getOrDefault(false)
+                    else -> false
+                }
+            }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SportsDropdown("Version", state.appVersion, listOf("16.11.01", "6.16.04").map { it to it },
-                selectAppVersion, Modifier.weight(1f))
+                selectAppVersion, Modifier.weight(1f).filterNavigation(versionFocus))
             SportsDropdown("Region", if (state.region == "IN") "India" else "Canada",
-                listOf("CA" to "Canada", "IN" to "India"), selectRegion, Modifier.weight(1f))
+                listOf("CA" to "Canada", "IN" to "India"), selectRegion, Modifier.weight(1f).filterNavigation(regionFocus))
         }
         if (!state.configured) {
             SportsEmpty("Connect Cricbuzz", "Import your Cricbuzz API configuration to load videos directly.")
@@ -191,16 +215,18 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
         if (state.configured) {
             if (searchVisible) OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().focusRequester(search).onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) {
-                    runCatching { entry.requestFocus() }; true
+                    runCatching { entry.requestFocus() }.getOrDefault(false)
                 } else false
             }, singleLine = true, label = { Text("Find a team or video") })
             if (state.collectionId == null) {
                 if (!state.loading && state.error == null && sections.isEmpty()) SportsEmpty("No matching videos", "Try another team or refresh the catalogue.")
-                CricketVideoRows(sections, state.preparingId, Modifier.weight(1f), compact, header, entry, requesters,
-                    onFocused = { lastFocusKey = it }, selectCollection = selectCollection, play = play)
+                key(state.region, state.appVersion) { CricketVideoRows(sections, state.preparingId, Modifier.weight(1f), compact,
+                    if (searchVisible) search else lastFilterFocus, entry, requesters,
+                    onFocused = { lastFocusKey = it }, selectCollection = selectCollection, play = play) }
             } else {
                 if (!state.loading && state.error == null && visible.isEmpty()) SportsEmpty("No matching videos", "Try another team or refresh this category.")
-                SportsGrid(visible, { it.id }, scroll, if (compact) 160 else 280, Modifier.weight(1f), header,
+                SportsGrid(visible, { it.id }, scroll, gridMinWidth, Modifier.weight(1f),
+                    if (searchVisible) search else lastFilterFocus,
                     below = more.takeIf { state.hasMore }, entry = entry,
                     requester = { index -> requesters.getOrPut("grid:${visible[index].id}") { FocusRequester() } }) { video, _, modifier ->
                     CricketHighlightTile(video, state.preparingId == video.id, modifier.onFocusChanged {
@@ -227,6 +253,7 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
     compact: Boolean, header: FocusRequester, entry: FocusRequester, requesters: MutableMap<String, FocusRequester>,
     onFocused: (String) -> Unit, selectCollection: (Int?) -> Unit, play: (String) -> Unit) {
     val vertical = rememberLazyListState()
+    val entryRow by remember { derivedStateOf { vertical.firstVisibleItemIndex } }
     val rowStates = remember { mutableMapOf<Int?, LazyListState>() }
     val scope = rememberCoroutineScope()
     val coordinator = remember(scope) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(scope) }
@@ -261,7 +288,9 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
         }
     }
     com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(coordinator) {
-    LazyColumn(modifier.fillMaxWidth(), state = vertical, verticalArrangement = Arrangement.spacedBy(16.dp),
+    LazyColumn(modifier.fillMaxWidth().onFocusChanged {
+        if (!it.hasFocus) { sideways?.cancel(); coordinator.cancel() }
+    }.focusGroup(), state = vertical, verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(bottom = 18.dp)) {
         itemsIndexed(sections, key = { _, row -> row.id?.toString() ?: "featured" }) { rowIndex, section ->
             val restored = rememberLazyListState()
@@ -274,12 +303,13 @@ private fun CricketVideoRows(sections: List<CricketVideoSection>, preparingId: S
                         visualLabel = "View all", modifier = Modifier.semantics { contentDescription = "View all ${section.title}" },
                         onClick = { selectCollection(section.id) })
                 }
-                LazyRow(Modifier.fillMaxWidth().focusGroup(), state = horizontal,
+                // Enter the visible row's videos, even when row zero is unmounted; skip View all.
+                LazyRow(Modifier.fillMaxWidth()
+                    .then(if (rowIndex == entryRow) Modifier.focusRequester(entry) else Modifier).focusGroup(), state = horizontal,
                     horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
                     itemsIndexed(section.videos, key = { _, video -> video.id }) { index, video ->
                         val key = "${section.id}:${video.id}"
                         val tileModifier = Modifier.width(if (compact) 268.dp else 300.dp)
-                            .then(if (rowIndex == 0 && index == 0) Modifier.focusRequester(entry) else Modifier)
                             .focusRequester(remember(requesters, key) { requesters.getOrPut(key) { FocusRequester() } })
                             .onFocusChanged { if (it.isFocused) onFocused(key) }
                             .onPreviewKeyEvent { event ->

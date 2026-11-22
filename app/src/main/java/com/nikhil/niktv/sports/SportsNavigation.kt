@@ -202,13 +202,23 @@ internal fun SportsDropdown(label: String, value: String, options: List<Pair<Str
     select: (String) -> Unit, modifier: Modifier = Modifier, valueOnly: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
+    val trigger = remember { FocusRequester() }
+    val selectedItem = remember { FocusRequester() }
+    val portalFocus = com.nikhil.niktv.discovery.LocalPortalFocusReturn.current
+    val selectedKey = options.firstOrNull { it.first == value || it.second == value }?.first ?: options.firstOrNull()?.first
+    fun close(key: String? = null) {
+        portalFocus.cancel()
+        runCatching { trigger.requestFocus() }
+        expanded = false
+        key?.let(select)
+    }
     Box(modifier) {
-        Surface(onClick = { expanded = true }, shape = SportsShape,
+        Surface(onClick = { portalFocus.cancel(); expanded = true }, shape = SportsShape,
             color = if (focused) Color.White else Color(0xFF242831).copy(alpha = .85f),
             contentColor = if (focused) Color.Black else Color.White,
             border = androidx.compose.foundation.BorderStroke(if (focused) 2.dp else 1.dp,
                 if (focused) Color.White else Color(0xFF454B58)),
-            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).onFocusChanged { focused = it.isFocused }
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).focusRequester(trigger).onFocusChanged { focused = it.isFocused }
                 .semantics { contentDescription = "$label: $value" }) {
             Row(Modifier.padding(horizontal = if (valueOnly) 8.dp else 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -217,13 +227,15 @@ internal fun SportsDropdown(label: String, value: String, options: List<Pair<Str
                 Icon(Icons.Default.ExpandMore, null, Modifier.size(20.dp))
             }
         }
-        DropdownMenu(expanded, { expanded = false }, containerColor = SportsSurface) {
+        DropdownMenu(expanded, { close() }, containerColor = SportsSurface,
+            modifier = if (expanded) Modifier.initialFocusEntry(selectedItem) else Modifier) {
             options.forEach { (key, title) ->
                 val active = key == value || title == value
                 DropdownMenuItem(text = { Text(title, color = Color.White) },
-                    modifier = Modifier.semantics { selected = active },
+                    modifier = Modifier.then(if (key == selectedKey) Modifier.focusRequester(selectedItem) else Modifier)
+                        .semantics { selected = active },
                     trailingIcon = { if (active) Icon(Icons.Default.Check, null, tint = Color.White) },
-                    onClick = { expanded = false; select(key) })
+                    onClick = { close(key) })
             }
         }
     }
