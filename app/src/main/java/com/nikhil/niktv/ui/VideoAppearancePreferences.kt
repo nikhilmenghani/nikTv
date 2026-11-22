@@ -1228,7 +1228,7 @@ internal fun PlayerQueueOverlay(
                     .focusable(),
                 color = when {
                     current -> Color(0x665D1825)
-                    else -> if (listQueue) Color(0x66171A20) else Color(0xFF171A20)
+                    else -> Color(0x66171A20)
                 },
                 border = if (focused) {
                     androidx.compose.foundation.BorderStroke(
@@ -1465,8 +1465,8 @@ internal fun PlayerQueueOverlay(
                     if (listQueue) translationX = size.width * (1f - renderedReveal)
                     else translationY = size.height * (1f - renderedReveal)
                 },
-            color = if (listQueue) Color(0xA6191D25) else Color(0xF51A1A1A),
-            border = if (listQueue) androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .16f)) else null,
+            color = Color(0xA6191D25),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .16f)),
             shape =
                 androidx.compose.foundation.shape.RoundedCornerShape(
                     queueSheetCornerRadius
@@ -1582,7 +1582,7 @@ internal fun PlayerQueueOverlay(
                                         }
                                     )
                                     .focusable(),
-                                color = if (listQueue) Color(0x66171A20) else Color(0xFF171A20),
+                                color = Color(0x66171A20),
                                 border = androidx.compose.foundation.BorderStroke(if (focused) 2.5.dp else 1.dp,
                                     if (focused) Color.White else Color(0xFF35383F)),
                                 shape = shape
@@ -1650,7 +1650,7 @@ internal fun PlayerQueueOverlay(
                                         }
                                     )
                                     .focusable(),
-                                color = if (listQueue) Color(0x66171A20) else Color(0xFF171A20),
+                                color = Color(0x66171A20),
                                 border = androidx.compose.foundation.BorderStroke(if (focused) 2.5.dp else 1.dp,
                                     if (focused) Color.White else Color(0xFF35383F)),
                                 shape = loadMoreShape
