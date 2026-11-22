@@ -26,6 +26,12 @@ jobs:
           java-version: '17'
           distribution: zulu
       - uses: gradle/actions/setup-gradle@v4
+      - name: Cache Robolectric Android SDK jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric/android-all-instrumented
+          key: ${{ runner.os }}-robolectric-v1-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: ${{ runner.os }}-robolectric-v1-
       - name: Read development version
         shell: bash
         run: |

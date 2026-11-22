@@ -200,7 +200,13 @@ android {
         }
     }
     buildFeatures { compose = true; buildConfig = true; resValues = true }
-    testOptions { unitTests.isIncludeAndroidResources = true }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            // These large runtime jars bypass Gradle's resolver. Central can throttle shared CI IPs.
+            it.systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
+        }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; isCoreLibraryDesugaringEnabled = true }
     lint {
         disable.addAll(listOf("MissingTvBanner", "OldTargetApi", "GradleDependency", "NewerVersionAvailable"))
