@@ -3,57 +3,54 @@ package com.nikhil.niktv.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Subtitles
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import com.nikhil.niktv.data.OnlineSubtitle
 import com.nikhil.niktv.data.OpenSubtitlesClient
 import com.nikhil.niktv.data.SubtitleSearchRequest
 import com.nikhil.niktv.model.PlayingMedia
 import java.io.File
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 internal data class SubtitleTrackOption(
     val id: String,
@@ -74,7 +71,8 @@ internal fun PlayingMedia.suggestedSubtitleSearchTitle(): String {
     return title.ifBlank { series?.title ?: media.title }
 }
 
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+private enum class SubtitleSearchEditor { QUERY, LANGUAGE }
+
 @Composable
 internal fun SubtitleSelectionDialog(
     tracks: List<SubtitleTrackOption>,
@@ -88,35 +86,27 @@ internal fun SubtitleSelectionDialog(
     internetSearch: SubtitleSearchRequest? = null,
     onExternalSubtitle: ((File) -> Unit)? = null,
     downloadedSubtitleName: String? = null,
-    onDeleteDownloadedSubtitle: (() -> Unit)? = null
+    onDeleteDownloadedSubtitle: (() -> Unit)? = null,
+    delaySupported: Boolean = true,
+    appearanceSupported: Boolean = true,
+    limitationMessage: String? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val configuration = LocalConfiguration.current
     var searchMode by remember { mutableStateOf(false) }
     var query by remember(internetSearch?.query) { mutableStateOf(internetSearch?.query.orEmpty()) }
     var language by remember { mutableStateOf(internetSearch?.languages ?: "en") }
-    var queryEditing by remember { mutableStateOf(false) }
-    var languageEditing by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<SubtitleSearchEditor?>(null) }
     var results by remember { mutableStateOf<List<OnlineSubtitle>>(emptyList()) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
-    var focusSearchOutcome by remember { mutableStateOf(false) }
-    val configuration = LocalConfiguration.current
-    val keyboard = LocalSoftwareKeyboardController.current
-    /*
-     * SUBTITLE_EMPTY_TRACK_FOCUS_V41
-     *
-     * Timing controls only have meaning when the active stream exposes at
-     * least one subtitle track. Keep that same fact in the D-pad focus graph
-     * so every explicit destination corresponds to a composed control.
-     */
-    val hasSubtitleTracks = tracks.isNotEmpty()
-    val hasActiveSubtitle = hasSubtitleTracks || !downloadedSubtitleName.isNullOrBlank()
-    val isTv = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
-        (configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
-        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
-        !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
+    val hasActiveSubtitle = tracks.isNotEmpty() || !downloadedSubtitleName.isNullOrBlank()
+    val hasDelayControls = hasActiveSubtitle && delaySupported
+    val hasAppearanceControl = hasActiveSubtitle && appearanceSupported
+    val canSearch = internetSearch != null && onExternalSubtitle != null
+    val isTv = context.isTvLikeDevice(configuration)
     val compact = configuration.usesPhoneLayout(isTv) || configuration.usesShortWideLayout(isTv)
     val landscape = configuration.screenWidthDp > configuration.screenHeightDp
     val panelWidthFraction = when {
@@ -146,594 +136,489 @@ internal fun SubtitleSelectionDialog(
     val resetFocusRequester = remember { FocusRequester() }
     val appearanceFocusRequester = remember { FocusRequester() }
     val deleteFocusRequester = remember { FocusRequester() }
-    val trackFocusRequesters = remember(tracks.map { it.id }) {
-        List(tracks.size + 1) { FocusRequester() }
+    val offFocusRequester = remember { FocusRequester() }
+    // Keep the focus owner for each track even when selection or the list changes.
+    val retainedTrackRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    val trackFocusRequesters = listOf(offFocusRequester) + tracks.map {
+        retainedTrackRequesters.getOrPut(it.id) { FocusRequester() }
     }
-    val trackHeaderFocusRequester =
-        if (internetSearch != null && onExternalSubtitle != null) {
-            modeFocusRequester
-        } else {
-            closeFocusRequester
-        }
-    val offDownFocusRequester =
-        if (hasSubtitleTracks) {
-            trackFocusRequesters[1]
-        } else if (hasActiveSubtitle) {
-            earlierFocusRequester
-        } else {
-            trackHeaderFocusRequester
-        }
-    var focusedTrackRequesterIndex by remember(tracks.map { it.id }) {
-        mutableStateOf(0)
+    val retainedResultRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    val resultFocusRequesters = results.map {
+        retainedResultRequesters.getOrPut(it.id) { FocusRequester() }
     }
+    val trackHeaderFocusRequester = if (canSearch) modeFocusRequester else closeFocusRequester
+    val afterTracksFocusRequester = when {
+        hasDelayControls -> earlierFocusRequester
+        hasAppearanceControl -> appearanceFocusRequester
+        else -> trackHeaderFocusRequester
+    }
+    val initialTrackIndex = remember { tracks.indexOfFirst { it.selected } + 1 }
+    val initialTrackRequester = remember { trackFocusRequesters[initialTrackIndex] }
+    val trackList = rememberLazyListState(initialFirstVisibleItemIndex = initialTrackIndex)
+    val resultList = rememberLazyListState()
+    var focusedTrackId by remember { mutableStateOf<String?>(null) }
+    val focusedTrackIndex = tracks.indexOfFirst { it.id == focusedTrackId } + 1
+    var focusedResultId by remember { mutableStateOf<String?>(null) }
+    val focusedResultIndex = results.indexOfFirst { it.id == focusedResultId }
     var trackListHasFocus by remember { mutableStateOf(false) }
+    var resultListHasFocus by remember { mutableStateOf(false) }
+    var navigationJob by remember { mutableStateOf<Job?>(null) }
 
-    /*
-     * SUBTITLE_DPAD_GRAPH_V42
-     *
-     * The embedded/downloaded track list is a LazyColumn. Route vertical
-     * D-pad movement at the list boundary, before LazyColumn can consume the
-     * key for scrolling, and retry focus once composition settles if needed.
-     */
-    fun requestSubtitleFocus(destination: FocusRequester): Boolean {
-        val moved =
+    fun focusControl(destination: FocusRequester): Boolean {
+        navigationJob?.cancel()
+        runCatching { destination.requestFocus() }
+        return true
+    }
+
+    fun focusTrack(index: Int): Boolean {
+        navigationJob?.cancel()
+        val destination = trackFocusRequesters.getOrNull(index) ?: return true
+        if (trackList.layoutInfo.visibleItemsInfo.any { it.index == index }) {
             runCatching { destination.requestFocus() }
-                .getOrDefault(false)
-        if (!moved) {
-            scope.launch {
-                repeat(4) { attempt ->
-                    delay(16L * (attempt + 1))
-                    if (
-                        runCatching { destination.requestFocus() }
-                            .getOrDefault(false)
-                    ) {
-                        return@launch
-                    }
-                }
+        } else {
+            // Focused lazy items stay pinned while the destination is brought into
+            // composition. Transfer once after layout; never retry after navigation.
+            navigationJob = scope.launch {
+                trackList.scrollToItem(index)
+                withFrameNanos { }
+                runCatching { destination.requestFocus() }
             }
         }
         return true
     }
 
-    val resultFocusRequesters = remember(results.map { it.id }) {
-        List(results.size) { FocusRequester() }
-    }
-    LaunchedEffect(searchMode) {
-        val destination = if (searchMode) searchFocusRequester else trackHeaderFocusRequester
-        repeat(6) { attempt ->
-            delay(40L * (attempt + 1))
-            if (runCatching { destination.requestFocus() }.getOrDefault(false)) {
-                return@LaunchedEffect
+    fun focusResult(index: Int): Boolean {
+        navigationJob?.cancel()
+        val destination = resultFocusRequesters.getOrNull(index) ?: return true
+        if (resultList.layoutInfo.visibleItemsInfo.any { it.index == index }) {
+            runCatching { destination.requestFocus() }
+        } else {
+            navigationJob = scope.launch {
+                resultList.scrollToItem(index)
+                withFrameNanos { }
+                runCatching { destination.requestFocus() }
             }
         }
+        return true
     }
-    LaunchedEffect(searching, results, searchError, focusSearchOutcome) {
-        if (!searchMode || searching || !focusSearchOutcome) return@LaunchedEffect
-        delay(80L)
-        val destination = resultFocusRequesters.firstOrNull() ?: searchFocusRequester
-        repeat(4) { attempt ->
-            if (runCatching { destination.requestFocus() }.getOrDefault(false)) {
-                focusSearchOutcome = false
-                return@LaunchedEffect
-            }
-            delay(40L * (attempt + 1))
+
+    fun stopEditing() {
+        val destination = when (editing) {
+            SubtitleSearchEditor.QUERY -> queryFocusRequester
+            SubtitleSearchEditor.LANGUAGE -> languageFocusRequester
+            null -> null
         }
-        focusSearchOutcome = false
+        destination?.let { focusControl(it) }
+        editing = null
     }
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .onPreviewKeyEvent { event ->
-                if (searchMode || !trackListHasFocus || event.type != KeyEventType.KeyDown) {
-                    false
-                } else when (event.key) {
-                    Key.DirectionUp -> requestSubtitleFocus(
-                        if (focusedTrackRequesterIndex == 0) trackHeaderFocusRequester
-                        else trackFocusRequesters[focusedTrackRequesterIndex - 1]
-                    )
-                    Key.DirectionDown -> requestSubtitleFocus(
-                        when {
-                            !hasSubtitleTracks -> earlierFocusRequester
-                            focusedTrackRequesterIndex < tracks.size ->
-                                trackFocusRequesters[focusedTrackRequesterIndex + 1]
-                            else -> earlierFocusRequester
-                        }
-                    )
-                    else -> false
+
+    fun showSearch(show: Boolean) {
+        // This toolbar target survives both layouts. Focus it before removing a
+        // focused field/result/track so no unrelated control receives interim focus.
+        focusControl(modeFocusRequester)
+        editing = null
+        searchMode = show
+    }
+
+    fun dismissPopup() {
+        navigationJob?.cancel()
+        onDismiss()
+    }
+
+    fun back() {
+        when {
+            editing != null -> stopEditing()
+            searchMode -> showSearch(false)
+            else -> dismissPopup()
+        }
+    }
+
+    Dialog(onDismissRequest = ::back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // The dialog has its own text-input owner and keyboard controller.
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(editing) {
+            val destination = when (editing) {
+                SubtitleSearchEditor.QUERY -> queryFocusRequester
+                SubtitleSearchEditor.LANGUAGE -> languageFocusRequester
+                null -> { keyboard?.hide(); return@LaunchedEffect }
+            }
+            withFrameNanos { }
+            if (runCatching { destination.requestFocus() }.getOrDefault(false)) keyboard?.show()
+        }
+        // Observe the dialog's IME insets, including Back consumed by the keyboard.
+        SeriesSearchKeyboardDismiss(editing != null, ::stopEditing)
+        BackHandler(enabled = editing != null || searchMode, onBack = ::back)
+        Box(
+            Modifier
+                .fillMaxSize()
+                .imePadding()
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        navigationJob?.cancel()
+                        waitForUpOrCancellation(pass = PointerEventPass.Initial)
+                    }
                 }
-            }
-            .padding(
-                end = if (compact) 8.dp else 24.dp,
-                bottom = if (compact) 8.dp else 20.dp
-            ),
-        contentAlignment = Alignment.BottomEnd
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth(panelWidthFraction)
-                .widthIn(max = panelMaxWidth)
-                .heightIn(max = (configuration.screenHeightDp - if (compact) 12 else 32).coerceAtLeast(220).dp),
-            color = Color(0xF2111317),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(if (compact) 16.dp else 22.dp),
-            border = BorderStroke(1.dp, Color(0xFF30343B)),
-            shadowElevation = if (compact) 8.dp else 14.dp
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown) navigationJob?.cancel()
+                    if (event.type != KeyEventType.KeyDown) false
+                    else if (!searchMode && trackListHasFocus) when (event.key) {
+                        Key.DirectionUp -> if (focusedTrackIndex == 0) focusControl(trackHeaderFocusRequester)
+                            else focusTrack(focusedTrackIndex - 1)
+                        Key.DirectionDown -> if (focusedTrackIndex < tracks.size) focusTrack(focusedTrackIndex + 1)
+                            else focusControl(afterTracksFocusRequester)
+                        else -> { navigationJob?.cancel(); false }
+                    } else if (searchMode && resultListHasFocus) when (event.key) {
+                        Key.DirectionUp -> if (focusedResultIndex <= 0) focusControl(searchFocusRequester)
+                            else focusResult(focusedResultIndex - 1)
+                        Key.DirectionDown -> focusResult((focusedResultIndex + 1).coerceAtMost(results.lastIndex))
+                        else -> { navigationJob?.cancel(); false }
+                    } else false
+                }
+                .padding(end = if (compact) 8.dp else 24.dp, bottom = if (compact) 8.dp else 20.dp),
+            contentAlignment = Alignment.BottomEnd
         ) {
-            Column(
-                Modifier
-                    .focusGroup()
-                    .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 8.dp else 14.dp),
-                verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)
+            Surface(
+                modifier = Modifier.fillMaxWidth(panelWidthFraction).widthIn(max = panelMaxWidth)
+                    .heightIn(max = (configuration.screenHeightDp - if (compact) 12 else 32).coerceAtLeast(220).dp),
+                color = Color(0xF2111317),
+                contentColor = Color.White,
+                shape = RoundedCornerShape(if (compact) 16.dp else 22.dp),
+                border = BorderStroke(1.dp, Color(0xFF30343B)),
+                shadowElevation = if (compact) 8.dp else 14.dp
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (searchMode) "Find subtitles" else "Subtitles",
-                        style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (internetSearch != null && onExternalSubtitle != null) {
-                        NikTvTextActionButton(
-                            onClick = { searchMode = !searchMode },
-                            modifier = Modifier
-                                .focusRequester(modeFocusRequester)
+                Column(
+                    Modifier.initialFocusEntry(initialTrackRequester)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 8.dp else 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (searchMode) "Find subtitles" else "Subtitles",
+                            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.weight(1f))
+                        if (canSearch) NikTvTextActionButton(
+                            onClick = { showSearch(!searchMode) },
+                            modifier = Modifier.heightIn(min = 44.dp).focusRequester(modeFocusRequester)
                                 .focusProperties {
+                                    canFocus = true
                                     left = modeFocusRequester
                                     right = if (!searchMode && onDeleteDownloadedSubtitle != null) deleteFocusRequester else closeFocusRequester
-                                    down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
+                                    down = if (searchMode) queryFocusRequester else offFocusRequester
+                                }.onPreviewKeyEvent {
+                                    if (!searchMode && it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) focusTrack(0) else false
                                 }
-                                .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                         ) {
-                            Icon(if (searchMode) Icons.Default.Subtitles else Icons.Default.Search, null)
+                            Icon(if (searchMode) Icons.Default.Subtitles else Icons.Default.Search,
+                                if (searchMode) "Show subtitle tracks" else "Find subtitles online")
                             if (!compact) Text(if (searchMode) " Tracks" else " Online")
                         }
-                    }
-                    if (!searchMode && onDeleteDownloadedSubtitle != null) {
-                        IconButton(
-                            onClick = onDeleteDownloadedSubtitle,
-                            modifier = Modifier
-                                .focusRequester(deleteFocusRequester)
-                                .focusProperties {
-                                    left = if (internetSearch != null && onExternalSubtitle != null) modeFocusRequester else deleteFocusRequester
-                                    right = closeFocusRequester
-                                    down = trackFocusRequesters.first()
-                                }
-                                .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
+                        if (!searchMode && onDeleteDownloadedSubtitle != null) IconButton(
+                            onClick = {
+                                focusControl(trackHeaderFocusRequester)
+                                onDeleteDownloadedSubtitle()
+                            },
+                            modifier = Modifier.focusRequester(deleteFocusRequester).focusProperties {
+                                canFocus = true
+                                left = if (canSearch) modeFocusRequester else deleteFocusRequester
+                                right = closeFocusRequester
+                                down = offFocusRequester
+                            }.onPreviewKeyEvent {
+                                if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) focusTrack(0) else false
+                            }.playerControlFocus(CircleShape, scaleOnFocus = false)
                         ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                downloadedSubtitleName?.let { "Delete downloaded subtitle $it" }
-                                    ?: "Delete downloaded subtitle"
-                            )
+                            Icon(Icons.Default.Delete, downloadedSubtitleName?.let { "Delete downloaded subtitle $it" }
+                                ?: "Delete downloaded subtitle")
                         }
-                    }
-                    NikTvTextActionButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .focusRequester(closeFocusRequester)
-                            .focusProperties {
+                        NikTvTextActionButton(
+                            onClick = ::dismissPopup,
+                            modifier = Modifier.heightIn(min = 44.dp).focusRequester(closeFocusRequester).focusProperties {
+                                canFocus = true
                                 left = when {
                                     !searchMode && onDeleteDownloadedSubtitle != null -> deleteFocusRequester
-                                    internetSearch != null && onExternalSubtitle != null -> modeFocusRequester
+                                    canSearch -> modeFocusRequester
                                     else -> closeFocusRequester
                                 }
                                 right = closeFocusRequester
-                                down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
+                                down = if (searchMode) queryFocusRequester else offFocusRequester
+                            }.onPreviewKeyEvent {
+                                if (!searchMode && it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) focusTrack(0) else false
                             }
-                            .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                    ) { Text("Close") }
-                }
-                if (internetSearch != null && onExternalSubtitle != null) {
-                    if (!searchMode && !compact) Text("Embedded and downloaded tracks", style = MaterialTheme.typography.labelSmall)
-                }
-                if (searchMode) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        readOnly = isTv && !queryEditing,
-                        label = {
-                            Text(if (internetSearch?.seasonNumber != null || internetSearch?.episodeNumber != null) "Series title" else "Movie title")
-                        },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(queryFocusRequester)
-                            .focusProperties {
+                        ) { Text("Close") }
+                    }
+                    if (canSearch && !searchMode && !compact) Text("Embedded and downloaded tracks", style = MaterialTheme.typography.labelSmall)
+                    if (searchMode) {
+                        SubtitleSearchInput(
+                            value = query, onValueChange = { query = it },
+                            label = if (internetSearch?.seasonNumber != null || internetSearch?.episodeNumber != null) "Series title" else "Movie title",
+                            editing = editing == SubtitleSearchEditor.QUERY,
+                            activate = { navigationJob?.cancel(); editing = SubtitleSearchEditor.QUERY },
+                            stopEditing = ::stopEditing,
+                            onFocusLost = { if (editing == SubtitleSearchEditor.QUERY) { editing = null; keyboard?.hide() } },
+                            modifier = Modifier.fillMaxWidth().focusRequester(queryFocusRequester).focusProperties {
+                                canFocus = true
                                 up = modeFocusRequester
                                 down = languageFocusRequester
-                            }
-                            .onFocusChanged {
-                                if (!it.isFocused && queryEditing) {
-                                    queryEditing = false
-                                    keyboard?.hide()
-                                }
-                            }
-                            .onPreviewKeyEvent { event ->
-                                if (isTv && !queryEditing && event.type == KeyEventType.KeyUp &&
-                                    event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
-                                ) {
-                                    queryEditing = true
-                                    keyboard?.show()
-                                    true
-                                } else false
+                                left = queryFocusRequester
+                                right = queryFocusRequester
                             },
-                        textStyle = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
-                    )
-                    internetSearch?.episodeTitle?.takeIf { it.isNotBlank() }?.let { episodeTitle ->
-                        Text(
-                            buildString {
+                            textStyle = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
+                        )
+                        internetSearch?.episodeTitle?.takeIf { it.isNotBlank() }?.let { episodeTitle ->
+                            Text(buildString {
                                 internetSearch.seasonNumber?.let { append("S").append(it.toString().padStart(2, '0')) }
                                 internetSearch.episodeNumber?.let { append("E").append(it.toString().padStart(2, '0')) }
-                                if (isNotEmpty()) append(" · ")
+                                if (isNotEmpty()) append(" \u00b7 ")
                                 append(episodeTitle)
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFB8BBC3),
-                            maxLines = 1
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = language,
-                            onValueChange = { language = it.take(12) },
-                            readOnly = isTv && !languageEditing,
-                            label = { Text("Languages") },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .focusRequester(languageFocusRequester)
-                                .focusProperties {
+                            }, style = MaterialTheme.typography.labelSmall, color = Color(0xFFB8BBC3), maxLines = 1)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            SubtitleSearchInput(
+                                value = language, onValueChange = { language = it.take(12) }, label = "Languages",
+                                editing = editing == SubtitleSearchEditor.LANGUAGE,
+                                activate = { navigationJob?.cancel(); editing = SubtitleSearchEditor.LANGUAGE }, stopEditing = ::stopEditing,
+                                onFocusLost = { if (editing == SubtitleSearchEditor.LANGUAGE) { editing = null; keyboard?.hide() } },
+                                modifier = Modifier.weight(1f).focusRequester(languageFocusRequester).focusProperties {
+                                    canFocus = true
                                     up = queryFocusRequester
+                                    left = languageFocusRequester
                                     right = searchFocusRequester
                                     down = resultFocusRequesters.firstOrNull() ?: languageFocusRequester
+                                }.onPreviewKeyEvent {
+                                    if (editing == null && it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown && results.isNotEmpty()) focusResult(0) else false
                                 }
-                                .onFocusChanged {
-                                    if (!it.isFocused && languageEditing) {
-                                        languageEditing = false
+                            )
+                            IconButton(
+                                onClick = {
+                                    if (!searching && query.isNotBlank()) {
+                                        focusControl(searchFocusRequester)
+                                        editing = null
                                         keyboard?.hide()
+                                        val request = internetSearch?.copy(query = query, languages = language)
+                                            ?: SubtitleSearchRequest(query = query, languages = language)
+                                        searching = true
+                                        searchError = null
+                                        scope.launch {
+                                            results = runCatching { OpenSubtitlesClient.search(request) }
+                                                .onFailure { searchError = it.message ?: "Subtitle search failed." }
+                                                .getOrDefault(emptyList())
+                                            searching = false
+                                        }
                                     }
-                                }
-                                .onPreviewKeyEvent { event ->
-                                    if (isTv && !languageEditing && event.type == KeyEventType.KeyUp &&
-                                        event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
-                                    ) {
-                                        languageEditing = true
-                                        keyboard?.show()
-                                        true
-                                    } else false
-                                }
-                        )
-                        IconButton(
-                            onClick = {
-                                if (searching || query.isBlank()) return@IconButton
-                                focusSearchOutcome = true
-                                val request = internetSearch?.copy(query = query, languages = language)
-                                    ?: SubtitleSearchRequest(query = query, languages = language)
-                                scope.launch {
-                                    searching = true
-                                    searchError = null
-                                    results = runCatching { OpenSubtitlesClient.search(request) }
-                                        .onFailure { searchError = it.message ?: "Subtitle search failed." }
-                                        .getOrDefault(emptyList())
-                                    searching = false
-                                }
-                            },
-                            modifier = Modifier
-                                .focusRequester(searchFocusRequester)
-                                .focusProperties {
+                                },
+                                modifier = Modifier.focusRequester(searchFocusRequester).focusProperties {
+                                    canFocus = true
                                     up = queryFocusRequester
                                     left = languageFocusRequester
                                     right = searchFocusRequester
                                     down = resultFocusRequesters.firstOrNull() ?: searchFocusRequester
-                                }
-                                .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
-                        ) { Icon(Icons.Default.Search, "Search") }
-                    }
-                    if (searching) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
-                    searchError?.let { Text(it) }
-                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = listHeight)) {
-                        items(results.size, key = { results[it].id }) { index ->
-                            val subtitle = results[index]
-                            NikTvTextActionButton(
-                                onClick = {
-                                    if (downloadingId != null) return@NikTvTextActionButton
-                                    scope.launch {
-                                        downloadingId = subtitle.id
-                                        searchError = null
-                                        runCatching { OpenSubtitlesClient.download(context, subtitle) }
-                                            .onSuccess { file -> onExternalSubtitle?.invoke(file); onDismiss() }
-                                            .onFailure { searchError = it.message ?: "Subtitle download failed." }
-                                        downloadingId = null
-                                    }
-                                },
-                                // Keep the focused result in the graph while its
-                                // subtitle file is being downloaded.
-                                enabled = true,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .focusRequester(resultFocusRequesters[index])
-                                    .focusProperties {
-                                        up = resultFocusRequesters.getOrNull(index - 1) ?: searchFocusRequester
-                                        down = resultFocusRequesters.getOrNull(index + 1) ?: resultFocusRequesters[index]
-                                        left = resultFocusRequesters[index]
-                                        right = resultFocusRequesters[index]
-                                    }
-                                    .onPreviewKeyEvent { event ->
-                                        if (event.type != KeyEventType.KeyDown) {
-                                            false
-                                        } else when (event.key) {
-                                            Key.DirectionUp -> requestSubtitleFocus(
-                                                resultFocusRequesters.getOrNull(index - 1)
-                                                    ?: searchFocusRequester
-                                            )
-                                            Key.DirectionDown -> requestSubtitleFocus(
-                                                resultFocusRequesters.getOrNull(index + 1)
-                                                    ?: resultFocusRequesters[index]
-                                            )
-                                            else -> false
-                                        }
-                                    }
-                                    .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                            ) {
-                                Text(subtitle.displayName, Modifier.weight(1f))
-                                if (downloadingId == subtitle.id) CircularProgressIndicator(Modifier.padding(4.dp))
-                            }
-                        }
-                        if (!searching && results.isEmpty() && searchError == null) {
-                            item { Text("Search OpenSubtitles using the suggested title or enter your own.", Modifier.padding(12.dp)) }
-                        }
-                    }
-                } else LazyColumn(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = listHeight)
-                        .onFocusChanged { trackListHasFocus = it.hasFocus }
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) {
-                                false
-                            } else {
-                                when (event.key) {
-                                    Key.DirectionUp -> {
-                                        if (focusedTrackRequesterIndex == 0) {
-                                            requestSubtitleFocus(
-                                                trackHeaderFocusRequester
-                                            )
-                                        } else {
-                                            requestSubtitleFocus(
-                                                trackFocusRequesters[
-                                                    focusedTrackRequesterIndex - 1
-                                                ]
-                                            )
-                                        }
-                                    }
-                                    Key.DirectionDown -> {
-                                        when {
-                                            !hasSubtitleTracks ->
-                                                requestSubtitleFocus(
-                                                    earlierFocusRequester
-                                                )
-                                            focusedTrackRequesterIndex < tracks.size ->
-                                                requestSubtitleFocus(
-                                                    trackFocusRequesters[
-                                                        focusedTrackRequesterIndex + 1
-                                                    ]
-                                                )
-                                            else ->
-                                                requestSubtitleFocus(
-                                                    earlierFocusRequester
-                                                )
-                                        }
-                                    }
-                                    else -> false
-                                }
-                            }
-                        }
-                ) {
-                    item {
-                        SubtitleTrackRow(
-                            "Off",
-                            tracks.none { it.selected },
-                            Modifier
-                                .focusRequester(trackFocusRequesters[0])
-                                .onFocusChanged {
-                                    if (it.isFocused) {
-                                        focusedTrackRequesterIndex = 0
-                                    }
-                                }
-                                .focusProperties {
-                                    up = trackHeaderFocusRequester
-                                    down = offDownFocusRequester
-                                }
-                        ) { onSelect(null) }
-                    }
-                    items(tracks.size, key = { tracks[it].id }) { index ->
-                        val track = tracks[index]
-                        val requesterIndex = index + 1
-                        SubtitleTrackRow(
-                            track.label,
-                            track.selected,
-                            Modifier
-                                .focusRequester(
-                                    trackFocusRequesters[requesterIndex]
-                                )
-                                .onFocusChanged {
-                                    if (it.isFocused) {
-                                        focusedTrackRequesterIndex =
-                                            requesterIndex
-                                    }
-                                }
-                                .focusProperties {
-                                    up =
-                                        trackFocusRequesters[
-                                            requesterIndex - 1
-                                        ]
-                                    down =
-                                        trackFocusRequesters.getOrNull(
-                                            requesterIndex + 1
-                                        ) ?: earlierFocusRequester
-                                }
-                        ) { onSelect(track.id) }
-                    }
-                    if (tracks.isEmpty()) {
-                        item {
-                            Text(
-                                "No subtitle tracks are available in this stream.",
-                                Modifier.padding(12.dp)
-                            )
-                        }
-                    }
-                }
-                if (!searchMode && hasActiveSubtitle && !compact) Text("Subtitle timing")
-                if (!searchMode && hasActiveSubtitle) Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = { onDelayChange((delayMs - 250L).coerceAtLeast(-10_000L)) },
-                        modifier = Modifier
-                            .focusRequester(earlierFocusRequester)
-                            .focusProperties {
-                                up = trackFocusRequesters.last()
-                                left = earlierFocusRequester
-                                right = laterFocusRequester
-                                down = when {
-                                    delayMs != 0L -> resetFocusRequester
-                                    else -> appearanceFocusRequester
-                                }
-                            }
-                            .onPreviewKeyEvent { event ->
-                                if (event.type != KeyEventType.KeyDown) {
-                                    false
-                                } else {
-                                    when (event.key) {
-                                        Key.DirectionUp ->
-                                            requestSubtitleFocus(
-                                                trackFocusRequesters.last()
-                                            )
-                                        Key.DirectionLeft ->
-                                            requestSubtitleFocus(
-                                                earlierFocusRequester
-                                            )
-                                        Key.DirectionRight ->
-                                            requestSubtitleFocus(
-                                                laterFocusRequester
-                                            )
-                                        Key.DirectionDown ->
-                                            requestSubtitleFocus(
-                                                when {
-                                                    delayMs != 0L -> resetFocusRequester
-                                                    else -> appearanceFocusRequester
-                                                }
-                                            )
+                                }.onPreviewKeyEvent {
+                                    if (it.type != KeyEventType.KeyDown) false else when (it.key) {
+                                        Key.DirectionUp -> focusControl(queryFocusRequester)
+                                        Key.DirectionDown -> if (results.isNotEmpty()) focusResult(0) else focusControl(searchFocusRequester)
+                                        Key.DirectionLeft -> focusControl(languageFocusRequester)
+                                        Key.DirectionRight -> focusControl(searchFocusRequester)
                                         else -> false
                                     }
+                                }.playerControlFocus(CircleShape, scaleOnFocus = false)
+                            ) { Icon(Icons.Default.Search, "Search") }
+                        }
+                        if (searching) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+                        searchError?.let { Text(it) }
+                        LazyColumn(
+                            Modifier.fillMaxWidth().heightIn(max = listHeight)
+                                .onFocusChanged { resultListHasFocus = it.hasFocus }.focusGroup(),
+                            state = resultList
+                        ) {
+                            items(results.size, key = { results[it].id }) { index ->
+                                val subtitle = results[index]
+                                NikTvTextActionButton(
+                                    onClick = {
+                                        if (downloadingId == null) scope.launch {
+                                            downloadingId = subtitle.id
+                                            searchError = null
+                                            runCatching { OpenSubtitlesClient.download(context, subtitle) }
+                                                .onSuccess { file -> onExternalSubtitle?.invoke(file); dismissPopup() }
+                                                .onFailure { searchError = it.message ?: "Subtitle download failed." }
+                                            downloadingId = null
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                                        .focusRequester(resultFocusRequesters[index])
+                                        .onFocusChanged { if (it.isFocused) focusedResultId = subtitle.id }
+                                        .focusProperties { canFocus = true; left = resultFocusRequesters[index]; right = resultFocusRequesters[index] }
+                                ) {
+                                    Text(subtitle.displayName, Modifier.weight(1f))
+                                    if (downloadingId == subtitle.id) CircularProgressIndicator(Modifier.padding(4.dp))
                                 }
                             }
-                            .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
+                            if (!searching && results.isEmpty() && searchError == null) item {
+                                Text("Search OpenSubtitles using the suggested title or enter your own.", Modifier.padding(12.dp))
+                            }
+                        }
+                    } else LazyColumn(
+                        Modifier.fillMaxWidth().heightIn(max = listHeight)
+                            .onFocusChanged { trackListHasFocus = it.hasFocus }.focusGroup(),
+                        state = trackList
                     ) {
-                        Icon(Icons.Default.Remove, "Show subtitles earlier")
+                        item(key = "subtitle-off") {
+                            SubtitleTrackRow("Off", tracks.none { it.selected },
+                                Modifier.focusRequester(offFocusRequester)
+                                    .onFocusChanged { if (it.isFocused) focusedTrackId = null }
+                                    .focusProperties { left = offFocusRequester; right = offFocusRequester }) { onSelect(null) }
+                        }
+                        items(tracks.size, key = { "subtitle-track:${tracks[it].id}" }) { index ->
+                            val track = tracks[index]
+                            val requester = trackFocusRequesters[index + 1]
+                            SubtitleTrackRow(track.label, track.selected,
+                                Modifier.focusRequester(requester)
+                                    .onFocusChanged { if (it.isFocused) focusedTrackId = track.id }
+                                    .focusProperties { left = requester; right = requester }) { onSelect(track.id) }
+                        }
+                        if (tracks.isEmpty()) item(key = "subtitle-empty") {
+                            Text("No subtitle tracks are available in this stream.", Modifier.padding(12.dp))
+                        }
                     }
-                    Text(if (delayMs == 0L) "0 ms" else "%+d ms".format(delayMs))
-                    IconButton(
-                        onClick = { onDelayChange((delayMs + 250L).coerceAtMost(10_000L)) },
-                        modifier = Modifier
-                            .focusRequester(laterFocusRequester)
-                            .focusProperties {
-                                up = trackFocusRequesters.last()
-                                left = earlierFocusRequester
-                                right = laterFocusRequester
+                    if (!searchMode && hasDelayControls && !compact) Text("Subtitle timing")
+                    if (!searchMode && hasDelayControls) Row(
+                        Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { onDelayChange((delayMs - 250L).coerceAtLeast(-10_000L)) },
+                            modifier = Modifier.focusRequester(earlierFocusRequester).focusProperties {
+                                canFocus = true
+                                left = earlierFocusRequester; right = laterFocusRequester
                                 down = when {
                                     delayMs != 0L -> resetFocusRequester
-                                    else -> appearanceFocusRequester
+                                    hasAppearanceControl -> appearanceFocusRequester
+                                    else -> earlierFocusRequester
                                 }
-                            }
-                            .onPreviewKeyEvent { event ->
-                                if (event.type != KeyEventType.KeyDown) {
-                                    false
-                                } else {
-                                    when (event.key) {
-                                        Key.DirectionUp ->
-                                            requestSubtitleFocus(
-                                                trackFocusRequesters.last()
-                                            )
-                                        Key.DirectionLeft ->
-                                            requestSubtitleFocus(
-                                                earlierFocusRequester
-                                            )
-                                        Key.DirectionRight ->
-                                            requestSubtitleFocus(
-                                                laterFocusRequester
-                                            )
-                                        Key.DirectionDown ->
-                                            requestSubtitleFocus(
-                                                when {
-                                                    delayMs != 0L -> resetFocusRequester
-                                                    else -> appearanceFocusRequester
-                                                }
-                                            )
-                                        else -> false
-                                    }
-                                }
-                            }
-                            .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
-                    ) {
-                        Icon(Icons.Default.Add, "Show subtitles later")
-                    }
-                }
-                if (!searchMode && hasActiveSubtitle && delayMs != 0L) NikTvTextActionButton(
-                    onClick = { onDelayChange(0L) },
-                    modifier = Modifier
-                        .focusRequester(resetFocusRequester)
-                        .focusProperties {
-                            up = earlierFocusRequester
-                            down = appearanceFocusRequester
-                        }
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) {
-                                false
-                            } else {
-                                when (event.key) {
-                                    Key.DirectionUp ->
-                                        requestSubtitleFocus(
-                                            earlierFocusRequester
-                                        )
-                                    Key.DirectionDown ->
-                                        requestSubtitleFocus(
-                                            appearanceFocusRequester
-                                        )
+                            }.onPreviewKeyEvent {
+                                if (it.type != KeyEventType.KeyDown) false else when (it.key) {
+                                    Key.DirectionUp -> focusTrack(tracks.size)
+                                    Key.DirectionDown -> focusControl(when {
+                                        delayMs != 0L -> resetFocusRequester
+                                        hasAppearanceControl -> appearanceFocusRequester
+                                        else -> earlierFocusRequester
+                                    })
+                                    Key.DirectionLeft -> focusControl(earlierFocusRequester)
+                                    Key.DirectionRight -> focusControl(laterFocusRequester)
                                     else -> false
                                 }
+                            }.playerControlFocus(CircleShape, scaleOnFocus = false)
+                        ) { Icon(Icons.Default.Remove, "Show subtitles earlier") }
+                        Text(if (delayMs == 0L) "0 ms" else "%+d ms".format(delayMs))
+                        IconButton(
+                            onClick = { onDelayChange((delayMs + 250L).coerceAtMost(10_000L)) },
+                            modifier = Modifier.focusRequester(laterFocusRequester).focusProperties {
+                                canFocus = true
+                                left = earlierFocusRequester; right = laterFocusRequester
+                                down = when {
+                                    delayMs != 0L -> resetFocusRequester
+                                    hasAppearanceControl -> appearanceFocusRequester
+                                    else -> laterFocusRequester
+                                }
+                            }.onPreviewKeyEvent {
+                                if (it.type != KeyEventType.KeyDown) false else when (it.key) {
+                                    Key.DirectionUp -> focusTrack(tracks.size)
+                                    Key.DirectionDown -> focusControl(when {
+                                        delayMs != 0L -> resetFocusRequester
+                                        hasAppearanceControl -> appearanceFocusRequester
+                                        else -> laterFocusRequester
+                                    })
+                                    Key.DirectionLeft -> focusControl(earlierFocusRequester)
+                                    Key.DirectionRight -> focusControl(laterFocusRequester)
+                                    else -> false
+                                }
+                            }.playerControlFocus(CircleShape, scaleOnFocus = false)
+                        ) { Icon(Icons.Default.Add, "Show subtitles later") }
+                    }
+                    if (!searchMode && hasDelayControls && delayMs != 0L) NikTvTextActionButton(
+                        onClick = { focusControl(earlierFocusRequester); onDelayChange(0L) },
+                        modifier = Modifier.heightIn(min = 44.dp).focusRequester(resetFocusRequester).focusProperties {
+                            canFocus = true
+                            up = earlierFocusRequester; down = if (hasAppearanceControl) appearanceFocusRequester else resetFocusRequester
+                            left = resetFocusRequester; right = resetFocusRequester
+                        }.onPreviewKeyEvent {
+                            if (it.type != KeyEventType.KeyDown) false else when (it.key) {
+                                Key.DirectionUp -> focusControl(earlierFocusRequester)
+                                Key.DirectionDown -> focusControl(if (hasAppearanceControl) appearanceFocusRequester else resetFocusRequester)
+                                else -> false
                             }
                         }
-                        .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
-                ) { Text("Reset timing") }
-                if (!searchMode && hasActiveSubtitle) NikTvTextActionButton(
-                    onClick = { onAppearanceChange(appearance.next()) },
-                    modifier = Modifier
-                        .focusRequester(appearanceFocusRequester)
-                        .focusProperties {
-                            up = if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
-                            left = appearanceFocusRequester
-                            right = appearanceFocusRequester
-                            down = appearanceFocusRequester
+                    ) { Text("Reset timing") }
+                    if (!searchMode && hasAppearanceControl) NikTvTextActionButton(
+                        onClick = { onAppearanceChange(appearance.next()) },
+                        modifier = Modifier.heightIn(min = 44.dp).focusRequester(appearanceFocusRequester).focusProperties {
+                            canFocus = true
+                            up = if (hasDelayControls) {
+                                if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
+                            } else trackFocusRequesters.last()
+                            left = appearanceFocusRequester; right = appearanceFocusRequester; down = appearanceFocusRequester
+                        }.onPreviewKeyEvent {
+                            if (it.type != KeyEventType.KeyDown) false else when (it.key) {
+                                Key.DirectionUp -> if (hasDelayControls) focusControl(
+                                    if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
+                                ) else focusTrack(tracks.size)
+                                Key.DirectionDown -> focusControl(appearanceFocusRequester)
+                                else -> false
+                            }
                         }
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                requestSubtitleFocus(if (delayMs != 0L) resetFocusRequester else earlierFocusRequester)
-                            } else false
-                        }
-                        .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
-                ) { Text("Appearance: ${appearance.label}") }
-                if (!searchMode && hasActiveSubtitle && timingRequiresVlc && !compact) {
-                    Text("Changing timing switches this playback session to VLC while preserving your position.")
+                    ) { Text("Appearance: ${appearance.label}") }
+                    if (!searchMode && hasDelayControls && timingRequiresVlc && !compact) {
+                        Text("Changing timing switches this playback session to VLC while preserving your position.")
+                    }
+                    if (!searchMode && limitationMessage != null) {
+                        Text(limitationMessage, style = MaterialTheme.typography.labelSmall, color = Color(0xFFB8BBC3))
+                    }
                 }
             }
         }
     }
-    }
+}
+
+@Composable
+private fun SubtitleSearchInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    editing: Boolean,
+    activate: () -> Unit,
+    stopEditing: () -> Unit,
+    onFocusLost: () -> Unit,
+    modifier: Modifier = Modifier,
+    textStyle: TextStyle = MaterialTheme.typography.bodyLarge
+) {
+    val currentActivate by rememberUpdatedState(activate)
+    val focusManager = LocalFocusManager.current
+    OutlinedTextField(
+        value = value, onValueChange = onValueChange, label = { Text(label) },
+        readOnly = !editing, singleLine = true, textStyle = textStyle,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, showKeyboardOnFocus = false),
+        keyboardActions = KeyboardActions(onDone = { stopEditing() }),
+        modifier = modifier.onFocusChanged { if (!it.isFocused) onFocusLost() }
+            .onPreviewKeyEvent {
+                if (!editing && it.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
+                    if (it.type == KeyEventType.KeyUp) activate()
+                    true
+                } else if (!editing && it.type == KeyEventType.KeyDown) {
+                    val direction = when (it.key) {
+                        Key.DirectionUp -> FocusDirection.Up
+                        Key.DirectionDown -> FocusDirection.Down
+                        Key.DirectionLeft -> FocusDirection.Left
+                        Key.DirectionRight -> FocusDirection.Right
+                        else -> null
+                    }
+                    if (direction != null) { focusManager.moveFocus(direction); true } else false
+                } else false
+            }.pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    if (waitForUpOrCancellation(pass = PointerEventPass.Initial) != null) currentActivate()
+                }
+            }
+    )
 }
 
 @Composable
@@ -743,11 +628,11 @@ private fun SubtitleTrackRow(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    NikTvTextActionButton(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth().playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-    ) {
+    // NikTvTextActionButton owns the single matching rounded focus outline.
+    NikTvTextActionButton(onClick = onClick, modifier = modifier.fillMaxWidth().heightIn(min = 44.dp)
+        .focusProperties { canFocus = true }) {
         RadioButton(selected = selected, onClick = null)
-        Text(label, Modifier.weight(1f).padding(start = 8.dp))
+        Text(label, Modifier.weight(1f).padding(start = 8.dp),
+            style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

@@ -160,6 +160,11 @@ internal fun VlcPlayerScreen(
     offlineDownloadProgressText: String? = null,
     initialSubtitleDelayMs: Long = 0L,
     initialExternalSubtitleFile: File? = null,
+    initialExternalSubtitleEnabled: Boolean = initialExternalSubtitleFile != null,
+    initialSubtitleAppearance: SubtitleAppearancePreset = SubtitleAppearancePreset.STANDARD,
+    onSubtitleSettingsChanged: (File?, Boolean, Long, SubtitleAppearancePreset) -> Unit = { _, _, _, _ -> },
+    focusSubtitleSettingsOnEnter: Boolean = false,
+    onSubtitleSettingsFocusRestored: () -> Unit = {},
     onRetry: (Long) -> Unit,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     onReauthenticate: ((Long) -> Unit)? = null,
@@ -297,8 +302,18 @@ internal fun VlcPlayerScreen(
     var selectedSubtitleTrackId by remember(media.media.id) { mutableStateOf<Int?>(null) }
     var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(initialSubtitleDelayMs) }
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile) }
-    var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile != null) }
-    var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
+    var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleEnabled) }
+    var subtitleAppearance by remember { mutableStateOf(initialSubtitleAppearance) }
+    // Read in composition so every setting subscribes this synchronization
+    // scope, even when its visible consumers recompose in child layers only.
+    val subtitleFileForParent = externalSubtitleFile
+    val subtitleEnabledForParent = externalSubtitleEnabled
+    val subtitleDelayForParent = subtitleDelayMs
+    val subtitleAppearanceForParent = subtitleAppearance
+    SideEffect {
+        onSubtitleSettingsChanged(subtitleFileForParent, subtitleEnabledForParent,
+            subtitleDelayForParent, subtitleAppearanceForParent)
+    }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
         if (unique.any { it.id == media.media.id }) unique
@@ -410,6 +425,16 @@ internal fun VlcPlayerScreen(
             extraControlsOpen = true
             settingsRibbon.restore(playerSwitchRequester)
             onPlayerSwitchFocusRestored()
+        }
+    }
+
+    LaunchedEffect(focusSubtitleSettingsOnEnter) {
+        if (focusSubtitleSettingsOnEnter) {
+            controlsVisible = true
+            extraControlsOpen = true
+            settingsRibbon.restore(subtitleRequester)
+            modeFeedback = "Using VLC for this subtitle format"
+            onSubtitleSettingsFocusRestored()
         }
     }
 
@@ -2529,8 +2554,15 @@ internal fun VlcPlayerScreen(
                     subtitleDelayMs = delay
                     player.setSpuDelay(delay * 1_000L)
                 },
-                onDismiss = { subtitleDialogOpen = false },
+                onDismiss = {
+                    settingsRibbon.restore(subtitleRequester)
+                    subtitleDialogOpen = false
+                },
                 appearance = subtitleAppearance,
+                appearanceSupported = externalSubtitleEnabled && downloadedUsesOverlay,
+                limitationMessage = if (!externalSubtitleEnabled || !downloadedUsesOverlay)
+                    "VLC controls the style of native captions. Appearance presets apply to downloaded SRT and VTT captions."
+                    else null,
                 onAppearanceChange = { subtitleAppearance = it },
                 internetSearch = SubtitleSearchRequest(
                     query = media.suggestedSubtitleSearchTitle(),

@@ -422,10 +422,17 @@ fun PlayerScreen(
     var manualDecoderSession by remember(media.decoderSessionId) { mutableStateOf<String?>(null) }
     val activeDecoderSession = manualDecoderSession ?: media.decoderSessionId
     var sessionEngineOverride by remember(media.media.id) { mutableStateOf<PlaybackEngine?>(null) }
+    // Keep intent above the engine branch so a subtitle handoff also preserves Pause.
+    var playbackRequested by remember(media.progressKey, media.playbackAttemptId) { mutableStateOf(media.playWhenReady) }
+    LaunchedEffect(media.playbackAttemptId, media.playWhenReady) {
+        playbackRequested = media.playWhenReady
+    }
     var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(0L) }
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf<File?>(null) }
     var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(false) }
     var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
+    var restoreSubtitleSettingsFocus by remember(media.progressKey) { mutableStateOf(false) }
+    var subtitleFormatNotice by remember(media.progressKey) { mutableStateOf<String?>(null) }
     DisposableEffect(media.media.id, externalSubtitleFile?.absolutePath) {
         val episodeSubtitleFile = externalSubtitleFile
         onDispose {
@@ -461,7 +468,7 @@ fun PlayerScreen(
             !alternateSourceSupportsVlc(media.alternateSource)))) PlaybackEngine.MEDIA3 else requestedEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
-            media = media,
+            media = media.copy(playWhenReady = playbackRequested),
             cricketScores = cricketScores,
             introSettings = introSettings,
             initialResumePosition = engineSwitchResumePosition,
@@ -479,7 +486,10 @@ fun PlayerScreen(
             liveQueueCategoryTitle = liveQueueCategoryTitle,
             liveQueueXtream = liveQueueXtream,
             onProgress = onProgress,
-            onPlaybackIntentChanged = onPlaybackIntentChanged,
+            onPlaybackIntentChanged = { requested ->
+                playbackRequested = requested
+                onPlaybackIntentChanged(requested)
+            },
             onChooseAlternateSource = onChooseAlternateSource,
             alternateSourceChooserOpen = alternateSourceChooserOpen,
             onVideoFrameRendered = onVideoFrameRendered,
@@ -491,6 +501,16 @@ fun PlayerScreen(
             offlineDownloadProgressText = offlineDownloadProgressText,
             initialSubtitleDelayMs = subtitleDelayMs,
             initialExternalSubtitleFile = externalSubtitleFile,
+            initialExternalSubtitleEnabled = externalSubtitleEnabled,
+            initialSubtitleAppearance = subtitleAppearance,
+            onSubtitleSettingsChanged = { file, enabled, delay, appearance ->
+                externalSubtitleFile = file
+                externalSubtitleEnabled = enabled
+                subtitleDelayMs = delay
+                subtitleAppearance = appearance
+            },
+            focusSubtitleSettingsOnEnter = restoreSubtitleSettingsFocus,
+            onSubtitleSettingsFocusRestored = { restoreSubtitleSettingsFocus = false },
             onRetry = onRetry,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             onReauthenticate = onReauthenticate,
@@ -512,6 +532,11 @@ fun PlayerScreen(
                 restorePlayerSwitchFocus = true
                 selectedPlayerChoice = selectedEngine
                 engineSwitchResumePosition = playbackRestartPosition(media.catalogType, position)
+                if (selectedEngine.resolvePlayerEngine(context, playbackScope) != PlaybackEngine.VLC &&
+                    externalSubtitleEnabled && externalSubtitleFile?.extension?.let(::downloadedSubtitleUsesOverlay) == false) {
+                    externalSubtitleEnabled = false
+                    subtitleFormatNotice = "This subtitle format needs VLC. Choose SRT or VTT for this player."
+                }
                 onPlaybackEngineChanged(selectedEngine)
                 sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
             },
@@ -668,7 +693,6 @@ fun PlayerScreen(
     }
 
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
-    var playbackRequested by remember(media.progressKey, media.playbackAttemptId) { mutableStateOf(media.playWhenReady) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackHasBeenReady by remember(media.progressKey) { mutableStateOf(false) }
     var bufferingIndicatorVisible by remember(media.progressKey) { mutableStateOf(true) }
@@ -796,6 +820,8 @@ fun PlayerScreen(
         if (effectiveEngine == PlaybackEngine.MPV && mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) {
             MpvPlayerAdapter(context, media, playbackRestartPosition(media.catalogType,
                 resumePosition ?: engineSwitchResumePosition)).apply {
+                if (externalSubtitleEnabled) trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
                 prepare()
                 playWhenReady = playbackRequested && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             }
@@ -842,6 +868,8 @@ fun PlayerScreen(
                 setLoadErrorHandlingPolicy(LiveSegmentLoadErrorPolicy { playbackHasBeenReady })
         })
         builder.build().apply {
+            if (externalSubtitleEnabled) trackSelectionParameters = trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             if (com.nikhil.niktv.BuildConfig.DEBUG && com.nikhil.niktv.BuildConfig.PLAYBACK_SYNC_DIAGNOSTICS) volume = 0f
             // HLS supplies its own hold-back/segment timing. A fixed six-second
             // offset puts long-segment streams too close to unfinished media.
@@ -1053,9 +1081,36 @@ fun PlayerScreen(
             castPlayer = castPlayer,
             localPlayer = localPlayer
         )
-    LaunchedEffect(player, media.playbackAttemptId, media.playWhenReady) {
-        playbackRequested = media.playWhenReady
-        player.playWhenReady = media.playWhenReady && (!isTvDevice ||
+    fun activateDownloadedSubtitle(file: File) {
+        subtitleFormatNotice = null
+        if (downloadedSubtitleUsesOverlay(file.extension)) {
+            externalSubtitleEnabled = true
+            return
+        }
+        // The text overlay only parses SRT/VTT. Hand styled formats to a native
+        // renderer once, without changing the saved player choice or retrying a
+        // source whose headers/timing cannot be represented by VLC.
+        val unavailableReason = when {
+            castSessionActive -> "Stop casting or choose SRT or VTT."
+            media.separateAudioUrl != null -> "This stream uses separate audio; choose SRT or VTT."
+            vlcHeaderOptions(media.streamRequestHeaders) == null -> "This stream requires headers VLC cannot use; choose SRT or VTT."
+            !alternateSourceSupportsVlc(media.alternateSource) -> "This source's stream timing requires ExoPlayer; choose SRT or VTT."
+            else -> null
+        }
+        if (unavailableReason != null) {
+            externalSubtitleEnabled = false
+            subtitleFormatNotice = "This subtitle format needs VLC. $unavailableReason"
+            modeFeedback = subtitleFormatNotice
+            return
+        }
+        externalSubtitleEnabled = true
+        engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
+        playbackRequested = player.playWhenReady
+        restoreSubtitleSettingsFocus = true
+        sessionEngineOverride = PlaybackEngine.VLC
+    }
+    LaunchedEffect(player, playbackRequested) {
+        player.playWhenReady = playbackRequested && (!isTvDevice ||
             playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
     }
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
@@ -2163,6 +2218,7 @@ fun PlayerScreen(
             },
             update = { playerView ->
                 if (playerView.player !== player) playerView.player = player
+                playerView.subtitleView?.applySubtitleAppearance(subtitleAppearance, bottomInsetDp = if (controlsVisible) 118 else 24)
                 val mpvPlayer = player as? MpvPlayerAdapter
                 if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) mpvPlayer?.setVideoSizing(resizeMode)
                 val requestedResizeMode = if (mpvPlayer != null) AspectRatioFrameLayout.RESIZE_MODE_FILL else when (resizeMode) {
@@ -2196,7 +2252,7 @@ fun PlayerScreen(
             file = externalSubtitleFile,
             positionMs = position,
             delayMs = subtitleDelayMs,
-            enabled = externalSubtitleEnabled,
+            enabled = externalSubtitleEnabled && externalSubtitleFile?.extension?.let(::downloadedSubtitleUsesOverlay) == true,
             appearance = subtitleAppearance,
             modifier = Modifier.fillMaxSize().padding(bottom = if (controlsVisible) 118.dp else 24.dp)
         )
@@ -3254,13 +3310,15 @@ fun PlayerScreen(
                     val builder = player.trackSelectionParameters.buildUpon()
                         .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                     if (id == DOWNLOADED_SUBTITLE_TRACK_ID) {
-                        externalSubtitleEnabled = true
+                        externalSubtitleFile?.let(::activateDownloadedSubtitle)
                         builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                     } else if (id == null) {
                         externalSubtitleEnabled = false
+                        subtitleFormatNotice = null
                         builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                     } else {
                         externalSubtitleEnabled = false
+                        subtitleFormatNotice = null
                         subtitleTracks.firstOrNull { it.id == id }?.let { track ->
                             builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                                 .setOverrideForType(
@@ -3273,8 +3331,15 @@ fun PlayerScreen(
                 onDelayChange = { delay ->
                     subtitleDelayMs = delay
                 },
-                onDismiss = { subtitleDialogOpen = false },
-                timingRequiresVlc = false,
+                onDismiss = {
+                    settingsRibbon.restore(subtitleFocusRequester)
+                    subtitleDialogOpen = false
+                },
+                delaySupported = externalSubtitleEnabled || (effectiveEngine == PlaybackEngine.MPV && !castSessionActive),
+                limitationMessage = subtitleFormatNotice ?: if (!externalSubtitleEnabled &&
+                    (effectiveEngine != PlaybackEngine.MPV || castSessionActive) && subtitleTracks.isNotEmpty())
+                    "Embedded caption timing is unavailable in ExoPlayer. Use VLC or MPV, or download SRT or VTT."
+                    else null,
                 appearance = subtitleAppearance,
                 onAppearanceChange = { subtitleAppearance = it },
                 internetSearch = SubtitleSearchRequest(
@@ -3286,7 +3351,7 @@ fun PlayerScreen(
                 onExternalSubtitle = { file ->
                     externalSubtitleFile?.takeIf { it != file }?.delete()
                     externalSubtitleFile = file
-                    externalSubtitleEnabled = true
+                    activateDownloadedSubtitle(file)
                     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                         .build()
@@ -3301,6 +3366,7 @@ fun PlayerScreen(
                         file.delete()
                         externalSubtitleFile = null
                         externalSubtitleEnabled = false
+                        subtitleFormatNotice = null
                     }
                 }
             )
