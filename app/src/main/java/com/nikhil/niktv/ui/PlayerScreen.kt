@@ -3501,12 +3501,15 @@ internal fun PlayerChromeIconButton(
     size: Dp = if (primaryAction) 56.dp else 48.dp,
     iconSize: Dp = if (primaryAction) 28.dp else 23.dp,
     scaleOnFocus: Boolean = true,
+    compact: Boolean = false,
     onFocused: (Boolean) -> Unit = {}
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val minimumFocusSize = when {
-        rememberPlayerTvDevice() -> 56.dp
+        compact && rememberPlayerTvDevice() -> 40.dp
+        compact -> 44.dp
+        rememberPlayerTvDevice() -> 48.dp
         configuration.usesPhoneLayout() -> 44.dp
         else -> 48.dp
     }
@@ -3521,6 +3524,7 @@ internal fun PlayerChromeIconButton(
             .playerControlFocus(
                 shape = shape,
                 scaleOnFocus = scaleOnFocus,
+                minimumTargetSize = controlSize,
                 onFocused = {
                     isFocused = it
                     onFocused(it)
@@ -4186,6 +4190,7 @@ private fun formatPlayerTime(milliseconds: Long): String {
 internal fun Modifier.playerControlFocus(
     shape: Shape = RoundedCornerShape(12.dp),
     scaleOnFocus: Boolean = true,
+    minimumTargetSize: Dp? = null,
     onFocused: (Boolean) -> Unit = {}
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
@@ -4195,7 +4200,7 @@ internal fun Modifier.playerControlFocus(
     val directionalInput = playerUsesDirectionalInput()
     val showFocus = focused && directionalInput && LocalWindowInfo.current.isWindowFocused
     LaunchedEffect(showFocus) { onFocused(showFocus) }
-    val minimumSize = when {
+    val minimumSize = minimumTargetSize ?: when {
         isTv -> 56.dp
         configuration.usesPhoneLayout() -> 44.dp
         else -> 48.dp

@@ -18,7 +18,31 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class SyncCommitMetadataTest {
+    @Test fun changedProfileNamesAreIncludedAndAccountOnlyMessagesStayUnchanged() {
+        assertEquals("Sync NikTV account data · Profile: Sangeeta",
+            profileSyncCommitMessage(DEFAULT_SYNC_COMMIT_MESSAGE, listOf("Sangeeta")))
+        assertEquals("Sync NikTV account data · Profiles: Nikhil, Sangeeta",
+            profileSyncCommitMessage(DEFAULT_SYNC_COMMIT_MESSAGE, listOf("Nikhil", "Sangeeta")))
+        assertEquals(DEFAULT_SYNC_COMMIT_MESSAGE, profileSyncCommitMessage(DEFAULT_SYNC_COMMIT_MESSAGE, emptyList()))
+        assertFalse(profileSyncCommitMessage(DEFAULT_SYNC_COMMIT_MESSAGE, listOf("token=fixture-secret")).contains("fixture-secret"))
+    }
     private val fixture = SyncDeviceInfo("Xiaomi", "M2102J20SI", "13", "1.2.3", "abcd1234")
+
+    @Test fun transportAddsTheNamesOfProfilesInTheUploadedChanges() = runBlocking {
+        var message = ""
+        val transport = GitHubSyncTransport("fixture-auth-token", fixtureClient("main") {
+            message = it.getString("message")
+        }, pauseWrites = false, commitMessage = syncCommitMessage(fixture))
+        val repo = SyncRepository("fixture-owner", "main", "unused")
+        val remote = transport.fetch(repo, "77")
+        val identities = listOf("Nikhil", "Sangeeta").mapIndexed { index, name ->
+            val id = "00000000-0000-0000-0000-00000000000${index + 1}"
+            SyncRecord("77", id, "profile", id, JSONObject().put("name", name).toString(), 1L, "fixture", "create-$index")
+        }
+        transport.upload(repo, remote.document.copy(records = identities), remote.sha)
+        assertTrue(message.contains("Profiles: Nikhil, Sangeeta"))
+        assertTrue(message.endsWith("device abcd1234"))
+    }
 
     private fun fixtureClient(branch: String, onCommit: (JSONObject) -> Unit) = OkHttpClient.Builder().addInterceptor { chain ->
         val request = chain.request()

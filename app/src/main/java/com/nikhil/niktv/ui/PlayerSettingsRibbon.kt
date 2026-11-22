@@ -60,17 +60,13 @@ internal fun RowScope.PlayerBottomActions(scroll: ScrollState, content: @Composa
 /** Settings expand inline from the persistent bottom-row trigger. */
 internal class PlayerSettingsRibbonState {
     private var target: FocusRequester? = null
-    private var lastFocused: FocusRequester? = null
     private var actions: List<PlayerSettingAction> = emptyList()
     var revealOnOpen = false
         private set
-    fun entry(actions: List<PlayerSettingAction>): FocusRequester =
-        lastFocused?.takeIf { requester -> actions.any { it.requester == requester } }
-            ?: actions.first().requester
+    fun entry(actions: List<PlayerSettingAction>): FocusRequester = actions.last().requester
     fun firstOr(fallback: FocusRequester): FocusRequester = actions.firstOrNull()?.requester ?: fallback
     fun open(actions: List<PlayerSettingAction>, directional: Boolean = true) {
         this.actions = actions
-        lastFocused = null
         revealOnOpen = !directional
         // Opening only reveals options. The persistent Settings trigger retains
         // focus until the user deliberately enters the row with Left.
@@ -83,7 +79,6 @@ internal class PlayerSettingsRibbonState {
         target = if (runCatching { requester.requestFocus() }.getOrDefault(false)) null else requester
     }
     fun revealed() { revealOnOpen = false }
-    fun rememberFocus(requester: FocusRequester) { lastFocused = requester }
     fun attach(requester: FocusRequester) {
         if (target == requester && runCatching { requester.requestFocus() }.getOrDefault(false)) target = null
     }
@@ -112,7 +107,7 @@ internal fun PlayerSettingsRibbon(
     BackHandler(onBack = ::dismiss)
     Row(modifier.onPreviewKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) { dismiss(); true } else false
-    }, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+    }, horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
         actions.forEachIndexed { index, action -> key(action.kind) {
             val previous = actions.getOrNull(index - 1)?.requester ?: left
             val next = actions.getOrNull(index + 1)?.requester ?: toggle
@@ -125,8 +120,8 @@ internal fun PlayerSettingsRibbon(
                     .playerDpadFocusRoutes(left = previous, right = next, up = up),
                 selected = action.selected, progress = action.progress,
                 indeterminateProgress = action.indeterminateProgress, badgeText = action.badgeText,
-                size = 44.dp, iconSize = 21.dp, scaleOnFocus = false,
-                onFocused = { focused -> if (focused) state.rememberFocus(action.requester); onFocused(focused) })
+                size = 40.dp, iconSize = 19.dp, scaleOnFocus = false, compact = true,
+                onFocused = onFocused)
         } }
     }
 }

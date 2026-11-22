@@ -198,7 +198,17 @@ internal class GitHubSyncTransport(
         val commit = call("GET", base(repository) + "/git/commits/$head")!!
         val tree = call("POST", base(repository) + "/git/trees", JSONObject()
             .put("base_tree", commit.getJSONObject("tree").getString("sha")).put("tree", changes))!!
-        val created = call("POST", base(repository) + "/git/commits", JSONObject().put("message", commitMessage)
+        val previousIdentities = fetchedIndex!!.records.filter { it.collection == "profile" }.associateBy { it.recordId }
+        val identities = document.records.filter { it.collection == "profile" }.associateBy { it.recordId }
+        val changedProfiles = uploaded.keys + (previousIdentities.keys + identities.keys).filter {
+            previousIdentities[it] != identities[it]
+        }
+        val names = changedProfiles.sorted().map { id ->
+            val record = identities[id] ?: previousIdentities[id]
+            runCatching { JSONObject(record?.payload.orEmpty()).optString("name").takeIf { it.isNotBlank() } }
+                .getOrNull() ?: "Unnamed profile"
+        }
+        val created = call("POST", base(repository) + "/git/commits", JSONObject().put("message", profileSyncCommitMessage(commitMessage, names))
             .put("tree", tree.getString("sha")).put("parents", JSONArray().put(head)))!!
         // Fast-forward only: a sibling commit from another device causes a bounded
         // fetch/merge retry. Until this succeeds none of these files are visible.

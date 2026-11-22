@@ -50,6 +50,16 @@ internal fun sanitizeSyncCommitMessage(value: String): String {
         .take(MAX_SYNC_COMMIT_MESSAGE_LENGTH).trim().ifBlank { DEFAULT_SYNC_COMMIT_MESSAGE }
 }
 
+internal fun profileSyncCommitMessage(base: String, names: List<String>): String {
+    if (names.isEmpty()) return sanitizeSyncCommitMessage(base)
+    val labels = names.map { devicePart(it, 32, "Unnamed profile") }
+    val profiles = labels.take(3).joinToString(", ") + if (labels.size > 3) " +${labels.size - 3} more" else ""
+    val safeBase = sanitizeSyncCommitMessage(base)
+    val details = safeBase.removePrefix(DEFAULT_SYNC_COMMIT_MESSAGE).trim().trimStart('·').trim()
+    return sanitizeSyncCommitMessage("$DEFAULT_SYNC_COMMIT_MESSAGE · ${if (names.size == 1) "Profile" else "Profiles"}: $profiles" +
+        if (details.isEmpty()) "" else " · $details")
+}
+
 /** Called from the account manager's IO operations. Custom names can contain a room/location,
  * so commits use the manufacturer's model label rather than user-entered device labels. */
 internal fun currentDeviceSyncCommitMessage(context: Context): String = syncCommitMessage(SyncDeviceInfo(

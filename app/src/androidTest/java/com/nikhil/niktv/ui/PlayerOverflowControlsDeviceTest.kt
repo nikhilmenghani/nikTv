@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,10 +21,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlayerOverflowControlsDeviceTest {
+    private val actionsCount = 11
     private val ins get() = InstrumentationRegistry.getInstrumentation()
     private fun root(): AccessibilityNodeInfo? {
         if (android.os.Build.VERSION.SDK_INT >= 33) ins.uiAutomation.clearCache()
-        return ins.uiAutomation.rootInActiveWindow
+        return ins.uiAutomation.rootInActiveWindow?.takeIf { it.refresh() }
     }
     private fun find(label: String): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -53,7 +55,11 @@ class PlayerOverflowControlsDeviceTest {
     private fun key(code: Int) = ins.sendKeyDownUpSync(code)
 
     @Test fun bottomSettingsKeepDockFixedAndRestoreDpadFocus() = exercise(false)
-    @Test fun narrowBottomSettingsScrollWithoutWrappingOrLosingFocus() = exercise(true)
+    @Test fun narrowBottomSettingsScrollWithoutWrappingOrLosingFocus() {
+        org.junit.Assume.assumeFalse("Phone-width fixture; Fire TV uses the full-screen row",
+            ins.targetContext.isTvLikeDevice(ins.targetContext.resources.configuration))
+        exercise(true)
+    }
 
     private fun exercise(narrow: Boolean) {
         check(ins.targetContext.packageName.endsWith(".regression"))
@@ -62,9 +68,13 @@ class PlayerOverflowControlsDeviceTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
         val history = java.util.concurrent.CopyOnWriteArrayList<String>()
         val activations = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val paintedWidths = java.util.concurrent.ConcurrentHashMap<PlayerSettingKind, Int>()
+        var fixtureToggle: FocusRequester? = null
         try {
+            await("Fixture window is ready for focus") { host.hasWindowFocus() }
             ins.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
                 val toggle = remember { FocusRequester() }
+                fixtureToggle = toggle
                 val seek = remember { FocusRequester() }
                 val play = remember { FocusRequester() }
                 val requesters = remember { PlayerSettingKind.entries.associateWith { FocusRequester() } }
@@ -76,8 +86,9 @@ class PlayerOverflowControlsDeviceTest {
                     PlayerSettingKind.INTRO, PlayerSettingKind.TIMEOUT, PlayerSettingKind.CRICKET, PlayerSettingKind.INFORMATION)
                     .map { kind -> PlayerSettingAction(kind, Icons.Default.Settings, kind.title,
                         onClick = { activations.add(kind.title); choice = kind }, requester = requesters.getValue(kind),
-                        modifier = Modifier.onFocusChanged { if (it.isFocused) history.add(kind.title) }, value = "Current") }
-                Surface(Modifier.fillMaxSize()) {
+                        modifier = Modifier.onGloballyPositioned { paintedWidths[kind] = it.size.width }
+                            .onFocusChanged { if (it.isFocused) history.add(kind.title) }, value = "Current") }
+                Surface(Modifier.fillMaxSize().initialFocusEntry(toggle)) {
                     Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
                         Column(if (narrow) Modifier.width(360.dp) else Modifier.fillMaxWidth()) {
                             PlayerChromeIconButton(Icons.Default.Settings, "Seek fixture", {}, Modifier.focusRequester(seek)
@@ -95,6 +106,7 @@ class PlayerOverflowControlsDeviceTest {
                                     state.open(actions); open = true
                                 }, Modifier.focusRequester(toggle)
                                     .focusProperties { left = if (open) state.entry(actions) else play; up = seek }
+                                    .playerDpadFocusRoutes(left = if (open) state.entry(actions) else play, up = seek)
                                     .onFocusChanged { if (it.isFocused) history.add("Toggle") })
                             }
                         }
@@ -102,8 +114,10 @@ class PlayerOverflowControlsDeviceTest {
                 }
                 if (choice != null) AlertDialog(onDismissRequest = { choice = null }, title = { Text("Setting choice") },
                     confirmButton = { TextButton(onClick = { choice = null }) { Text("Close choice") } })
-                LaunchedEffect(Unit) { withFrameNanos { }; toggle.requestFocus() }
             } } }
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            await("Settings is attached") { find("Settings fixture") != null }
+            ins.runOnMainSync { requireNotNull(fixtureToggle).requestFocus() }
             await("Settings owns initial focus") { focused("Settings fixture") }
             val playBefore = bounds("Play fixture")
             val seekBefore = bounds("Seek fixture")
@@ -111,13 +125,19 @@ class PlayerOverflowControlsDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Opening retains Settings") { focused("Settings fixture") && find("Subtitles") != null }
             assertTrue("Opening must not move focus", history.drop(openedAt).isEmpty())
-            key(KeyEvent.KEYCODE_DPAD_LEFT)
-            await("Opening enters the first quick control") { focused("Subtitles") }
-            assertEquals("Opening must not visit another main control", listOf("Subtitles"), history.drop(openedAt))
             assertEquals("Opening leaves Play anchored", playBefore, bounds("Play fixture"))
             assertEquals("Opening leaves seek anchored", seekBefore, bounds("Seek fixture"))
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Left enters the physically adjacent last setting") { focused("Stream info") }
+            assertEquals("Left must not jump across the row", listOf("Stream info"), history.drop(openedAt))
+            repeat(actionsCount - 1) { key(KeyEvent.KEYCODE_DPAD_LEFT) }
+            await("Opening enters the first quick control") { focused("Subtitles") }
             val subtitlesBefore = bounds("Subtitles")
-            assertEquals("Settings share the transport baseline", bounds("Play fixture").centerY(), subtitlesBefore.centerY())
+            val paintedSubtitleBefore = paintedWidths[PlayerSettingKind.SUBTITLES]
+            val expectedSettingDp = if (ins.targetContext.isTvLikeDevice(ins.targetContext.resources.configuration)) 40 else 44
+            assertTrue("Compact settings must respect their requested size rather than the transport minimum",
+                kotlin.math.abs(requireNotNull(paintedWidths[PlayerSettingKind.SUBTITLES]) - expectedSettingDp * ins.targetContext.resources.displayMetrics.density) <= 1f)
+            assertEquals("Settings share the transport baseline", playBefore.centerY(), subtitlesBefore.centerY())
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Right enters Audio") { focused("Audio") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -156,8 +176,10 @@ class PlayerOverflowControlsDeviceTest {
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Reopening retains Settings") { focused("Settings fixture") && find("Subtitles") != null }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Reopening enters the nearest setting") { focused("Stream info") }
+            repeat(actionsCount - 1) { key(KeyEvent.KEYCODE_DPAD_LEFT) }
             await("Reopening remains reachable") { focused("Subtitles") }
-            assertEquals("Focus outline does not resize its cell", subtitlesBefore.width(), bounds("Subtitles").width())
+            assertEquals("Focus outline does not resize its cell", paintedSubtitleBefore, paintedWidths[PlayerSettingKind.SUBTITLES])
             NavigationAuditEvidence.capture("player-bottom-settings-${if (narrow) "narrow" else "wide"}")
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Up reaches the seek row") { focused("Seek fixture") }
