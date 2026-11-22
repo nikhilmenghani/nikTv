@@ -69,6 +69,7 @@ internal class GitHubSyncTransport(
     private val pauseWrites: Boolean = true,
     commitMessage: String = DEFAULT_SYNC_COMMIT_MESSAGE,
     private val profileCache: ProfileSyncCache = ProfileSyncCache(),
+    private val readOnly: Boolean = false,
 ) {
     private val commitMessage = sanitizeSyncCommitMessage(commitMessage)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -86,6 +87,7 @@ internal class GitHubSyncTransport(
         val base = "/repos/${identity.login}/niktv-data"
         var repo = call("GET", base, missing = true)
         val created = repo == null
+        require(!readOnly || repo != null) { "No remote NikTV account exists yet. Use normal sync to set it up first." }
         if (repo == null) {
             repo = try {
                 call("POST", "/user/repos", JSONObject().put("name", "niktv-data").put("private", true)
@@ -102,6 +104,7 @@ internal class GitHubSyncTransport(
         if (manifest != null) {
             validateManifest(JSONObject(manifest.first), identity.accountId)
         } else {
+            require(!readOnly) { "The remote NikTV manifest is missing. Pull cancelled; local data is preserved." }
             val root = call("GET", "$base/git/trees/${encode(repository.branch)}", missing = true)
             val tree = root?.optJSONArray("tree")
             val empty = tree == null || tree.length() == 0
@@ -267,6 +270,7 @@ internal class GitHubSyncTransport(
     }
 
     private suspend fun call(method: String, path: String, payload: JSONObject? = null, missing: Boolean = false): JSONObject? = withContext(Dispatchers.IO) {
+        check(!readOnly || method == "GET") { "Uploads are blocked in manual pull-only mode." }
         if (method != "GET" && pauseWrites) {
             val wait = 1_000 - (android.os.SystemClock.elapsedRealtime() - lastWriteAt)
             if (wait > 0) delay(wait)

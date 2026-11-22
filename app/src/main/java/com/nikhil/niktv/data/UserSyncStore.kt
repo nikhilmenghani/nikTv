@@ -72,6 +72,7 @@ interface UserSyncDao {
     @Query("SELECT * FROM sync_records WHERE accountId = :accountId") suspend fun records(accountId: String): List<SyncRecord>
     @Query("SELECT * FROM sync_records WHERE accountId = :accountId") fun observeRecords(accountId: String): Flow<List<SyncRecord>>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun put(record: SyncRecord)
+    @Query("DELETE FROM sync_records WHERE accountId=:accountId AND profileId=:profileId") suspend fun deleteProfileRecords(accountId: String, profileId: String)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun enqueue(entry: SyncOutbox)
     @Query("SELECT * FROM sync_outbox WHERE accountId = :accountId") suspend fun pending(accountId: String): List<SyncOutbox>
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE accountId = :accountId") fun observePendingCount(accountId: String): Flow<Int>
@@ -294,6 +295,30 @@ class UserSyncStore private constructor(private val context: Context) {
     suspend fun acknowledge(accountId: String, mutationIds: Collection<String>) {
         mutationIds.chunked(400).forEach { dao.acknowledge(accountId, it) }
     }
+
+    /** Explicit remote-wins replacement, including removal of local-only test mutations.
+     * Device credentials, downloads, portal mappings and other viewers stay on this device. */
+    internal suspend fun replaceProfileFromRemote(owner: UserScope, records: List<SyncRecord>) = withEditLock { db.withTransaction {
+        require(scope.value == owner) { "The selected profile changed. Pull again for the current profile." }
+        require(records.all { it.accountId == owner.accountId }) { "Remote data belongs to another account." }
+        val incoming = records.filter { it.profileId == owner.profileId }
+        require(incoming.any { it.collection == "profile" && it.recordId == owner.profileId }) {
+            "This profile has no server copy. Local data is preserved."
+        }
+        require(incoming.all { it.revision >= 0 && it.generation >= 0 && it.payload.length <= 1_000_000 }) { "Invalid sync record." }
+        val maps = dao.mappings(owner.accountId)
+        val privateKeys = privateViewingKeys(owner, maps, incoming)
+        val queued = pending(owner.accountId).filter { it.profileId == owner.profileId }.map { it.mutationId }
+        dao.deleteProfileRecords(owner.accountId, owner.profileId)
+        incoming.forEach { record ->
+            // A read-only pull must never enqueue privacy cleanup for a later upload.
+            dao.put(if (!record.deleted && privateViewingRecord(record, maps, privateKeys))
+                record.copy(payload = "{}", deleted = true) else record)
+        }
+        acknowledge(owner.accountId, queued)
+        rebuildPreferences(owner, dao.records(owner.accountId), preserveDeviceOnly = false)
+        if (incoming.any { it.collection == "profile" && it.deleted }) forgetViewer(owner)
+    } }
     suspend fun merge(accountId: String, records: List<SyncRecord>) = withEditLock { db.withTransaction {
         require(records.all { it.accountId == accountId }) { "Remote data belongs to another account." }
         val current = dao.records(accountId).associateBy { Triple(it.profileId, it.collection, it.recordId) }.toMutableMap()
@@ -459,7 +484,7 @@ class UserSyncStore private constructor(private val context: Context) {
         mutate(UserScope(owner.accountId, ""), "account", migrationId, "{\"imported\":true}")
     } }
 
-    private suspend fun rebuildPreferences(owner: UserScope, records: List<SyncRecord>) {
+    private suspend fun rebuildPreferences(owner: UserScope, records: List<SyncRecord>, preserveDeviceOnly: Boolean = true) {
         val maps = dao.mappings(owner.accountId)
         val privateKeys = privateViewingKeys(owner, maps)
         val localPreferences = dao.preferences(owner.accountId, owner.profileId).associate { it.name to it.value }
@@ -476,7 +501,7 @@ class UserSyncStore private constructor(private val context: Context) {
                     val restored = values.mapNotNull { value -> restoreLocal(value["entry"] ?: JsonNull, maps)?.let { item -> mergeLocalMediaMetadata(item, indexed[identity(item)]) } }
                     // Legacy v2/title keys and still-unmapped portal records stay on this device.
                     // They are never used as shared identity or discarded by unrelated sync.
-                    val deviceOnly = previous.filter { identity(it) == null }
+                    val deviceOnly = if (preserveDeviceOnly) previous.filter { identity(it) == null } else emptyList()
                     if (restored.isEmpty() && deviceOnly.isEmpty()) null else JsonArray(restored + deviceOnly).toString()
                 }
                 values.isEmpty() -> null

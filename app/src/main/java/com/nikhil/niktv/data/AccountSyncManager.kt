@@ -48,9 +48,26 @@ class AccountSyncManager private constructor(context: Context) {
     private val mutableState = MutableStateFlow(AccountSyncState())
     val state: StateFlow<AccountSyncState> = mutableState.asStateFlow()
     private val profileSyncCache = ProfileSyncCache()
+    private val debugPrefs = context.getSharedPreferences("niktv_debug_sync", Context.MODE_PRIVATE)
+    private val mutablePullOnly = MutableStateFlow(debugPullOnlyEnabled(
+        stored = debugPrefs.getBoolean("manual_pull_only", false)))
+    val manualPullOnly: StateFlow<Boolean> = mutablePullOnly.asStateFlow()
+
+    /** Device-only setting. Serialize mode changes with all uploads already in progress. */
+    fun requestManualPullOnly(enabled: Boolean): Job = syncScope.launch { mutex.withLock {
+        if (!com.nikhil.niktv.BuildConfig.DEBUG) return@withLock
+        check(debugPrefs.edit().putBoolean("manual_pull_only", enabled).commit())
+        mutablePullOnly.value = enabled
+        prefs.getString("accountId", null)?.let { accountId -> runCatching { cancelWork(accountId) } }
+        mutableState.value = mutableState.value.copy(error = null, message = if (enabled)
+            "Manual pull only. Local edits will not upload." else "Normal sync. Local changes can upload on sync.")
+    } }
+
+    private fun automaticSyncAllowed() = !manualPullOnly.value && automaticAccountSyncEnabled()
 
     private fun githubTransport(token: String) = GitHubSyncTransport(token,
-        commitMessage = currentDeviceSyncCommitMessage(context), profileCache = profileSyncCache)
+        commitMessage = currentDeviceSyncCommitMessage(context), profileCache = profileSyncCache,
+        readOnly = manualPullOnly.value)
 
     /** Restore the last successful local account without waiting for a network request. */
     suspend fun restoreCachedAccount(): AccountSyncState {
@@ -108,16 +125,21 @@ class AccountSyncManager private constructor(context: Context) {
                 mutableState.value = AccountSyncState(identity.accountId, identity.login,
                     initialized = isInitialized(identity.accountId), syncing = true, message = "Preparing private niktv-data repository…")
                 val repository = transport.bootstrap(identity)
-                transport.checkWrite(repository)
-                syncCaptured(transport, repository, identity.accountId)
-                successful(identity)
+                if (manualPullOnly.value) {
+                    val message = pullCaptured(transport, repository, identity.accountId, store.selectedScope.value)
+                    successful(identity, message)
+                } else {
+                    transport.checkWrite(repository)
+                    syncCaptured(transport, repository, identity.accountId)
+                    successful(identity)
+                }
             } catch (cancelled: CancellationException) { interrupted(); throw cancelled }
             catch (error: Exception) { failed(error) }
         }
     }
 
     suspend fun launchSync() = mutex.withLock {
-        if (!automaticAccountSyncEnabled()) return@withLock
+        if (!automaticSyncAllowed()) return@withLock
         awaitSetupRecovery(context)
         withContext(Dispatchers.IO) {
             val token = vault.token()
@@ -129,11 +151,16 @@ class AccountSyncManager private constructor(context: Context) {
         }
     }
 
-    suspend fun syncNow() = syncForAccount(null)
+    suspend fun syncNow() {
+        if (manualPullOnly.value) pullProfileNow(store.selectedScope.value) else syncForAccount(null)
+    }
 
     /** Explicit UI requests belong to the account manager, so closing Settings or
      * recreating an Activity cannot interrupt an upload after it has started. */
-    fun requestManualSync(): Job? = requestAccountSync()
+    fun requestManualSync(): Job? = if (manualPullOnly.value) {
+        val owner = store.selectedScope.value
+        syncScope.launch { pullProfileNow(owner) }
+    } else requestAccountSync()
     fun requestLaunchSync(): Job? = requestAutomaticSync()
 
     /** Called only after the episode's history mutation is durable. Never borrow a
@@ -143,7 +170,7 @@ class AccountSyncManager private constructor(context: Context) {
     fun requestPlaybackSync(scope: UserScope): Job? = requestAutomaticSync(scope.accountId)
 
     private fun requestAutomaticSync(accountId: String? = null): Job? =
-        if (automaticAccountSyncEnabled()) {
+        if (automaticSyncAllowed()) {
             if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.i("NikTvSyncTiming", "automatic_requested")
             requestAccountSync(accountId)
         } else null
@@ -162,7 +189,8 @@ class AccountSyncManager private constructor(context: Context) {
     }
 
     internal suspend fun syncForAccount(expectedAccountId: String?, requireRetry: Boolean = expectedAccountId != null) = mutex.withLock {
-        if (requireRetry && !automaticAccountSyncEnabled()) return@withLock
+        // Also guard requests queued before the device switched to pull-only mode.
+        if (manualPullOnly.value || (requireRetry && !automaticSyncAllowed())) return@withLock
         awaitSetupRecovery(context)
         withContext(Dispatchers.IO) {
             val accountId = prefs.getString("accountId", null) ?: return@withContext
@@ -179,6 +207,42 @@ class AccountSyncManager private constructor(context: Context) {
             mutableState.value = mutableState.value.copy(syncing = true, error = null, message = "Syncing account…")
             runSavedSync(accountId, token)
         }
+    }
+
+    private suspend fun pullProfileNow(owner: UserScope?) = mutex.withLock {
+        if (!com.nikhil.niktv.BuildConfig.DEBUG || !manualPullOnly.value) return@withLock
+        awaitSetupRecovery(context)
+        withContext(Dispatchers.IO) {
+            val accountId = prefs.getString("accountId", null) ?: return@withContext
+            if (owner != null && (owner.accountId != accountId || owner != store.selectedScope.value)) return@withContext
+            val token = vault.token()
+            if (token.isBlank()) { restoreCachedAccountLocked(false); return@withContext }
+            mutableState.value = mutableState.value.copy(syncing = true, error = null, message = "Pulling server profile…")
+            try {
+                val transport = githubTransport(token)
+                val identity = transport.identity()
+                require(identity.accountId == accountId) { "The token belongs to another account. Reconnect before pulling." }
+                val repository = transport.bootstrap(identity)
+                val message = pullCaptured(transport, repository, accountId, owner)
+                successful(identity, message)
+            } catch (cancelled: CancellationException) { interrupted(); throw cancelled }
+            catch (error: Exception) { failed(error) }
+        }
+    }
+
+    private suspend fun pullCaptured(transport: GitHubSyncTransport, repository: SyncRepository,
+        accountId: String, owner: UserScope?): String {
+        val downloaded = transport.fetch(repository, accountId)
+        require(downloaded.document.accountId == accountId && downloaded.document.records.all { it.accountId == accountId }) {
+            "Remote records belong to another account. Local data is preserved."
+        }
+        if (owner == null) {
+            // On the chooser, refresh only the roster so a profile can be selected first.
+            store.merge(accountId, downloaded.document.records.filter { it.collection == "profile" })
+            return "Profiles downloaded. Select a profile, then pull it in Settings. No changes uploaded."
+        }
+        store.replaceProfileFromRemote(owner, downloaded.document.records)
+        return "Profile replaced with server copy. No changes uploaded."
     }
 
     private suspend fun runSavedSync(accountId: String, token: String) {
@@ -241,12 +305,12 @@ class AccountSyncManager private constructor(context: Context) {
             }.onFailure { if (it is CancellationException) throw it }
         }
     }
-    private fun successful(identity: SyncIdentity) {
+    private fun successful(identity: SyncIdentity, message: String = "Up to date") {
         check(prefs.edit().putBoolean("initialized:${identity.accountId}", true)
             .putBoolean("reconnect:${identity.accountId}", false).remove("retryAfter:${identity.accountId}")
             .putBoolean("retryNeeded:${identity.accountId}", false)
             .putLong("lastSync:${identity.accountId}", System.currentTimeMillis()).commit())
-        mutableState.value = AccountSyncState(identity.accountId, identity.login, initialized = true, message = "Up to date")
+        mutableState.value = AccountSyncState(identity.accountId, identity.login, initialized = true, message = message)
         cancelLegacySyncWork(identity.accountId)
     }
 
@@ -291,7 +355,7 @@ class AccountSyncManager private constructor(context: Context) {
     /** Ordinary changes remain local until app opening or manual sync. Only a transient
      * failure of an explicitly started sync may arrange its own network-constrained retry. */
     fun requestSync(reason: String, immediate: Boolean = false) {
-        if (!automaticAccountSyncEnabled() || !allowsScheduledSync(reason)) return
+        if (!automaticSyncAllowed() || !allowsScheduledSync(reason)) return
         val accountId = prefs.getString("accountId", null) ?: return
         if (!retryNeeded(accountId) || !prefs.contains("ciphertext") || prefs.getBoolean("reconnect:$accountId", false)) return
         val request = OneTimeWorkRequestBuilder<AccountSyncWorker>()
@@ -305,7 +369,7 @@ class AccountSyncManager private constructor(context: Context) {
     private fun cancelLegacySyncWork(accountId: String) {
         runCatching {
             val work = WorkManager.getInstance(context)
-            if (!automaticAccountSyncEnabled()) work.cancelUniqueWork("niktv-sync-retry:$accountId")
+            if (!automaticSyncAllowed()) work.cancelUniqueWork("niktv-sync-retry:$accountId")
             listOf("periodic", "progress", "edits", "flush", "catchup").forEach {
                 work.cancelUniqueWork("niktv-sync-$it:$accountId")
             }
@@ -353,6 +417,8 @@ internal fun automaticAccountSyncEnabled(applicationId: String = com.nikhil.nikt
     applicationId == "com.nikhil.niktv" || (diagnosticOptIn && applicationId == "com.nikhil.niktv.debug")
 
 internal fun allowsScheduledSync(reason: String): Boolean = reason == "retry"
+
+internal fun debugPullOnlyEnabled(debug: Boolean = com.nikhil.niktv.BuildConfig.DEBUG, stored: Boolean): Boolean = debug && stored
 
 internal fun cachedAccountState(accountId: String?, login: String?, initialized: Boolean,
     reconnect: Boolean, tokenAvailable: Boolean): AccountSyncState {

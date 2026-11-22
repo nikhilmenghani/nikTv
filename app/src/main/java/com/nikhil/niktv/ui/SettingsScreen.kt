@@ -154,19 +154,37 @@ private fun AccountSyncSettingsRow() {
     val context = LocalContext.current
     val manager = remember(context) { com.nikhil.niktv.data.AccountSyncManager.get(context) }
     val sync by manager.state.collectAsStateWithLifecycle()
+    val pullOnly by manager.manualPullOnly.collectAsStateWithLifecycle()
     val pending by remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context).pendingChanges }.collectAsStateWithLifecycle(0)
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("Enabled profile sync", style = MaterialTheme.typography.labelLarge)
-            Text(if (sync.syncing) "Syncing in background…" else sync.error ?: if (pending > 0) "Changes saved on this device" else sync.message,
-                style = MaterialTheme.typography.labelSmall, color = Color(0xFF9A9DA7), maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
+    val owner by remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context).selectedScope }.collectAsStateWithLifecycle()
+    val modeFocus = remember { FocusRequester() }
+    val actionFocus = remember { FocusRequester() }
+    val canSync = sync.initialized && !sync.reconnectRequired && (!pullOnly || owner != null)
+    Column {
+        if (com.nikhil.niktv.BuildConfig.DEBUG) SettingsControlRow(
+            "Manual pull only (debug)", checked = pullOnly,
+            modifier = Modifier.focusRequester(modeFocus).focusProperties { if (canSync) down = actionFocus },
+            description = if (pullOnly) "Uploads blocked. Pull replaces this profile's local edits with the server copy."
+                else "Normal sync can upload local changes. Enable pull only before testing; pull before returning to normal sync to discard test edits.",
+            onToggle = { manager.requestManualPullOnly(it) }, enabled = !sync.syncing)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(if (pullOnly) "Manual profile pull" else "Enabled profile sync", style = MaterialTheme.typography.labelLarge)
+                Text(if (sync.syncing) sync.message else sync.error ?: if (pending > 0 && !pullOnly) "Changes saved on this device" else sync.message,
+                    style = MaterialTheme.typography.labelSmall, color = Color(0xFF9A9DA7), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+            }
+            NikTvSecondaryActionButton(onClick = { if (!sync.syncing) manager.requestManualSync() },
+                modifier = Modifier.focusRequester(actionFocus).focusProperties {
+                    if (com.nikhil.niktv.BuildConfig.DEBUG && !sync.syncing) up = modeFocus
+                },
+                enabled = canSync && (!sync.syncing || pullOnly)) {
+                Text(if (sync.syncing) "Syncing…" else if (pullOnly) "Pull profile" else "Sync all enabled")
+            }
         }
-        NikTvSecondaryActionButton(onClick = manager::requestManualSync,
-            enabled = !sync.syncing && sync.initialized && !sync.reconnectRequired) {
-            Text(if (sync.syncing) "Syncing…" else "Sync all enabled")
-        }
+        if (pullOnly && owner == null) Text("Select a profile first to pull its latest server copy.",
+            Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = SettingsMuted)
     }
 }
 
@@ -611,11 +629,10 @@ internal fun ModernSettingsScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing),
         containerColor = Color(0xFF07080A),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = { Column {
+        topBar = {
             CompactSettingsTopBar(if (compactSettingsHeader) null else LocalSelectedUserProfile.current?.name, settingsBack,
                 compact = compactSettingsHeader)
-            if (selectedSettingsPage != SettingsPage.XTREAM_CONTENT) AccountSyncSettingsRow()
-        } }
+        }
     ) { padding ->
         val settingsPageContent: @Composable () -> Unit = {
         val activeDestination = LocalSettingsDestination.current ?: selectedSettingsDestination
@@ -694,6 +711,9 @@ internal fun ModernSettingsScreen(
             fontWeight = FontWeight.SemiBold)
 
         if (activePage == SettingsPage.PROFILES) {
+            SettingsSection("Profile sync", page = SettingsPage.PROFILES) {
+                SettingsLinkRow(SettingsPage.PROFILE_SYNC, "Sync this device with your GitHub profile")
+            }
             DeviceProfileSettings { id -> managedViewerId = id; openSettingsPage(SettingsPage.VIEWER_PORTALS) }
             SettingsSection("Portals & access", page = SettingsPage.PROFILES) {
                 SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "${state.profiles.size} saved")
@@ -701,6 +721,9 @@ internal fun ModernSettingsScreen(
                 SettingsLinkRow(SettingsPage.PRIVATE_CONFIGURATION, if (RemoteCredentials.configured(context)) "Configured" else "Set up")
                 SettingsLinkRow(SettingsPage.PAIRING, "Nearby, remote or file")
             }
+        }
+        if (activePage == SettingsPage.PROFILE_SYNC) {
+            SettingsSection("Profile sync", page = SettingsPage.PROFILE_SYNC) { AccountSyncSettingsRow() }
         }
         if (activePage == SettingsPage.VIEWER_PORTALS) {
             ViewerProfileSettings(managedViewerId, state.profiles)
@@ -1943,7 +1966,8 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
                 description = "Controls whether this profile appears on Who’s watching.",
                 onToggle = { checked -> update {
                     users.setProfileEnabled(profile.id, checked)
-                    if (checked) com.nikhil.niktv.data.AccountSyncManager.get(context).requestManualSync()
+                    val manager = com.nikhil.niktv.data.AccountSyncManager.get(context)
+                    if (checked && !manager.manualPullOnly.value) manager.requestManualSync()
                 } })
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),

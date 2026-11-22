@@ -47,6 +47,7 @@ internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
         "Profiles", "Portals",
         "Connection",
         "Parental controls",
+        "Profile sync",
         "Private configuration",
         "Pair devices" -> SettingsDestination.PROFILES
 
@@ -70,6 +71,7 @@ internal enum class SettingsPage(val destination: SettingsDestination, val title
     PLAYBACK(SettingsDestination.PLAYBACK, "Playback"),
     DISPLAY(SettingsDestination.GENERAL, "Display & controls"),
     PROFILES(SettingsDestination.PROFILES, "Profiles & portals"),
+    PROFILE_SYNC(SettingsDestination.PROFILES, "Profile sync", PROFILES),
     VIEWER_PORTALS(SettingsDestination.PROFILES, "Profile settings", PROFILES),
     XTREAM_CONTENT(SettingsDestination.PROFILES, "Content preferences", VIEWER_PORTALS),
     LIBRARY(SettingsDestination.CATALOG, "Library & backup"),
@@ -108,6 +110,7 @@ internal fun compactSettingsPageFor(title: String): SettingsPage = when (title) 
     "Compatibility" -> SettingsPage.COMPATIBILITY
     "Storage & refresh" -> SettingsPage.BROWSE_REFRESH
     "Profiles", "Portals" -> SettingsPage.MANAGE_PROFILES
+    "Profile sync" -> SettingsPage.PROFILE_SYNC
     "Connection" -> SettingsPage.CONNECTION
     "Parental controls" -> SettingsPage.PARENTAL
     "Private configuration" -> SettingsPage.PRIVATE_CONFIGURATION

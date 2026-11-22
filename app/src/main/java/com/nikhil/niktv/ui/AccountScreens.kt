@@ -613,6 +613,7 @@ internal fun UserProfilesScreen(
     val configuration = LocalConfiguration.current
     val remote = context.usesRemoteNavigation(configuration)
     // Entry focus belongs to this visit, not to selection/sync updates while a portal opens.
+    val pullOnly by remember(context) { AccountSyncManager.get(context).manualPullOnly }.collectAsStateWithLifecycle()
     val first = remember { FocusRequester() }
     val entryProfileId = remember { selectedProfileId }
     val offlineEntry = remember { FocusRequester() }
@@ -679,7 +680,7 @@ internal fun UserProfilesScreen(
                     }) }
                 }
                 add(Triple("GitHub account", Icons.Default.AccountCircle, onAccount))
-                add(Triple("Sync now", Icons.Default.Sync, onSync))
+                add(Triple(if (pullOnly) "Pull profiles" else "Sync now", Icons.Default.Sync, onSync))
                 add(Triple("Remote control", Icons.Default.SettingsRemote, LocalOpenLanPlayback.current))
                 onSettings?.let { add(Triple("Settings", Icons.Default.Settings, it)) }
             }
@@ -689,7 +690,7 @@ internal fun UserProfilesScreen(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { (label, icon, action) ->
                             ProfileChooserAction(label, icon, action, Modifier.weight(1f),
-                                enabled = label != "Sync now" || !state.syncing,
+                                enabled = label !in setOf("Sync now", "Pull profiles") || !state.syncing,
                                 compact = shortWide)
                         }
                         repeat(actionColumns - row.size) { Spacer(Modifier.weight(1f)) }

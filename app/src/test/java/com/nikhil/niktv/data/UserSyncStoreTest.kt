@@ -21,6 +21,52 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserSyncStoreTest {
+    @Test fun manualPullOverridesNewerLocalEditsAndDropsOnlyThisProfilesQueue(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val profile = users.profiles.first().first()
+        val owner = UserScope("101", profile.id)
+        users.selectProfile(profile.id)
+        val server = users.snapshot("101").filter { it.profileId == profile.id } + SyncRecord(
+            "101", profile.id, "preferences", "season", """{"preference":"series_start_season","entry":"2"}""",
+            1, "remote", "server-season")
+        users.updateProfile(profile.copy(name = "Local test edit"))
+        users.db.withTransaction {
+            users.mutate(owner, "preferences", "season", """{"preference":"series_start_season","entry":"99"}""")
+            users.mutate(owner, "preferences", "test-only", """{"preference":"recent_searches","entry":"test"}""")
+            users.db.syncDao().putPreference(UserLocalPreference("101", profile.id, "offline_media_downloads", "local-files"))
+        }
+        val other = users.snapshot("101").filter { it.profileId != profile.id }
+        val otherQueue = users.pending("101").filter { it.profileId != profile.id }
+        users.replaceProfileFromRemote(owner, server)
+        assertEquals(server.toSet(), users.snapshot("101").filter { it.profileId == profile.id }.toSet())
+        assertEquals(other, users.snapshot("101").filter { it.profileId != profile.id })
+        assertEquals(otherQueue, users.pending("101"))
+        val preferences = users.db.syncDao().preferences("101", profile.id).associate { it.name to it.value }
+        assertEquals("2", preferences["series_start_season"])
+        assertEquals("local-files", preferences["offline_media_downloads"])
+        assertNull(preferences["recent_searches"])
+        assertEquals(profile.name, users.profiles.first().single { it.id == profile.id }.name)
+    }
+
+    @Test fun invalidMissingOrSwitchedProfilePullPreservesLocalData(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val profiles = users.profiles.first()
+        val owner = UserScope("101", profiles.first().id)
+        users.selectProfile(owner.profileId)
+        val before = users.snapshot("101")
+        val queued = users.pending("101")
+        suspend fun rejected(records: List<SyncRecord>) {
+            try { users.replaceProfileFromRemote(owner, records); fail("Unsafe pull accepted") }
+            catch (_: IllegalArgumentException) { }
+            assertEquals(before, users.snapshot("101")); assertEquals(queued, users.pending("101"))
+        }
+        rejected(emptyList())
+        rejected(before.map { it.copy(accountId = "202") })
+        rejected(before.map { it.copy(revision = -1) })
+        users.selectProfile(profiles.last().id)
+        rejected(before)
+    }
+
     @Test fun playbackSnapshotReadsFreshSyncedProgressForItsCapturedViewerOnly(): Unit = runBlocking {
         users.selectAccount("101"); users.initializeDefaults("101")
         val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))

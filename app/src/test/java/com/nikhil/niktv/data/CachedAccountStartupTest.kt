@@ -37,6 +37,7 @@ class CachedAccountStartupTest {
         withContext(Dispatchers.IO) { users.db.clearAllTables() }
         users.disconnect()
         auth.edit().clear().commit()
+        context.getSharedPreferences("niktv_debug_sync", 0).edit().clear().commit()
         Unit
     }
 
@@ -164,6 +165,24 @@ class CachedAccountStartupTest {
         assertTrue(automaticAccountSyncEnabled("com.nikhil.niktv.debug", diagnosticOptIn = true))
         assertFalse(automaticAccountSyncEnabled("com.nikhil.niktv.regression", diagnosticOptIn = true))
         assertFalse(automaticAccountSyncEnabled("other.package", diagnosticOptIn = true))
+    }
+
+    @Test fun pullOnlyPersistsAndBlocksQueuedNormalSyncAndReleaseIgnoresIt() = runBlocking {
+        assertFalse(debugPullOnlyEnabled(debug = false, stored = true))
+        assertTrue(debugPullOnlyEnabled(debug = true, stored = true))
+        assertFalse(debugPullOnlyEnabled(debug = true, stored = false))
+        auth.edit().putString("accountId", "101").putBoolean("retryNeeded:101", true).commit()
+        val manager = manager()
+        manager.requestManualPullOnly(true).join()
+        assertTrue(manager.manualPullOnly.value)
+        val restored = manager()
+        assertTrue(restored.manualPullOnly.value)
+        restored.syncForAccount("101", requireRetry = false)
+        assertFalse(restored.state.value.syncing)
+        assertNull(restored.state.value.error)
+        assertNull(restored.requestLaunchSync())
+        restored.requestManualPullOnly(false).join()
+        assertFalse(manager().manualPullOnly.value)
     }
 
     @Test fun debugLaunchAndViewingTriggersCannotQueueASync() = runBlocking {

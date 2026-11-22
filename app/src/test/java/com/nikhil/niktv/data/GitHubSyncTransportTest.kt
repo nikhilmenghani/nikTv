@@ -15,13 +15,34 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class GitHubSyncTransportTest {
+    @Test fun readOnlyTransportBlocksWritesBeforeTheyReachTheNetwork() = runBlocking {
+        val api = GitHubSyncTransport("fixture", OkHttpClient.Builder().addInterceptor {
+            fail("Read-only transport attempted HTTP write")
+            throw AssertionError()
+        }.build(), readOnly = true)
+        try { api.checkWrite(SyncRepository("fixture", "main", "https://github.com/fixture/niktv-data")); fail("Write accepted") }
+        catch (error: IllegalStateException) { assertTrue(error.message!!.contains("blocked")) }
+    }
+
+    @Test fun readOnlyBootstrapNeverCreatesRepositoryOrManifest() = runBlocking {
+        for (missingRepo in listOf(true, false)) {
+            val api = transport(readOnly = true) { method, path ->
+                assertEquals("GET", method)
+                if (missingRepo || path.endsWith("manifest.json")) 404 to "{}"
+                else 200 to """{"private":true,"default_branch":"main","html_url":"https://github.com/dynamic-owner/niktv-data"}"""
+            }
+            try { api.bootstrap(identity); fail("Missing remote setup accepted") }
+            catch (_: IllegalArgumentException) { }
+        }
+    }
+
     private val identity = SyncIdentity("77", "dynamic-owner")
-    private fun transport(handler: (String, String) -> Pair<Int, String>) = GitHubSyncTransport("fixture-token", OkHttpClient.Builder().addInterceptor { chain ->
+    private fun transport(readOnly: Boolean = false, handler: (String, String) -> Pair<Int, String>) = GitHubSyncTransport("fixture-token", OkHttpClient.Builder().addInterceptor { chain ->
         val request = chain.request()
         val result = handler(request.method, request.url.encodedPath)
         Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(result.first).message("fixture")
             .body(result.second.toResponseBody()).build()
-    }.build(), pauseWrites = false)
+    }.build(), pauseWrites = false, readOnly = readOnly)
 
     @Test fun identityUsesAuthenticatedNumericIdAndLogin() = runBlocking {
         val api = transport { _, path -> assertEquals("/user", path); 200 to """{"id":77,"login":"dynamic-owner"}""" }
