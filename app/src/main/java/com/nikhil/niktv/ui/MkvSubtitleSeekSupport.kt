@@ -82,11 +82,13 @@ internal class MkvSubtitleSeekSupport(private val recovery: SparseSubtitleCueRec
             return this
         }
 
+        @androidx.annotation.OptIn(androidx.media3.common.util.ExperimentalApi::class)
         override fun experimentalSetTextTrackTranscodingEnabled(enabled: Boolean): ExtractorsFactory {
             delegate.experimentalSetTextTrackTranscodingEnabled(enabled)
             return this
         }
 
+        @androidx.annotation.OptIn(androidx.media3.common.util.ExperimentalApi::class)
         override fun experimentalSetCodecsToParseWithinGopSampleDependencies(codecs: Int): ExtractorsFactory {
             delegate.experimentalSetCodecsToParseWithinGopSampleDependencies(codecs)
             return this
