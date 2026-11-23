@@ -24,7 +24,7 @@ class WindowLayoutTest {
         assertTrue(landscape.usesShortWideLayout())
         assertEquals(portrait.smallestScreenWidthDp, landscape.smallestScreenWidthDp)
         assertEquals(portrait.fontScale, landscape.fontScale, 0f)
-        assertFalse(window(592, 360).usesPhoneLayout())
+        assertTrue(window(592, 360).usesPhoneLayout())
         assertEquals(2, com.nikhil.niktv.discovery.components.modernCollectionPosterColumns(portrait, false))
         assertEquals(4, com.nikhil.niktv.discovery.components.modernCollectionPosterColumns(landscape, false))
     }
@@ -44,6 +44,14 @@ class WindowLayoutTest {
         val missing = Configuration().apply { smallestScreenWidthDp = 360 }
         assertTrue(missing.usesPhoneLayout())
         missing.orientation = Configuration.ORIENTATION_LANDSCAPE
-        assertFalse(missing.usesPhoneLayout())
+        assertTrue(missing.usesPhoneLayout())
+    }
+    @Test fun splitScreenAndRotationAlwaysReevaluateCurrentWidth() {
+        val current = window(412, 900)
+        for ((width, height, phone) in listOf(Triple(900, 412, false), Triple(480, 280, true),
+            Triple(412, 900, true), Triple(320, 220, true), Triple(800, 360, false))) {
+            current.screenWidthDp = width; current.screenHeightDp = height
+            assertEquals("$width x $height", phone, current.usesPhoneLayout())
+        }
     }
 }

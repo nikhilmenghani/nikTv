@@ -91,6 +91,7 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
             (DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS } +
                 if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination ->
                 val active = destination == selected
+                var focused by remember(destination) { mutableStateOf(false) }
                 val icon = when (destination) {
                     DiscoveryPhoneDestination.HOME -> Icons.Default.Home
                     DiscoveryPhoneDestination.LIVE -> Icons.Default.LiveTv
@@ -101,8 +102,10 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                 }
                 Box(Modifier.weight(1f)) {
                 Surface(onClick = { if (destination == DiscoveryPhoneDestination.PROVIDERS) portalsOpen = true else select(destination) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { this.selected = active; contentDescription = destination.title },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                        .onFocusChanged { focused = it.isFocused }.semantics { this.selected = active; contentDescription = destination.title },
                     shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(2.dp, if (focused) Color.White else Color.Transparent),
                     color = if (active) Color(0x663D3E45) else Color.Transparent,
                     contentColor = if (active) Color.White else Color(0xFFB1B1B9)) {
                     Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp),
