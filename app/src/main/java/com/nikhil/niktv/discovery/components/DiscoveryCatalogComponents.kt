@@ -2552,7 +2552,8 @@ private fun Modifier.modernGridVerticalFocus(
     index: () -> Int,
     columns: Int,
     itemCount: Int,
-    moveFocus: (Int) -> Unit
+    moveFocus: (Int) -> Unit,
+    sectionGrid: com.nikhil.niktv.discovery.ChannelSectionGrid? = null
 ): Modifier {
     if (!enabled) return this
 
@@ -2565,8 +2566,8 @@ private fun Modifier.modernGridVerticalFocus(
         if (currentIndex < 0) return@onPreviewKeyEvent false
         val targetIndex =
             when (event.key) {
-                Key.DirectionDown -> currentIndex + columns
-                Key.DirectionUp -> currentIndex - columns
+                Key.DirectionDown -> sectionGrid?.vertical(currentIndex, true) ?: (currentIndex + columns)
+                Key.DirectionUp -> sectionGrid?.vertical(currentIndex, false) ?: (currentIndex - columns)
                 else -> return@onPreviewKeyEvent false
             }
 
@@ -3134,7 +3135,7 @@ internal fun ModernIptvCollection(
     val matchingOccurrences by androidx.compose.runtime.key(pinnedOnly) {
         produceState(
             if (isLiveTv) emptyList() else providerCollectionOccurrences(emptyList(), state.items),
-            state.items, pinsForView, trimmedChannelQuery, sourceFilter, availabilityToken,
+            state.items, pinsForView, pinnedChannelIds, trimmedChannelQuery, sourceFilter, availabilityToken,
             if (trimmedChannelQuery.isEmpty() || !isLiveTv) 0L else guideClock.value
         ) {
             value = withContext(Dispatchers.Default) {
@@ -3151,7 +3152,11 @@ internal fun ModernIptvCollection(
                     val byId = buildMap { candidates.forEach { putIfAbsent(it.id, it) } }
                     pinsForView.mapNotNull(byId::get)
                 }
-                providerCollectionOccurrences(emptyList(), items)
+                val pinned = if (isLiveTv && !pinnedOnly) {
+                    val byId = candidates.associateBy { it.id }
+                    pinnedChannelIds.mapNotNull(byId::get)
+                } else emptyList()
+                providerCollectionOccurrences(pinned, items)
             }
             appliedAvailability = availabilityToken
             collectionProjectionReady = true
@@ -3177,6 +3182,10 @@ internal fun ModernIptvCollection(
         isLiveTv && isPhone -> 1
         isLiveTv -> 4
         else -> modernCollectionPosterColumns(configuration, isTv)
+    }
+    val pinnedShortcutCount = displayedOccurrences.takeWhile { it.key.startsWith("pinned:") }.size
+    val sectionGrid = remember(pinnedShortcutCount, displayedItems.size, columns) {
+        com.nikhil.niktv.discovery.ChannelSectionGrid(pinnedShortcutCount, displayedItems.size, columns)
     }
     val fullSpan:
         androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() ->
@@ -3289,11 +3298,11 @@ internal fun ModernIptvCollection(
     DisposableEffect(viewportKey, isLiveTv) {
         onDispose { if (isLiveTv) enrichVisibleLiveGuides(emptyList()) }
     }
-    LaunchedEffect(viewportKey, gridState, isLiveTv) {
+    LaunchedEffect(viewportKey, gridState, isLiveTv, sectionGrid) {
         if (!isLiveTv) return@LaunchedEffect
         snapshotFlow {
             val visibleIds = gridState.layoutInfo.visibleItemsInfo.sortedBy { it.index }.mapNotNull { visible ->
-                currentGuideItems.getOrNull(visible.index)?.id
+                currentGuideItems.getOrNull(sectionGrid.tileIndex(visible.index))?.id
             }
             Triple(
                 prioritizeVisibleLiveGuides(visibleIds,
@@ -3336,7 +3345,7 @@ internal fun ModernIptvCollection(
             focusMoveInProgress = true
             focusedPosterIndex = targetIndex
             focusMoveJob?.cancel()
-            if (gridState.focusVisibleTile(targetIndex, targetRequester)) {
+            if (gridState.focusVisibleTile(sectionGrid.gridIndex(targetIndex), targetRequester)) {
                 focusMoveJob = null
                 focusMoveInProgress = false
             } else focusMoveJob = focusScope.launch {
@@ -3345,7 +3354,7 @@ internal fun ModernIptvCollection(
                 // Otherwise removal of the source tile sends focus to Profile.
                 runCatching { gridFocusParking.requestFocus() }
 
-                val targetGridIndex = targetIndex
+                val targetGridIndex = sectionGrid.gridIndex(targetIndex)
                 val targetInfo = gridState.layoutInfo.visibleItemsInfo
                     .firstOrNull { it.index == targetGridIndex }
                 val fullyVisible = targetInfo != null &&
@@ -3371,7 +3380,8 @@ internal fun ModernIptvCollection(
                             )
                         }
                     } else {
-                        gridState.revealTileRow(targetGridIndex, columns)
+                        if (sectionGrid.sectioned) gridState.scrollToItem(targetGridIndex)
+                        else gridState.revealTileRow(targetGridIndex, columns)
                     }
                     withTimeoutOrNull(1_000L) {
                         snapshotFlow {
@@ -3401,7 +3411,7 @@ internal fun ModernIptvCollection(
         if (remoteNavigationActive && !availabilityFocusPending && !collectionControlsOwnNavigation && initialTilesPositioned && retainFocusAfterItemChange && focusIds.isNotEmpty()) {
             withFrameNanos { }
             if (focusedPosterIndex < 0 && !focusMoveInProgress) {
-                val target = restoredChannelIndex() ?: gridState.firstVisibleItemIndex.coerceAtMost(displayedItems.lastIndex)
+                val target = restoredChannelIndex() ?: sectionGrid.tileIndex(gridState.firstVisibleItemIndex).coerceAtMost(displayedItems.lastIndex)
                 moveFocusToIndex(target)
             }
         }
@@ -3415,7 +3425,7 @@ internal fun ModernIptvCollection(
     }
     LaunchedEffect(remoteNavigationActive, gridOwnsFocus, initialTilesPositioned, focusIds.isNotEmpty(), availabilityFocusPending) {
         if (remoteNavigationActive && !availabilityFocusPending && !collectionControlsOwnNavigation && gridOwnsFocus && initialTilesPositioned && !focusMoveInProgress) {
-            val targetIndex = restoredChannelIndex() ?: gridState.firstVisibleItemIndex
+            val targetIndex = restoredChannelIndex() ?: sectionGrid.tileIndex(gridState.firstVisibleItemIndex)
             moveFocusToIndex(targetIndex)
         }
     }
@@ -3440,7 +3450,7 @@ internal fun ModernIptvCollection(
         hasItems = focusIds.isNotEmpty(),
         focusedIndex = { if (availabilityFocusPending || collectionControlsOwnNavigation) 0 else focusedPosterIndex },
         restoreIndex = {
-            restoredChannelIndex() ?: gridState.firstVisibleItemIndex.coerceAtMost((displayedItems.size - 1).coerceAtLeast(0))
+            restoredChannelIndex() ?: sectionGrid.tileIndex(gridState.firstVisibleItemIndex).coerceAtMost((displayedItems.size - 1).coerceAtLeast(0))
         },
         moveFocus = moveFocusToIndex
     )
@@ -3458,7 +3468,7 @@ internal fun ModernIptvCollection(
     val appendPage = if (trimmedChannelQuery.isEmpty() || hasLocalMore) {
         rememberCollectionPagination(
             displayedItems.map { it.id }, state.catalogLoadingMore, gridState,
-            itemFocusRequesters, loadMoreVisible, itemOffset = 0, focusKeys = focusIds
+            itemFocusRequesters, loadMoreVisible, itemOffset = if (sectionGrid.sectioned) 2 else 0, focusKeys = focusIds
         )
     } else CollectionPagination(false) {}
 
@@ -3703,7 +3713,7 @@ internal fun ModernIptvCollection(
                     "${matchingItems.distinctBy { it.id }.size} matching loaded channels",
                     color = Color.White.copy(alpha = .68f), style = MaterialTheme.typography.bodySmall)
                 if (trimmedChannelQuery.isNotEmpty()) {
-                    val matchCount = matchingItems.size
+                    val matchCount = if (isLiveTv && !pinnedOnly) matchingItems.size - pinnedShortcutCount else matchingItems.size
                     val searchIsCurrent = state.categoryFindQuery.equals(trimmedChannelQuery, ignoreCase = true)
                     val status = when {
                         !isLiveTv -> "$matchCount titles found · This collection only"
@@ -3770,20 +3780,21 @@ internal fun ModernIptvCollection(
                 // Parking is only an intermediate stop during lazy-row moves;
                 // an ordinary entry must hand focus to an actual media tile.
                 if (remoteNavigationActive && !availabilityFocusPending && !collectionControlsOwnNavigation && initialTilesPositioned && focusState.isFocused && !focusMoveInProgress) {
-                    val targetIndex = restoredChannelIndex() ?: gridState.firstVisibleItemIndex
+                    val targetIndex = restoredChannelIndex() ?: sectionGrid.tileIndex(gridState.firstVisibleItemIndex)
                     moveFocusToIndex(targetIndex.coerceIn(0, (focusIds.size - 1).coerceAtLeast(0)))
                 }
             }
             .onPreviewKeyEvent { event ->
                 isLiveTv && remoteNavigationActive && event.type == KeyEventType.KeyDown &&
-                    event.key == Key.DirectionUp && focusedPosterIndex in 0 until columns && focusChannelView()
+                    event.key == Key.DirectionUp && focusedPosterIndex >= 0 && sectionGrid.vertical(focusedPosterIndex, false) < 0 && focusChannelView()
             }
             .modernGridVerticalFocus(
                 enabled = remoteNavigationActive,
                 index = { focusedPosterIndex },
                 columns = columns,
                 itemCount = focusIds.size,
-                moveFocus = moveFocusToIndex
+                moveFocus = moveFocusToIndex,
+                sectionGrid = sectionGrid
             )
             .focusable(remoteNavigationActive),
         contentPadding = PaddingValues(
@@ -3800,12 +3811,22 @@ internal fun ModernIptvCollection(
             if (isLiveTv && isTv) 12.dp else if (isTv) 20.dp else 12.dp
         )
     ) {
+        val sections = if (pinnedShortcutCount > 0) listOf(
+            Triple("Pinned", 0, displayedOccurrences.take(pinnedShortcutCount)),
+            Triple("All channels", pinnedShortcutCount, displayedOccurrences.drop(pinnedShortcutCount))
+        ) else listOf(Triple("", 0, displayedOccurrences))
+        for ((heading, startIndex, tiles) in sections) {
+        if (heading.isNotEmpty()) item("channel-section-$heading", span = fullSpan) {
+            Text(heading, color = Color.White, style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(vertical = 6.dp))
+        }
         gridItemsIndexed(
-            items = displayedOccurrences,
+            items = tiles,
             key = { _, occurrence ->
                 "modern-iptv-${category.type.name}-${occurrence.key}"
             }
-        ) { index, occurrence ->
+        ) { sectionIndex, occurrence ->
+            val index = startIndex + sectionIndex
             val media = occurrence.media
             var pinFeedback by remember(occurrence.key) { mutableStateOf<String?>(null) }
             LaunchedEffect(pinFeedback) {
@@ -3885,7 +3906,7 @@ internal fun ModernIptvCollection(
                         focusedPosterIndex = index
                         if (playInContext != null) playInContext(media, providerPlayerQueue(matchingItems),
                             com.nikhil.niktv.model.PlaybackQueueFilter(trimmedChannelQuery, filteredSourceIds,
-                                pinnedIds = pinsForView.orEmpty(),
+                                pinnedIds = if (pinnedOnly) emptyList() else pinnedChannelIds,
                                 selectedOrdinal = displayedItems.take(index).count { it.id == media.id },
                                 contextId = category.id,
                                 fixedIds = when {
@@ -3928,6 +3949,7 @@ internal fun ModernIptvCollection(
             )
         }
 
+        }
         if (state.loading && state.items.isEmpty()) {
             item("iptv-loading", span = fullSpan) {
                 ModernCollectionLoading(

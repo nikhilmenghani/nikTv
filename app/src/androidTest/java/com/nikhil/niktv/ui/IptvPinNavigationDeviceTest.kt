@@ -70,7 +70,6 @@ class IptvPinNavigationDeviceTest {
     @Test fun deepPinUnpinAndExternalUpdateKeepOriginalTileAndBrowsingPosition() {
         val context = ins.targetContext
         check(context.packageName.endsWith(".regression"))
-        assumeTrue(context.resources.configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(context.resources.configuration))
         val profile = PortalProfile("Pin navigation fixture", "https://pin-navigation.invalid", "")
         val profileKey = profile.cacheKey()
         val category = Category("pin-navigation-fixture", "Pin navigation fixture", CatalogType.LIVE_TV)
@@ -89,8 +88,11 @@ class IptvPinNavigationDeviceTest {
         for (number in 117..120) IptvPinPreferences.toggleChannel(context, profileKey, category.id, "pin-fixture-$number")
         val host = ins.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val selection = java.util.concurrent.atomic.AtomicReference<Pair<List<MediaItem>, PlaybackQueueFilter>?>()
         val focusHistory = ConcurrentLinkedQueue<String>()
         try {
+            ins.runOnMainSync { host.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            await("Landscape window ready") { host.window.decorView.width > host.window.decorView.height }
             ins.setInTouchMode(false)
             ins.uiAutomation.setOnAccessibilityEventListener { event ->
                 if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
@@ -101,18 +103,16 @@ class IptvPinNavigationDeviceTest {
             ins.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) { Surface(Modifier.fillMaxSize()) {
                 ModernIptvCollection(state, category, close = {}, openItem = { fail("Pin navigation must not play") },
                     toggleFavorite = {}, loadMore = {}, refresh = {}, enrichFocusedMetadata = { _, _ -> },
-                    enrichVisibleLiveGuides = {}, refreshLiveProgramme = {}, findChannelsInCategory = {}, cancelCategoryFind = {}, isTv = true)
+                    enrichVisibleLiveGuides = {}, refreshLiveProgramme = {}, findChannelsInCategory = {}, cancelCategoryFind = {}, isTv = true, playInContext = { _, queue, filter -> selection.set(queue to filter) })
             } } } }
-            await("First channel gets remote focus") { focused(title(1)) }
-            val firstRow = (1..4).map { number -> Rect().also { requireNotNull(tile(title(number))).getBoundsInScreen(it) } }
-            assertTrue("Four channels share the first visible row", firstRow.all { it.top == firstRow.first().top && it.height() > 0 })
-            IptvPinPreferences.toggleChannel(context, profileKey, category.id, "pin-fixture-4")
-            await("Late pin delivery keeps the first row focused and visible") {
-                focused(title(1)) && find(tile(title(4)), "Pinned channel") != null
-            }
-            assertEquals("The first row retains its vertical position", firstRow.first().top,
-                Rect().also { requireNotNull(tile(title(1))).getBoundsInScreen(it) }.top)
-            assertFalse("Pins must never take initial focus from All", focusHistory.any { it in (117..120).map(::title) })
+            await("First pinned shortcut gets remote focus under All") { focused(title(117)) }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("All supplies its full playback context") { selection.get() != null }
+            assertEquals(120, selection.get()!!.first.size)
+            assertEquals((117..120).map { "pin-fixture-$it" }, selection.get()!!.second.pinnedIds)
+            assertNull(selection.get()!!.second.fixedIds)
+            val firstRow = (117..120).map { number -> Rect().also { requireNotNull(tile(title(number))).getBoundsInScreen(it) } }
+            assertTrue("Four pinned shortcuts share the first visible row", firstRow.all { it.top == firstRow.first().top && it.height() > 0 })
             NavigationAuditEvidence.capture("pin-navigation-first-row")
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Up reaches the All tab") { focused("All") }
@@ -131,15 +131,22 @@ class IptvPinNavigationDeviceTest {
             NavigationAuditEvidence.capture("pin-navigation-pinned-tab")
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Down enters the first pinned channel") { focused(title(117)) }
+            selection.set(null)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Pinned supplies its restricted playback context") { selection.get() != null }
+            assertEquals(4, selection.get()!!.first.size)
+            assertEquals(4, selection.get()!!.second.fixedIds?.size)
+            assertTrue(selection.get()!!.second.pinnedIds!!.isEmpty())
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Up returns to the active tab") { focused("Pinned") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Left returns to All") { focused("All") }
+            clearFixturePins()
+            ins.waitForIdleSync()
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("All keeps tab focus and restores provider order") { focused("All") && tile(title(1)) != null }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Down re-enters the first regular channel") { focused(title(1)) }
-            clearFixturePins()
             for (row in 1..16) {
                 key(KeyEvent.KEYCODE_DPAD_DOWN)
                 await("Dpad reaches channel ${1 + row * 4}") { focused(title(1 + row * 4)) }
