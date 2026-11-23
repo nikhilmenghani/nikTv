@@ -163,6 +163,9 @@ class AccountSyncManager private constructor(context: Context) {
     } else requestAccountSync()
     fun requestLaunchSync(): Job? = requestAutomaticSync()
 
+    /** Password changes are durable before uploading; Dev pull-only behavior is preserved. */
+    fun requestProfileSync(accountId: String): Job? = requestAutomaticSync(accountId)
+
     /** Called only after the episode's history mutation is durable. Never borrow a
      * different account's token if playback finishes while accounts are switching. */
     fun requestEpisodeSync(scope: UserScope): Job? = requestAutomaticSync(scope.accountId)

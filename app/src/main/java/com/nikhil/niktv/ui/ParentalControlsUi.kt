@@ -158,7 +158,10 @@ internal fun ParentalControlsSettings(profileId: String?, vm: NikTvViewModel = v
 internal fun ParentalPinDialog(
     title: String, pin: String, onPin: (String) -> Unit,
     error: String?, dismiss: () -> Unit, confirm: () -> Unit,
-    confirmation: String? = null, onConfirmation: ((String) -> Unit)? = null
+    confirmation: String? = null, onConfirmation: ((String) -> Unit)? = null,
+    confirmLabel: String = if (confirmation == null) "Unlock" else "Save",
+    pinLabel: String = if (confirmation == null) "PIN" else "New PIN",
+    confirmationLabel: String = "Confirm new PIN"
 ) {
     val focus = remember { FocusRequester() }
     val confirmationFocus = remember { FocusRequester() }
@@ -208,7 +211,7 @@ internal fun ParentalPinDialog(
             Column(Modifier.initialFocusEntry(focus), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = pin, onValueChange = { onPin(it.filter { c -> c in '0'..'9' }.take(4)) },
-                    label = { Text(if (confirmation == null) "PIN" else "New PIN") },
+                    label = { Text(pinLabel) },
                     singleLine = true, visualTransformation = PasswordVisualTransformation(),
                     readOnly = editingField != 0, interactionSource = pinInteraction,
                     shape = RoundedCornerShape(10.dp),
@@ -219,7 +222,7 @@ internal fun ParentalPinDialog(
                 if (confirmation != null) OutlinedTextField(
                     value = confirmation,
                     onValueChange = { onConfirmation?.invoke(it.filter { c -> c in '0'..'9' }.take(4)) },
-                    label = { Text("Confirm new PIN") }, singleLine = true,
+                    label = { Text(confirmationLabel) }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     readOnly = editingField != 1, interactionSource = confirmationInteraction,
                     shape = RoundedCornerShape(10.dp),
@@ -236,7 +239,7 @@ internal fun ParentalPinDialog(
                     .focusRequester(cancelFocus).focusProperties { up = if (confirmation != null) confirmationFocus else focus }) { Text("Cancel") }
                 NikTvPrimaryActionButton(onClick = confirm, enabled = validParentalPin(pin) &&
                     (confirmation == null || validParentalPin(confirmation)),
-                    modifier = Modifier.weight(1f).height(48.dp)) { Text(if (confirmation == null) "Unlock" else "Save") }
+                    modifier = Modifier.weight(1f).height(48.dp)) { Text(confirmLabel) }
             }
         }
     )

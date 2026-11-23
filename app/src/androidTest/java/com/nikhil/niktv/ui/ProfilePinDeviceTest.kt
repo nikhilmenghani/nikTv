@@ -30,6 +30,43 @@ class ProfilePinDeviceTest {
         while (SystemClock.elapsedRealtime() < until) { if (test()) return; Thread.sleep(40) }
         fail(label)
     }
+    @Test fun firstEntrySetsAnyChosenPasswordInsteadOfUnlocking() {
+        val context = ins.targetContext
+        require(context.packageName.endsWith(".regression"))
+        val request = ProfilePinRequest(UserProfile("setup-fixture", "New profile"), deleting = false)
+        val host = ins.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        try {
+            ins.setInTouchMode(false)
+            ins.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) { ProfilePinPrompt(request) } } }
+            await("First entry clearly offers password setup") { find { it.text?.toString() == "Set password for New profile" } != null }
+            assertNull(find { it.text?.toString() == "Unlock" })
+            await("New password field owns initial D-pad focus") { find { it.isFocused } != null }
+            fun enter(value: String) {
+                ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("OK activates the focused password field") { find { it.isEditable && it.isFocused } != null }
+                assertTrue(requireNotNull(find { it.isEditable && it.isFocused }).performAction(
+                    AccessibilityNodeInfo.ACTION_SET_TEXT,
+                    Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }))
+            }
+            enter("4826")
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            enter("4826")
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Set password is enabled and focused") {
+                var target = find { it.text?.toString() == "Set password" }
+                while (target != null && !target.isClickable) target = target.parent
+                target?.let { it.isEnabled && it.isFocused } == true
+            }
+            NavigationAuditEvidence.capture("profile-set-password-focused")
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Any chosen four-digit password completes setup") { request.result.isCompleted }
+            assertTrue(kotlinx.coroutines.runBlocking { request.result.await() })
+            assertTrue(ProfilePin.verifies(request.newPinVerifier, "4826"))
+            assertFalse(ProfilePin.verifies(request.newPinVerifier, "0000"))
+        } finally { ins.runOnMainSync { host.finish() } }
+    }
     @Test fun ownerPinAndOverrideWorkButWrongPinCannotAuthorizeDeletion() {
         val context = ins.targetContext
         require(context.packageName.endsWith(".regression"))

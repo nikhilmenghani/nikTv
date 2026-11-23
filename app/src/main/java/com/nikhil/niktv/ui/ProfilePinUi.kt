@@ -10,17 +10,30 @@ import kotlinx.coroutines.withContext
 
 internal class ProfilePinRequest(val profile: UserProfile, val deleting: Boolean) {
     val result = CompletableDeferred<Boolean>()
+    var newPinVerifier: String? = null
+        private set
+
+    fun completeSetup(verifier: String) {
+        check(!deleting && profile.pinVerifier == null)
+        newPinVerifier = verifier
+        result.complete(true)
+    }
 }
 
 @Composable
 internal fun ProfilePinPrompt(request: ProfilePinRequest) {
+    if (!request.deleting && request.profile.pinVerifier == null) {
+        SetProfilePinPrompt(request.profile, { request.result.complete(false) }) { request.completeSetup(it) }
+        DisposableEffect(request) { onDispose { request.result.complete(false) } }
+        return
+    }
     var pin by remember(request) { mutableStateOf("") }
     var error by remember(request) { mutableStateOf<String?>(null) }
     var busy by remember(request) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     DisposableEffect(request) { onDispose { request.result.complete(false) } }
     ParentalPinDialog(
-        title = if (request.deleting) "Confirm deletion of ${request.profile.name}" else "Unlock ${request.profile.name}",
+        title = "Unlock ${request.profile.name}",
         pin = pin, onPin = { if (!busy) pin = it }, error = error,
         dismiss = { request.result.complete(false) }, confirm = {
             if (!busy) {
@@ -42,7 +55,7 @@ internal fun SetProfilePinPrompt(profile: UserProfile, dismiss: () -> Unit, save
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    ParentalPinDialog("Set PIN for ${profile.name}", pin, { if (!busy) pin = it }, error, dismiss, {
+    ParentalPinDialog("Set password for ${profile.name}", pin, { if (!busy) pin = it }, error, dismiss, {
         if (!busy) {
             if (pin != confirmation) error = "The PINs do not match."
             else {
@@ -59,5 +72,6 @@ internal fun SetProfilePinPrompt(profile: UserProfile, dismiss: () -> Unit, save
                 }
             }
         }
-    }, confirmation, { if (!busy) confirmation = it })
+    }, confirmation, { if (!busy) confirmation = it },
+        confirmLabel = "Set password", pinLabel = "New password (4 digits)", confirmationLabel = "Confirm password")
 }

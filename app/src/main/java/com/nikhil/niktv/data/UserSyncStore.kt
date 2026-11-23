@@ -238,12 +238,14 @@ class UserSyncStore private constructor(private val context: Context) {
                 json.encodeToString(profile.copy(name = profile.name.trim(), pinVerifier = existing?.pinVerifier ?: profile.pinVerifier)))
         }
     }
-    suspend fun setProfilePin(profileId: String, verifier: String): UserProfile = withEditLock {
+    suspend fun setProfilePin(profileId: String, verifier: String, onlyIfUnset: Boolean = false): UserProfile = withEditLock {
         require(Regex("v1:[0-9a-f]{32}:[0-9a-f]{64}").matches(verifier))
         val accountId = requireNotNull(account.value)
         db.withTransaction {
             val row = dao.records(accountId).first { it.collection == "profile" && it.recordId == profileId && !it.deleted }
-            val updated = json.decodeFromString<UserProfile>(row.payload).copy(pinVerifier = verifier)
+            val current = json.decodeFromString<UserProfile>(row.payload)
+            check(!onlyIfUnset || current.pinVerifier == null) { "This profile's password has changed. Reopen the profile." }
+            val updated = current.copy(pinVerifier = verifier)
             mutate(UserScope(accountId, profileId), "profile", profileId, json.encodeToString(updated))
             updated
         }
