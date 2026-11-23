@@ -380,11 +380,27 @@ class UserSyncStore private constructor(private val context: Context) {
             if (old != null && prefersPendingViewing(old, remote, pendingIds)) {
                 // Rebase the uploading device's unsent viewing action after observing
                 // the remote revision. Persist winner + outbox atomically for retries.
-                val rebased = old.copy(revision = ++revision, mutationId = UUID.randomUUID().toString())
+                val rebased = old.copy(payload = retainSyncedArtwork(json.parseToJsonElement(old.payload),
+                    json.parseToJsonElement(remote.payload)).toString(), revision = ++revision, mutationId = UUID.randomUUID().toString())
                 dao.put(rebased)
                 dao.enqueue(SyncOutbox(rebased.mutationId, accountId, json.encodeToString(rebased)))
                 current[key] = rebased
                 return@forEach
+            }
+            if (old != null && !old.deleted && !remote.deleted && old.collection in setOf("history", "favorites", "series")) {
+                val winner = if (remote.newerThan(old)) remote else old
+                val other = if (winner === remote) old else remote
+                val payload = json.parseToJsonElement(winner.payload)
+                val retained = retainSyncedArtwork(payload, json.parseToJsonElement(other.payload))
+                if (retained != payload) {
+                    val repaired = winner.copy(payload = retained.toString(), revision = ++revision,
+                        deviceId = deviceId, mutationId = UUID.randomUUID().toString())
+                    dao.put(repaired)
+                    dao.enqueue(SyncOutbox(repaired.mutationId, accountId, json.encodeToString(repaired)))
+                    current[key] = repaired
+                    affected += UserScope(accountId, repaired.profileId)
+                    return@forEach
+                }
             }
             if (old == null || remote.newerThan(old)) {
                 dao.put(remote); current[key] = remote
@@ -676,12 +692,6 @@ class UserSyncStore private constructor(private val context: Context) {
         is JsonPrimitive -> if (value.isString && (value.content.contains("://") || Regex("(?i)(token=|password=|mac=)").containsMatchIn(value.content))) JsonNull else value
         else -> value
     }
-    private fun portablePublicArtwork(value: JsonElement): Boolean = runCatching {
-        val uri = java.net.URI((value as? JsonPrimitive)?.contentOrNull ?: return false)
-        uri.scheme == "https" && uri.host == "image.tmdb.org" && uri.port == -1 &&
-            uri.userInfo == null && uri.query == null && uri.fragment == null &&
-            Regex("^/t/p/(?:original|w[0-9]+|h[0-9]+)/[A-Za-z0-9_.-]+\\.(?:jpg|jpeg|png|webp)$").matches(uri.path.orEmpty())
-    }.getOrDefault(false)
     private fun restoreLocalText(value: String, maps: List<LocalPortalMapping>): String {
         var result = value
         maps.forEach { result = result.replace("portal:${it.portalId}", it.localKey) }

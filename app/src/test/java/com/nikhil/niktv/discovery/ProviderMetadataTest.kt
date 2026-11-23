@@ -8,6 +8,31 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class ProviderMetadataTest {
+    @Test fun confirmedMovieArtworkEnrichesHistoryWithoutChangingPlaybackOrOrdering() {
+        val media = MediaItem("472762", "Hera Pheri (Hindi) - HINDI | ALL TIME FAV MOVIES", null, "original-command")
+        val recent = RecentItem(FavoriteKind.MOVIE, media, playedAtMillis = 1234, profileKey = "portal-one")
+        val other = recent.copy(profileKey = "portal-two")
+        val card = DiscoveryCard(21614, false, "Hera Pheri", date = "2000-03-31", poster = "https://image.tmdb.org/t/p/w342/hera.jpg")
+        val result = confirmedProviderRecents(listOf(recent, other), "portal-one", media, CatalogType.MOVIES, card)
+        assertEquals(card.id, result[0].media.externalTmdbId)
+        assertEquals(card.poster, result[0].media.logo)
+        assertEquals(recent.key, result[0].key)
+        assertEquals(recent.playedAtMillis, result[0].playedAtMillis)
+        assertEquals(media.command, result[0].media.command)
+        assertEquals(other, result[1])
+    }
+
+    @Test fun confirmedSeriesArtworkDoesNotReplaceTheResumeEpisode() {
+        val series = MediaItem("series", "Series", null, "series-command")
+        val episode = MediaItem("episode-7", "Episode", null, "episode-command", seasonNumber = 2, episodeNumber = 7)
+        val recent = RecentItem(FavoriteKind.SERIES, series, series = series, lastPlayed = episode, playedAtMillis = 1234, profileKey = "portal")
+        val result = confirmedProviderRecents(listOf(recent), "portal", series, CatalogType.SERIES,
+            DiscoveryCard(7, true, "Series", poster = "https://image.tmdb.org/t/p/w342/series.jpg")).single()
+        assertEquals(7, result.media.externalTmdbId)
+        assertEquals(7, result.series?.externalTmdbId)
+        assertEquals(episode, result.lastPlayed)
+        assertEquals(recent.playedAtMillis, result.playedAtMillis)
+    }
     @org.junit.Test fun confirmedArtworkUpdatesOnlyTheExactSavedProviderTarget() {
         val media = com.nikhil.niktv.model.MediaItem("provider-42", "Master Of The Universe (English)", null, "original-playback-command")
         val favorite = com.nikhil.niktv.model.FavoriteItem(com.nikhil.niktv.model.FavoriteKind.MOVIE, media, profileKey = "portal-one")

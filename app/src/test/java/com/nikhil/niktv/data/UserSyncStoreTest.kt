@@ -21,6 +21,40 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserSyncStoreTest {
+    @Test fun confirmedHistoryArtworkSurvivesSparseSyncAndWorksWithoutTheSendingDeviceCache(): Unit = runBlocking {
+        users.selectAccount("101"); users.initializeDefaults("101")
+        val owner = UserScope("101", UserSyncStore.defaultProfileId("101", UserProfileType.GENERAL))
+        users.selectProfile(owner.profileId)
+        val portal = PortalProfile("Artwork fixture", "https://provider.invalid", "")
+        users.associatePortal(owner, portal)
+        val store = ProfileStore(context, memoryPreferences())
+        val item = MediaItem("472762", "Hera Pheri (Hindi) - HINDI | ALL TIME FAV MOVIES", null, "private-command")
+        val recent = RecentItem(FavoriteKind.MOVIE, item, playedAtMillis = 1234, profileKey = portal.cacheKey())
+        store.saveRecentlyPlayed(listOf(recent))
+        val card = com.nikhil.niktv.discovery.DiscoveryCard(21614, false, "Hera Pheri", poster = "https://image.tmdb.org/t/p/w342/hera.jpg")
+        assertTrue(store.updateRecentPresentation(owner) {
+            com.nikhil.niktv.discovery.confirmedProviderRecents(it, portal.cacheKey(), item, CatalogType.MOVIES, card)
+        })
+        val enriched = users.snapshot("101").single { it.collection == "history" }
+        users.acknowledge("101", users.pending("101").map { it.mutationId })
+        val root = Json.parseToJsonElement(enriched.payload).jsonObject
+        val entry = root.getValue("entry").jsonObject
+        val sparseMedia = JsonObject(entry.getValue("media").jsonObject - "externalTmdbId" - "logo")
+        val sparseEntry = JsonObject(entry + ("media" to sparseMedia) + ("playedAtMillis" to JsonPrimitive(9000)))
+        users.merge("101", listOf(enriched.copy(payload = JsonObject(root + ("entry" to sparseEntry)).toString(),
+            revision = enriched.revision + 10, deviceId = "sparse-device", mutationId = "sparse-history")))
+        val synced = users.snapshot("101").single { it.collection == "history" }
+        val restored = Json { ignoreUnknownKeys = true }.decodeFromJsonElement<RecentItem>(Json.parseToJsonElement(synced.payload).jsonObject.getValue("entry"))
+        assertEquals(9000L, restored.playedAtMillis)
+        assertEquals(card.id, restored.media.externalTmdbId)
+        assertEquals(card.poster, restored.media.logo)
+        assertFalse(synced.payload.contains("private-command"))
+        val cache = com.nikhil.niktv.discovery.DiscoveryCache(java.io.File(context.cacheDir, java.util.UUID.randomUUID().toString()))
+        var artwork = emptyMap<String, String>()
+        com.nikhil.niktv.discovery.loadRecentArtwork(cache, listOf(restored), 1,
+            lookup = { _, _ -> error("A fresh device must not need to search an already confirmed title") }, publish = { artwork = it })
+        assertEquals(listOf(card.poster), artwork.values.toList())
+    }
     @Test fun manualPullOverridesNewerLocalEditsAndDropsOnlyThisProfilesQueue(): Unit = runBlocking {
         users.selectAccount("101"); users.initializeDefaults("101")
         val profile = users.profiles.first().first()

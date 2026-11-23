@@ -4796,6 +4796,11 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             allFavorites = updated
             store.saveFavorites(updated, owner)
         }
+        val historyUpdated = store.updateRecentPresentation(owner) {
+            com.nikhil.niktv.discovery.confirmedProviderRecents(it, profile, item, type, card)
+        }
+        if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.i("NikTvMetadata",
+            "confirmed type=$type tmdbId=${card.id} historyUpdated=$historyUpdated")
         _state.update { current ->
             if (current.session?.profile?.cacheKey() != profile) current else {
                 fun enrich(items: List<MediaItem>) = items.map { if (it.id == item.id && it.title == item.title) enriched else it }

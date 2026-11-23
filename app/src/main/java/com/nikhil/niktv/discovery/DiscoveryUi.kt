@@ -479,8 +479,10 @@ private fun DiscoveryPreviewContent(
     // any bounded public metadata repair runs asynchronously, without provider requests.
     val continueArtworkCache = remember(context) { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")) }
     val recentArtworkRepository = remember(context, profile) { DiscoveryRepository(context, providerProfile = profile) }
+    val recentPresentationStore = remember(context) { ProfileStore(context) }
+    val recentPresentationOwner = com.nikhil.niktv.ui.LocalViewingOwner.current
     val continueArtwork by produceState<Map<String, String>>(emptyMap(), profile, app.recentlyPlayed,
-        surface, scrollVariant.tileLimit, activityCollection, app.selectedSeries?.id, state.detail?.key, foreground) {
+        surface, scrollVariant.tileLimit, activityCollection, app.selectedSeries?.id, state.detail?.key, foreground, recentPresentationOwner) {
         val recents = app.recentlyPlayed.filter { it.profileKey == profile &&
             it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) &&
             (surface == DashboardSurface.HOME || it.kind == if (surface == DashboardSurface.MOVIES) FavoriteKind.MOVIE else FavoriteKind.SERIES) }
@@ -489,7 +491,14 @@ private fun DiscoveryPreviewContent(
         // Cached covers publish immediately. Repair a bounded visible history window
         // with public metadata only; this cannot search or open provider streams.
         loadRecentArtwork(continueArtworkCache, recents, if (foreground) 6 else 0,
-            lookup = { item, type -> recentArtworkRepository.providerDetails(item, type).card },
+            lookup = { item, type ->
+                val card = recentArtworkRepository.providerDetails(item, type).card
+                if (recentPresentationOwner != null && publicRecentArtwork(card, item, type) != null)
+                    recentPresentationStore.updateRecentPresentation(recentPresentationOwner) {
+                        confirmedProviderRecents(it, profile, item, type, card)
+                    }
+                card
+            },
             publish = { value = it })
     }
     // Provider image hosts can disappear while their nonempty URLs stay cached.

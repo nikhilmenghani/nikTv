@@ -33,6 +33,20 @@ internal fun confirmedProviderFavorites(favorites: List<FavoriteItem>, profile: 
     }
 }
 
+internal fun confirmedProviderRecents(recents: List<RecentItem>, profile: String, item: MediaItem,
+    type: CatalogType, card: DiscoveryCard): List<RecentItem> {
+    require(type in setOf(CatalogType.MOVIES, CatalogType.SERIES) && card.id > 0 && card.series == (type == CatalogType.SERIES))
+    val kind = if (card.series) FavoriteKind.SERIES else FavoriteKind.MOVIE
+    fun enrich(media: MediaItem) = if (media.id != item.id || media.title != item.title) media else media.copy(
+        externalTmdbId = card.id, logo = card.poster ?: card.backdrop ?: media.logo,
+        description = card.overview ?: media.description)
+    return recents.map { recent ->
+        val target = recent.series ?: recent.media
+        if (recent.profileKey != profile || recent.kind != kind || target.id != item.id || target.title != item.title) recent
+        else recent.copy(media = enrich(recent.media), series = recent.series?.let(::enrich))
+    }
+}
+
 /** Reuse a confirmed/exact cached public cover; browsing never starts matching requests. */
 internal suspend fun cachedProviderArtwork(cache: DiscoveryCache, item: MediaItem, type: CatalogType): String? {
     if (type == CatalogType.LIVE_TV) return null

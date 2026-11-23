@@ -350,6 +350,19 @@ class ProfileStore @JvmOverloads constructor(
     suspend fun saveRecentlyPlayed(items: List<RecentItem>, scope: UserScope? = captureScope()) = scopedPreferences(scope).editProfileMetadata {
         it[recentKey] = Json.encodeToString(items)
     }
+    /** Read and enrich inside the edit, so a metadata result cannot overwrite newer viewing activity. */
+    internal suspend fun updateRecentPresentation(scope: UserScope?, update: (List<RecentItem>) -> List<RecentItem>): Boolean {
+        var changed = false
+        scopedPreferences(scope).editProfileMetadata { values ->
+            val current = values[recentKey]?.let { Json.decodeFromString<List<RecentItem>>(it) }.orEmpty()
+            val enriched = update(current)
+            if (enriched != current) {
+                values[recentKey] = Json.encodeToString(enriched)
+                changed = true
+            }
+        }
+        return changed
+    }
     suspend fun savePlaybackProgress(items: List<PlaybackProgress>, scope: UserScope? = captureScope()) = scopedPreferences(scope).editProfileMetadata {
         it[progressKey] = Json.encodeToString(items)
     }
