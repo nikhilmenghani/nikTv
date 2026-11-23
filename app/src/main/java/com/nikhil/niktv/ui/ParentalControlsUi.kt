@@ -163,7 +163,8 @@ internal fun ParentalPinDialog(
     confirmLabel: String = if (confirmation == null) "Unlock" else "Save",
     pinLabel: String = if (confirmation == null) "PIN" else "New PIN",
     confirmationLabel: String = "Confirm new PIN",
-    checking: Boolean = false, verificationError: String? = null, retry: (() -> Unit)? = null
+    checking: Boolean = false, verificationError: String? = null, retry: (() -> Unit)? = null,
+    offline: (() -> Unit)? = null, notice: String? = null
 ) {
     val focus = remember { FocusRequester() }
     val confirmationFocus = remember { FocusRequester() }
@@ -228,6 +229,7 @@ internal fun ParentalPinDialog(
                     Text("Checking GitHub for a saved password…")
                 }
                 verificationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                notice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 if (!verificationBlocked) {
                 OutlinedTextField(
                     value = pin, onValueChange = { onPin(it.filter { c -> c in '0'..'9' }.take(4)) },
@@ -267,6 +269,12 @@ internal fun ParentalPinDialog(
                 }, enabled = if (verificationBlocked) !checking && verificationError != null && retry != null else validParentalPin(pin) &&
                     (confirmation == null || validParentalPin(confirmation)),
                     modifier = Modifier.weight(1f).height(48.dp)) { Text(if (verificationBlocked) "Retry" else confirmLabel) }
+                if (!checking && verificationError != null && offline != null) {
+                    NikTvSecondaryActionButton(onClick = {
+                        cancelFocus.requestFocus()
+                        offline()
+                    }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Offline") }
+                }
             }
         }
     )

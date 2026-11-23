@@ -164,7 +164,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     suspend fun authorizeProfile(profile: UserProfile, deleting: Boolean = false, changingPin: Boolean = false): Boolean {
         val accountId = store.selectedAccount.value ?: return false
         if (!deleting && !changingPin && profile.pinVerifier != null && com.nikhil.niktv.data.ProfilePin.remembered(context, accountId, profile)) return true
-        val request = ProfilePinRequest(profile, deleting) { manager.profileForPasswordCheck(accountId, profile.id) }
+        val request = ProfilePinRequest(profile, deleting, allowOffline = !deleting && !changingPin) {
+            manager.profileForPasswordCheck(accountId, profile.id)
+        }
         pendingProfilePin?.result?.complete(false)
         pendingProfilePin = request
         return try {
@@ -173,7 +175,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             val valid = accepted && store.selectedAccount.value == accountId && current?.pinVerifier == request.authorizedVerifier && current != null
             if (valid && !deleting) {
                 val authorized = request.newPinVerifier?.let { store.setProfilePin(profile.id, it, onlyIfUnset = true) } ?: requireNotNull(current)
-                com.nikhil.niktv.data.ProfilePin.remember(context, accountId, authorized)
+                if (authorized.pinVerifier != null) com.nikhil.niktv.data.ProfilePin.remember(context, accountId, authorized)
                 if (request.newPinVerifier != null) manager.requestProfileSync(accountId)
                 if (changingPin && request.newPinVerifier == null) settingProfilePin = authorized
             }

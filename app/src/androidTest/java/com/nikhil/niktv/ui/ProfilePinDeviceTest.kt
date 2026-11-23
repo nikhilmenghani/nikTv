@@ -104,6 +104,35 @@ class ProfilePinDeviceTest {
             NavigationAuditEvidence.capture("profile-password-arrived-during-setup")
         } finally { ins.runOnMainSync { host.finish() } }
     }
+    @Test fun unavailableGithubAllowsOverrideUnlockWithoutPasswordSetup() {
+        val context = ins.targetContext
+        require(context.packageName.endsWith(".regression"))
+        val request = ProfilePinRequest(UserProfile("offline-fixture", "Offline fixture"), false) { error("offline") }
+        val host = ins.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        try {
+            ins.setInTouchMode(false)
+            ins.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) { ProfilePinPrompt(request) } } }
+            await("Offline unlock is offered after a failed read") { request.checkError != null && focused("Cancel") }
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Retry remains in its usual place") { focused("Retry") }
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Offline action is reachable") { focused("Offline") }
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Offline opens the PIN editor, not Set password") { focused("PIN") && request.usingOffline }
+            assertNull(find { it.text?.toString() == "Set password" })
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("PIN editor activates") { find { it.isEditable && it.isFocused } != null }
+            assertTrue(requireNotNull(find { it.isEditable && it.isFocused }).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,
+                Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "2564") }))
+            var target = requireNotNull(find { it.text?.toString() == "Unlock" })
+            while (!target.isClickable) target = requireNotNull(target.parent)
+            assertTrue(target.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            await("Override opens the cached profile") { request.result.isCompleted }
+            assertTrue(kotlinx.coroutines.runBlocking { request.result.await() })
+            assertNull(request.newPinVerifier)
+        } finally { ins.runOnMainSync { host.finish() } }
+    }
     @Test fun firstEntrySetsAnyChosenPasswordInsteadOfUnlocking() {
         val context = ins.targetContext
         require(context.packageName.endsWith(".regression"))

@@ -10,6 +10,23 @@ import org.junit.Test
 
 class ProfilePinRequestTest {
     private val unset = UserProfile("fixture", "Fixture")
+    @Test fun offlineFallbackNeverSetsOrRemembersAnUnknownPassword() = runBlocking {
+        val request = ProfilePinRequest(unset, false) { error("offline") }
+        assertFalse(request.useOffline())
+        request.checkRemotePassword()
+        assertTrue(request.useOffline())
+        assertTrue(request.usingOffline)
+        assertFalse(request.checking)
+        assertFalse(request.setupVerified)
+        assertNull(request.newPinVerifier)
+        assertFalse(request.completeSetup("replacement"))
+        assertTrue(com.nikhil.niktv.data.ProfilePin.verifies(request.profile.pinVerifier, "2564"))
+        assertFalse(com.nikhil.niktv.data.ProfilePin.verifies(request.profile.pinVerifier, "1234"))
+        assertTrue(request.completeUnlock(null))
+        val destructive = ProfilePinRequest(unset, true) { error("offline") }
+        destructive.checkRemotePassword()
+        assertFalse(destructive.useOffline())
+    }
     @Test fun missingLocalPasswordRequiresSuccessfulRemoteVerification() = runBlocking {
         var fail = true
         val request = ProfilePinRequest(unset, false) { if (fail) error("offline") else unset }

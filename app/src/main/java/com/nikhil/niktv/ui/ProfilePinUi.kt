@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal class ProfilePinRequest(profile: UserProfile, val deleting: Boolean,
+internal class ProfilePinRequest(profile: UserProfile, val deleting: Boolean, val allowOffline: Boolean = !deleting,
     private val verifyProfile: (suspend () -> UserProfile)? = null) {
     var profile by mutableStateOf(profile)
         private set
@@ -17,6 +17,8 @@ internal class ProfilePinRequest(profile: UserProfile, val deleting: Boolean,
     var checkError by mutableStateOf<String?>(null)
         private set
     var setupVerified by mutableStateOf(false)
+        private set
+    var usingOffline by mutableStateOf(false)
         private set
     val result = CompletableDeferred<Boolean>()
     var authorizedVerifier: String? = null
@@ -45,6 +47,14 @@ internal class ProfilePinRequest(profile: UserProfile, val deleting: Boolean,
         catch (_: Exception) {
             if (profile.pinVerifier == null) checkError = "Could not check the password on GitHub. Check your connection and retry."
         } finally { checking = false }
+    }
+
+    fun useOffline(): Boolean {
+        if (!allowOffline || checking || checkError == null) return false
+        usingOffline = true
+        setupVerified = false
+        checkError = null
+        return true
     }
 
     fun completeUnlock(verifier: String?): Boolean {
@@ -83,6 +93,9 @@ internal fun ProfilePinPrompt(request: ProfilePinRequest) {
         pinLabel = if (setting) "New password (4 digits)" else "PIN", confirmationLabel = "Confirm password",
         confirmLabel = if (setting) "Set password" else "Unlock",
         checking = request.checking, verificationError = request.checkError, retry = { attempt++ },
+        offline = if (request.allowOffline) ({ request.useOffline() }) else null,
+        notice = if (request.usingOffline && profile.pinVerifier == null)
+            "Use the override PIN to open this cached profile offline." else null,
         dismiss = { request.result.complete(false) }, confirm = {
             if (!busy) {
                 if (setting && pin != confirmation) {
