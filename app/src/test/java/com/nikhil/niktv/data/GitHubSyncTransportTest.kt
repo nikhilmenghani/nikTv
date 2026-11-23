@@ -15,6 +15,42 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class GitHubSyncTransportTest {
+    @Test fun passwordCheckFetchesOnlyTheCurrentRosterWithoutProfileHistoryOrWrites() = runBlocking {
+        val verifier = ProfilePin.create("1357")
+        val profile = UserProfile("fixture", "Fixture", pinVerifier = verifier)
+        val record = SyncRecord("77", "fixture", "profile", "fixture",
+            kotlinx.serialization.json.Json.encodeToString(profile), 1, "device", "mutation")
+        val doc = AccountDocument(schemaVersion = 2, accountId = "77", records = listOf(record),
+            profileFiles = mapOf("unused-profile" to "unused-hash"))
+        val requests = mutableListOf<String>()
+        val api = transport(readOnly = true) { method, path ->
+            assertEquals("GET", method)
+            requests += path
+            when {
+                path.endsWith("/git/ref/heads/main") -> 200 to """{"object":{"sha":"pinned-head"}}"""
+                path.endsWith("manifest.json") -> encoded("""{"application":"niktv","schemaVersion":2,"accountId":"77"}""")
+                path.endsWith("account.json") -> encoded(kotlinx.serialization.json.Json { encodeDefaults = true }.encodeToString(doc))
+                else -> error("Unexpected request: $path")
+            }
+        }
+        assertEquals(listOf(record), api.fetchProfileRoster(SyncRepository("dynamic-owner", "main", "unused"), "77"))
+        assertEquals(3, requests.size)
+        assertTrue(requests.none { "/profiles/" in it })
+    }
+
+    @Test fun missingRemoteRosterNeverMeansNoPassword() = runBlocking {
+        val api = transport(readOnly = true) { _, path -> when {
+            path.endsWith("/git/ref/heads/main") -> 200 to """{"object":{"sha":"pinned-head"}}"""
+            path.endsWith("manifest.json") -> encoded("""{"application":"niktv","schemaVersion":2,"accountId":"77"}""")
+            else -> 404 to "{}"
+        } }
+        try { api.fetchProfileRoster(SyncRepository("dynamic-owner", "main", "unused"), "77"); fail("Missing roster accepted") }
+        catch (_: SyncFailure) { }
+    }
+
+    private fun encoded(content: String) = 200 to org.json.JSONObject().put("encoding", "base64")
+        .put("sha", "fixture-sha").put("content", android.util.Base64.encodeToString(content.toByteArray(), android.util.Base64.NO_WRAP)).toString()
+
     @Test fun readOnlyTransportBlocksWritesBeforeTheyReachTheNetwork() = runBlocking {
         val api = GitHubSyncTransport("fixture", OkHttpClient.Builder().addInterceptor {
             fail("Read-only transport attempted HTTP write")

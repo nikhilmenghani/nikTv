@@ -16,6 +16,30 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class ProfilePinStoreTest {
+    @Test fun stalePasswordlessMetadataCannotEraseEitherSideKnownPassword() = runBlocking {
+        val store = UserSyncStore.get(RuntimeEnvironment.getApplication())
+        withContext(Dispatchers.IO) { store.db.clearAllTables() }
+        store.disconnect(); store.selectAccount("101")
+        val profile = store.createProfile("Original")
+        val original = store.snapshot("101").single { it.collection == "profile" }
+        val verifier = ProfilePin.create("1357")
+        val withPin = original.copy(payload = Json.encodeToString(profile.copy(pinVerifier = verifier)),
+            revision = original.revision + 10, mutationId = "remote-password")
+        store.updateProfile(profile.copy(name = "Local rename"))
+        // Even a locally newer ordinary edit without the new field retains the cloud PIN.
+        val passwordless = original.copy(payload = Json.encodeToString(profile.copy(name = "Newer rename")),
+            revision = withPin.revision + 10, mutationId = "newer-old-client")
+        store.merge("101", listOf(passwordless))
+        store.merge("101", listOf(withPin))
+        assertEquals(verifier, store.profiles.first().single().pinVerifier)
+        assertEquals("Newer rename", store.profiles.first().single().name)
+        // A newer remote old-client edit cannot remove the now-known local PIN either.
+        val revision = store.snapshot("101").maxOf { it.revision }
+        store.merge("101", listOf(passwordless.copy(revision = revision + 1, mutationId = "another-old-client")))
+        assertEquals(verifier, store.profiles.first().single().pinVerifier)
+        assertTrue(store.pending("101").any { it.collection == "profile" &&
+            Json.decodeFromString<UserProfile>(it.payload).pinVerifier == verifier })
+    }
     @Test fun pinSurvivesStaleProfileEditsAndIsIncludedInSync() = runBlocking {
         val store = UserSyncStore.get(RuntimeEnvironment.getApplication())
         withContext(Dispatchers.IO) { store.db.clearAllTables() }

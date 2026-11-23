@@ -9,6 +9,7 @@ import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.data.UserSyncStore
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -161,11 +162,16 @@ internal fun ParentalPinDialog(
     confirmation: String? = null, onConfirmation: ((String) -> Unit)? = null,
     confirmLabel: String = if (confirmation == null) "Unlock" else "Save",
     pinLabel: String = if (confirmation == null) "PIN" else "New PIN",
-    confirmationLabel: String = "Confirm new PIN"
+    confirmationLabel: String = "Confirm new PIN",
+    checking: Boolean = false, verificationError: String? = null, retry: (() -> Unit)? = null
 ) {
     val focus = remember { FocusRequester() }
     val confirmationFocus = remember { FocusRequester() }
     val cancelFocus = remember { FocusRequester() }
+    val verificationBlocked = checking || verificationError != null
+    var retainConfirmation by remember { mutableStateOf(confirmation != null) }
+    var confirmationFocused by remember { mutableStateOf(false) }
+    val showConfirmation = confirmation != null || retainConfirmation
     var editingField by remember { mutableStateOf<Int?>(null) }
     val pinInteraction = remember { MutableInteractionSource() }
     val confirmationInteraction = remember { MutableInteractionSource() }
@@ -181,6 +187,14 @@ internal fun ParentalPinDialog(
         title = { Text(title) },
         text = {
             val keyboard = LocalSoftwareKeyboardController.current
+            LaunchedEffect(confirmation != null) {
+                if (confirmation == null && retainConfirmation && confirmationFocused) {
+                    editingField = null
+                    keyboard?.hide()
+                    focus.requestFocus()
+                }
+                retainConfirmation = confirmation != null
+            }
             LaunchedEffect(editingField) {
                 if (editingField != null) {
                     withFrameNanos { }
@@ -208,7 +222,13 @@ internal fun ParentalPinDialog(
                     else -> false
                 }
             }
-            Column(Modifier.initialFocusEntry(focus), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.initialFocusEntry(if (verificationBlocked) cancelFocus else focus), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (checking) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    Text("Checking GitHub for a saved password…")
+                }
+                verificationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (!verificationBlocked) {
                 OutlinedTextField(
                     value = pin, onValueChange = { onPin(it.filter { c -> c in '0'..'9' }.take(4)) },
                     label = { Text(pinLabel) },
@@ -217,29 +237,36 @@ internal fun ParentalPinDialog(
                     shape = RoundedCornerShape(10.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done, showKeyboardOnFocus = false),
                     keyboardActions = KeyboardActions(onDone = { if (validParentalPin(pin) && confirmation == null) confirm() }),
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus).pinKeyboard(0, if (confirmation != null) confirmationFocus else cancelFocus)
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus).pinKeyboard(0, if (showConfirmation) confirmationFocus else cancelFocus)
                 )
-                if (confirmation != null) OutlinedTextField(
-                    value = confirmation,
+                if (showConfirmation) OutlinedTextField(
+                    value = confirmation.orEmpty(),
                     onValueChange = { onConfirmation?.invoke(it.filter { c -> c in '0'..'9' }.take(4)) },
                     label = { Text(confirmationLabel) }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     readOnly = editingField != 1, interactionSource = confirmationInteraction,
                     shape = RoundedCornerShape(10.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done, showKeyboardOnFocus = false),
-                    keyboardActions = KeyboardActions(onDone = { if (validParentalPin(pin) && validParentalPin(confirmation)) confirm() }),
-                    modifier = Modifier.fillMaxWidth().focusRequester(confirmationFocus).pinKeyboard(1, cancelFocus)
+                    keyboardActions = KeyboardActions(onDone = { if (validParentalPin(pin) && validParentalPin(confirmation.orEmpty())) confirm() }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(confirmationFocus)
+                        .onFocusChanged { confirmationFocused = it.isFocused }.pinKeyboard(1, cancelFocus)
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
             }
         },
         confirmButton = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 NikTvSecondaryActionButton(onClick = dismiss, modifier = Modifier.weight(1f).height(48.dp)
-                    .focusRequester(cancelFocus).focusProperties { up = if (confirmation != null) confirmationFocus else focus }) { Text("Cancel") }
-                NikTvPrimaryActionButton(onClick = confirm, enabled = validParentalPin(pin) &&
+                    .focusRequester(cancelFocus).focusProperties { up = if (verificationBlocked) FocusRequester.Cancel else if (showConfirmation) confirmationFocus else focus }) { Text("Cancel") }
+                NikTvPrimaryActionButton(onClick = {
+                    if (verificationBlocked) {
+                        cancelFocus.requestFocus()
+                        retry?.invoke()
+                    } else confirm()
+                }, enabled = if (verificationBlocked) !checking && verificationError != null && retry != null else validParentalPin(pin) &&
                     (confirmation == null || validParentalPin(confirmation)),
-                    modifier = Modifier.weight(1f).height(48.dp)) { Text(confirmLabel) }
+                    modifier = Modifier.weight(1f).height(48.dp)) { Text(if (verificationBlocked) "Retry" else confirmLabel) }
             }
         }
     )

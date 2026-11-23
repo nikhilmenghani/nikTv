@@ -161,23 +161,30 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     var mappingProfile by remember { mutableStateOf<UserProfile?>(null) }
     var pendingProfilePin by remember { mutableStateOf<ProfilePinRequest?>(null) }
     var settingProfilePin by remember { mutableStateOf<UserProfile?>(null) }
-    suspend fun authorizeProfile(profile: UserProfile, deleting: Boolean = false): Boolean {
+    suspend fun authorizeProfile(profile: UserProfile, deleting: Boolean = false, changingPin: Boolean = false): Boolean {
         val accountId = store.selectedAccount.value ?: return false
-        if (!deleting && profile.pinVerifier != null && com.nikhil.niktv.data.ProfilePin.remembered(context, accountId, profile)) return true
-        val request = ProfilePinRequest(profile, deleting)
+        if (!deleting && !changingPin && profile.pinVerifier != null && com.nikhil.niktv.data.ProfilePin.remembered(context, accountId, profile)) return true
+        val request = ProfilePinRequest(profile, deleting) { manager.profileForPasswordCheck(accountId, profile.id) }
         pendingProfilePin?.result?.complete(false)
         pendingProfilePin = request
         return try {
             val accepted = request.result.await()
             val current = store.profiles.first().firstOrNull { it.id == profile.id }
-            val valid = accepted && store.selectedAccount.value == accountId && current?.pinVerifier == profile.pinVerifier && current != null
+            val valid = accepted && store.selectedAccount.value == accountId && current?.pinVerifier == request.authorizedVerifier && current != null
             if (valid && !deleting) {
-                val authorized = request.newPinVerifier?.let { store.setProfilePin(profile.id, it, onlyIfUnset = true) } ?: profile
+                val authorized = request.newPinVerifier?.let { store.setProfilePin(profile.id, it, onlyIfUnset = true) } ?: requireNotNull(current)
                 com.nikhil.niktv.data.ProfilePin.remember(context, accountId, authorized)
                 if (request.newPinVerifier != null) manager.requestProfileSync(accountId)
+                if (changingPin && request.newPinVerifier == null) settingProfilePin = authorized
             }
             valid
         } finally { if (pendingProfilePin === request) pendingProfilePin = null }
+    }
+    LaunchedEffect(pendingProfilePin, profiles) {
+        pendingProfilePin?.let { request ->
+            profiles.firstOrNull { it.id == request.profile.id }?.let(request::refresh)
+                ?: request.result.complete(false)
+        }
     }
     suspend fun profileAction(message: String, action: suspend () -> Unit) {
         profileError = null
@@ -438,7 +445,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                         },
                         onDelete = { profile -> scope.launch { profileAction("Could not delete this profile. Retry from this screen.") { if (authorizeProfile(profile, deleting = true)) store.deleteProfile(profile.id) } } },
                         onChangePin = { profile -> scope.launch {
-                            if (profile.pinVerifier == null || authorizeProfile(profile, deleting = true)) settingProfilePin = profile
+                            profileAction("Could not change this profile's password. Retry from this screen.") {
+                                authorizeProfile(profile, changingPin = true)
+                            }
                         } },
                         onManagePortals = { mappingProfile = it },
                         onImportLegacy = if (hasLegacy) { profile -> scope.launch {

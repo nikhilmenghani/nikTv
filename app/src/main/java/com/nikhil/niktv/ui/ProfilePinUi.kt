@@ -8,41 +8,100 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal class ProfilePinRequest(val profile: UserProfile, val deleting: Boolean) {
+internal class ProfilePinRequest(profile: UserProfile, val deleting: Boolean,
+    private val verifyProfile: (suspend () -> UserProfile)? = null) {
+    var profile by mutableStateOf(profile)
+        private set
+    var checking by mutableStateOf(profile.pinVerifier == null)
+        private set
+    var checkError by mutableStateOf<String?>(null)
+        private set
+    var setupVerified by mutableStateOf(false)
+        private set
     val result = CompletableDeferred<Boolean>()
+    var authorizedVerifier: String? = null
+        private set
     var newPinVerifier: String? = null
         private set
 
-    fun completeSetup(verifier: String) {
-        check(!deleting && profile.pinVerifier == null)
+    fun refresh(current: UserProfile) {
+        check(current.id == profile.id)
+        if (profile.pinVerifier != null && current.pinVerifier == null) return
+        profile = current
+        if (current.pinVerifier != null) {
+            checking = false; checkError = null; setupVerified = false
+        }
+    }
+
+    suspend fun checkRemotePassword() {
+        if (profile.pinVerifier != null) return
+        checking = true; checkError = null; setupVerified = false
+        try {
+            val current = requireNotNull(verifyProfile) { "Password verification is unavailable." }.invoke()
+            // A live sync may already have supplied a password while this read was pending.
+            if (profile.pinVerifier == null || current.pinVerifier != null) refresh(current)
+            setupVerified = profile.pinVerifier == null
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (profile.pinVerifier == null) checkError = "Could not check the password on GitHub. Check your connection and retry."
+        } finally { checking = false }
+    }
+
+    fun completeUnlock(verifier: String?): Boolean {
+        if (profile.pinVerifier != verifier) return false
+        authorizedVerifier = verifier
+        return result.complete(true)
+    }
+
+    fun completeSetup(verifier: String): Boolean {
+        if (deleting || profile.pinVerifier != null || !setupVerified || checking || checkError != null) return false
         newPinVerifier = verifier
-        result.complete(true)
+        return result.complete(true)
     }
 }
 
 @Composable
 internal fun ProfilePinPrompt(request: ProfilePinRequest) {
-    if (!request.deleting && request.profile.pinVerifier == null) {
-        SetProfilePinPrompt(request.profile, { request.result.complete(false) }) { request.completeSetup(it) }
-        DisposableEffect(request) { onDispose { request.result.complete(false) } }
-        return
-    }
-    var pin by remember(request) { mutableStateOf("") }
-    var error by remember(request) { mutableStateOf<String?>(null) }
+    val profile = request.profile
+    val setting = !request.deleting && profile.pinVerifier == null && request.setupVerified
+    var pin by remember(request, profile.pinVerifier) { mutableStateOf("") }
+    var confirmation by remember(request, profile.pinVerifier) { mutableStateOf("") }
+    var error by remember(request, profile.pinVerifier) { mutableStateOf<String?>(null) }
     var busy by remember(request) { mutableStateOf(false) }
+    var attempt by remember(request) { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     DisposableEffect(request) { onDispose { request.result.complete(false) } }
+    LaunchedEffect(request, attempt) { request.checkRemotePassword() }
     ParentalPinDialog(
-        title = "Unlock ${request.profile.name}",
+        title = when {
+            request.checking || request.checkError != null -> "Check password for ${profile.name}"
+            setting -> "Set password for ${profile.name}"
+            else -> "Unlock ${profile.name}"
+        },
         pin = pin, onPin = { if (!busy) pin = it }, error = error,
+        confirmation = confirmation.takeIf { setting }, onConfirmation = { if (!busy) confirmation = it },
+        pinLabel = if (setting) "New password (4 digits)" else "PIN", confirmationLabel = "Confirm password",
+        confirmLabel = if (setting) "Set password" else "Unlock",
+        checking = request.checking, verificationError = request.checkError, retry = { attempt++ },
         dismiss = { request.result.complete(false) }, confirm = {
             if (!busy) {
+                if (setting && pin != confirmation) {
+                    error = "The PINs do not match."
+                    return@ParentalPinDialog
+                }
                 busy = true
                 scope.launch {
-                    val accepted = withContext(Dispatchers.Default) { ProfilePin.verifies(request.profile.pinVerifier, pin) }
-                    pin = ""
-                    busy = false
-                    if (accepted) request.result.complete(true) else error = "Incorrect PIN. Try again."
+                    try {
+                        if (setting) {
+                            val verifier = withContext(Dispatchers.Default) { ProfilePin.create(pin) }
+                            if (!request.completeSetup(verifier)) error = "The profile changed. Enter its existing password."
+                        } else {
+                            val verifier = profile.pinVerifier
+                            val accepted = withContext(Dispatchers.Default) { ProfilePin.verifies(verifier, pin) }
+                            if (!accepted || !request.completeUnlock(verifier)) error = "Incorrect PIN. Try again."
+                        }
+                        pin = ""
+                    } finally { busy = false }
                 }
             }
         })

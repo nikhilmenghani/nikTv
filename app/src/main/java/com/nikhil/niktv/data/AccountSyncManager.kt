@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -165,6 +166,28 @@ class AccountSyncManager private constructor(context: Context) {
 
     /** Password changes are durable before uploading; Dev pull-only behavior is preserved. */
     fun requestProfileSync(accountId: String): Job? = requestAutomaticSync(accountId)
+
+    /** Read-only, including in Dev: a missing local password is not proof that GitHub has none. */
+    internal suspend fun profileForPasswordCheck(accountId: String, profileId: String): UserProfile = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            require(prefs.getString("accountId", null) == accountId && store.selectedAccount.value == accountId)
+            fun missing(): Nothing = throw IllegalStateException("This profile is unavailable. Return to profiles and retry.")
+            val local = store.profiles.first().firstOrNull { it.id == profileId } ?: missing()
+            if (local.pinVerifier != null) return@withContext local
+            val token = vault.token()
+            require(token.isNotBlank()) { "Reconnect GitHub to check this profile's password." }
+            val transport = GitHubSyncTransport(token, readOnly = true)
+            val identity = transport.identity()
+            require(identity.accountId == accountId) { "Reconnect the correct GitHub account." }
+            val repository = transport.bootstrap(identity)
+            val roster = transport.fetchProfileRoster(repository, accountId)
+            val remote = roster.firstOrNull { it.recordId == profileId } ?: missing()
+            if (remote.deleted) missing()
+            require(store.selectedAccount.value == accountId)
+            store.merge(accountId, roster)
+            store.profiles.first().firstOrNull { it.id == profileId } ?: missing()
+        }
+    }
 
     /** Called only after the episode's history mutation is durable. Never borrow a
      * different account's token if playback finishes while accounts are switching. */

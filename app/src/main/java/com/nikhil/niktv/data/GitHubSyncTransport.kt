@@ -133,6 +133,21 @@ internal class GitHubSyncTransport(
             .put("encoding", "utf-8"))
     }
 
+    /** Password setup needs the current roster, never every profile's viewing history. */
+    suspend fun fetchProfileRoster(repository: SyncRepository, accountId: String): List<SyncRecord> {
+        val head = call("GET", base(repository) + "/git/ref/heads/${encode(repository.branch)}")!!
+            .getJSONObject("object").getString("sha")
+        val manifest = file(repository, "manifest.json", head)
+            ?: throw SyncFailure("Could not verify the remote profiles. Retry after checking GitHub.")
+        validateManifest(JSONObject(manifest.first), accountId)
+        val content = file(repository, "account.json", head)
+            ?: throw SyncFailure("Could not verify the remote profiles. Retry after checking GitHub.")
+        val index = decodeDocument(content.first, accountId)
+        require(index.profileId == null && (index.schemaVersion == 1 ||
+            index.records.all { it.profileId.isBlank() || it.collection == "profile" })) { "Invalid account index." }
+        return index.records.filter { it.collection == "profile" }
+    }
+
     suspend fun fetch(repository: SyncRepository, accountId: String): RemoteAccount {
         val head = call("GET", base(repository) + "/git/ref/heads/${encode(repository.branch)}")!!
             .getJSONObject("object").getString("sha")

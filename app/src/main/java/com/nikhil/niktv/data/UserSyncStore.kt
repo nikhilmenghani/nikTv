@@ -359,6 +359,24 @@ class UserSyncStore private constructor(private val context: Context) {
             require(remote.revision >= 0 && remote.generation >= 0 && remote.payload.length <= 1_000_000) { "Invalid sync record." }
             val key = Triple(remote.profileId, remote.collection, remote.recordId)
             val old = current[key]
+            if (old != null && old.collection == "profile" && !old.deleted && !remote.deleted) {
+                val winner = if (remote.newerThan(old)) remote else old
+                val other = if (winner === remote) old else remote
+                // No supported action removes a profile PIN. An older client or stale
+                // metadata edit without that field must not erase a known password.
+                val winnerPayload = json.parseToJsonElement(winner.payload).jsonObject
+                val otherPin = json.parseToJsonElement(other.payload).jsonObject["pinVerifier"]
+                    ?.takeIf { it is JsonPrimitive && it.isString && it.content.isNotBlank() }
+                if (winnerPayload["pinVerifier"].let { it == null || it == JsonNull } && otherPin != null) {
+                    val restored = winner.copy(payload = JsonObject(winnerPayload + ("pinVerifier" to otherPin)).toString(),
+                        revision = ++revision, deviceId = deviceId, mutationId = UUID.randomUUID().toString())
+                    dao.put(restored)
+                    dao.enqueue(SyncOutbox(restored.mutationId, accountId, json.encodeToString(restored)))
+                    current[key] = restored
+                    affected += UserScope(accountId, restored.profileId)
+                    return@forEach
+                }
+            }
             if (old != null && prefersPendingViewing(old, remote, pendingIds)) {
                 // Rebase the uploading device's unsent viewing action after observing
                 // the remote revision. Persist winner + outbox atomically for retries.
