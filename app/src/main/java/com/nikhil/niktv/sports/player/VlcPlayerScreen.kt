@@ -543,7 +543,8 @@ internal fun VlcPlayerScreen(
         }
     }
     val seekTarget = remember(player) { PlaybackSeekTarget() }
-    fun seekMovieTo(target: Long) {
+    var buttonSeekRevision by remember(player) { mutableIntStateOf(0) }
+    fun seekMovieTo(target: Long, external: Boolean = false) {
         val bounded = seekTarget.absolute(target, duration, android.os.SystemClock.elapsedRealtime())
         android.util.Log.i("NikTvSeek", "VLC requestedMs=$bounded actualMs=${player.time}")
         // Explicit user intent replaces startup positioning. Cancel a queued
@@ -553,12 +554,13 @@ internal fun VlcPlayerScreen(
         pendingInitialResumePosition = 0L
         preparedSession.command { it.setTime(bounded, false) }
         position = bounded
+        if (external) buttonSeekRevision++
     }
     fun skipMovie(delta: Long) {
         val base = pendingInitialResumePosition.takeIf { it > 0L } ?: player.time.coerceAtLeast(0L)
         val target = seekTarget.target(base, duration, delta,
             android.os.SystemClock.elapsedRealtime())
-        seekMovieTo(target)
+        seekMovieTo(target, external = true)
     }
     fun chooseAlternateSource() {
         val choose = onChooseAlternateSource ?: return
@@ -1034,8 +1036,8 @@ internal fun VlcPlayerScreen(
                     }
                 }
             } else {
-                position = player.time.coerceAtLeast(0L)
-                seekTarget.acknowledge(position)
+                seekTarget.acknowledge(nativeClockPosition, android.os.SystemClock.elapsedRealtime())
+                position = seekTarget.displayPosition(player.time.coerceAtLeast(0L), android.os.SystemClock.elapsedRealtime(), acknowledge = false)
             }
 
             if (
@@ -1953,6 +1955,7 @@ internal fun VlcPlayerScreen(
                                 commitOnRelease = com.nikhil.niktv.ui.localPlaybackSource(media.url, media.offlinePlayback),
                                 position = position,
                                 duration = duration,
+                                externalSeekRevision = buttonSeekRevision,
                                 onSeek = {
                                     seekMovieTo(it)
                                 },

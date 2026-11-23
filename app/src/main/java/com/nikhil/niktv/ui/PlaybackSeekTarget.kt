@@ -20,8 +20,16 @@ internal class PlaybackSeekTarget {
         return target
     }
 
-    fun acknowledge(actual: Long) {
-        if (pending?.let { kotlin.math.abs(actual - it) <= 500L } == true) pending = null
+    fun acknowledge(actual: Long, now: Long? = null) {
+        // Playback may advance between the seek and the first UI clock poll.
+        val tolerance = 500L + (now?.minus(requestedAt) ?: 0L).coerceIn(0L, 2_000L)
+        if (pending?.let { kotlin.math.abs(actual - it) <= tolerance } == true) pending = null
+    }
+
+    /** Don't paint an old decoder clock over a seek the user just requested. */
+    fun displayPosition(actual: Long, now: Long, acknowledge: Boolean = true): Long {
+        if (acknowledge) acknowledge(actual, now)
+        return pending?.takeIf { now - requestedAt < 5_000L } ?: actual
     }
 
     fun isPending(now: Long): Boolean = pending != null && now - requestedAt < 5_000L

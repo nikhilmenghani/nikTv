@@ -1078,6 +1078,91 @@ class PlaybackEngineFixtureTest {
         }
     }
 
+    @Test fun sportsNativeWindowSeekButtonsAndDpadReachLiveBelowBar() {
+        check(context.packageName.endsWith(".regression"))
+        val server = FixtureServer()
+        val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
+        val firstFrames = AtomicInteger()
+        val renderedFrames = AtomicInteger()
+        val reconnects = AtomicInteger()
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val previousVolume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        fun find(description: String, prefix: Boolean = false): android.view.accessibility.AccessibilityNodeInfo? {
+            if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+            fun walk(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+                if (node == null) return null
+                val label = node.contentDescription?.toString().orEmpty()
+                if (if (prefix) label.startsWith(description) else label == description) return node
+                for (index in 0 until node.childCount) walk(node.getChild(index))?.let { return it }
+                return null
+            }
+            return walk(instrumentation.uiAutomation.rootInActiveWindow)
+        }
+        fun click(description: String) {
+            var node = find(description)
+            repeat(8) { if (node?.isClickable != true) node = node?.parent }
+            assertTrue("Reachable control: $description", node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) == true)
+        }
+        fun position(): Long? = find("Current playback time ", true)?.contentDescription?.toString()
+            ?.removePrefix("Current playback time ")?.split(':')?.mapNotNull { it.toLongOrNull() }
+            ?.fold(0L) { total, value -> total * 60 + value }
+        try {
+            val media = PlayingMedia(NikItem("sports-dvr-fixture", "Sports window fixture", null, null),
+                "${server.base}/live-dvr", CatalogType.LIVE_TV, playbackFormat = "HLS", progressKey = "sports-dvr-fixture",
+                allowLiveWindowSeeking = true)
+            main { activity.setContent {
+                androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                    com.nikhil.niktv.sports.player.PlayerScreen(media, playbackDomain = PlaybackDomain.SPORTS, onBack = {}, onRetry = { reconnects.incrementAndGet() },
+                        onRetryAlternateDecoder = { reconnects.incrementAndGet() },
+                        onPlaybackAuthorizationFailure = { reconnects.incrementAndGet() },
+                        onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
+                        controlsTimeoutSeconds = 60, startFullscreen = true, showLiveRecordingAndGuide = false,
+                        onVideoFrameRendered = { firstFrames.incrementAndGet() },
+                        onVideoFramesRendered = { renderedFrames.set(it) })
+                }
+            } }
+            await("Sports live fixture renders") { firstFrames.get() > 0 }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Opening the overlay reveals the native-window seekbar") { (position() ?: 0) > 20 }
+            val before = requireNotNull(position())
+            click("Back 10 seconds")
+            await("Rewind seeks inside the native window") { position()?.let { it <= before - 6 } == true }
+            click("Pause")
+            await("The native live window is paused") { find("Play") != null }
+            val rewound = requireNotNull(position())
+            instrumentation.setInTouchMode(false)
+            var play = find("Play")
+            while (play != null && !play.isClickable) play = play.parent
+            assertTrue("The paused playback control accepts focus", play?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS) == true)
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_UP)
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right advances within the live window") { position()?.let { it >= rewound + 8 } == true }
+            Thread.sleep(600)
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Left rewinds within the same live bar") { position()?.let { it <= rewound + 2 } == true }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            fun liveFocused(): Boolean {
+                var node = find("Watch live")
+                while (node != null && !node.isFocusable) node = node.parent
+                return node?.isFocused == true
+            }
+            await("Go Live is reached in the playback row") { liveFocused() }
+            NavigationAuditEvidence.capture("sports-go-live-controls-row")
+            assertNotNull(find("Watch live"))
+            click("Watch live")
+            await("Watch live seeks to native default without restarting") { position()?.let { it >= before - 4 } == true }
+            assertEquals("Seeking retains the same stream/player", 0, reconnects.get())
+        } finally {
+            main { activity.finish() }
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, previousVolume, 0)
+            server.close()
+        }
+    }
+
     @Test fun playerErrorCanBeHiddenAndReenteredWithRemote() {
         check(context.packageName.endsWith(".regression"))
         val store = com.nikhil.niktv.sports.SportsPlaybackPreferences(context)

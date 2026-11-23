@@ -27,27 +27,52 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Synthetic UI only; never connects a profile or plays media. */
 class ModernModalAndMatchDeviceTest {
-    @Test fun liveSeekbarRightEntersLiveActionWithoutSeeking() {
+    @Test fun liveSeekbarKeepsBothDirectionsAndLiveActionIsBelow() {
         val calls = CopyOnWriteArrayList<Long>()
         fixture({
             val bar = remember { FocusRequester() }
             val live = remember { FocusRequester() }
-            Row(Modifier.width(650.dp).initialFocusEntry(bar)) {
+            Column(Modifier.width(600.dp).initialFocusEntry(bar)) {
                 com.nikhil.niktv.sports.player.PlaybackProgressBar(20_000, 120_000, { calls.add(it) }, "live-navigation",
-                    modifier = Modifier.weight(1f).focusRequester(bar),
-                    onNavigateRight = { live.requestFocus() })
+                    bufferedPosition = 90_000, modifier = Modifier.focusRequester(bar).focusProperties { down = live })
                 NikTvActionButton("Watch live fixture", modifier = Modifier.focusRequester(live)
-                    .focusProperties { left = bar }, onClick = {})
+                    .focusProperties { up = bar }, onClick = {})
             }
         }) {
+            await("Live bar owns initial input focus") { focused("Current playback time 0:20") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Right enters the LIVE action") { focused("Watch live fixture") }
-            Thread.sleep(600)
-            assertTrue("Navigation to LIVE must not seek", calls.isEmpty())
+            await("Right seeks forwards on the live bar") { calls.size == 1 }
+            assertEquals(30_000L, calls.last())
+            assertFalse(focused("Watch live fixture"))
             key(KeyEvent.KEYCODE_DPAD_LEFT)
-            key(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)
-            await("Dedicated fast-forward remains available on the bar") { calls.size == 1 }
-            assertEquals(30_000L, calls.single())
+            await("Left seeks backwards on the same live bar") { calls.size == 2 }
+            assertEquals(20_000L, calls.last())
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down can reach the LIVE action below") { focused("Watch live fixture") }
+        }
+    }
+
+    @Test fun externalSeekButtonReplacesAnUncommittedBarPreview() {
+        val calls = CopyOnWriteArrayList<Long>()
+        fixture({
+            val bar = remember { FocusRequester() }
+            var position by remember { mutableStateOf(20_000L) }
+            var revision by remember { mutableStateOf(0) }
+            Column(Modifier.width(600.dp).initialFocusEntry(bar)) {
+                PlaybackProgressBar(position, 120_000, { calls.add(it) }, "button-preview",
+                    modifier = Modifier.focusRequester(bar), externalSeekRevision = revision)
+                NikTvActionButton("Forward button fixture", onClick = { position += 10_000; revision++ })
+            }
+        }) {
+            await("Seek bar owns initial input focus") { focused("Current playback time 0:20") }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("D-pad previews ten seconds") { find("Current playback time 0:10") != null }
+            var button = find("Forward button fixture")
+            while (button != null && !button.isClickable) button = button.parent
+            assertTrue(button?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+            await("Button immediately replaces old preview") { find("Current playback time 0:30") != null }
+            Thread.sleep(650)
+            assertTrue("Old preview cannot overwrite the button command", calls.isEmpty())
         }
     }
 
@@ -92,7 +117,7 @@ class ModernModalAndMatchDeviceTest {
                 com.nikhil.niktv.sports.player.PlaybackProgressBar(0L, 7_200_000L, { calls.add(it) }, "fixture-seek", modifier = Modifier.focusRequester(bar))
             }
         }) {
-            Thread.sleep(250)
+            await("Held-seek bar owns input focus") { focused("Current playback time 0:00") }
             val down = SystemClock.uptimeMillis()
             instrumentation.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0))
             Thread.sleep(850)

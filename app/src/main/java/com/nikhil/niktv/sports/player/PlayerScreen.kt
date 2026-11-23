@@ -1079,6 +1079,19 @@ fun PlayerScreen(
         currentWindowIsLive = player.isCurrentMediaItemLive
         bufferedPosition = player.bufferedPosition.coerceAtLeast(0L)
     }
+    val buttonSeekTarget = remember(player) { com.nikhil.niktv.ui.PlaybackSeekTarget() }
+    var buttonSeekRevision by remember(player) { mutableIntStateOf(0) }
+    fun seekPlaybackTo(target: Long) {
+        val bounded = buttonSeekTarget.absolute(target, duration, android.os.SystemClock.elapsedRealtime())
+        player.seekTo(bounded)
+        buttonSeekTarget.acknowledge(player.currentPosition)
+        position = bounded
+    }
+    fun skipPlayback(delta: Long) {
+        val target = buttonSeekTarget.target(player.currentPosition, duration, delta, android.os.SystemClock.elapsedRealtime())
+        seekPlaybackTo(target)
+        buttonSeekRevision++
+    }
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isCurrentMediaItemSeekable }
     val introAvailable = introSecondsRemaining != null
@@ -1538,7 +1551,7 @@ fun PlayerScreen(
                     "dropped=${counters?.droppedBufferCount}")
                 lastHealthSample = android.os.SystemClock.elapsedRealtime()
             }
-            position = player.currentPosition.coerceAtLeast(0L)
+            position = buttonSeekTarget.displayPosition(player.currentPosition.coerceAtLeast(0L), android.os.SystemClock.elapsedRealtime())
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
             sampleLiveWindow()
             if (onVideoFramesRendered != null) {
@@ -2289,7 +2302,9 @@ fun PlayerScreen(
             }
 
 
+            val showWatchLive = liveWindowSeekingAvailable && currentWindowIsLive
             val firstQuickActionRequester = when {
+                showWatchLive -> watchLiveFocusRequester
                 media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide -> programmeGuideFocusRequester
                 introAvailable -> skipIntroFocusRequester
                 extraControlsOpen -> settingsRibbon.firstOr(extraControlsRequester)
@@ -2552,7 +2567,7 @@ fun PlayerScreen(
                         modifier = Modifier
                             .focusRequester(programmeGuideFocusRequester)
                             .playerDpadFocusRoutes(
-                                left = lastPlaybackActionRequester,
+                                left = if (showWatchLive) watchLiveFocusRequester else lastPlaybackActionRequester,
                                 right = if (recordingThisChannel) recordingPauseFocusRequester else downloadFocusRequester,
                                 up = if (seekable) progressFocusRequester else backFocusRequester
                             ),
@@ -2636,13 +2651,9 @@ fun PlayerScreen(
                                 commitOnRelease = com.nikhil.niktv.ui.localPlaybackSource(media.url, media.offlinePlayback),
                                 position = position,
                                 duration = duration,
+                                externalSeekRevision = buttonSeekRevision,
                                 bufferedPosition = bufferedPosition.takeIf { liveWindowSeekingAvailable },
-                                onNavigateRight = if (liveWindowSeekingAvailable && currentWindowIsLive) ({
-                                    runCatching { watchLiveFocusRequester.requestFocus() }.getOrDefault(false)
-                                }) else null,
-                                onSeek = {
-                                    player.seekTo(it)
-                                },
+                                onSeek = { seekPlaybackTo(it) },
                                 compact = compactPlayerSpacing,
                                 modifier = Modifier
                                     .weight(1f)
@@ -2650,19 +2661,13 @@ fun PlayerScreen(
                                     .focusProperties {
                                         up = backFocusRequester
                                         down = primaryActionRequester
-                                        if (liveWindowSeekingAvailable && currentWindowIsLive) right = watchLiveFocusRequester
                                     }
                                     .playerControlFocus(
                                         shape = RoundedCornerShape(14.dp),
                                         scaleOnFocus = false
                                     ) { controlsFocused = it }
                             )
-                            if (liveWindowSeekingAvailable && currentWindowIsLive) PlayerChromeIconButton(
-                                icon = Icons.Default.LiveTv, contentDescription = "Watch live", badgeText = "LIVE",
-                                onClick = { player.seekToDefaultPosition(); playbackRequested = true; player.play() },
-                                modifier = Modifier.focusRequester(watchLiveFocusRequester)
-                                    .playerDpadFocusRoutes(left = progressFocusRequester, down = primaryActionRequester, up = backFocusRequester),
-                                onFocused = { controlsFocused = it })
+
                             }
                         } else if (media.catalogType == CatalogType.LIVE_TV) {
                             Row(
@@ -2740,7 +2745,7 @@ fun PlayerScreen(
                                             icon = Icons.Default.Replay10,
                                             contentDescription = "Back 10 seconds",
                                             onClick = {
-                                                player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                                skipPlayback(-10_000L)
                                             },
                                             modifier = Modifier.focusRequester(rewindFocusRequester)
                                                 .focusProperties {
@@ -2801,7 +2806,7 @@ fun PlayerScreen(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.Forward10,
                                             contentDescription = "Forward 10 seconds",
-                                            onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) },
+                                            onClick = { skipPlayback(10_000L) },
                                             modifier = Modifier.focusRequester(forwardFocusRequester)
                                                 .focusProperties {
                                                     up = progressFocusRequester
@@ -2839,10 +2844,26 @@ fun PlayerScreen(
                                     }
                                 }
 
+                                if (showWatchLive) PlayerChromeIconButton(
+                                    icon = Icons.Default.LiveTv, contentDescription = "Watch live", badgeText = "LIVE",
+                                    onClick = {
+                                        player.seekToDefaultPosition()
+                                        position = player.currentPosition
+                                        buttonSeekTarget.absolute(position, duration, android.os.SystemClock.elapsedRealtime())
+                                        buttonSeekRevision++
+                                        playbackRequested = true; player.play()
+                                    },
+                                    modifier = Modifier.focusRequester(watchLiveFocusRequester).playerDpadFocusRoutes(
+                                        left = lastPlaybackActionRequester,
+                                        right = if (introAvailable) skipIntroFocusRequester else if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) programmeGuideFocusRequester else if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
+                                        up = progressFocusRequester),
+                                    size = if (compactMobileControls) 44.dp else 48.dp,
+                                    onFocused = { controlsFocused = it })
+
                                 if (introAvailable) PlayerChromeIconButton(
                                     icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
                                     modifier = Modifier.focusRequester(skipIntroFocusRequester).playerDpadFocusRoutes(
-                                        left = lastPlaybackActionRequester, right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
+                                        left = if (showWatchLive) watchLiveFocusRequester else lastPlaybackActionRequester, right = if (extraControlsOpen) settingsRibbon.firstOr(extraControlsRequester) else extraControlsRequester,
                                         up = if (seekable) progressFocusRequester else backFocusRequester),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it })
@@ -2858,7 +2879,7 @@ fun PlayerScreen(
                                 Spacer(Modifier.weight(1f))
                                 PlayerSettingsRibbon(
                                     visible = extraControlsOpen, actions = settingsActions, state = settingsRibbon,
-                                    toggle = extraControlsRequester, left = if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                    toggle = extraControlsRequester, left = if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else if (showWatchLive) watchLiveFocusRequester else lastPlaybackActionRequester,
                                     up = if (seekable) progressFocusRequester else backFocusRequester,
                                     onDismiss = { extraControlsOpen = false }, onFocused = { controlsFocused = it }
                                 )
@@ -2873,12 +2894,12 @@ fun PlayerScreen(
                                     selected = extraControlsOpen,
                                     modifier = Modifier.focusRequester(extraControlsRequester)
                                         .focusProperties {
-                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else if (showWatchLive) watchLiveFocusRequester else lastPlaybackActionRequester
                                             right = FocusRequester.Cancel
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else lastPlaybackActionRequester,
+                                            left = if (extraControlsOpen) settingsRibbon.entry(settingsActions) else if (media.catalogType == CatalogType.LIVE_TV && showLiveRecordingAndGuide) downloadFocusRequester else if (introAvailable) skipIntroFocusRequester else if (showWatchLive) watchLiveFocusRequester else lastPlaybackActionRequester,
                                             right = FocusRequester.Cancel,
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         ),
@@ -3954,148 +3975,14 @@ internal fun PlayerMoreOptionsDialog(
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 internal fun PlaybackProgressBar(
-    position: Long,
-    duration: Long,
-    onSeek: (Long) -> Unit,
-    mediaKey: String,
-    compact: Boolean = false,
-    active: Boolean = true,
-    modifier: Modifier = Modifier,
-    bufferedPosition: Long? = null,
-    onNavigateRight: (() -> Boolean)? = null,
-    commitOnRelease: Boolean = false
-) {
-    if (bufferedPosition == null && onNavigateRight == null) {
-        // VOD/local files use the same input/commit lifecycle as the IPTV player.
-        // Live windows retain their buffered track and Watch live focus route.
-        com.nikhil.niktv.ui.PlaybackProgressBar(position, duration, onSeek, mediaKey,
-            compact, active, modifier, commitOnRelease)
-        return
-    }
-    val safeDuration = duration.coerceAtLeast(0L)
-    var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
-    var revision by remember(mediaKey) { mutableIntStateOf(0) }
-    var directionHeld by remember(mediaKey) { mutableStateOf(false) }
-    val holdAcceleration = remember(mediaKey) { SeekHoldAcceleration() }
-    var dragging by remember(mediaKey) { mutableStateOf(false) }
-    val seek by rememberUpdatedState(onSeek)
-    LaunchedEffect(mediaKey, revision, directionHeld, dragging, active) {
-        if (!active) { preview = null; directionHeld = false; dragging = false; holdAcceleration.reset(); return@LaunchedEffect }
-        val target = preview ?: return@LaunchedEffect
-        if (directionHeld || dragging) return@LaunchedEffect
-        delay(450L)
-        seek(target.coerceIn(0L, safeDuration))
-        delay(1_000L)
-        preview = null
-    }
-    val safePosition = (preview ?: position).coerceIn(0L, safeDuration)
-    val fraction = if (safeDuration > 0L) safePosition.toFloat() / safeDuration else 0f
-    val elapsed = formatPlayerTime(safePosition)
-    val remaining = formatPlayerTime(safeDuration - safePosition)
-    val total = formatPlayerTime(safeDuration)
-    Column(
-        modifier
-            .height(if (compact) 40.dp else 58.dp)
-            .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
-            .onPreviewKeyEvent { event ->
-                if (!active) return@onPreviewKeyEvent true
-                if (event.key == ComposeKey.DirectionRight && onNavigateRight != null) {
-                    if (event.type == ComposeKeyEventType.KeyDown) onNavigateRight()
-                    return@onPreviewKeyEvent true
-                }
-                val direction = when (event.key) {
-                    ComposeKey.DirectionLeft, ComposeKey.MediaRewind -> -1
-                    ComposeKey.DirectionRight, ComposeKey.MediaFastForward -> 1
-                    else -> return@onPreviewKeyEvent false
-                }
-                if (event.type == ComposeKeyEventType.KeyDown) {
-                    val step = holdAcceleration.step(direction, event.nativeKeyEvent.eventTime,
-                        event.nativeKeyEvent.repeatCount > 0, safeDuration)
-                    directionHeld = true
-                    preview = seekPreviewPosition(preview ?: position, direction, safeDuration, step)
-                    revision++
-                } else if (event.type == ComposeKeyEventType.KeyUp) {
-                    holdAcceleration.release(direction)
-                    directionHeld = holdAcceleration.isHeld
-                    revision++
-                }
-                true
-            }
-            .onFocusChanged { if (!it.hasFocus) { directionHeld = false; holdAcceleration.reset() } }
-            .focusProperties { canFocus = active }
-            .focusable(),
-        verticalArrangement = Arrangement.Center
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Spacer(Modifier.weight(1f))
-            Text(
-                "−$remaining  /  $total",
-                color = Color.White.copy(alpha = 0.70f),
-                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium
-            )
-        }
-        Slider(
-            // Use one normalized unit for the thumb, painted track and accessibility range.
-            // Millisecond values were being clamped at the range endpoint on device.
-            value = fraction,
-            onValueChange = {
-                holdAcceleration.reset()
-                directionHeld = false
-                dragging = true
-                preview = (it.toDouble() * safeDuration).toLong().coerceIn(0L, safeDuration)
-                revision++
-            },
-            onValueChangeFinished = { dragging = false; revision++ },
-            enabled = active && safeDuration > 0L,
-            valueRange = 0f..1f,
-            modifier = Modifier.fillMaxWidth().height(if (compact) 20.dp else 28.dp)
-                .focusProperties { canFocus = false },
-            thumb = {
-                Text(
-                    elapsed,
-                    modifier = Modifier
-                        .clip(MaterialTheme.shapes.small)
-                        .background(MaterialTheme.colorScheme.primary)
-                        .semantics { contentDescription = "Current playback time $elapsed" }
-                        .padding(horizontal = 6.dp, vertical = if (compact) 1.dp else 3.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            },
-            track = {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(if (compact) 4.dp else 5.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color.White.copy(alpha = 0.24f))
-                ) {
-                    bufferedPosition?.let { buffered ->
-                        Box(Modifier.fillMaxHeight().fillMaxWidth(
-                            if (safeDuration > 0L) (buffered.toFloat() / safeDuration).coerceIn(0f, 1f) else 0f)
-                            .background(Color.White.copy(alpha = .35f)))
-                    }
-                    Box(
-                        Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(fraction)
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
-                }
-            },
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = Color.Transparent,
-                inactiveTrackColor = Color.Transparent
-            )
-        )
-    }
-}
+    position: Long, duration: Long, onSeek: (Long) -> Unit, mediaKey: String,
+    compact: Boolean = false, active: Boolean = true, modifier: Modifier = Modifier,
+    bufferedPosition: Long? = null, commitOnRelease: Boolean = false,
+    externalSeekRevision: Int = 0
+) = com.nikhil.niktv.ui.PlaybackProgressBar(
+    position, duration, onSeek, mediaKey, compact, active, modifier,
+    commitOnRelease, bufferedPosition, externalSeekRevision
+)
 
 private fun Throwable.causeSequence(): Sequence<Throwable> = generateSequence(this) { it.cause }
 

@@ -1121,6 +1121,19 @@ fun PlayerScreen(
         player.playWhenReady = playbackRequested && (!isTvDevice ||
             playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
     }
+    val buttonSeekTarget = remember(player) { com.nikhil.niktv.ui.PlaybackSeekTarget() }
+    var buttonSeekRevision by remember(player) { mutableIntStateOf(0) }
+    fun seekPlaybackTo(target: Long) {
+        val bounded = buttonSeekTarget.absolute(target, duration, android.os.SystemClock.elapsedRealtime())
+        player.seekTo(bounded)
+        buttonSeekTarget.acknowledge(player.currentPosition)
+        position = bounded
+    }
+    fun skipPlayback(delta: Long) {
+        val target = buttonSeekTarget.target(player.currentPosition, duration, delta, android.os.SystemClock.elapsedRealtime())
+        seekPlaybackTo(target)
+        buttonSeekRevision++
+    }
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isCurrentMediaItemSeekable }
     val introAvailable = introSecondsRemaining != null
@@ -1579,7 +1592,7 @@ fun PlayerScreen(
                     "dropped=${counters?.droppedBufferCount}")
                 lastHealthSample = android.os.SystemClock.elapsedRealtime()
             }
-            position = player.currentPosition.coerceAtLeast(0L)
+            position = buttonSeekTarget.displayPosition(player.currentPosition.coerceAtLeast(0L), android.os.SystemClock.elapsedRealtime())
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
             if (onVideoFramesRendered != null) {
                 (player as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters?.let { counters ->
@@ -2702,9 +2715,8 @@ fun PlayerScreen(
                                 commitOnRelease = com.nikhil.niktv.ui.localPlaybackSource(media.url, media.offlinePlayback),
                                 position = position,
                                 duration = duration,
-                                onSeek = {
-                                    player.seekTo(it)
-                                },
+                                externalSeekRevision = buttonSeekRevision,
+                                onSeek = { seekPlaybackTo(it) },
                                 compact = compactPlayerSpacing,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2794,7 +2806,7 @@ fun PlayerScreen(
                                             icon = Icons.Default.Replay10,
                                             contentDescription = "Back 10 seconds",
                                             onClick = {
-                                                player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                                skipPlayback(-10_000L)
                                             },
                                             modifier = Modifier.focusRequester(rewindFocusRequester)
                                                 .focusProperties {
@@ -2855,7 +2867,7 @@ fun PlayerScreen(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.Forward10,
                                             contentDescription = "Forward 10 seconds",
-                                            onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) },
+                                            onClick = { skipPlayback(10_000L) },
                                             modifier = Modifier.focusRequester(forwardFocusRequester)
                                                 .focusProperties {
                                                     up = progressFocusRequester
@@ -4088,36 +4100,39 @@ internal fun PlaybackProgressBar(
     compact: Boolean = false,
     active: Boolean = true,
     modifier: Modifier = Modifier,
-    commitOnRelease: Boolean = false
+    commitOnRelease: Boolean = false,
+    bufferedPosition: Long? = null,
+    externalSeekRevision: Int = 0
 ) {
     val safeDuration = duration.coerceAtLeast(0L)
-    var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
-    var pendingSeek by remember(mediaKey) { mutableStateOf<Long?>(null) }
-    var revision by remember(mediaKey) { mutableIntStateOf(0) }
-    var commitRevision by remember(mediaKey) { mutableIntStateOf(0) }
-    var directionHeld by remember(mediaKey) { mutableStateOf(false) }
-    val holdAcceleration = remember(mediaKey) { SeekHoldAcceleration() }
-    var dragging by remember(mediaKey) { mutableStateOf(false) }
+    var preview by remember(mediaKey, externalSeekRevision) { mutableStateOf<Long?>(null) }
+    var pendingSeek by remember(mediaKey, externalSeekRevision) { mutableStateOf<Long?>(null) }
+    var revision by remember(mediaKey, externalSeekRevision) { mutableIntStateOf(0) }
+    var commitRevision by remember(mediaKey, externalSeekRevision) { mutableIntStateOf(0) }
+    var directionHeld by remember(mediaKey, externalSeekRevision) { mutableStateOf(false) }
+    val holdAcceleration = remember(mediaKey, externalSeekRevision) { SeekHoldAcceleration() }
+    var dragging by remember(mediaKey, externalSeekRevision) { mutableStateOf(false) }
     val seek by rememberUpdatedState(onSeek)
     val currentMediaKey by rememberUpdatedState(mediaKey)
+    val currentExternalRevision by rememberUpdatedState(externalSeekRevision)
     fun commitPendingSeek() {
         val target = pendingSeek ?: return
         pendingSeek = null
         commitRevision++
         seek(target.coerceIn(0L, safeDuration))
     }
-    DisposableEffect(mediaKey) {
+    DisposableEffect(mediaKey, externalSeekRevision) {
         val ownedSeek = onSeek
         onDispose {
             // A hidden controls overlay still owes the user's final seek. A
             // different episode/retry must never inherit the old cursor target.
-            if (currentMediaKey == mediaKey) pendingSeek?.let { target ->
+            if (currentMediaKey == mediaKey && currentExternalRevision == externalSeekRevision) pendingSeek?.let { target ->
                 pendingSeek = null
                 runCatching { ownedSeek(target) }
             }
         }
     }
-    LaunchedEffect(mediaKey, revision, directionHeld, dragging, active) {
+    LaunchedEffect(mediaKey, externalSeekRevision, revision, directionHeld, dragging, active) {
         if (!active) {
             commitPendingSeek()
             preview = null; directionHeld = false; dragging = false; holdAcceleration.reset()
@@ -4127,12 +4142,12 @@ internal fun PlaybackProgressBar(
         delay(450L)
         commitPendingSeek()
     }
-    LaunchedEffect(mediaKey, commitRevision) {
+    LaunchedEffect(mediaKey, externalSeekRevision, commitRevision) {
         if (commitRevision == 0) return@LaunchedEffect
         delay(1_000L)
         if (pendingSeek == null) preview = null
     }
-    LaunchedEffect(mediaKey, position, commitRevision, commitOnRelease) {
+    LaunchedEffect(mediaKey, externalSeekRevision, position, commitRevision, commitOnRelease) {
         if (commitOnRelease && pendingSeek == null && !directionHeld && !dragging &&
             preview?.let { kotlin.math.abs(position - it) <= 500L } == true) preview = null
     }
@@ -4232,6 +4247,11 @@ internal fun PlaybackProgressBar(
                         .clip(RoundedCornerShape(999.dp))
                         .background(Color.White.copy(alpha = 0.24f))
                 ) {
+                    bufferedPosition?.let { buffered ->
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(
+                            if (safeDuration > 0L) (buffered.toFloat() / safeDuration).coerceIn(0f, 1f) else 0f)
+                            .background(Color.White.copy(alpha = .35f)))
+                    }
                     Box(
                         Modifier
                             .fillMaxHeight()
