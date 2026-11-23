@@ -28,7 +28,8 @@ internal data class ProfileSetupDraft(
     val content: XtreamContentPolicy = XtreamContentPolicy(),
     val parental: ProfileParentalPolicy = ProfileParentalPolicy(),
     val pinchToZoom: Boolean = false,
-    val quality: Int = 0
+    val quality: Int = 0,
+    val swipeControls: PlayerSwipeControls = PlayerSwipeControls()
 ) {
     val canOpen get() = enabled && selected.isNotEmpty()
     val start get() = startingPortal?.takeIf { it in selected } ?: portals.firstOrNull { it.key in selected }?.key
@@ -78,7 +79,8 @@ internal object ProfileSetupStore {
             account, profile != null, owner?.let { it.profileId in users.enabledProfileIds(it.accountId) } ?: true,
             ProfileBrowsePreferences.layout(context, owner), portals, selected, start,
             XtreamContentPreferences.read(context, owner), owner?.let { ParentalControls.policy(context, it) } ?: ProfileParentalPolicy(),
-            PlayerGesturePreferences.pinchToZoom(context, owner), PortalQualityPreferences.height(context, owner))
+            PlayerGesturePreferences.pinchToZoom(context, owner), PortalQualityPreferences.height(context, owner),
+            swipeControls = PlayerGesturePreferences.swipes(context, owner))
     }
 
     suspend fun save(context: Context, draft: ProfileSetupDraft): UserProfile = withContext(Dispatchers.IO) {
@@ -107,7 +109,7 @@ internal object ProfileSetupStore {
             UserProfilePreferences.Change("profile_parental_v1", "enabled", draft.parental.protectionEnabled, false),
             UserProfilePreferences.Change("profile_parental_v1", "show_sensitive_iptv", draft.parental.showSensitiveIptv, false),
             UserProfilePreferences.Change("profile_parental_v1", "relock_minutes", draft.parental.relockMinutes, false)
-        )) {
+        ) + PlayerSwipeGesture.entries.map { UserProfilePreferences.Change("niktv_playback_ui", it.key, draft.swipeControls.enabled(it)) }) {
             check(users.selectedAccount.value == account) { "The account changed. Reopen profile setup." }
             if (draft.existing) check(users.dao.records(account).any { it.collection == "profile" && it.recordId == owner.profileId && !it.deleted }) { "This profile is no longer available." }
             users.updateProfile(draft.profile.copy(name = draft.profile.name.trim(), avatar = draft.profile.avatar.trim()))
@@ -125,6 +127,7 @@ internal object ProfileSetupStore {
                 users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.PORTAL, it.portal.cacheKey()))
             }
         }
+        AccountSyncManager.get(context).requestProfileSync(account)
         draft.profile
     }
 

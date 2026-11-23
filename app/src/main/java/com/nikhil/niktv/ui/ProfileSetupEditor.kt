@@ -211,6 +211,9 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
                                         1 -> {
                                             SettingsControlRow("Pinch to zoom", checked = draft.pinchToZoom,
                                                 description = "Allow two-finger zoom in the player. Off by default.", onToggle = { change(draft.copy(pinchToZoom = it)) })
+                                            PlayerSwipeSettings(draft.swipeControls) { gesture, enabled ->
+                                                change(draft.copy(swipeControls = draft.swipeControls.with(gesture, enabled)))
+                                            }
                                             SettingsPickerRow("Preferred IPTV quality", listOf(0 to "Best available", 2160 to "Up to 4K", 1080 to "Up to 1080p", 720 to "Up to 720p", 480 to "Up to 480p"),
                                                 draft.quality, { change(draft.copy(quality = it)) }, "Used when the provider offers multiple playback qualities.")
                                         }

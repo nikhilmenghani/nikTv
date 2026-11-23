@@ -56,7 +56,7 @@ class ProfileSetupDeviceTest {
         val choice = initial.portals.single { it.portal.cacheKey() == portal.cacheKey() }
         val next = initial.copy(profile = initial.profile.copy(name = "New viewer"), layout = ViewerLayout.EASY,
             selected = setOf(choice.key), startingPortal = choice.key, content = XtreamContentPolicy.parents(),
-            pinchToZoom = true, quality = 720)
+            pinchToZoom = true, quality = 720, swipeControls = com.nikhil.niktv.data.PlayerSwipeControls(true, false, true))
         ProfileSetupStore.save(context, next)
         val created = UserScope(watching.accountId, next.profile.id)
         assertEquals(watching, users.selectedScope.value)
@@ -68,6 +68,7 @@ class ProfileSetupDeviceTest {
         assertEquals(ViewerLayout.EASY, ProfileBrowsePreferences.layout(context, created))
         assertEquals(XtreamContentPolicy.parents(), XtreamContentPreferences.read(context, created))
         assertTrue(PlayerGesturePreferences.pinchToZoom(context, created))
+        assertEquals(com.nikhil.niktv.data.PlayerSwipeControls(true, false, true), PlayerGesturePreferences.swipes(context, created))
         assertEquals(720, PortalQualityPreferences.height(context, created))
         assertEquals(ProfileParentalPolicy(), ParentalControls.policy(context, created))
         assertEquals(portal.cacheKey(), users.rememberedDestination(created)?.portalKey)

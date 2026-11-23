@@ -25,6 +25,27 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = Application::class, manifest = Config.NONE)
 class UserProfilePreferencesTest {
+    @Test fun playerSwipePreferencesAreIndependentPortableAndRefreshFromRemote() = runBlocking {
+        assertEquals(PlayerSwipeControls(), PlayerGesturePreferences.swipes(context, family()))
+        assertEquals(PlayerSwipeControls(), PlayerGesturePreferences.swipes(context, null))
+        for (gesture in PlayerSwipeGesture.entries) PlayerGesturePreferences.setSwipe(context, family(), gesture, true)
+        assertEquals(PlayerSwipeControls(true, true, true), PlayerGesturePreferences.observeSwipes(context, family()).first())
+        users.selectProfile(kids().profileId)
+        assertEquals(PlayerSwipeControls(), PlayerGesturePreferences.swipes(context, kids()))
+        val records = users.snapshot("101").filter { row -> PlayerSwipeGesture.entries.any { "niktv_playback_ui|${it.key}" in row.recordId } }
+        assertEquals(3, records.size)
+        assertTrue(records.all { it.profileId == family().profileId })
+        val volume = records.single { "swipe_volume" in it.recordId }
+        val root = Json.parseToJsonElement(volume.payload).jsonObject
+        val entry = JsonObject(root.getValue("entry").jsonObject + ("value" to JsonPrimitive(false)))
+        users.merge("101", listOf(volume.copy(payload = JsonObject(root + ("entry" to entry)).toString(),
+            revision = records.maxOf { it.revision } + 10, deviceId = "remote", mutationId = "remote-volume")))
+        assertEquals(PlayerSwipeControls(true, true, false), PlayerGesturePreferences.swipes(context, family()))
+        assertEquals(PlayerSwipeControls(), PlayerGesturePreferences.swipes(context, kids()))
+        users.selectAccount("202"); users.initializeDefaults("202")
+        UserProfilePreferences.warm(context, family("202"))
+        assertEquals(PlayerSwipeControls(), PlayerGesturePreferences.swipes(context, family("202")))
+    }
     @Test fun parentalPolicyDefaultsToProtectedAndDoesNotSync() = runBlocking {
         val locked = ProfileParentalPolicy()
         assertEquals(locked, ParentalControls.observe(context, family()).first())

@@ -624,6 +624,8 @@ fun PlayerScreen(
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
     val playerOptionsOpen = extraControlsOpen || speedPickerVisible || playerPickerVisible || decoderPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
+    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(rememberPlayerGestureOwner(media))
+    val currentSwipeControls by rememberUpdatedState(swipeControls)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
         if (unique.any { it.id == media.media.id }) unique
@@ -634,7 +636,7 @@ fun PlayerScreen(
     val easyPlayer = LocalViewerLayout.current == com.nikhil.niktv.data.ViewerLayout.EASY
     val showEasyList = easyPlayer && focusMode && hasPlaybackQueue
     val easyListRequester = remember(media.progressKey) { FocusRequester() }
-    val queueGesturesAllowed by rememberUpdatedState(!easyPlayer)
+    val queueGesturesAllowed by rememberUpdatedState(swipeControls.channels)
     LaunchedEffect(modeFeedback) {
         if (modeFeedback != null) {
             delay(1_800L)
@@ -1845,7 +1847,7 @@ fun PlayerScreen(
         modifier
             .fillMaxSize()
             .playerQueueSwipeObserver(
-                enabled = !easyPlayer && focusMode && hasPlaybackQueue && !pictureEditorVisible,
+                enabled = swipeControls.channels && focusMode && hasPlaybackQueue && !pictureEditorVisible,
                 onOpen = ::showEpisodeQueue
             )
             .playerRemoteBack(controlsVisible)
@@ -2072,6 +2074,11 @@ fun PlayerScreen(
                         }
                     }
                     setOnTouchListener { touchedView, event ->
+                        if (queueGestureOwned && !currentSwipeControls.channels) {
+                            queueGestureOwned = false
+                            queueRevealDragging = false
+                            queueRevealProgress = 0f
+                        }
                         scaleDetector.onTouchEvent(event)
                         var panned = false
                         when (event.actionMasked) {
@@ -2094,15 +2101,15 @@ fun PlayerScreen(
                                 // entire middle half belongs to the playback queue,
                                 // even while the controls are visible.
                                 val sideBand = playerView.width * 0.25f
-                                val brightnessBand = event.x <= sideBand
-                                val volumeBand = event.x >= playerView.width - sideBand
+                                val brightnessBand = currentSwipeControls.brightness && event.x <= sideBand
+                                val volumeBand = currentSwipeControls.volume && event.x >= playerView.width - sideBand
                                 levelGestureEligible = brightnessBand || volumeBand
                                 brightnessGesture = brightnessBand
                                 adjustingLevel = false
                                 gestureConsumed = false
                                 tapCandidate = true
                                 queueGestureOwned =
-                                    focusMode &&
+                                    currentSwipeControls.channels && focusMode &&
                                         queueGesturesAllowed && hasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         !playerOptionsOpen &&
@@ -2162,7 +2169,7 @@ fun PlayerScreen(
                                 } else {
                                     val deltaY = gestureStartY - event.y
                                     if (
-                                        levelGestureEligible &&
+                                        levelGestureEligible && (if (brightnessGesture) currentSwipeControls.brightness else currentSwipeControls.volume) &&
                                         (adjustingLevel || kotlin.math.abs(deltaY) > 24f * resources.displayMetrics.density)
                                     ) {
                                         adjustingLevel = true

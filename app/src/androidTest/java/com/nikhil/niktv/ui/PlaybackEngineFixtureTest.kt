@@ -1214,6 +1214,15 @@ class PlaybackEngineFixtureTest {
 
     @Test fun sportsDoubleTapAndMiddleSwipeUseTheStreamQueue() {
         check(context.packageName.endsWith(".regression"))
+        val gestureUsers = com.nikhil.niktv.data.UserSyncStore.get(context)
+        val previousAccount = gestureUsers.selectedAccount.value
+        val previousOwner = gestureUsers.selectedScope.value
+        val gestureOwner = com.nikhil.niktv.data.UserScope("991119", com.nikhil.niktv.data.UserSyncStore.defaultProfileId("991119", com.nikhil.niktv.data.UserProfileType.GENERAL))
+        runBlocking {
+            gestureUsers.selectAccount(gestureOwner.accountId); gestureUsers.initializeDefaults(gestureOwner.accountId)
+            gestureUsers.selectProfile(gestureOwner.profileId)
+            com.nikhil.niktv.data.PlayerGesturePreferences.setSwipe(context, gestureOwner, com.nikhil.niktv.data.PlayerSwipeGesture.CHANNELS, true)
+        }
         val server = FixtureServer()
         val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
@@ -1260,7 +1269,14 @@ class PlaybackEngineFixtureTest {
             before = frames.get()
             clickControl("Fixture source 3")
             await("Selecting a stream in the list renders it") { selected.intValue == 2 && frames.get() > before }
-        } finally { main { activity.finish() }; server.close() }
+        } finally {
+            main { activity.finish() }; server.close()
+            runBlocking {
+                com.nikhil.niktv.data.PlayerGesturePreferences.setSwipe(context, gestureOwner, com.nikhil.niktv.data.PlayerSwipeGesture.CHANNELS, false)
+                if (previousAccount != null) { gestureUsers.selectAccount(previousAccount); previousOwner?.let { gestureUsers.selectProfile(it.profileId) } }
+                else gestureUsers.disconnect()
+            }
+        }
     }
 
     @Test fun sportsControlsApplyTimeoutPersistEngineAndPreservePlayback() {

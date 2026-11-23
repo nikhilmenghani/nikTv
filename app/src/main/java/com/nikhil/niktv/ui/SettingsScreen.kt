@@ -1934,6 +1934,7 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
     val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
         .collectAsStateWithLifecycle(emptySet())
     val pinchToZoom by rememberPinchToZoomEnabled(owner)
+    val swipeControls by rememberPlayerSwipeControls(owner)
     val viewerLayout by rememberViewerLayout(owner)
     val scope = rememberCoroutineScope()
     var error by remember(owner) { mutableStateOf<String?>(null) }
@@ -2003,6 +2004,9 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
                 onToggle = { checked -> update {
                     com.nikhil.niktv.data.PlayerGesturePreferences.setPinchToZoom(context, owner, checked)
                 } })
+            PlayerSwipeSettings(swipeControls) { gesture, checked -> update {
+                com.nikhil.niktv.data.PlayerGesturePreferences.setSwipe(context, owner, gesture, checked)
+            } }
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "Shared portal connections")
             error?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error) }

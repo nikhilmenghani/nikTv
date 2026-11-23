@@ -299,6 +299,8 @@ internal fun VlcPlayerScreen(
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile) }
     var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile != null) }
     var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
+    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(rememberPlayerGestureOwner(media))
+    val currentSwipeControls by rememberUpdatedState(swipeControls)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
         if (unique.any { it.id == media.media.id }) unique
@@ -1205,7 +1207,7 @@ internal fun VlcPlayerScreen(
     PlayerSurfaceHost(
         modifier.fillMaxSize()
             .playerQueueSwipeObserver(
-                enabled = focusMode && hasPlaybackQueue && !pictureEditorVisible,
+                enabled = swipeControls.channels && focusMode && hasPlaybackQueue && !pictureEditorVisible,
                 onOpen = {
                     controlsVisible = false
                     controlsFocused = false
@@ -1281,6 +1283,11 @@ internal fun VlcPlayerScreen(
                         }
                     }
                     layout.setOnTouchListener { _, event ->
+                        if (queueGestureOwned && !currentSwipeControls.channels) {
+                            queueGestureOwned = false
+                            queueRevealDragging = false
+                            queueRevealProgress = 0f
+                        }
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
                                 val topSystemGestureInset =
@@ -1308,15 +1315,15 @@ internal fun VlcPlayerScreen(
                                 // Outer quarters adjust brightness/volume; the
                                 // middle half consistently reveals the queue.
                                 val sideBand = layout.width * 0.25f
-                                val brightnessBand = event.x <= sideBand
-                                val volumeBand = event.x >= layout.width - sideBand
+                                val brightnessBand = currentSwipeControls.brightness && event.x <= sideBand
+                                val volumeBand = currentSwipeControls.volume && event.x >= layout.width - sideBand
                                 levelGestureEligible = brightnessBand || volumeBand
                                 brightnessGesture = brightnessBand
                                 adjustingLevel = false
                                 queueSwipeTriggered = false
                                 tapCandidate = true
                                 queueGestureOwned =
-                                    focusMode &&
+                                    currentSwipeControls.channels && focusMode &&
                                         currentHasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         !playerOptionsOpen &&
@@ -1361,7 +1368,7 @@ internal fun VlcPlayerScreen(
                                         queueSwipeTriggered = true
                                     }
                                 } else if (
-                                    levelGestureEligible &&
+                                    levelGestureEligible && (if (brightnessGesture) currentSwipeControls.brightness else currentSwipeControls.volume) &&
                                     (adjustingLevel || kotlin.math.abs(deltaY) > 24f * layout.resources.displayMetrics.density)
                                 ) {
                                     adjustingLevel = true
