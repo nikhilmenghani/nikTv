@@ -24,6 +24,7 @@ import java.util.UUID
     val color: Long = 0xFFE50914,
     val avatar: String = "",
     val type: UserProfileType = UserProfileType.GENERAL,
+    val pinVerifier: String? = null,
 )
 @Serializable data class UserScope(val accountId: String, val profileId: String)
 @Serializable enum class ViewerDestinationKind { PORTAL, SPORTS, OFFLINE, PLAYFY }
@@ -230,7 +231,21 @@ class UserSyncStore private constructor(private val context: Context) {
         val accountId = requireNotNull(account.value)
         db.withTransaction {
             require(dao.records(accountId).none { it.collection == "profile" && it.recordId == profile.id && it.deleted }) { "This profile was deleted on another device. Create a new profile to continue." }
-            mutate(UserScope(accountId, profile.id), "profile", profile.id, json.encodeToString(profile.copy(name = profile.name.trim())))
+            val existing = dao.records(accountId).firstOrNull { it.collection == "profile" && it.recordId == profile.id && !it.deleted }
+                ?.let { json.decodeFromString<UserProfile>(it.payload) }
+            // Ordinary profile edits must not overwrite a newer PIN from another screen/device.
+            mutate(UserScope(accountId, profile.id), "profile", profile.id,
+                json.encodeToString(profile.copy(name = profile.name.trim(), pinVerifier = existing?.pinVerifier ?: profile.pinVerifier)))
+        }
+    }
+    suspend fun setProfilePin(profileId: String, verifier: String): UserProfile = withEditLock {
+        require(Regex("v1:[0-9a-f]{32}:[0-9a-f]{64}").matches(verifier))
+        val accountId = requireNotNull(account.value)
+        db.withTransaction {
+            val row = dao.records(accountId).first { it.collection == "profile" && it.recordId == profileId && !it.deleted }
+            val updated = json.decodeFromString<UserProfile>(row.payload).copy(pinVerifier = verifier)
+            mutate(UserScope(accountId, profileId), "profile", profileId, json.encodeToString(updated))
+            updated
         }
     }
     suspend fun deleteProfile(profileId: String) = withEditLock {

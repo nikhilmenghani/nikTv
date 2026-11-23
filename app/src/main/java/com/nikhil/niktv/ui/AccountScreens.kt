@@ -159,6 +159,22 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     var profileDownloads by remember { mutableStateOf(false) }
     var profileError by remember { mutableStateOf<String?>(null) }
     var mappingProfile by remember { mutableStateOf<UserProfile?>(null) }
+    var pendingProfilePin by remember { mutableStateOf<ProfilePinRequest?>(null) }
+    var settingProfilePin by remember { mutableStateOf<UserProfile?>(null) }
+    suspend fun authorizeProfile(profile: UserProfile, deleting: Boolean = false): Boolean {
+        val accountId = store.selectedAccount.value ?: return false
+        if (!deleting && com.nikhil.niktv.data.ProfilePin.remembered(context, accountId, profile)) return true
+        val request = ProfilePinRequest(profile, deleting)
+        pendingProfilePin?.result?.complete(false)
+        pendingProfilePin = request
+        return try {
+            val accepted = request.result.await()
+            val current = store.profiles.first().firstOrNull { it.id == profile.id }
+            val valid = accepted && store.selectedAccount.value == accountId && current?.pinVerifier == profile.pinVerifier && current != null
+            if (valid && !deleting) com.nikhil.niktv.data.ProfilePin.remember(context, accountId, profile)
+            valid
+        } finally { if (pendingProfilePin === request) pendingProfilePin = null }
+    }
     suspend fun profileAction(message: String, action: suspend () -> Unit) {
         profileError = null
         try { action() }
@@ -196,6 +212,8 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     }
     suspend fun openViewer(profileId: String, offlineOnly: Boolean = false, atLaunch: Boolean = false) {
         require(profileId in store.enabledProfileIds(requireNotNull(store.selectedAccount.value))) { "Enable this profile in Settings first." }
+        val targetProfile = store.profiles.first { rows -> rows.any { it.id == profileId } }.first { it.id == profileId }
+        if (!authorizeProfile(targetProfile)) { choosingProfile = true; return }
         val owner = UserScope(requireNotNull(store.selectedAccount.value), profileId)
         com.nikhil.niktv.data.UserProfilePreferences.warm(context, owner)
         store.selectProfile(profileId)
@@ -294,6 +312,8 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             useCachedProfiles = false
             profileError = null
             mappingProfile = null
+            pendingProfilePin?.result?.complete(false)
+            settingProfilePin = null
         }
     }
     LaunchedEffect(launchComplete, account.accountId, account.initialized, account.reconnectRequired) {
@@ -404,13 +424,18 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                                     choosingProfile = true
                                     val created = store.createProfile(name, type, color, avatar)
                                     store.setProfileEnabled(created.id, true)
+                                    settingProfilePin = created
                                 } else store.updateProfile(existing.copy(name = name, color = color, avatar = avatar))
                             }
                         } },
                         onSaveSetup = { draft ->
                             com.nikhil.niktv.data.ProfileSetupStore.save(context, draft)
+                            if (!draft.existing) settingProfilePin = draft.profile
                         },
-                        onDelete = { profile -> scope.launch { profileAction("Could not delete this profile. Retry from this screen.") { store.deleteProfile(profile.id) } } },
+                        onDelete = { profile -> scope.launch { profileAction("Could not delete this profile. Retry from this screen.") { if (authorizeProfile(profile, deleting = true)) store.deleteProfile(profile.id) } } },
+                        onChangePin = { profile -> scope.launch {
+                            if (authorizeProfile(profile, deleting = true)) settingProfilePin = profile
+                        } },
                         onManagePortals = { mappingProfile = it },
                         onImportLegacy = if (hasLegacy) { profile -> scope.launch {
                             profileAction("Could not import device viewing data. Your existing data is preserved; retry from this screen.") {
@@ -457,6 +482,11 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             }
         }
     }
+    pendingProfilePin?.let { ProfilePinPrompt(it) }
+    settingProfilePin?.let { profile -> SetProfilePinPrompt(profile, { settingProfilePin = null }) { verifier ->
+        val updated = store.setProfilePin(profile.id, verifier)
+        store.selectedAccount.value?.let { com.nikhil.niktv.data.ProfilePin.remember(context, it, updated) }
+    } }
 }
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -592,6 +622,7 @@ internal fun UserProfilesScreen(
     onDelete: (UserProfile) -> Unit, onAccount: () -> Unit, onSync: () -> Unit,
     onImportLegacy: ((UserProfile) -> Unit)? = null,
     onManagePortals: ((UserProfile) -> Unit)? = null,
+    onChangePin: ((UserProfile) -> Unit)? = null,
     selectedProfileId: String? = null,
     onOfflineDownloads: ((UserProfile) -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
@@ -745,6 +776,7 @@ internal fun UserProfilesScreen(
         title = { Text(profile.name, style = MaterialTheme.typography.titleLarge) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             NikTvSecondaryActionButton(onClick = { edit(profile) }, modifier = Modifier.fillMaxWidth()) { Text("Manage profile") }
+            onChangePin?.let { change -> NikTvSecondaryActionButton(onClick = { managing = null; change(profile) }, modifier = Modifier.fillMaxWidth()) { Text("Profile PIN") } }
             if (onImportLegacy != null || onManagePortals != null) NikTvTextActionButton(onClick = { managing = null; tools = profile }, modifier = Modifier.fillMaxWidth()) { Text("Profile tools") }
         } }, confirmButton = { NikTvTextActionButton(onClick = { managing = null }) { Text("Cancel") } }) }
     tools?.let { profile -> AlertDialog(onDismissRequest = { tools = null },
