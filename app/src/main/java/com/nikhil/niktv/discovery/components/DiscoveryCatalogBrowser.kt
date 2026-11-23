@@ -101,6 +101,7 @@ internal fun DiscoveryCatalogBrowser(
 
     if (tmdbSetupOpen) {
         TmdbHomeSectionsDialog(
+            profile = state.savedProfile?.cacheKey().orEmpty(),
             selected = selectedTmdbSections,
             surface = dashboardSurface,
             close = { tmdbSetupOpen = false },

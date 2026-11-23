@@ -79,7 +79,7 @@ internal fun CategoryBrowseControls(
     onMode: (CategoryBrowseMode) -> Unit, onQuery: (String) -> Unit,
     create: () -> Unit,
     refresh: () -> Unit = {}, refreshing: Boolean = false, organized: Boolean = true,
-    visibleCount: Int? = null, totalCount: Int? = null
+    visibleCount: Int? = null, totalCount: Int? = null, arrange: (() -> Unit)? = null
 ) {
     var menu by remember { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(query.isNotEmpty()) }
@@ -103,6 +103,7 @@ internal fun CategoryBrowseControls(
                 if (!searchOpen) { onQuery(""); keyboard?.hide() }
             }
             ModernHeaderOptionsIcon("Refresh categories", Icons.Default.Refresh, refresh)
+            arrange?.let { ModernHeaderOptionsIcon("Arrange categories", Icons.Default.SwapVert, it) }
             if (organized) {
                 ModernHeaderOptionsIcon("Browse by", Icons.Default.AccountTree) { menu = true }
                 ModernHeaderOptionsIcon("Create collection", Icons.Default.Add) { create() }

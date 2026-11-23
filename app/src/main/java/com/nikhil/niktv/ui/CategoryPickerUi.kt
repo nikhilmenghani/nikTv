@@ -48,6 +48,7 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     var draft by rememberSaveable(profile, type) { mutableStateOf<List<String>?>(null) }
     val defaults = raw.map { it.id }
     val selected = categoryPickerSelection(draft, saved, defaults)
+    var arranging by remember { mutableStateOf(false) }
     var query by rememberSaveable(profile, type) { mutableStateOf("") }
     val filtered = remember(raw, query) {
         if (query.isBlank()) raw else raw.filter { it.title.matchesTitleKeywords(query.trim()) }
@@ -154,6 +155,8 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
                             else Icon(Icons.Default.Refresh, "Refresh categories")
                         }
                     }
+                    NikTvSecondaryActionButton({ arranging = true }, Modifier.size(48.dp), enabled = selected.size > 1,
+                        contentPadding = PaddingValues(0.dp)) { Icon(Icons.Default.SwapVert, "Arrange categories") }
                 }
                 if (refreshRequested && !refreshing) state.error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, maxLines = 2)
@@ -275,4 +278,5 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
             }
         }
     }
+    if (arranging && profile != null) CategoryOrderDialog(profile, type, raw.filter { it.id in selected }) { arranging = false }
 }

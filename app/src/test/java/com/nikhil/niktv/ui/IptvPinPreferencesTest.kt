@@ -187,4 +187,49 @@ class IptvPinPreferencesTest {
             payload = JsonObject(payload + ("mapKey" to JsonPrimitive(key))).toString(),
             revision = template.revision + 100, deviceId = "other-device", mutationId = "remote-pin-$id")
     }
+
+    @Test fun reorderedPinsSurviveRemoteMergesAndDoNotRepinRemovedChannels() = runBlocking {
+        toggle("alpha"); toggle("bravo"); toggle("charlie")
+        val before = users.snapshot("101")
+        IptvPinPreferences.reorderChannels(context, family, profile, category, listOf("charlie", "alpha", "bravo"))
+        assertEquals(listOf("charlie", "alpha", "bravo"), pins())
+        users.merge("101", before)
+        assertEquals(listOf("charlie", "alpha", "bravo"), pins())
+        // A stale editor includes bravo after another device removed it. Reordering must not restore it.
+        toggle("bravo")
+        toggle("new-channel")
+        IptvPinPreferences.reorderChannels(context, family, profile, category, listOf("bravo", "alpha", "charlie"))
+        assertEquals(listOf("alpha", "charlie", "new-channel"), pins())
+        assertEquals(-1L, preferences.getLong("$legacyKey|entry-v2|bravo", 0))
+        assertTrue(users.pending("101").any { it.recordId.endsWith("|entry-v2|charlie") })
+    }
+
+    @Test fun categoryAndTmdbOrderingIsPortableAndIsolatedByViewerPortalTypeAndScreen() = runBlocking {
+        IptvPinPreferences.saveCategoryOrder(context, family, profile, CatalogType.MOVIES, listOf("hindi", "english"))
+        IptvPinPreferences.saveCategoryOrder(context, family, profile, CatalogType.SERIES, listOf("series-first"))
+        IptvPinPreferences.saveTmdbOrder(context, family, profile, DashboardSurface.HOME, listOf("POPULAR_MOVIES", "TRENDING_SERIES"))
+        IptvPinPreferences.savePinnedOverviewOrder(context, family, profile, listOf("channel-2", "channel-1"))
+        val snap = IptvPinPreferences.snapshot(preferences, profile)
+        assertEquals(listOf("hindi", "english"), snap.categoryOrder(CatalogType.MOVIES))
+        assertEquals(listOf("series-first"), snap.categoryOrder(CatalogType.SERIES))
+        assertEquals(listOf("POPULAR_MOVIES", "TRENDING_SERIES"), snap.tmdbOrder(DashboardSurface.HOME))
+        assertTrue(snap.tmdbOrder(DashboardSurface.MOVIES).isEmpty())
+        assertEquals(listOf("channel-2", "channel-1"), snap.pinnedOverviewOrder())
+        assertTrue(pins().isEmpty()) // Display-only ordering never creates channel membership.
+        val records = users.snapshot("101").filter { it.collection == "preferences" && !it.deleted }
+        assertTrue(records.any { it.recordId.contains("category-order") && it.payload.contains("hindi") })
+        val remote = records.single { it.recordId.contains("tmdb-order") }.let { record ->
+            val payload = Json.parseToJsonElement(record.payload).jsonObject
+            val entry = payload.getValue("entry").jsonObject
+            record.copy(revision = record.revision + 100, deviceId = "remote", mutationId = "remote-category-order",
+                payload = JsonObject(payload + ("entry" to JsonObject(entry + ("value" to buildJsonArray {
+                    add("TRENDING_SERIES"); add("POPULAR_MOVIES")
+                })))).toString())
+        }
+        users.merge("101", listOf(remote))
+        assertEquals(listOf("TRENDING_SERIES", "POPULAR_MOVIES"), IptvPinPreferences.snapshot(preferences, profile).tmdbOrder(DashboardSurface.HOME))
+        assertTrue(IptvPinPreferences.snapshot(preferences, "other-portal").categoryOrder(CatalogType.MOVIES).isEmpty())
+        UserProfilePreferences.warm(context, kids)
+        assertTrue(IptvPinPreferences.snapshot(IptvPinPreferences.preferences(context, kids), profile).categoryOrder(CatalogType.MOVIES).isEmpty())
+    }
 }

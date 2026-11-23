@@ -82,18 +82,26 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val favoritesHero = !live && libraryFavoriteHeroes(state.favorites, profile).isNotEmpty()
     val firstRowIndex = if (live) 2 else 1
     val pinSnapshot = rememberIptvPins(profile)
+    var arrangingPins by remember(profile) { mutableStateOf(false) }
+    val pinnedOverviewOrder = pinSnapshot.pinnedOverviewOrder()
+    val orderedCategories = remember(state.categories, pinSnapshot) {
+        orderedForDisplay(state.categories, pinSnapshot.categoryOrder(CatalogType.LIVE_TV), ::categoryDisplayOrderId)
+    }
     val pins = remember(profile, state.categories, pinSnapshot) { state.categories.associate {
         it.id to pinSnapshot.pinnedChannelOrder(it.id)
     } }
     val progress = rememberDiscoveryProgressLookup(profile, state.recentlyPlayed, state.playbackProgress)
     val feedIdentity = "$profile:$destination"
     val loadedRows by produceState(feedIdentity to emptyList<LibraryRow>(), state.playbackProgress, progress,
-        state.favorites, state.recentlyPlayed, state.browseCachesByType, state.categories, profile, live, pins) {
+        state.favorites, state.recentlyPlayed, state.browseCachesByType, orderedCategories, profile, live, pins, pinnedOverviewOrder) {
         value = feedIdentity to withContext(Dispatchers.Default) {
-        if (live) libraryLiveRows(state, profile, pins) else libraryCollectionRows(state, profile, includeEpisodes = phone)
+        if (live) libraryLiveRows(state.copy(categories = orderedCategories), profile, pins).map { row ->
+            if (row.key == "pinned") row.copy(entries = orderedForDisplay(row.entries, pinnedOverviewOrder) { it.media.id }) else row
+        } else libraryCollectionRows(state, profile, includeEpisodes = phone)
         }
     }
     val rows = loadedRows.takeIf { it.first == feedIdentity }?.second.orEmpty()
+    if (arrangingPins) PinnedOverviewOrderDialog(profile, rows.firstOrNull { it.key == "pinned" }?.entries.orEmpty().map { it.media }) { arrangingPins = false }
     val latestRows by rememberUpdatedState(rows)
     var returnToHero by rememberSaveable(profile, destination) { mutableStateOf(false) }
     var returnToInfo by rememberSaveable(profile, destination) { mutableStateOf(false) }
@@ -262,6 +270,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                             fontSize = if (phone) 17.sp else MaterialTheme.typography.titleMedium.fontSize,
                             lineHeight = if (phone) 22.sp else MaterialTheme.typography.titleMedium.lineHeight,
                             fontWeight = if (phone) FontWeight.Bold else MaterialTheme.typography.titleMedium.fontWeight)
+                        if (live && row.key == "pinned" && row.entries.size > 1) DiscoveryAction("Arrange pinned channels", Icons.Default.SwapVert, iconOnly = true) { arrangingPins = true }
                         if (hasMore && !phonePosterRow && (!live || row.category != null)) DiscoveryAction("View all", Icons.Default.ChevronRight) { row.category?.let(openCategory) ?: browseSaved(row.entries.firstOrNull()?.kind) }
                     }
                     DiscoveryHorizontalFocusViewport(16.dp) {
@@ -314,7 +323,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
             }
             if (live) {
                 item("category-shortcuts") { Text("Channel categories", Modifier.padding(horizontal = 24.dp), color = Color.White, style = MaterialTheme.typography.titleMedium) }
-                items(state.categories.filter { it.type == CatalogType.LIVE_TV }.chunked(if (phone) 2 else 4), key = { group -> "category-group:${group.first().id}" }) { group ->
+                items(orderedCategories.filter { it.type == CatalogType.LIVE_TV }.chunked(if (phone) 2 else 4), key = { group -> "category-group:${group.first().id}" }) { group ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         group.forEach { category -> DiscoveryAction(category.title, modifier = Modifier.weight(1f)) { openCategory(category) } }
                         repeat((if (phone) 2 else 4) - group.size) { Spacer(Modifier.weight(1f)) }

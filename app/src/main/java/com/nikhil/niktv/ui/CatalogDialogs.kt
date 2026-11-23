@@ -120,12 +120,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 internal fun TmdbHomeSectionsDialog(
+    profile: String,
     selected: List<TmdbHomeSection>,
     surface: DashboardSurface,
     close: () -> Unit,
     save: (List<TmdbHomeSection>) -> Unit
 ) {
     var choices by remember(selected) { mutableStateOf(selected.toSet()) }
+    var arranging by remember { mutableStateOf(false) }
     val available = remember(surface) { tmdbSectionsForSurface(surface) }
     Dialog(
         onDismissRequest = close,
@@ -144,6 +146,10 @@ internal fun TmdbHomeSectionsDialog(
                     Text("${surface.displayTitle()} · TMDB sections", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
                     Text("Only this screen is affected.", color = Color.Gray)
+                    NikTvSecondaryActionButton({ arranging = true }, enabled = choices.size > 1) {
+                        Icon(Icons.Default.SwapVert, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp)); Text("Arrange categories")
+                    }
                     Spacer(Modifier.height(16.dp))
                     LazyColumn(Modifier.weight(1f)) {
                         items(available, key = { it.name }) { section ->
@@ -196,6 +202,7 @@ internal fun TmdbHomeSectionsDialog(
             }
         }
     }
+    if (arranging) TmdbOrderDialog(profile, surface, available.filter { it in choices }) { arranging = false }
 }
 
 internal fun tmdbSectionsForSurface(surface: DashboardSurface): List<TmdbHomeSection> =

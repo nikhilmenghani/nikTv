@@ -96,6 +96,7 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
@@ -474,6 +475,7 @@ private fun ModernDestinationHub(
         )
     }
     val categoryPins = rememberIptvPins(profileKey)
+    var arrangingCategories by remember { mutableStateOf(false) }
     val pinnedLiveCategories = categoryPins.pinnedCategories(CatalogType.LIVE_TV)
     val pinnedMovieCategories = categoryPins.pinnedCategories(CatalogType.MOVIES)
     val pinnedSeriesCategories = categoryPins.pinnedCategories(CatalogType.SERIES)
@@ -505,7 +507,7 @@ private fun ModernDestinationHub(
         GridItemSpan(maxLineSpan)
     }
 
-    val tmdbSections = if (dashboardSurface == DashboardSurface.LIVE_TV) {
+    val tmdbSections = orderedForDisplay(if (dashboardSurface == DashboardSurface.LIVE_TV) {
         emptyList()
     } else state.tmdbSectionsBySurface[dashboardSurface]
         .orEmpty().filter { section ->
@@ -514,7 +516,7 @@ private fun ModernDestinationHub(
                 DashboardSurface.SERIES -> section.series
                 else -> true
             }
-        }
+        }, categoryPins.tmdbOrder(dashboardSurface)) { it.name }
 
     val rawLiveCategories =
         if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.LIVE_TV)) {
@@ -567,14 +569,17 @@ private fun ModernDestinationHub(
             } else CategoryOrganization.organize(providerCategories, categoryBrowseMode)
         }
     }
-    val matchingCategories = remember(organizedCategories, providerCategories, state.rawCategoriesByType, categoryQuery, pinnedLiveCategories, pinnedMovieCategories, pinnedSeriesCategories) {
+    val matchingCategories = remember(organizedCategories, providerCategories, state.rawCategoriesByType, categoryQuery, pinnedLiveCategories, pinnedMovieCategories, pinnedSeriesCategories, categoryPins) {
         CategoryOrganization.search(organizedCategories, state.rawCategoriesByType[browseType].orEmpty(), categoryQuery)
             .sortedBy { category -> category.id !in when (category.type) {
                 CatalogType.LIVE_TV -> pinnedLiveCategories
                 CatalogType.MOVIES -> pinnedMovieCategories
                 else -> pinnedSeriesCategories
-            } }
+            } }.groupBy { it.type }.flatMap { (type, categories) ->
+                orderedForDisplay(categories, categoryPins.categoryOrder(type), ::categoryDisplayOrderId)
+            }
     }
+    if (arrangingCategories) CategoryOrderDialog(profileKey, browseType, matchingCategories) { arrangingCategories = false }
     val liveCategories = matchingCategories.filter { it.type == CatalogType.LIVE_TV }
     val movieCategories = matchingCategories.filter { it.type == CatalogType.MOVIES }
     val seriesCategories = matchingCategories.filter { it.type == CatalogType.SERIES }
@@ -751,7 +756,8 @@ private fun ModernDestinationHub(
                     refresh = { refreshProviderCategories(browseType) },
                     refreshing = (profileKey to browseType) in state.categoryRefreshes,
                     visibleCount = providerCategories.size,
-                    totalCount = state.rawCategoriesByType[browseType]?.size ?: providerCategories.size)
+                    totalCount = state.rawCategoriesByType[browseType]?.size ?: providerCategories.size,
+                    arrange = if (matchingCategories.size > 1) ({ arrangingCategories = true }) else null)
             }
             if (matchingCategories.isEmpty()) {
                 item("no-matching-categories", span = fullSpan) {
@@ -3121,6 +3127,8 @@ internal fun ModernIptvCollection(
     }
     val channelPins = rememberIptvPins(profileKey)
     val pinnedChannelIds = if (isLiveTv) channelPins.pinnedChannelOrder(category.id) else emptyList()
+    var arrangingPins by remember(profileKey, category.id) { mutableStateOf(false) }
+    if (arrangingPins) PinnedChannelOrderDialog(profileKey, category, state.items) { arrangingPins = false }
     val visitId = state.modernIptvCategoryOpenId
     var pinnedOnly by rememberSaveable(profileKey, category.id, visitId) { mutableStateOf(false) }
     val pinsForView = pinnedChannelIds.takeIf { isLiveTv && pinnedOnly }
@@ -3690,7 +3698,15 @@ internal fun ModernIptvCollection(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Channels", style = MaterialTheme.typography.titleSmall, color = Color.White)
+                        Text("Channels", style = MaterialTheme.typography.titleSmall, color = Color.White, modifier = Modifier.weight(1f))
+                        if (pinnedChannelIds.size > 1) {
+                            NikTvSecondaryActionButton({ arrangingPins = true }, Modifier.size(40.dp)
+                                .semantics { contentDescription = "Arrange pinned channels" },
+                                shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(0.dp)) {
+                                Icon(Icons.Default.SwapVert, null, Modifier.size(20.dp))
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             val tabKeys = Modifier.onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) false

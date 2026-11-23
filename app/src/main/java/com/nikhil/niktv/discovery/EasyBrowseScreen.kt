@@ -52,6 +52,10 @@ import com.nikhil.niktv.ui.LocalMarkUnwatched
 import com.nikhil.niktv.ui.NikTvSecondaryActionButton
 import com.nikhil.niktv.ui.NikDropdownMenuItem
 import com.nikhil.niktv.ui.NikTvState
+import com.nikhil.niktv.ui.CategoryOrderDialog
+import com.nikhil.niktv.ui.PinnedChannelOrderDialog
+import com.nikhil.niktv.ui.orderedForDisplay
+import com.nikhil.niktv.ui.categoryDisplayOrderId
 import com.nikhil.niktv.ui.episodeRemainingLabel
 import com.nikhil.niktv.ui.episodeComparator
 import com.nikhil.niktv.ui.seriesEpisodeCountLabel
@@ -456,21 +460,25 @@ internal fun EasyBrowsePage(
 internal fun EasyCategoriesPage(state: NikTvState, type: CatalogType, home: () -> Unit, refresh: () -> Unit,
     edit: () -> Unit, select: (Category) -> Unit) {
     val portalKey = state.session?.profile?.cacheKey().orEmpty()
-    val pinned = rememberIptvPins(portalKey).pinnedCategories(type)
+    val categoryPins = rememberIptvPins(portalKey)
+    val pinned = categoryPins.pinnedCategories(type)
+    var arranging by remember { mutableStateOf(false) }
     val gate = XtreamContentGate(state)
-    val categories = state.modernVisibleIptvCategories(type, requireExplicitSelection = false)
+    val categories = orderedForDisplay(state.modernVisibleIptvCategories(type, requireExplicitSelection = false)
         .filter(gate::allowsCategory)
-        .distinctBy(Category::id).sortedBy { it.id !in pinned }
+        .distinctBy(Category::id).sortedBy { it.id !in pinned }, categoryPins.categoryOrder(type), ::categoryDisplayOrderId)
     val loading = (portalKey to type) in state.categoryRefreshes
     val destination = type.easyDestination()
     EasyBrowsePage(destination.label, categories.map { EasyBrowseEntry(it.id, it.title, destination.icon, opensList = true) },
         if (loading) "Loading categories…" else "No categories available.", home = home,
         open = { id -> categories.firstOrNull { it.id == id }?.let(select) }) {
         NikTvSecondaryActionButton(edit, Modifier.weight(1f)) { Text("Edit categories") }
+        NikTvSecondaryActionButton({ arranging = true }, enabled = categories.size > 1) { Icon(Icons.Default.SwapVert, "Arrange categories") }
         NikTvSecondaryActionButton({ if (!loading) refresh() }, Modifier.weight(1f)) {
             Text(if (loading) "Refreshing…" else "Refresh categories")
         }
     }
+    if (arranging) CategoryOrderDialog(portalKey, type, categories) { arranging = false }
 }
 
 internal fun MediaItem.easyEpisodeLabel(): String? = episodeNumber?.let { episode ->
@@ -495,6 +503,7 @@ internal fun EasyTitlesPage(state: NikTvState, category: Category, home: () -> U
         CatalogType.SERIES -> FavoriteKind.SERIES
     }
     val pins = rememberIptvPins(portalKey).pinnedChannelOrder(category.id)
+    var arrangingPins by remember { mutableStateOf(false) }
     val items = remember(state.items, state.xtreamContentPolicy, state.hideSensitiveIptv, state.contentPolicyCategories, state.session, category, pins) {
         val gate = XtreamContentGate(state)
         val order = pins.withIndex().associate { (index, id) -> id to index }
@@ -523,7 +532,11 @@ internal fun EasyTitlesPage(state: NikTvState, category: Category, home: () -> U
         NikTvSecondaryActionButton({ if (!state.loading) refresh() }) {
             Text(if (state.loading) "Loading…" else "Refresh")
         }
+        if (category.type == CatalogType.LIVE_TV && pins.size > 1) {
+            NikTvSecondaryActionButton({ arrangingPins = true }) { Text("Arrange pinned channels") }
+        }
     }
+    if (arrangingPins) PinnedChannelOrderDialog(portalKey, category, items) { arrangingPins = false }
 }
 
 @Composable

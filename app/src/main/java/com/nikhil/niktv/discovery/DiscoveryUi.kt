@@ -194,15 +194,16 @@ private fun DiscoveryPreviewContent(
     val providerLoaded by providerVm.state.collectAsStateWithLifecycle()
     val openProvider = LocalOpenProviderDiscovery.current
     val configureProvider = LocalConfigureProviderDiscovery.current
+    val displayOrder = rememberIptvPins(profile)
     val playProvider = LocalPlayProviderDiscovery.current
     val downloadProvider = LocalDownloadProviderDiscovery.current
     val providerPageLoader = LocalProviderDiscoveryPageLoader.current
-    val fullProviderSelections = remember(profile, surface, app.categoryFilters, app.rawCategoriesByType, app.browseCachesByType.mapValues { it.value.categories }) {
+    val fullProviderSelections = remember(profile, surface, app.categoryFilters, app.rawCategoriesByType, app.browseCachesByType.mapValues { it.value.categories }, displayOrder) {
         listOf(CatalogType.MOVIES, CatalogType.SERIES)
             .filter { surface != DashboardSurface.HOME && (it == CatalogType.SERIES) == (surface == DashboardSurface.SERIES) }
-            .associateWith { type -> providerDiscoveryCategoryRows(
+            .associateWith { type -> orderedForDisplay(providerDiscoveryCategoryRows(
                 app.modernVisibleIptvCategories(type, requireExplicitSelection = surface == DashboardSurface.HOME),
-                implicitSelection = app.categoryFilters["$profile|${type.name}"] == null) }
+                implicitSelection = app.categoryFilters["$profile|${type.name}"] == null), displayOrder.categoryOrder(type), ::categoryDisplayOrderId) }
     }
     // The experiment bounds request/cache scope as well as drawing. Full collections
     // still receive all selected categories, and persistent selections are untouched.
@@ -316,6 +317,7 @@ private fun DiscoveryPreviewContent(
     }
     val localScope = rememberCoroutineScope()
     var configure by remember { mutableStateOf(false) }
+    var arrangingTmdb by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var categoryPopup by remember { mutableStateOf(false) }
     var actor by remember(profile, surface) { mutableStateOf<DiscoveryPerson?>(null) }
@@ -522,7 +524,7 @@ private fun DiscoveryPreviewContent(
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
         app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection,
-        watchProviders.providers, watchProviders.loading, watchProviders.error, genreState.providers, genreArtwork) { buildList {
+        watchProviders.providers, watchProviders.loading, watchProviders.error, genreState.providers, genreArtwork, displayOrder) { buildList {
         val detail = state.detail
         if (detail == null) {
             val allRecents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
@@ -644,6 +646,10 @@ private fun DiscoveryPreviewContent(
             if (state.collection.isNotEmpty()) add(Rail("collection", state.details?.collection?.title ?: "Collection", state.collection.map { cardEntry(it, "collection") }))
             if (state.related.isNotEmpty()) add(Rail("related", "Related", state.related.map { cardEntry(it, "related") }))
         }
+    }.let { rows ->
+        // Keep Continue Watching/New Episodes in place; reorder the configured TMDB rails.
+        val tmdb = orderedForDisplay(rows.filter { it.section != null }, displayOrder.tmdbOrder(surface)) { it.section!!.name }.iterator()
+        rows.map { if (it.section != null) tmdb.next() else it }
     } }
     val visibleRails = remember(rails, state.feeds, providerState.pages, scrollVariant, experiment, hiddenTrialRows) { rails.take(scrollVariant.rowLimit).filterNot { row ->
         (experiment && row.key in hiddenTrialRows) || row.section?.let { it in state.feeds && state.feeds[it].isNullOrEmpty() } == true ||
@@ -1450,6 +1456,12 @@ private fun DiscoveryPreviewContent(
     if (configure) AlertDialog(onDismissRequest = { configure = false }, title = { Text("TMDB categories") },
         text = {
             LazyColumn(Modifier.heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                item("arrange-tmdb") {
+                    NikTvSecondaryActionButton({ arrangingTmdb = true }, enabled = state.sections.size > 1) {
+                        Icon(Icons.Default.SwapVert, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp)); Text("Arrange categories")
+                    }
+                }
                 tmdbCategoryPairs(surface).groupBy { it.hollywood.series }.forEach { (series, pairs) ->
                     item {
                         Text(if (series) "Series" else "Movies", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
@@ -1483,6 +1495,7 @@ private fun DiscoveryPreviewContent(
                 }
             }
         }, confirmButton = { NikTvSecondaryActionButton({ configure = false }) { Text("Close") } }, containerColor = Color(0xFF181B22))
+    if (arrangingTmdb) TmdbOrderDialog(profile, surface, state.sections) { arrangingTmdb = false }
 
 }
 

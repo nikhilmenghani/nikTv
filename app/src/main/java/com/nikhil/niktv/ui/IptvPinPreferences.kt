@@ -5,6 +5,9 @@ import android.content.SharedPreferences
 import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.model.CatalogType
+import com.nikhil.niktv.model.DashboardSurface
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
 /** Profile-scoped ordering preferences for IPTV destinations and channels. */
@@ -19,6 +22,52 @@ internal object IptvPinPreferences {
 
     private fun categoryKey(profileKey: String, type: CatalogType) =
         "$profileKey|category|${type.name}"
+
+    private fun categoryOrderKey(profileKey: String, type: CatalogType) = "$profileKey|category-order|${type.name}"
+    private fun tmdbOrderKey(profileKey: String, surface: DashboardSurface) = "$profileKey|tmdb-order|${surface.name}"
+    private fun pinnedOverviewOrderKey(profileKey: String) = "$profileKey|pinned-overview-order"
+
+    internal fun readOrder(value: Any?): List<String> = (value as? String)?.let { encoded ->
+        runCatching { val array = JSONArray(encoded); (0 until array.length()).map { array.getString(it) }.distinct() }.getOrNull()
+    }.orEmpty()
+
+    internal fun categoryOrder(values: Map<String, *>, profileKey: String, type: CatalogType) = readOrder(values[categoryOrderKey(profileKey, type)])
+    internal fun tmdbOrder(values: Map<String, *>, profileKey: String, surface: DashboardSurface) = readOrder(values[tmdbOrderKey(profileKey, surface)])
+    internal fun pinnedOverviewOrder(values: Map<String, *>, profileKey: String) = readOrder(values[pinnedOverviewOrderKey(profileKey)])
+
+    suspend fun savePinnedOverviewOrder(context: Context, owner: UserScope?, profileKey: String, ids: List<String>) =
+        saveOrder(context, owner, pinnedOverviewOrderKey(profileKey), ids)
+
+    suspend fun saveCategoryOrder(context: Context, owner: UserScope?, profileKey: String, type: CatalogType, ids: List<String>) =
+        saveOrder(context, owner, categoryOrderKey(profileKey, type), ids)
+
+    suspend fun saveTmdbOrder(context: Context, owner: UserScope?, profileKey: String, surface: DashboardSurface, ids: List<String>) =
+        saveOrder(context, owner, tmdbOrderKey(profileKey, surface), ids)
+
+    private suspend fun saveOrder(context: Context, owner: UserScope?, key: String, ids: List<String>) = withContext(Dispatchers.IO) {
+        owner?.let { com.nikhil.niktv.data.UserProfilePreferences.warm(context, it) }
+        val prefs = preferences(context, owner)
+        synchronized(prefs) {
+            check(prefs.edit().putString(key, JSONArray(mergeDisplayOrder(readOrder(prefs.all[key]), ids)).toString()).commit())
+        }
+        owner?.let { com.nikhil.niktv.data.AccountSyncManager.get(context).requestProfileSync(it.accountId) }
+    }
+
+    /** Change ranks only for channels still pinned at commit time; never re-pin a stale dialog item. */
+    suspend fun reorderChannels(context: Context, owner: UserScope?, profileKey: String, categoryId: String, ids: List<String>) = withContext(Dispatchers.IO) {
+        owner?.let { com.nikhil.niktv.data.UserProfilePreferences.warm(context, it) }
+        val prefs = preferences(context, owner)
+        synchronized(prefs) {
+            val current = pinnedChannelOrder(prefs.all, profileKey, categoryId)
+            val updated = orderedForDisplay(current, ids) { it }
+            val prefix = channelEntryPrefix(profileKey, categoryId)
+            val editor = prefs.edit().putInt(channelFormatKey(profileKey, categoryId), CHANNEL_FORMAT)
+            updated.forEachIndexed { index, id -> editor.putLong(prefix + id, index.toLong()) }
+            val legacy = channelKey(profileKey, categoryId)
+            check(editor.remove(legacy).remove("$legacy|order").commit())
+        }
+        owner?.let { com.nikhil.niktv.data.AccountSyncManager.get(context).requestProfileSync(it.accountId) }
+    }
 
     private fun channelKey(profileKey: String, categoryId: String) =
         "$profileKey|channel|$categoryId"
@@ -128,4 +177,7 @@ internal object IptvPinPreferences {
 internal class IptvPinSnapshot internal constructor(private val values: Map<String, *>, private val profileKey: String) {
     fun pinnedCategories(type: CatalogType): Set<String> = IptvPinPreferences.pinnedCategories(values, profileKey, type)
     fun pinnedChannelOrder(categoryId: String): List<String> = IptvPinPreferences.pinnedChannelOrder(values, profileKey, categoryId)
+    fun categoryOrder(type: CatalogType): List<String> = IptvPinPreferences.categoryOrder(values, profileKey, type)
+    fun tmdbOrder(surface: DashboardSurface): List<String> = IptvPinPreferences.tmdbOrder(values, profileKey, surface)
+    fun pinnedOverviewOrder(): List<String> = IptvPinPreferences.pinnedOverviewOrder(values, profileKey)
 }
