@@ -108,7 +108,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
             Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
             com.nikhil.niktv.discovery.DiscoveryClockProfile(viewer?.name.orEmpty(),
                 Modifier.width(profileWidth).height(headerHeight),
-                null, androidx.compose.ui.geometry.Rect.Zero, {})
+                null, androidx.compose.ui.geometry.Rect.Zero) {}
         }
         }
         return

@@ -82,7 +82,7 @@ internal class SharedDiscoveryHeader {
     val content = movableContentOf<DiscoveryHeaderContent> { header ->
         with(header) {
             DiscoveryTopNavigationLayout(surface, profile, tabRequester, playRequester, back, select, navigate,
-                headerFocus, menu, changeMenu, customize, backdrop, backdropBounds, categoryManagerOpen,
+                headerFocus, menu, changeMenu, customize, categoryManagerOpen,
                 categoriesEnabled, categoryPopupChanged, library, searchActive, this@SharedDiscoveryHeader)
         }
     }
@@ -113,7 +113,7 @@ internal data class DiscoveryHeaderContent(
     val surface: DashboardSurface, val profile: String, val tabRequester: FocusRequester, val playRequester: FocusRequester,
     val back: () -> Unit, val select: (DashboardSurface) -> Unit, val navigate: (String) -> Unit,
     val headerFocus: () -> Unit, val menu: Boolean, val changeMenu: (Boolean) -> Unit, val customize: (() -> Unit)?,
-    val backdrop: String?, val backdropBounds: Rect, val categoryManagerOpen: Boolean, val categoriesEnabled: Boolean,
+    val categoryManagerOpen: Boolean, val categoriesEnabled: Boolean,
     val categoryPopupChanged: (Boolean) -> Unit, val library: DiscoveryLibraryDestination?, val searchActive: Boolean
 )
 
@@ -123,25 +123,25 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     tabRequester: FocusRequester, playRequester: FocusRequester,
     back: () -> Unit, select: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
     headerFocus: () -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit, customize: (() -> Unit)?,
-    backdrop: String? = null, backdropBounds: Rect = Rect.Zero,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
     library: DiscoveryLibraryDestination? = null, searchActive: Boolean = false, shareAcrossTabs: Boolean = false) {
     val shared = LocalSharedDiscoveryHeader.current.takeIf { shareAcrossTabs }
     if (shared != null) shared.content(DiscoveryHeaderContent(surface, profile, tabRequester, playRequester,
-        back, select, navigate, headerFocus, menu, changeMenu, customize, backdrop, backdropBounds,
+        back, select, navigate, headerFocus, menu, changeMenu, customize,
         categoryManagerOpen, categoriesEnabled, categoryPopupChanged, library, searchActive))
     else DiscoveryTopNavigationLayout(surface, profile, tabRequester, playRequester, back, select, navigate, headerFocus,
-        menu, changeMenu, customize, backdrop, backdropBounds, categoryManagerOpen, categoriesEnabled, categoryPopupChanged,
+        menu, changeMenu, customize, categoryManagerOpen, categoriesEnabled, categoryPopupChanged,
         library, searchActive)
 }
 
+// Keep wide navigation chrome readable and visually stationary while hero artwork changes behind it.
 @Composable
 private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: String,
     tabRequester: FocusRequester, playRequester: FocusRequester,
     back: () -> Unit, select: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
     headerFocus: () -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit, customize: (() -> Unit)?,
-    backdrop: String?, backdropBounds: Rect, categoryManagerOpen: Boolean, categoriesEnabled: Boolean,
+    categoryManagerOpen: Boolean, categoriesEnabled: Boolean,
     categoryPopupChanged: (Boolean) -> Unit, library: DiscoveryLibraryDestination?, searchActive: Boolean,
     shared: SharedDiscoveryHeader? = null) {
     val experiment = LocalDiscoveryExperiment.current
@@ -161,10 +161,8 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
     val widths = DiscoveryHeaderWidths((maxWidth.value - profileSpace - 12f).coerceAtLeast(0f), profileSpace)
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
-        DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), backdrop ?: LocalMobileGlassArtwork.current,
-            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds,
-            fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
-            fillWidth = LocalMobileGlassFillWidth.current) {
+        DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), artwork = null,
+            backdropBounds = Rect.Zero, baseColor = WideDiscoveryGlassBase) {
             CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
             Row(Modifier.fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -200,8 +198,8 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
             }
         }
         Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
-        DiscoveryClockProfile(profile, Modifier.width(widths.profile.dp).height(height), backdrop ?: LocalMobileGlassArtwork.current,
-            if (backdropBounds.isEmpty) LocalMobileGlassBounds.current else backdropBounds) { navigate("Profile") }
+        DiscoveryClockProfile(profile, Modifier.width(widths.profile.dp).height(height), backdrop = null,
+            backdropBounds = Rect.Zero, panelBase = WideDiscoveryGlassBase) { navigate("Profile") }
     }
     }
 }
@@ -218,7 +216,8 @@ private fun Modifier.discoveryNavigationTab(label: String, active: Boolean, shar
         .discoveryTabIndicator(active, Color.White.copy(alpha = .8f))
 
 @Composable
-internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, openPortals: () -> Unit) {
+internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect,
+    panelBase: Color = Color(0x77171B24), openPortals: () -> Unit) {
     val context = LocalContext.current
     val openUserProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
     val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
@@ -243,8 +242,8 @@ internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically) {
             if (showPortals) DiscoveryGlassPanel(Modifier.width(portalWidth).fillMaxHeight(), backdrop, backdropBounds,
-                fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
-                fillWidth = LocalMobileGlassFillWidth.current) {
+                fitArtwork = backdrop != null && LocalMobileGlassFit.current, topAligned = backdrop != null && LocalMobileGlassTopAligned.current,
+                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current, baseColor = panelBase) {
                 Box(Modifier.fillMaxSize().padding(5.dp), contentAlignment = Alignment.Center) {
                     CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
                         DirectPortalButtons()
@@ -252,8 +251,8 @@ internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop
                 }
             }
             DiscoveryGlassPanel(Modifier.width(personWidth).fillMaxHeight(), backdrop, backdropBounds,
-                fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
-                fillWidth = LocalMobileGlassFillWidth.current) {
+                fitArtwork = backdrop != null && LocalMobileGlassFit.current, topAligned = backdrop != null && LocalMobileGlassTopAligned.current,
+                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current, baseColor = panelBase) {
                 Row(Modifier.fillMaxSize().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,

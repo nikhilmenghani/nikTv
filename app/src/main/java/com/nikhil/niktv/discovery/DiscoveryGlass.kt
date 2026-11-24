@@ -7,6 +7,8 @@ import androidx.compose.runtime.*
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
@@ -80,6 +82,8 @@ internal fun discoveryPrimaryActionWidth(phone: Boolean = false): androidx.compo
 
 internal val LocalDetailActionGlass = staticCompositionLocalOf { false }
 internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }
+internal val LocalStableHeroGlass = staticCompositionLocalOf { false }
+internal val WideDiscoveryGlassBase = Color(0xFF10131A)
 internal val LocalMobileGlassBounds = staticCompositionLocalOf { Rect.Zero }
 // Scrolling changes coordinates, not the header's content or measured layout.
 internal val LocalMobileGlassMovingBounds = staticCompositionLocalOf<(() -> Rect)?> { null }
@@ -88,13 +92,16 @@ internal val LocalMobileGlassArtwork = staticCompositionLocalOf<String?> { null 
 internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focused: Boolean = false,
     artworkOpacity: Float = .68f, tint: Color = Color(0x71101520), content: @Composable () -> Unit) {
     if (LocalMobileGlassEnabled.current) CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-        DiscoveryGlassPanel(modifier, LocalMobileGlassArtwork.current, LocalMobileGlassBounds.current,
+        val stable = LocalStableHeroGlass.current
+        val detail = LocalDetailActionGlass.current
+        DiscoveryGlassPanel(modifier, if (stable) null else LocalMobileGlassArtwork.current,
+            if (stable) Rect.Zero else LocalMobileGlassBounds.current,
             focused = focused,
             artworkOpacity = artworkOpacity,
-            baseColor = if (LocalDetailActionGlass.current) Color(0x66242A34) else Color(0x77171B24),
-            tint = if (LocalDetailActionGlass.current) Color(0x44242A34) else tint,
-            fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
-            fillWidth = LocalMobileGlassFillWidth.current) { content() }
+            baseColor = if (stable) WideDiscoveryGlassBase else if (detail) Color(0x66242A34) else Color(0x77171B24),
+            tint = if (detail) Color(0x44242A34) else tint,
+            fitArtwork = !stable && LocalMobileGlassFit.current, topAligned = !stable && LocalMobileGlassTopAligned.current,
+            fillWidth = !stable && LocalMobileGlassFillWidth.current) { content() }
     }
     else Box(modifier) { content() }
 }
@@ -114,41 +121,44 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
     focused: Boolean = false, fitArtwork: Boolean = false, topAligned: Boolean = false, fillWidth: Boolean = false,
     baseColor: Color = Color(0x77171B24), artworkOpacity: Float = .68f, tint: Color = Color(0x71101520),
     content: @Composable BoxScope.() -> Unit) {
-    val context = LocalContext.current
-    var position by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    // MemoryInfo is a system-service call; never put that IPC on a focus/scroll frame.
-    val permitted by key(context, artwork) {
-        produceState(false) {
-            value = withContext(Dispatchers.Default) { !discoveryArtworkPressure(context) }
+    val hasArtwork = !artwork.isNullOrBlank() && artworkOpacity > 0f
+    val painter = if (hasArtwork) {
+        val context = LocalContext.current
+        // MemoryInfo is a system-service call. Neutral glass needs neither it nor an image request.
+        val permitted by key(context, artwork) {
+            produceState(false) {
+                value = withContext(Dispatchers.Default) { !discoveryArtworkPressure(context) }
+            }
         }
-    }
-    val painter = rememberAsyncImagePainter(remember(artwork, permitted) {
-        ImageRequest.Builder(context).data(if (permitted) thumbnailArtworkUrl(artwork, 1280) else null)
-            // The final glass texture is 96px wide. Decode near that size instead of
-            // allocating a second full backdrop just to downsample it for blur.
-            .size(192, 108).transformations(DiscoveryGlassTransformation()).build()
-    })
-    val movingBounds = LocalMobileGlassMovingBounds.current
+        if (permitted) rememberAsyncImagePainter(remember(context, artwork) {
+            ImageRequest.Builder(context).data(thumbnailArtworkUrl(artwork, 1280))
+                // Decode near the final glass texture size before applying blur.
+                .size(192, 108).transformations(DiscoveryGlassTransformation()).build()
+        }) else null
+    } else null
+    val position = if (hasArtwork) remember { mutableStateOf(Offset.Zero) } else null
+    val movingBounds = if (painter != null) LocalMobileGlassMovingBounds.current else null
     val shape = remember { RoundedCornerShape(10.dp) }
     val glassHighlight = remember {
         Brush.verticalGradient(listOf(Color.White.copy(alpha = .12f), Color.Transparent, Color.Black.copy(alpha = .12f)))
     }
-    Box(modifier.onGloballyPositioned { position = it.positionInWindow() }.clip(shape)
+    val placement = if (position != null) Modifier.onGloballyPositioned { position.value = it.positionInWindow() } else Modifier
+    Box(modifier.then(placement).clip(shape)
         .background(baseColor).border(if (focused) 2.dp else 1.dp,
-            if (focused) Color.White else Color(0x777F899B), shape)) {
-        Canvas(Modifier.matchParentSize()) {
-            val bounds = movingBounds?.invoke() ?: backdropBounds
-            val intrinsic = painter.intrinsicSize
-            val imageRect = discoveryGlassImageRect(bounds, intrinsic, fitArtwork, topAligned, fillWidth)
-            if (imageRect != null) clipRect(bounds.left - position.x, bounds.top - position.y,
-                bounds.right - position.x, bounds.bottom - position.y) {
-                withTransform({ translate(imageRect.left - position.x, imageRect.top - position.y) }) {
-                    with(painter) { draw(Size(imageRect.width, imageRect.height), alpha = artworkOpacity) }
+            if (focused) Color.White else Color(0x777F899B), shape)
+        .drawBehind {
+            if (painter != null && position != null) {
+                val bounds = movingBounds?.invoke() ?: backdropBounds
+                val origin = position.value
+                val imageRect = discoveryGlassImageRect(bounds, painter.intrinsicSize, fitArtwork, topAligned, fillWidth)
+                if (imageRect != null) clipRect(bounds.left - origin.x, bounds.top - origin.y,
+                    bounds.right - origin.x, bounds.bottom - origin.y) {
+                    withTransform({ translate(imageRect.left - origin.x, imageRect.top - origin.y) }) {
+                        with(painter) { draw(Size(imageRect.width, imageRect.height), alpha = artworkOpacity) }
+                    }
                 }
             }
             drawRect(tint)
             drawRect(glassHighlight)
-        }
-        content()
-    }
+        }, content = content)
 }

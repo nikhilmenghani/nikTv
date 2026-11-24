@@ -149,6 +149,7 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
     private val mutable = MutableStateFlow(ProviderDiscoveryState())
     val state = mutable.asStateFlow()
     var retainedRows: Pair<String, Map<String, List<MediaItem>>> = "" to emptyMap()
+    var retainedHero: RetainedProviderHero? = null
     private var generation = 0L
     private var session: PortalSession? = null
     private var pageLoader: ProviderDiscoveryPageLoader? = null
@@ -169,7 +170,10 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
         this.pageLoader = pageLoader
         ttl = ttlMillis.coerceAtLeast(60_000L)
         val profile = session?.profile?.cacheKey().orEmpty()
-        if (mutable.value.profile != profile) retainedRows = "" to emptyMap()
+        if (mutable.value.profile != profile) {
+            retainedRows = "" to emptyMap()
+            retainedHero = null
+        }
         val selected = categories.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
         if (preview && initialPreviewWindow != null) {
             val identity = "$profile:windowed:" + selected.entries.sortedBy { it.key.name }.joinToString { (type, values) -> "$type:${values.map { it.id }}" }
@@ -288,7 +292,14 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
     }
     fun pause(release: Boolean = false) {
         generation++; windowGeneration++; jobs.values.forEach { it.cancel() }; jobs.clear(); diskJob?.cancel()
-        if (release) { session = null; previewWindow = null; previewRecency.clear(); mutable.value = ProviderDiscoveryState(); retainedRows = "" to emptyMap() }
+        if (release) {
+            session = null
+            previewWindow = null
+            previewRecency.clear()
+            mutable.value = ProviderDiscoveryState()
+            retainedRows = "" to emptyMap()
+            retainedHero = null
+        }
         else mutable.update { it.copy(loading = emptySet()) }
     }
     fun load(type: CatalogType, refresh: Boolean = false, categoryIds: Set<String>? = null) {

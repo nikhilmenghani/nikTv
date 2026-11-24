@@ -14,12 +14,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.model.DashboardSurface
-import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.ui.LocalViewingOwner
-
-// Prepared artwork only, bounded and scoped to a portal profile. Returning to
-// a tab can paint its cached backdrop while its retained catalogue reattaches.
-private val preparedScenes = linkedMapOf<Pair<UserScope?, Pair<String, DashboardSurface>>, String>()
 
 /** Reserve control space without moving the artwork below the glass navigation. */
 internal val LocalHeroNavigationInset = staticCompositionLocalOf { 0.dp }
@@ -38,15 +33,13 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     var viewportBounds by remember { mutableStateOf(Rect.Zero) }
     val owner = LocalViewingOwner.current
     val sceneIdentity = artworkIdentity?.let { owner to it }
-    val prepared = remember(sceneIdentity) { sceneIdentity?.let(preparedScenes::get) }
-    var published by remember(sceneIdentity) { mutableStateOf(false) }
     var failedArtwork by remember(sceneIdentity) { mutableStateOf<String?>(null) }
-    var artwork by remember(sceneIdentity) { mutableStateOf((prepared ?: initialSceneArtwork)?.let { MobileGlassSource(it, Rect.Zero) }) }
-    val artworkBounds = remember { mutableStateOf(Rect.Zero) }
-    val movingBounds = remember { { artworkBounds.value } }
+    // A prior visit may have ended on a different hero. Seed only from this route's current selection.
+    var artwork by remember(sceneIdentity) { mutableStateOf(initialSceneArtwork?.let { MobileGlassSource(it, Rect.Zero) }) }
+    val artworkBounds = remember(sceneIdentity) { mutableStateOf(Rect.Zero) }
+    val movingBounds = remember(artworkBounds) { { artworkBounds.value } }
     val publish = remember(sceneIdentity, backdropBehindRows) { { value: MobileGlassSource? ->
         artworkBounds.value = value?.bounds ?: Rect.Zero
-        if (!value?.artwork.isNullOrBlank()) published = true
         if (clearFailedArtwork && value?.artwork == failedArtwork && failedArtwork != null) artwork = null
         else if (!backdropBehindRows || !value?.artwork.isNullOrBlank()) artwork = value?.copy(bounds = Rect.Zero)
     } }
@@ -57,21 +50,18 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
         if (overlay) {
             // Match Previous Home: one prepared backdrop behind the hero and
             // activity rows, independent of the recycled feed's composition.
-            if (backdropBehindRows) DiscoveryBackdropArtwork(artwork?.artwork, reduceMotion, firstRevealMillis = 140, onPrepared = { url ->
-                if (published && sceneIdentity != null && url == artwork?.artwork) {
-                    preparedScenes.remove(sceneIdentity)
-                    preparedScenes[sceneIdentity] = url
-                    while (preparedScenes.size > 12) preparedScenes.remove(preparedScenes.keys.first())
-                }
-            }, onFailure = { url ->
-                if (clearFailedArtwork) { failedArtwork = url; artwork = null }
-            })
+            if (backdropBehindRows) key(sceneIdentity) {
+                DiscoveryBackdropArtwork(artwork?.artwork, reduceMotion, firstRevealMillis = 140, onFailure = { url ->
+                    if (clearFailedArtwork) { failedArtwork = url; artwork = null }
+                })
+            }
             CompositionLocalProvider(LocalHeroNavigationInset provides inset,
                 LocalDiscoverySceneArtwork provides backdropBehindRows,
                 LocalDiscoverySceneBounds provides viewportBounds,
                 LocalPublishMobileGlassSource provides publish) { content() }
-            // Only the chrome observes artwork publication; row models remain independent.
-            CompositionLocalProvider(LocalMobileGlassArtwork provides artwork?.artwork,
+            if (!phone) {
+                Box(Modifier.fillMaxWidth().onSizeChanged { inset = with(density) { it.height.toDp() } }) { header() }
+            } else CompositionLocalProvider(LocalMobileGlassArtwork provides artwork?.artwork,
                 LocalMobileGlassBounds provides (if (backdropBehindRows) viewportBounds else Rect.Zero),
                 LocalMobileGlassMovingBounds provides if (backdropBehindRows) null else movingBounds,
                 LocalMobileGlassFit provides (!backdropBehindRows && artwork?.fit == true),
@@ -79,8 +69,7 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
                 LocalMobileGlassFillWidth provides (!backdropBehindRows && artwork?.fillWidth == true)) {
                 Box(Modifier.fillMaxWidth().drawBehind {
                     val bounds = artworkBounds.value
-                    if (!backdropBehindRows && !bounds.isEmpty &&
-                        (if (phone) bounds.bottom <= viewportTop + inset.toPx() else bounds.top < viewportTop - 1f)) {
+                    if (!backdropBehindRows && !bounds.isEmpty && bounds.bottom <= viewportTop + inset.toPx()) {
                         drawRect(Color(0xFF090B10))
                     }
                 }.onSizeChanged { inset = with(density) { it.height.toDp() } }) { header() }

@@ -24,9 +24,6 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val heroGeneration = DiscoveryGeneration()
     private val focusGeneration = DiscoveryGeneration()
     private var completedFocusKey: String? = null
-    var preparedPresentation: DiscoveryCard? = null
-        private set
-    fun retainPreparedPresentation(card: DiscoveryCard) { preparedPresentation = card }
     private var heroRequestKey: String? = null
     private val jobs = mutableMapOf<String, Job>()
     private val stack = mutableListOf<DiscoveryCard>()
@@ -44,7 +41,6 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         if (!changed) return false
         stack.clear()
         clearFocusedPresentation()
-        preparedPresentation = null
         clearDetails()
         return true
     }
@@ -56,7 +52,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         boundExperiment = experiment
         genresOpen = false; chosenGenre = null
         jobs.values.forEach { it.cancel() }; jobs.clear(); stack.clear()
-        focusGeneration.next(); preparedPresentation = null; completedFocusKey = null
+        focusGeneration.next(); completedFocusKey = null
         screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()
         val key = preferenceKey(profile, surface, experiment)
         val defaults = originalSections ?: when (surface) {

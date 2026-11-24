@@ -103,4 +103,36 @@ class ProviderDiscoveryHeroTest {
         assertTrue(selected.all { it.queue.map { m -> m.id } == (0..29).map(Int::toString) })
         assertSame(selected, appendProviderHeroes(selected, listOf(a), pages, kotlin.random.Random(8)))
     }
+
+    @Test fun reattachingTheHeroRetainsItsSelectedTitleAndSampledPool() {
+        val scope = ProviderHeroScope("wio", CatalogType.MOVIES, "catalogue", listOf("a"))
+        val pages = mapOf("a" to page(*(0..29).map(Int::toString).toTypedArray()))
+        val fallback = appendProviderHeroes(emptyList(), listOf(a), pages, kotlin.random.Random(7))
+        val selected = fallback[4].item.id
+        val mounted = RetainedProviderHero(scope).update(fallback, fallback, emptyList(), selected)
+
+        val restored = requireNotNull(mounted.restore(scope, emptyList()))
+        val next = appendProviderHeroes(restored.fallback, listOf(a), pages, kotlin.random.Random(8))
+        assertSame(fallback, next)
+        assertEquals(selected, restored.update(next, next, emptyList(), restored.selectedId).selectedId)
+        assertEquals(selected, restored.update(next, emptyList(), emptyList(), restored.selectedId).selectedId)
+
+        assertNull(mounted.restore(scope.copy(profile = "other"), emptyList()))
+        assertNull(mounted.restore(scope.copy(type = CatalogType.SERIES), emptyList()))
+        assertNull(mounted.restore(scope.copy(catalogue = "updated"), emptyList()))
+        assertNull(mounted.restore(scope.copy(sources = listOf("b")), emptyList()))
+    }
+
+    @Test fun aChangedHistoryPreventsOldRecentArtworkFromBeingRestored() {
+        val scope = ProviderHeroScope("wio", CatalogType.MOVIES, "catalogue", listOf("a"))
+        val fallback = appendProviderHeroes(emptyList(), listOf(a), mapOf("a" to page("catalogue")))
+        val watched = listOf(recent("watched"))
+        val preferred = preferredProviderHeroes(scope.profile, scope.type, watched, fallback)
+        val mounted = RetainedProviderHero(scope).update(fallback, preferred, watched, "watched")
+
+        val restored = requireNotNull(mounted.restore(scope, emptyList()))
+        assertTrue(restored.entries.isEmpty())
+        assertSame(fallback, restored.fallback)
+        assertEquals("catalogue", restored.update(fallback, fallback, emptyList(), restored.selectedId).selectedId)
+    }
 }

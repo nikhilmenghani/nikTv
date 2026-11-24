@@ -1,8 +1,5 @@
 package com.nikhil.niktv.discovery
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -10,17 +7,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil3.compose.AsyncImage
-import coil3.request.*
 import com.nikhil.niktv.data.thumbnailArtworkUrl
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.ui.isTvLikeDevice
@@ -30,6 +21,31 @@ import java.io.File
 /** Presentation never supplies playback identity: actions always retain the provider item/queue. */
 internal data class ProviderHeroEntry(val item: MediaItem, val queue: List<MediaItem>, val recent: RecentItem? = null) {
     val artwork get() = recent?.media?.logo?.takeIf(String::isNotBlank) ?: item.logo
+}
+
+internal data class ProviderHeroScope(
+    val profile: String, val type: CatalogType, val catalogue: String, val sources: List<String>
+)
+
+/** The native hero view can detach while its provider route and selected title still exist. */
+internal data class RetainedProviderHero(
+    val scope: ProviderHeroScope,
+    val fallback: List<ProviderHeroEntry> = emptyList(),
+    val entries: List<ProviderHeroEntry> = emptyList(),
+    val recents: List<RecentItem> = emptyList(),
+    val selectedId: String? = null,
+) {
+    fun restore(nextScope: ProviderHeroScope, nextRecents: List<RecentItem>): RetainedProviderHero? = when {
+        nextScope != scope -> null
+        nextRecents != recents -> copy(entries = emptyList())
+        else -> this
+    }
+
+    fun update(nextFallback: List<ProviderHeroEntry>, nextEntries: List<ProviderHeroEntry>,
+        nextRecents: List<RecentItem>, selection: String?): RetainedProviderHero =
+        copy(fallback = nextFallback, entries = nextEntries, recents = nextRecents,
+            selectedId = selection.takeIf { id -> nextEntries.isEmpty() || nextEntries.any { it.item.id == id } }
+                ?: nextEntries.firstOrNull()?.item?.id)
 }
 
 /** Snapshot read by the nested hero composition, independently of recycled-row submissions. */
@@ -96,27 +112,41 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     val density = LocalDensity.current
     val sceneArtwork = LocalDiscoverySceneArtwork.current
     val cache = remember(context) { DiscoveryCache(File(context.applicationContext.cacheDir, "discovery_preview")) }
-    // A changed profile or selected-category set creates a new pool. Window movement does not.
-    key(profile, type, provider.identity) {
-    var entries by remember { mutableStateOf(emptyList<ProviderHeroEntry>()) }
-    var fallbackEntries by remember { mutableStateOf(emptyList<ProviderHeroEntry>()) }
+    // Hydration windows and native view attachment can change within the same catalogue.
+    val heroScope = remember(profile, type, provider.identity, categories) {
+        ProviderHeroScope(profile, type, provider.identity, providerDiscoverySources(categories).map { it.id })
+    }
+    key(heroScope) {
+    var pool by remember(providerVm) {
+        mutableStateOf(providerVm.retainedHero?.restore(heroScope, display.seriesRecents)
+            ?: RetainedProviderHero(heroScope))
+    }
     val fallbackRandom = remember { kotlin.random.Random(kotlin.random.Random.nextInt()) }
-    var poolPrepared by remember { mutableStateOf(false) }
-    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    var poolPrepared by remember { mutableStateOf(pool.entries.isNotEmpty()) }
+    var selectedId by rememberSaveable { mutableStateOf(pool.selectedId) }
+    fun retain(next: RetainedProviderHero) {
+        pool = next
+        selectedId = next.selectedId
+        if (heroScope.catalogue.isNotBlank() && providerVm.state.value.identity == heroScope.catalogue) {
+            providerVm.retainedHero = next
+        }
+    }
     LaunchedEffect(provider.pages[type], categories, provider.profile, display.seriesRecents) {
         if (provider.profile != profile) return@LaunchedEffect
+        val recents = display.seriesRecents
+        val existingFallback = pool.fallback
         val (fallback, next) = withContext(Dispatchers.Default) {
-            val fallback = appendProviderHeroes(fallbackEntries, categories, provider.pages[type].orEmpty(), fallbackRandom)
-            fallback to preferredProviderHeroes(profile, type, display.seriesRecents, fallback)
+            val fallback = appendProviderHeroes(existingFallback, categories, provider.pages[type].orEmpty(), fallbackRandom)
+            fallback to preferredProviderHeroes(profile, type, recents, fallback)
         }
-        fallbackEntries = fallback; entries = next
+        retain(pool.update(fallback, next, recents, selectedId))
         poolPrepared = true
-        if (next.none { it.item.id == selectedId }) selectedId = next.firstOrNull()?.item?.id
     }
+    val entries = pool.entries
     val index = entries.indexOfFirst { it.item.id == selectedId }.coerceAtLeast(0)
     val selected = entries.getOrNull(index)
     fun rotateBy(direction: Int) {
-        if (entries.isNotEmpty()) selectedId = entries[Math.floorMod(index + direction, entries.size)].item.id
+        if (entries.isNotEmpty()) retain(pool.copy(selectedId = entries[Math.floorMod(index + direction, entries.size)].item.id))
     }
     val fallback = remember(selected, type) { selected?.let { providerDetailFallback(it.item, type).copy(poster = it.artwork) } }
     var cached by remember(selected?.item?.id) { mutableStateOf<DiscoveryCard?>(null) }
@@ -154,27 +184,24 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     val picture = (card?.backdrop ?: card?.poster).takeIf { presentationReady }
     val headerArtwork = thumbnailArtworkUrl(picture, 1280)
     var heroGlassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    LaunchedEffect(publishGlass, headerArtwork, display.artwork, heroGlassBounds, framed, portraitPhone) {
+        if (!portraitPhone) publishGlass(MobileGlassSource(headerArtwork.takeIf { display.artwork },
+            heroGlassBounds, topAligned = framed, fillWidth = framed))
+    }
     val baseHeight = trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), framed, context.isTvLikeDevice(configuration))
     Box((if (portraitPhone) Modifier.wrapContentWidth(unbounded = true).requiredWidth(configuration.screenWidthDp.dp) else Modifier.fillMaxWidth()).clipToBounds().onGloballyPositioned {
         heroGlassBounds = it.boundsInWindow()
-        if (!portraitPhone) publishGlass(MobileGlassSource(headerArtwork.takeIf { display.artwork }, it.boundsInWindow(), topAligned = framed, fillWidth = framed))
     }.then(if (landscape && !phone)
         Modifier.height(trialHeroFrameHeight(baseHeight, density.fontScale).dp + inset) else Modifier)) {
-        if (display.artwork && !portraitPhone && !sceneArtwork) key(selectedId, picture) {
-            val request = remember(picture) { ImageRequest.Builder(context).data(thumbnailArtworkUrl(picture, 1280))
-                .size(1280, 720).transformations(DiscoveryBackdropTransformation(verticalShade = false)).crossfade(false).build() }
-            var ready by remember { mutableStateOf(false) }
-            val alpha by animateFloatAsState(if (!display.fadeArtwork || ready) 1f else 0f,
-                tween(if (reduceMotion) 0 else 300), label = "providerHeroArtwork")
-            AsyncImage(request, null, (if (framed) Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true)
-                .aspectRatio(16f / 9f).align(Alignment.TopCenter) else Modifier.matchParentSize()).graphicsLayer { this.alpha = alpha },
-                contentScale = if (framed) ContentScale.FillWidth else ContentScale.Crop,
-                onSuccess = { ready = true })
+        if (display.artwork && !portraitPhone && !sceneArtwork) Box(Modifier.matchParentSize()) {
+            DiscoveryBackdropArtwork(headerArtwork, reduceMotion || !display.fadeArtwork,
+                alignment = if (framed) Alignment.TopCenter else Alignment.Center, viewportShade = true,
+                fillWidth = framed, prepare = presentationReady)
             DiscoveryHeroShade(Modifier.matchParentSize())
         }
-        CompositionLocalProvider(LocalMobileGlassEnabled provides true,
-            LocalMobileGlassArtwork provides headerArtwork,
-            LocalMobileGlassBounds provides (if (sceneArtwork) LocalDiscoverySceneBounds.current else heroGlassBounds),
+        CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalStableHeroGlass provides !phone,
+            LocalMobileGlassArtwork provides headerArtwork.takeIf { phone },
+            LocalMobileGlassBounds provides (if (phone) heroGlassBounds else androidx.compose.ui.geometry.Rect.Zero),
             LocalMobileGlassTopAligned provides (framed && !sceneArtwork),
             LocalMobileGlassFillWidth provides (framed && !sceneArtwork)) {
         DiscoveryHero(card?.let { if (portraitPhone && display.artwork && presentationReady) it else it.copy(backdrop = null, poster = null) },

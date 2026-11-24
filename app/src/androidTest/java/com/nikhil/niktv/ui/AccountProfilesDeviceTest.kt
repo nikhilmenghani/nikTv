@@ -38,7 +38,7 @@ class AccountProfilesDeviceTest {
                 Column(Modifier.safeDrawingPadding().padding(24.dp)) {
                     com.nikhil.niktv.discovery.DiscoveryClockProfile("Fixture", Modifier
                         .width(com.nikhil.niktv.discovery.discoveryProfileHeaderWidth(clock = true)).height(56.dp),
-                        null, androidx.compose.ui.geometry.Rect.Zero, {})
+                        null, androidx.compose.ui.geometry.Rect.Zero) {}
                     com.nikhil.niktv.discovery.DiscoveryPhoneBottomNavigation(null, {})
                 }
             }

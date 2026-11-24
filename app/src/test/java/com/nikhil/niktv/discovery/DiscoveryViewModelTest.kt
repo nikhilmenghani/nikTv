@@ -170,17 +170,15 @@ class DiscoveryViewModelTest {
         assertNull(vm.state.value.detail)
         assertTrue(vm.state.value.errors.isEmpty())
     }
-    @Test fun returningFromDetailsRetainsFocusedPresentationAndPreparedBackdrop() {
+    @Test fun returningFromDetailsRetainsFocusedPresentation() {
         val vm = DiscoveryViewModel(app, Source())
         vm.bind("return", DashboardSurface.SERIES, emptyList()); pump()
-        vm.presentFocusedCard("continue:chosen", card(42)); vm.retainPreparedPresentation(card(42))
+        vm.presentFocusedCard("continue:chosen", card(42))
         vm.pause(); vm.bind("return", DashboardSurface.SERIES, emptyList()); vm.resume("return", DashboardSurface.SERIES)
         assertEquals("continue:chosen", vm.state.value.focusedEntryKey)
         assertEquals(42, vm.state.value.focusedPresentation?.id)
-        assertEquals(42, vm.preparedPresentation?.id)
         vm.bind("different-profile", DashboardSurface.SERIES, emptyList())
         assertNull(vm.state.value.focusedPresentation)
-        assertNull(vm.preparedPresentation)
     }
     @Test fun repeatedSettledProviderFocusReusesItsPresentation() {
         var requests = 0
