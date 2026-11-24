@@ -51,7 +51,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     removePlaylist: (SportsCategory) -> Unit = {}, dismissLibraryError: () -> Unit = {},
     toggleChannelFlag: (SportsChannel) -> Unit = {}, setAvailabilityFilter: (SportsAvailabilityFilter) -> Unit = {},
     servers: SportsServersState = SportsServersState(), checkServers: () -> Unit = {},
-    selectServer: (String?) -> Unit = {}, closeServerChecks: () -> Unit = {}) {
+    selectServer: (String?) -> Unit = {}, closeServerChecks: () -> Unit = {}, portalEntryFocus: FocusRequester? = null) {
     val compact = sportsPhoneLayout()
     val scope = rememberCoroutineScope()
     val tabFocus = remember { SportsTab.entries.associateWith { FocusRequester() } }
@@ -108,7 +108,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val originKey = if (state.tab == SportsTab.EVENTS) lastTile?.substringAfterLast(':') else lastTile
     val restoreOrigin = state.restoreBrowseFocus && originKey != null && originKey in availableKeys &&
         (!showsAvailability || state.availabilityFilter.includes(state.channelFlags[originKey]))
-    val initial = if (selected != null) sourceFocus.getOrNull(lastSource ?: 0) ?: backFocus else if (restoreOrigin) originFocus else headerFocus
+    val initial = portalEntryFocus ?: if (selected != null) sourceFocus.getOrNull(lastSource ?: 0) ?: backFocus else if (restoreOrigin) originFocus else headerFocus
     fun tileRequester(key: String): FocusRequester = if (restoreOrigin && key == lastTile) originFocus else tileFocus.getOrPut(key) { FocusRequester() }
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
         .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp)) {
@@ -256,7 +256,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
           content = if (selected != null) sourceFocus.firstOrNull() ?: backFocus
               else if (showsAvailability && state.availabilityFilter != SportsAvailabilityFilter.ALL &&
                   availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) }) optionsAction
-              else if (availableKeys.isNotEmpty()) gridEntry else null)
+              else if (availableKeys.isNotEmpty()) gridEntry else null, portalEntryFocus = portalEntryFocus)
     }
     contextItem?.let { item -> SportsItemDialog(item, state.favourites.any { it.key == item.key },
         toggle = { toggleFavourite(item); contextItem = null; restore(restoreTile) }, close = { contextItem = null; restore(restoreTile) },

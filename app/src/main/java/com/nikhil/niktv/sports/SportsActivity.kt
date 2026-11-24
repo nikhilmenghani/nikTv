@@ -14,6 +14,12 @@ import androidx.compose.material3.MaterialTheme
 import com.nikhil.niktv.ui.NikColors
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material.icons.filled.*
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalView
+import com.nikhil.niktv.discovery.LocalPortalFocusReturn
+import com.nikhil.niktv.discovery.PortalFocusReturn
+
+private const val EXTRA_FOCUS_PORTAL = "niktv.focus_opened_portal"
 
 open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPictureHost {
     protected open val isPlayfyPortal: Boolean = false
@@ -97,33 +103,41 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
     }
 
     protected open fun showSportsContent() {
+        val focusOpenedPortal = intent.getBooleanExtra(EXTRA_FOCUS_PORTAL, false)
+        intent.removeExtra(EXTRA_FOCUS_PORTAL)
         setContent { MaterialTheme(colorScheme = NikColors) {
+            val portalFocus = remember { PortalFocusReturn() }
+            val portalId = if (isPlayfyPortal) "playfy" else "sports"
+            val view = LocalView.current
             val store = androidx.compose.runtime.remember { com.nikhil.niktv.data.ProfileStore(applicationContext) }
-            val portals = store.profiles.collectAsStateWithLifecycle(initialValue = emptyList()).value
+            val loadedPortals: List<com.nikhil.niktv.model.PortalProfile>? = store.profiles.collectAsStateWithLifecycle(initialValue = null).value
             val users = androidx.compose.runtime.remember { UserSyncStore.get(applicationContext) }
             val viewerScope = users.selectedScope.collectAsStateWithLifecycle().value
-            val hiddenPortals = androidx.compose.runtime.remember(viewerScope) {
+            val loadedHiddenPortals: Set<String>? = androidx.compose.runtime.remember(viewerScope) {
                 com.nikhil.niktv.data.ProfilePortalAccess.observe(applicationContext, viewerScope)
-            }.collectAsStateWithLifecycle(initialValue = emptySet()).value
+            }.collectAsStateWithLifecycle(initialValue = null).value
+            val hiddenPortals = loadedHiddenPortals.orEmpty()
             val viewers = users.profiles.collectAsStateWithLifecycle(initialValue = emptyList()).value
             val viewer = viewers.firstOrNull { it.id == viewerScope?.profileId }
-            val actions = portals.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
+            val actions = loadedPortals.orEmpty().filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
                 if (portal.portalType == com.nikhil.niktv.model.PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
-                open = {
+                id = portal.cacheKey(), open = {
                     openMainPortal(portal.cacheKey())
                 }) } + listOfNotNull(
                 com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket,
-                    selected = !isPlayfyPortal, id = "sports", open = {
+                    selected = !isPlayfyPortal, id = "sports", opensNewWindow = true, open = {
+                        val restoreFocus = !view.isInTouchMode
                         if (isPlayfyPortal) lifecycleScope.launch {
                             viewerScope?.let { users.rememberDestination(it, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS)) }
-                            openSports(); finish()
+                            openSports(focusPortal = restoreFocus); finish()
                         }
                     }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals },
                 com.nikhil.niktv.discovery.DirectPortalAction("Playfy TV", androidx.compose.material.icons.Icons.Default.LiveTv,
-                    selected = isPlayfyPortal, id = "playfy", open = {
+                    selected = isPlayfyPortal, id = "playfy", opensNewWindow = true, open = {
+                        val restoreFocus = !view.isInTouchMode
                         if (!isPlayfyPortal) lifecycleScope.launch {
                             viewerScope?.let { users.rememberDestination(it, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.PLAYFY)) }
-                            openPlayfy(); finish()
+                            openPlayfy(focusPortal = restoreFocus); finish()
                         }
                     }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
             val portalAccess = if (isPlayfyPortal) com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY else com.nikhil.niktv.data.ProfilePortalAccess.SPORTS
@@ -133,13 +147,19 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
                 }
             }
             androidx.compose.runtime.CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides actions,
+                LocalPortalFocusReturn provides portalFocus,
                 com.nikhil.niktv.ui.LocalSelectedUserProfile provides viewer,
                 com.nikhil.niktv.ui.LocalOpenUserProfiles provides {
                     openMainPortal(com.nikhil.niktv.discovery.PortalNavigationRequests.PROFILE_CHOOSER)
                 }) {
             androidx.compose.material3.Surface(color = NikColors.background, contentColor = NikColors.onBackground) {
                 com.nikhil.niktv.ui.LanPlaybackHost(com.nikhil.niktv.data.LanPlaybackSessions.get(applicationContext)) {
-                    SportsScreen(onClose = ::finish, source = if (isPlayfyPortal) SportsCatalogueSource.PLAYFY else SportsCatalogueSource.CRICFY)
+                    if (!focusOpenedPortal || loadedPortals != null && loadedHiddenPortals != null) {
+                        val portalEntry = if (focusOpenedPortal && actions.size > 1 && portalAccess !in hiddenPortals)
+                            portalFocus.requester(portalId) else null
+                        SportsScreen(onClose = ::finish, source = if (isPlayfyPortal) SportsCatalogueSource.PLAYFY else SportsCatalogueSource.CRICFY,
+                            portalEntryFocus = portalEntry)
+                    }
                 }
             }
             }
@@ -147,14 +167,16 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
     }
 }
 
-internal fun Context.openSports() {
+internal fun Context.openSports(focusPortal: Boolean = false) {
     val intent = Intent(this, SportsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        .putExtra(EXTRA_FOCUS_PORTAL, focusPortal)
     if (findActivity() == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     startActivity(intent, android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
 }
 
-internal fun Context.openPlayfy() {
+internal fun Context.openPlayfy(focusPortal: Boolean = false) {
     val intent = Intent(this, PlayfyActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        .putExtra(EXTRA_FOCUS_PORTAL, focusPortal)
     if (findActivity() == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     startActivity(intent, android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
 }

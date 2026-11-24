@@ -18,7 +18,8 @@ import java.time.Instant
 import kotlinx.coroutines.delay
 
 @Composable
-internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, source: SportsCatalogueSource = SportsCatalogueSource.CRICFY) {
+internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, source: SportsCatalogueSource = SportsCatalogueSource.CRICFY,
+    portalEntryFocus: androidx.compose.ui.focus.FocusRequester? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val application = context.applicationContext as android.app.Application
     val factory = remember(application, source) { viewModelFactory { initializer { SportsViewModel(application, source) } } }
@@ -32,6 +33,7 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, sour
     var status by rememberSaveable { mutableStateOf(defaults.status) }
     var lastSource by rememberSaveable(state.selected?.key) { mutableStateOf<Int?>(null) }
     val pages = rememberSaveableStateHolder()
+    var enteredFromPortal by remember { mutableStateOf(false) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var now by remember { mutableStateOf(Instant.now()) }
     DisposableEffect(lifecycle) {
@@ -78,6 +80,8 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, sour
         return
     }
     pages.SaveableStateProvider(state.route) {
+        val entryFocus = remember { portalEntryFocus.takeUnless { enteredFromPortal } }
+        SideEffect { enteredFromPortal = true }
         var search by rememberSaveable { mutableStateOf("") }
         val servers by model.servers.collectAsState()
         SportsBrowseContent(state, now, sport, { sport = it }, status, { status = it }, search, { search = it },
@@ -91,5 +95,6 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, sour
         addPlaylist = model::addPlaylist, importPlaylist = model::importPlaylist, removePlaylist = model::removePlaylist,
         dismissLibraryError = model::dismissLibraryError,
         toggleChannelFlag = model::toggleChannelFlag, setAvailabilityFilter = model::setAvailabilityFilter,
-        servers = servers, checkServers = model::checkServers, selectServer = model::selectServer, closeServerChecks = model::closeServerChecks) }
+        servers = servers, checkServers = model::checkServers, selectServer = model::selectServer,
+        closeServerChecks = model::closeServerChecks, portalEntryFocus = entryFocus) }
 }

@@ -139,7 +139,8 @@ internal fun sportsPhoneLayout(): Boolean {
 /** Matches the IPTV phone dock; tablets and televisions keep navigation in the header. */
 @Composable
 internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
-    requesters: Map<SportsTab, FocusRequester>, content: FocusRequester? = null, modifier: Modifier = Modifier) {
+    requesters: Map<SportsTab, FocusRequester>, content: FocusRequester? = null, modifier: Modifier = Modifier,
+    portalEntryFocus: FocusRequester? = null) {
     DiscoveryGlassPanel(modifier.padding(vertical = 8.dp).fillMaxWidth(), artwork = null,
         backdropBounds = androidx.compose.ui.geometry.Rect.Zero) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -169,30 +170,43 @@ internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
                     }
                 }
             }
-            if (com.nikhil.niktv.discovery.LocalDirectPortalActions.current.size > 1) SportsPortalMenu(Modifier.weight(1f))
+            if (com.nikhil.niktv.discovery.LocalDirectPortalActions.current.size > 1) SportsPortalMenu(Modifier.weight(1f), portalEntryFocus)
         }
     }
 }
 
 @Composable
-private fun SportsPortalMenu(modifier: Modifier) {
+private fun SportsPortalMenu(modifier: Modifier, entryFocus: FocusRequester?) {
     var expanded by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val portals = com.nikhil.niktv.discovery.LocalDirectPortalActions.current
+    val ownTrigger = remember { FocusRequester() }
+    val trigger = entryFocus ?: ownTrigger
+    val selectedItem = remember { FocusRequester() }
+    val selectedId = portals.firstOrNull { it.selected }?.id ?: portals.firstOrNull()?.id
+    fun close() {
+        runCatching { trigger.requestFocus() }
+        expanded = false
+    }
     Box(modifier) {
         Surface(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-            .semantics { contentDescription = "Portals" }, shape = RoundedCornerShape(8.dp), color = Color.Transparent) {
+            .focusRequester(trigger).onFocusChanged { focused = it.isFocused }.semantics { contentDescription = "Portals" },
+            shape = RoundedCornerShape(8.dp), color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(2.dp, if (focused) Color.White else Color.Transparent)) {
             Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Icon(Icons.Default.Subscriptions, null, Modifier.size(22.dp), tint = Color(0xFFB1B1B9))
                 Text("Portals", fontSize = 11.sp, lineHeight = 14.sp, color = Color(0xFFB1B1B9), fontWeight = FontWeight.Medium)
             }
         }
-        DropdownMenu(expanded, { expanded = false }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
-            portals.forEach { portal -> NikDropdownMenuItem(text = { Text(portal.name) },
+        DropdownMenu(expanded, ::close, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.initialFocusEntry(selectedItem)) {
+            portals.forEach { portal -> key(portal.id) { NikDropdownMenuItem(text = { Text(portal.name) },
                 leadingIcon = { Icon(portal.icon, null) },
                 trailingIcon = { if (portal.selected) Icon(Icons.Default.Check, "Selected portal") },
-                modifier = Modifier.semantics { selected = portal.selected },
-                onClick = { expanded = false; portal.open() }) }
+                modifier = (if (portal.id == selectedId) Modifier.focusRequester(selectedItem) else Modifier)
+                    .semantics { selected = portal.selected },
+                onClick = { close(); if (!portal.selected) portal.open() }) } }
         }
     }
 }

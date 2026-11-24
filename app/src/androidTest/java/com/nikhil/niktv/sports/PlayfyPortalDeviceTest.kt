@@ -4,9 +4,11 @@ import android.app.Activity
 import android.content.Intent
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.ui.NavigationAuditEvidence
+import com.nikhil.niktv.ui.isTvLikeDevice
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -79,31 +81,71 @@ class PlayfyPortalDeviceTest {
         val activities = mutableListOf(start())
         val sportsMonitor = ins.addMonitor(SportsActivity::class.java.name, null, false)
         val playfyMonitor = ins.addMonitor(PlayfyActivity::class.java.name, null, false)
+        val focusEvents = java.util.concurrent.CopyOnWriteArrayList<Pair<Int, String>>()
+        ins.uiAutomation.setOnAccessibilityEventListener { event ->
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                val label = event.contentDescription ?: event.source?.contentDescription ?: event.text.firstOrNull()
+                if (label != null) focusEvents += event.windowId to label.toString()
+            }
+        }
+        val host = activities.first()
+        val configuration = host.resources.configuration
+        val compact = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration, host.isTvLikeDevice(configuration))
+        fun assertEntryFocus(portal: String) {
+            val expected = if (compact) "Portals" else portal
+            await("$expected receives focus from the portal switch") { focused(expected, true) }
+            val window = requireNotNull(find(expected, true)).windowId
+            // Some Android builds expose initial Compose focus in the tree without
+            // dispatching TYPE_VIEW_FOCUSED while the activity window is attaching.
+            focusEvents.firstOrNull { it.first == window }?.let { (_, firstLabel) ->
+                assertEquals("The destination must focus its portal before any other control: $focusEvents", expected, firstLabel)
+            }
+            if (compact) {
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("The menu focuses its selected portal") { focused(portal) }
+            }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("OK keeps focus at the active portal") { focused(expected, true) }
+        }
         try {
-            await("Playfy header and both portal targets") { find("Playfy options") != null && find("Playfy TV", true) != null && find("Sports", true) != null }
-            action("Playfy TV", AccessibilityNodeInfo.ACTION_FOCUS, portal = true)
-            await("Current Playfy portal accepts focus") { focused("Playfy TV", true) }
+            await("Playfy header and portal navigation") {
+                find("Playfy options") != null && if (compact) find("Portals", true) != null
+                    else find("Playfy TV", true) != null && find("Sports", true) != null
+            }
+            action(if (compact) "Portals" else "Playfy TV", AccessibilityNodeInfo.ACTION_FOCUS, portal = true)
+            if (compact) {
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Current Playfy portal accepts focus") { focused("Playfy TV") }
+            } else await("Current Playfy portal accepts focus") { focused("Playfy TV", true) }
             NavigationAuditEvidence.capture("playfy-portal-focused")
-            key(KeyEvent.KEYCODE_DPAD_LEFT)
-            await("Left reaches the separate Sports portal") { focused("Sports", true) }
+            key(if (compact) KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Direction reaches the separate Sports portal") { focused("Sports", !compact) }
+            focusEvents.clear()
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             val sports = ins.waitForMonitorWithTimeout(sportsMonitor, 10_000)
             assertNotNull("Sports opens a separate production Activity", sports)
             activities += requireNotNull(sports)
             assertEquals(SportsActivity::class.java, sports.javaClass)
             await("Cricfy keeps its Sports options") { find("Sports options") != null && find("Playfy options") == null }
-            action("Sports", AccessibilityNodeInfo.ACTION_FOCUS, portal = true)
-            key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await("Right reaches Playfy again") { focused("Playfy TV", true) }
+            assertEntryFocus("Sports")
+            NavigationAuditEvidence.capture("sports-portal-entry-focus")
+            if (compact) {
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Sports is selected in its portal menu") { focused("Sports") }
+            }
+            key(if (compact) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Direction reaches Playfy again") { focused("Playfy TV", !compact) }
+            focusEvents.clear()
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             val playfy = ins.waitForMonitorWithTimeout(playfyMonitor, 10_000)
             assertNotNull("Playfy returns through its own production Activity", playfy)
             activities += requireNotNull(playfy)
             assertEquals(PlayfyActivity::class.java, playfy.javaClass)
             await("Returned Playfy header") { find("Playfy options") != null && find("Sports options") == null }
-            action("Playfy TV", AccessibilityNodeInfo.ACTION_FOCUS, portal = true)
+            assertEntryFocus("Playfy TV")
             NavigationAuditEvidence.capture("playfy-portal-returned")
         } finally {
+            ins.uiAutomation.setOnAccessibilityEventListener(null)
             ins.removeMonitor(sportsMonitor)
             ins.removeMonitor(playfyMonitor)
             ins.runOnMainSync { activities.forEach { it.finish() } }

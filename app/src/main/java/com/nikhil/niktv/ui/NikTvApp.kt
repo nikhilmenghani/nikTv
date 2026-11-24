@@ -487,6 +487,7 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
         .collectAsStateWithLifecycle(emptySet())
     val accessiblePortals = state.profiles.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }
     val directPortalScope = rememberCoroutineScope()
+    val portalHostView = androidx.compose.ui.platform.LocalView.current
     val portalFocusReturn = remember(directPortalOwner) { com.nikhil.niktv.discovery.PortalFocusReturn() }
     val directPortals = accessiblePortals.map { portal ->
         com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
@@ -494,23 +495,25 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
             selected = portal.cacheKey() == state.savedProfile?.cacheKey(), id = portal.cacheKey(), open = {
                 if (portal.cacheKey() != state.savedProfile?.cacheKey()) vm.switchProfile(portal)
             })
-    } + listOfNotNull(com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, id = "sports", open = {
+    } + listOfNotNull(com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket, id = "sports", opensNewWindow = true, open = {
+        val restoreFocus = !portalHostView.isInTouchMode
         directPortalScope.launch {
             directPortalOwner?.let { owner ->
                 com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
                     com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.SPORTS))
             }
-            appContext.openSports()
+            appContext.openSports(focusPortal = restoreFocus)
         }
     }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in hiddenPortals },
         com.nikhil.niktv.discovery.DirectPortalAction("Playfy TV", androidx.compose.material.icons.Icons.Default.LiveTv,
-            id = "playfy", open = {
+            id = "playfy", opensNewWindow = true, open = {
+                val restoreFocus = !portalHostView.isInTouchMode
                 directPortalScope.launch {
                     directPortalOwner?.let { owner ->
                         com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
                             com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.PLAYFY))
                     }
-                    appContext.openPlayfy()
+                    appContext.openPlayfy(focusPortal = restoreFocus)
                 }
             }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,

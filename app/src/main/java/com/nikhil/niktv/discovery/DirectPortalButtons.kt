@@ -18,7 +18,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 
-internal data class DirectPortalAction(val name: String, val icon: ImageVector, val selected: Boolean = false, val id: String = name, val open: () -> Unit)
+internal data class DirectPortalAction(val name: String, val icon: ImageVector, val selected: Boolean = false,
+    val id: String = name, val opensNewWindow: Boolean = false, val open: () -> Unit)
 internal val LocalDirectPortalActions = staticCompositionLocalOf<List<DirectPortalAction>> { emptyList() }
 internal class PortalFocusReturn {
     private val requesters = mutableMapOf<String, FocusRequester>()
@@ -94,15 +95,15 @@ internal fun DirectPortalButtons(modifier: Modifier = Modifier, labels: Boolean 
         if (event.nativeKeyEvent.keyCode in listOf(19, 20, 21, 22, 61)) focusReturn.cancel()
         false
     }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        actions.forEach { action ->
+        actions.forEach { action -> key(action.id) {
             DiscoveryAction(action.name, action.icon, iconOnly = !labels, selected = action.selected,
                 horizontalPadding = if (labels) 12.dp else 6.dp,
                 modifier = (if (labels) Modifier.heightIn(min = 48.dp) else Modifier.size(discoveryHeaderActionSize()))
                     .semantics { selected = action.selected }
                     .focusRequester(focusReturn.requester(action.id)), onClick = {
-                        if (!action.selected) focusReturn.clicked(action.id) else focusReturn.cancel()
+                        if (action.selected || action.opensNewWindow) focusReturn.cancel() else focusReturn.clicked(action.id)
                         action.open()
                     })
-        }
+        } }
     }
 }
