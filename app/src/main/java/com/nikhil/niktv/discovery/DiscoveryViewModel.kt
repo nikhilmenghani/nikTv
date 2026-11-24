@@ -28,8 +28,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val jobs = mutableMapOf<String, Job>()
     private val stack = mutableListOf<DiscoveryCard>()
     private var landingNavigationId: Long? = null
-    var genresOpen by androidx.compose.runtime.mutableStateOf(false)
-    var chosenGenre by androidx.compose.runtime.mutableStateOf<WatchProvider?>(null)
+    var genreBrowser by androidx.compose.runtime.mutableStateOf<GenreBrowserDestination?>(null)
 
     /** Explicit top-level navigation clears every nested detail, even on the selected tab.
      * Recomposition and Back returning from Search retain the current detail instead. */
@@ -50,7 +49,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     fun bind(profile: String, surface: DashboardSurface, originalSections: List<TmdbHomeSection>?, experiment: Boolean = false) {
         if (_state.value.profile == profile && _state.value.surface == surface && boundExperiment == experiment) return
         boundExperiment = experiment
-        genresOpen = false; chosenGenre = null
+        genreBrowser = null
         jobs.values.forEach { it.cancel() }; jobs.clear(); stack.clear()
         focusGeneration.next(); completedFocusKey = null
         screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()

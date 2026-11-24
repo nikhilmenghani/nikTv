@@ -12,6 +12,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.discovery.*
@@ -77,6 +79,7 @@ class DiscoveryGlassScrollDeviceTest {
         val artwork = mutableStateOf("$origin/red.png")
         val exerciseQueuedArtwork = mutableStateOf(false)
         val headerPixel = IntArray(2)
+        val buttonPixel = IntArray(2)
         val artworkPixel = IntArray(2)
         fun sample(at: IntArray): Int {
             val screenshot = requireNotNull(ins.uiAutomation.takeScreenshot())
@@ -93,6 +96,7 @@ class DiscoveryGlassScrollDeviceTest {
             fail("$label. Artwork pixel was ${Integer.toHexString(color)}")
         }
         try {
+            ins.setInTouchMode(true)
             ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
                 val tab = remember { FocusRequester() }
                 val body = remember { FocusRequester() }
@@ -104,6 +108,15 @@ class DiscoveryGlassScrollDeviceTest {
                         val current = artwork.value
                         if (exerciseQueuedArtwork.value) DiscoveryBackdropArtwork(current, reduceMotion = false, firstRevealMillis = 2_000)
                         else LaunchedEffect(publish, current) { publish(MobileGlassSource(current, Rect.Zero)) }
+                        Box(Modifier.padding(start = 40.dp, top = 100.dp)) {
+                            CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalStableHeroGlass provides true) {
+                                DiscoveryAction("Details", modifier = Modifier.width(180.dp).onGloballyPositioned {
+                                    val bounds = it.boundsInWindow()
+                                    buttonPixel[0] = (bounds.left + bounds.width / 8).toInt()
+                                    buttonPixel[1] = bounds.center.y.toInt()
+                                }, onClick = {})
+                            }
+                        }
                     })
             } } }
             ins.waitForIdleSync()
@@ -118,7 +131,8 @@ class DiscoveryGlassScrollDeviceTest {
                 headerPixel[1] += topInset + (18 * density).toInt()
             }
             awaitColor("Home artwork appears") { Color.red(it) > 130 && Color.blue(it) < 35 }
-            val glass = sample(headerPixel)
+            val redGlass = sample(headerPixel)
+            val redButton = sample(buttonPixel)
             NavigationAuditEvidence.capture("wide-glass-red")
             ins.runOnMainSync { artwork.value = "$origin/green.png" }
             assertTrue("The delayed request started", greenStarted.await(6, TimeUnit.SECONDS))
@@ -130,14 +144,16 @@ class DiscoveryGlassScrollDeviceTest {
                 assertTrue("A superseded response cannot paint over the latest hero", Color.blue(sample(artworkPixel)) > 130)
                 SystemClock.sleep(50)
             }
-            assertEquals("The glass color is independent of the backdrop", glass, sample(headerPixel))
+            val blueGlass = sample(headerPixel)
+            assertTrue("Translucent glass picks up the shared backdrop", Color.blue(blueGlass) > Color.blue(redGlass) + 5)
+            assertTrue("The glass keeps a dark scrim for the controls", Color.blue(blueGlass) < Color.blue(sample(artworkPixel)))
+            assertTrue("The hero button also picks up the shared backdrop", Color.blue(sample(buttonPixel)) > Color.blue(redButton) + 5)
             NavigationAuditEvidence.capture("wide-glass-blue")
             ins.runOnMainSync {
                 surface.value = DashboardSurface.MOVIES
                 artwork.value = "$origin/green-next.png"
             }
             awaitColor("Movies shows its own artwork") { Color.green(it) > 130 && Color.blue(it) < 35 }
-            assertEquals(glass, sample(headerPixel))
             ins.runOnMainSync {
                 surface.value = DashboardSurface.HOME
                 artwork.value = "$origin/revisit.png"
@@ -150,7 +166,8 @@ class DiscoveryGlassScrollDeviceTest {
             val pending = sample(artworkPixel)
             assertTrue("A revisit never exposes old Home or Movies artwork: ${Integer.toHexString(pending)}",
                 Color.red(pending) < 50 && Color.green(pending) < 50 && Color.blue(pending) < 50)
-            assertEquals(glass, sample(headerPixel))
+            assertTrue("The glass does not show the previous tab's artwork", Color.green(sample(headerPixel)) < 50)
+            assertTrue("The hero button does not show the previous tab's artwork", Color.green(sample(buttonPixel)) < 50)
             releaseRevisit.countDown()
             awaitColor("Home revisit uses its current selection") { Color.red(it) > 130 && Color.blue(it) < 35 }
             NavigationAuditEvidence.capture("wide-glass-revisited")

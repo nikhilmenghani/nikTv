@@ -143,9 +143,10 @@ class SportsUiDeviceTest {
         val previous = prefs.read()
         val now = Instant.parse("2026-10-27T10:00:00Z")
         val event = SportsEvent("1", "Cricket fixture", "fixture", "Cricket", "Fixture", "", "A", "B",
-            now.minusSeconds(60), now.plusSeconds(3600), emptyList())
+            Instant.parse("2026-10-27T09:59:00Z"), Instant.parse("2026-10-27T11:00:00Z"), emptyList())
         val football = event.copy(id = "2", slug = "football", title = "Football fixture", sport = "Football")
-        val upcoming = event.copy(id = "3", slug = "upcoming", title = "Upcoming fixture", start = now.plusSeconds(7200), end = now.plusSeconds(10800))
+        val upcoming = event.copy(id = "3", slug = "upcoming", title = "Upcoming fixture",
+            start = Instant.parse("2026-10-27T12:00:00Z"), end = Instant.parse("2026-10-27T13:00:00Z"))
         try {
             prefs.setStatus("Now & next")
             prefs.setSport("All sports")

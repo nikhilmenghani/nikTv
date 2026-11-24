@@ -84,10 +84,11 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
         }
     }
 
-    private fun openMainPortal(key: String) {
+    private fun openMainPortal(key: String, restoreFocus: Boolean = false) {
         startActivity(Intent(this, com.nikhil.niktv.MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-            .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL, key),
+            .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_PORTAL, key)
+            .putExtra(com.nikhil.niktv.discovery.PortalNavigationRequests.EXTRA_RESTORE_FOCUS, restoreFocus),
             android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
         finish()
     }
@@ -122,7 +123,7 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
             val actions = loadedPortals.orEmpty().filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
                 if (portal.portalType == com.nikhil.niktv.model.PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
                 id = portal.cacheKey(), open = {
-                    openMainPortal(portal.cacheKey())
+                    openMainPortal(portal.cacheKey(), restoreFocus = !view.isInTouchMode)
                 }) } + listOfNotNull(
                 com.nikhil.niktv.discovery.DirectPortalAction("Sports", androidx.compose.material.icons.Icons.Default.SportsCricket,
                     selected = !isPlayfyPortal, id = "sports", opensNewWindow = true, open = {

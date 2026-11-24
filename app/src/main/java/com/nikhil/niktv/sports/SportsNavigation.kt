@@ -1,12 +1,12 @@
 package com.nikhil.niktv.sports
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -14,12 +14,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -28,13 +26,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.niktv.discovery.DiscoveryAction
-import com.nikhil.niktv.discovery.DiscoveryGlassPanel
+import com.nikhil.niktv.discovery.PortalOptionsButton
+import com.nikhil.niktv.discovery.PortalOptionsMenu
+import com.nikhil.niktv.discovery.PortalPhoneDock
+import com.nikhil.niktv.discovery.PortalPhoneHeader
+import com.nikhil.niktv.discovery.PortalWideHeader
+import com.nikhil.niktv.discovery.discoveryTabIndicator
 import com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout
-import com.nikhil.niktv.ui.usesShortWideLayout
 import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.NikDropdownMenuItem
 import com.nikhil.niktv.ui.initialFocusEntry
-import com.nikhil.niktv.R
 import kotlinx.coroutines.launch
 
 internal data class SportsHeaderAction(val label: String, val icon: ImageVector,
@@ -57,66 +58,37 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
         expanded = false
     }
     @Composable fun options() {
-            Box {
-                DiscoveryAction(if (title == "Playfy TV") "Playfy options" else "Sports options", Icons.Default.MoreHoriz, iconOnly = true,
-                    focusHint = false,
-                    selected = actions.any { it.label == "Categories" && it.selected },
-                    modifier = Modifier.size(if (phone) 48.dp else 44.dp).focusRequester(menuFocus)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && downFocus != null) {
-                                runCatching { downFocus.requestFocus() }; true
-                            } else false
-                        }, onClick = { expanded = true })
-                DropdownMenu(expanded, { close() }, containerColor = SportsSurface,
-                    modifier = Modifier.initialFocusEntry(firstAction)) {
-                    actions.forEachIndexed { index, action ->
-                        NikDropdownMenuItem(text = { Text(action.label, color = Color.White) },
-                            leadingIcon = { Icon(action.icon, null, tint = Color.White) },
-                            trailingIcon = { if (action.selected) Icon(Icons.Default.Check, null, tint = Color.White) },
-                            modifier = Modifier.then(if (index == 0) Modifier.focusRequester(firstAction) else Modifier)
-                                .semantics { selected = action.selected },
-                            onClick = { close(action.onClick) })
-                    }
+        Box {
+            PortalOptionsButton(if (title == "Playfy TV") "Playfy options" else "Sports options",
+                selected = actions.any { it.label == "Categories" && it.selected },
+                modifier = Modifier.focusRequester(menuFocus)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && downFocus != null) {
+                            runCatching { downFocus.requestFocus() }; true
+                        } else false
+                    }, open = { expanded = true })
+            PortalOptionsMenu(expanded, { close() },
+                modifier = Modifier.initialFocusEntry(firstAction)) {
+                actions.forEachIndexed { index, action ->
+                    NikDropdownMenuItem(text = { Text(action.label, color = Color.White) },
+                        leadingIcon = { Icon(action.icon, null, tint = Color.White) },
+                        trailingIcon = { if (action.selected) Icon(Icons.Default.Check, null, tint = Color.White) },
+                        modifier = Modifier.then(if (index == 0) Modifier.focusRequester(firstAction) else Modifier)
+                            .semantics { selected = action.selected },
+                        onClick = { close(action.onClick) })
                 }
             }
+        }
     }
     if (!phone) {
-        val configuration = LocalConfiguration.current
-        val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
-        val headerHeight = maxOf(if (shortWide) 54.dp else 56.dp, (24f * androidx.compose.ui.platform.LocalDensity.current.fontScale + 24f).dp)
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = if (shortWide) 6.dp else 12.dp)) {
-        val profileWidth = com.nikhil.niktv.discovery.discoveryProfileHeaderWidth(clock = !shortWide)
-        val menuWidth = (maxWidth - profileWidth - 12.dp).coerceAtLeast(0.dp)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            DiscoveryGlassPanel(Modifier.widthIn(max = menuWidth).height(headerHeight), null, androidx.compose.ui.geometry.Rect.Zero) {
-                CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDiscoveryGlassButtons provides true,
-                    com.nikhil.niktv.discovery.LocalDiscoveryHeaderActionSizing provides true) {
-                    Row(Modifier.fillMaxHeight().padding(5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                            Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV",
-                                Modifier.fillMaxSize().graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
-                        }
-                        DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
-                            focusHint = false,
-                            modifier = Modifier.focusRequester(backFocus), onClick = back)
-                        navigation(Modifier.weight(1f, fill = false))
-                        options()
-                    }
-                }
-            }
-            Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
-            com.nikhil.niktv.discovery.DiscoveryClockProfile(viewer?.name.orEmpty(),
-                Modifier.width(profileWidth).height(headerHeight),
-                null, androidx.compose.ui.geometry.Rect.Zero) {}
+        PortalWideHeader(viewer?.name.orEmpty(), openProfiles) {
+            DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
+                focusHint = false, modifier = Modifier.focusRequester(backFocus), onClick = back)
+            navigation(Modifier.weight(1f, fill = false))
+            options()
         }
-        }
-        return
-    }
-    Surface(Modifier.fillMaxWidth().padding(top = 8.dp), shape = SportsShape,
-        color = Color.Transparent, contentColor = Color.White) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    } else {
+        PortalPhoneHeader {
             viewer?.let { profile ->
                 DiscoveryAction("Switch profile: ${profile.name}", visualLabel = profile.avatar.ifBlank { profile.name.take(1).uppercase() },
                     containerColor = Color(profile.color), horizontalPadding = 0.dp,
@@ -124,7 +96,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
                     onClick = openProfiles)
             }
             Text(title, Modifier.weight(1f).semantics { contentDescription = "Sports page title" },
-                fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             options()
         }
     }
@@ -141,37 +113,38 @@ internal fun sportsPhoneLayout(): Boolean {
 internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
     requesters: Map<SportsTab, FocusRequester>, content: FocusRequester? = null, modifier: Modifier = Modifier,
     portalEntryFocus: FocusRequester? = null) {
-    DiscoveryGlassPanel(modifier.padding(vertical = 8.dp).fillMaxWidth(), artwork = null,
-        backdropBounds = androidx.compose.ui.geometry.Rect.Zero) {
-        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            sportsMainTabs.forEach { destination ->
-                val active = destination == tab
-                val icon = when (destination) {
-                    SportsTab.EVENTS -> Icons.Default.LiveTv
-                    SportsTab.CHANNELS -> Icons.Default.Sports
-                    SportsTab.CATEGORIES -> Icons.Default.Category
-                    SportsTab.HIGHLIGHTS -> Icons.Default.VideoLibrary
-                }
-                Surface(onClick = { select(destination) },
-                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).focusRequester(requesters.getValue(destination))
-                        .onPreviewKeyEvent {
-                            if (it.type == KeyEventType.KeyDown && it.key in listOf(Key.DirectionUp, Key.DirectionDown) && content != null) {
-                                runCatching { content.requestFocus() }; true
-                            } else false
-                        }
-                        .semantics { selected = active; contentDescription = destination.title },
-                    shape = RoundedCornerShape(8.dp), color = if (active) Color(0x663D3E45) else Color.Transparent,
-                    contentColor = if (active) Color.White else SportsMuted) {
-                    Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Icon(icon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else SportsMuted)
-                        Text(destination.title, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1,
-                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+    PortalPhoneDock(modifier) {
+        sportsMainTabs.forEach { destination ->
+            val active = destination == tab
+            var focused by remember(destination) { mutableStateOf(false) }
+            val icon = when (destination) {
+                SportsTab.EVENTS -> Icons.Default.LiveTv
+                SportsTab.CHANNELS -> Icons.Default.Sports
+                SportsTab.CATEGORIES -> Icons.Default.Category
+                SportsTab.HIGHLIGHTS -> Icons.Default.VideoLibrary
+            }
+            Surface(onClick = { select(destination) },
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp).focusRequester(requesters.getValue(destination))
+                    .onPreviewKeyEvent {
+                        if (it.type == KeyEventType.KeyDown && it.key in listOf(Key.DirectionUp, Key.DirectionDown) && content != null) {
+                            runCatching { content.requestFocus() }; true
+                        } else false
                     }
+                    .onFocusChanged { focused = it.isFocused }
+                    .semantics { selected = active; contentDescription = destination.title }
+                    .discoveryTabIndicator(active, Color(0xFFFF6778)),
+                shape = RoundedCornerShape(8.dp), color = if (active) Color(0x663D3E45) else Color.Transparent,
+                border = BorderStroke(2.dp, if (focused) Color.White else Color.Transparent),
+                contentColor = if (active) Color.White else SportsMuted) {
+                Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Icon(icon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else SportsMuted)
+                    Text(destination.title, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
                 }
             }
-            if (com.nikhil.niktv.discovery.LocalDirectPortalActions.current.size > 1) SportsPortalMenu(Modifier.weight(1f), portalEntryFocus)
         }
+        if (com.nikhil.niktv.discovery.LocalDirectPortalActions.current.size > 1) SportsPortalMenu(Modifier.weight(1f), portalEntryFocus)
     }
 }
 

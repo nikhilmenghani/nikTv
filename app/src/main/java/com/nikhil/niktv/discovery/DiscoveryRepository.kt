@@ -26,20 +26,21 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
                 obj.string("name")?.let { WatchProvider(id, it) }
             }.distinctBy { it.id }.sortedBy { order.indexOf(it.id).takeIf { index -> index >= 0 } ?: 100 + it.id }
         }
-    suspend fun genreWallpaper(series: Boolean, genre: Int): String? =
-        cached("genre-poster-v1:$series:$genre", 12 * 60 * 60_000L,
+    suspend fun genreWallpaper(series: Boolean, genre: Int, market: GenreMarket?): String? =
+        cached("genre-poster-v1:$series:$genre" + market.cacheSuffix(), 12 * 60 * 60_000L,
             kotlinx.serialization.serializer<String?>()) {
-            val (path, query) = genreTitleRequest(series, genre, 1, wallpaper = true)
+            val (path, query) = genreTitleRequest(series, genre, 1, wallpaper = true, market = market)
             genrePoster(tmdb.discoveryJson(path, query), genre)
         }
     suspend fun genreTitles(series: Boolean, genre: Int, page: Int, stale: (WatchProviderPage) -> Unit,
-        refresh: Boolean): WatchProviderPage = cached("genre-titles-v1:$series:$genre:$page",
+        refresh: Boolean, market: GenreMarket?): WatchProviderPage = cached("genre-titles-v1:$series:$genre:$page" + market.cacheSuffix(),
         if (refresh) 0L else DiscoveryCache.FEED_TTL, WatchProviderPage.serializer(), stale) {
-            val (path, query) = genreTitleRequest(series, genre, page)
+            val (path, query) = genreTitleRequest(series, genre, page, market = market)
             val root = tmdb.discoveryJson(path, query)
             WatchProviderPage(cards(root, series), root["page"]?.jsonPrimitive?.intOrNull ?: page,
                 (root["total_pages"]?.jsonPrimitive?.intOrNull ?: page).coerceAtMost(500))
         }
+    private fun GenreMarket?.cacheSuffix() = this?.let { ":${it.name}" }.orEmpty()
     private suspend fun <T> cached(key: String, ttl: Long, serializer: kotlinx.serialization.KSerializer<T>,
         stale: (T) -> Unit = {}, load: suspend () -> T): T {
         return cache.load(key, ttl, serializer, stale) { slots.withPermit { load() } }

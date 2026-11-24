@@ -94,6 +94,8 @@ import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.R
 import com.nikhil.niktv.discovery.PortalNavigationRequests
+import com.nikhil.niktv.discovery.LocalPortalFocusReturn
+import com.nikhil.niktv.discovery.PortalFocusReturn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
@@ -150,6 +152,10 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
         }
     }
     val requestedPortal by PortalNavigationRequests.pending.collectAsStateWithLifecycle()
+    var portalEntryFocus by remember { mutableStateOf<Pair<UserScope, PortalFocusReturn>?>(null) }
+    fun preparePortalFocus(owner: UserScope, request: PortalNavigationRequests.Request) {
+        portalEntryFocus = if (request.restoreFocus) owner to PortalFocusReturn().apply { clicked(request.key) } else null
+    }
     val scope = rememberCoroutineScope()
     val launchBranding = LocalLaunchBrandingProgress.current
     val legacyStore = remember(context) { ProfileStore(context) }
@@ -282,12 +288,15 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             vm.resetPortalSession()
         }
         // An explicit Sports -> IPTV handoff takes priority over the saved Sports destination.
-        val requested = PortalNavigationRequests.pending.value?.takeUnless { afterSetup || it == PortalNavigationRequests.PROFILE_CHOOSER }
+        val requested = PortalNavigationRequests.pending.value?.takeUnless { afterSetup || it.key == PortalNavigationRequests.PROFILE_CHOOSER }
         if (requested != null) {
             try {
-                val portal = portals.firstOrNull { it.cacheKey() == requested }
+                val portal = portals.firstOrNull { it.cacheKey() == requested.key }
                     ?: throw IllegalStateException("This portal is unavailable for this profile.")
                 openPortal(portal)
+                if (PortalNavigationRequests.pending.value === requested && store.selectedScope.value == owner) {
+                    preparePortalFocus(owner, requested)
+                }
             } finally { PortalNavigationRequests.pending.compareAndSet(requested, null) }
         } else when (destination?.kind) {
             ViewerDestinationKind.OFFLINE -> {
@@ -348,7 +357,8 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
         if (!cached.initialized || cached.reconnectRequired || restoredAccount == id) return
         restoringViewer = true
         try {
-            if (PortalNavigationRequests.pending.compareAndSet(PortalNavigationRequests.PROFILE_CHOOSER, null)) {
+            val request = PortalNavigationRequests.pending.value
+            if (request?.key == PortalNavigationRequests.PROFILE_CHOOSER && PortalNavigationRequests.pending.compareAndSet(request, null)) {
                 openProfiles()
             } else {
                 store.rememberedProfileId(id)?.let { profileId ->
@@ -397,7 +407,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
         openingConfiguredViewer, viewerSetup) {
         val requested = requestedPortal ?: return@LaunchedEffect
         if (!launchComplete || restoringViewer || !account.initialized || openingConfiguredViewer != null || viewerSetup != null) return@LaunchedEffect
-        if (requested == PortalNavigationRequests.PROFILE_CHOOSER) {
+        if (requested.key == PortalNavigationRequests.PROFILE_CHOOSER) {
             PortalNavigationRequests.pending.compareAndSet(requested, null)
             openProfiles()
             return@LaunchedEffect
@@ -412,11 +422,12 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             try {
                 profileAction("Could not open this portal. Select your profile to retry.") {
                     val portal = legacyStore.scoped(owner).profiles.first().firstOrNull {
-                        it.cacheKey() == requested && com.nikhil.niktv.data.ProfilePortalAccess.allowed(context, it, owner)
+                        it.cacheKey() == requested.key && com.nikhil.niktv.data.ProfilePortalAccess.allowed(context, it, owner)
                     } ?: throw IllegalStateException("This portal is unavailable for this profile.")
                     // A loaded viewer keeps their context; switching a portal does not select the person again.
                     activateViewerPortal(owner, portal)
                     if (store.selectedScope.value == owner) {
+                        if (PortalNavigationRequests.pending.value === requested) preparePortalFocus(owner, requested)
                         choosingProfile = false
                         showAccount = false
                         showSettings = false
@@ -431,6 +442,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     }
     LaunchedEffect(selectedScope) {
         if (selectedUser != null && store.selectedScope.value?.profileId != selectedUser) selectedUser = null
+        if (portalEntryFocus?.first != store.selectedScope.value) portalEntryFocus = null
     }
     LaunchedEffect(appState.settingsOpen, appState.profileEditorOpen) {
         if (showSettings && appState.settingsOpen) settingsEntered = true
@@ -442,12 +454,14 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     // Profile names and enabled tiles load independently from selection. The live
     // selection has already been validated and is cleared when disabled/deleted.
     val activeOwner = selectedScope
+    val defaultPortalFocus = remember(activeOwner) { PortalFocusReturn() }
+    val portalFocus = portalEntryFocus?.takeIf { it.first == activeOwner }?.second ?: defaultPortalFocus
     val selectedViewerAvailable = activeOwner != null && activeOwner.profileId == selectedUser &&
         activeOwner.accountId == account.accountId
     CompositionLocalProvider(LocalOpenAccountScreen provides ::openAccount, LocalOpenUserProfiles provides ::openProfiles,
         LocalCloseProfileDownloads provides if (profileDownloads) ({ vm.closeOfflineDownloads(); openProfiles() }) else null,
         LocalCloseAccountSettings provides { showSettings = false },
-        LocalOpenConfiguredViewer provides ::openConfiguredViewer,
+        LocalOpenConfiguredViewer provides ::openConfiguredViewer, LocalPortalFocusReturn provides portalFocus,
         LocalViewingOwner provides activeOwner,
         LocalSelectedUserProfile provides profiles.firstOrNull { it.id == selectedUser }) {
         MaterialTheme(colorScheme = NikColors) {

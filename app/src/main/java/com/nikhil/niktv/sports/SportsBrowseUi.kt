@@ -111,8 +111,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val initial = portalEntryFocus ?: if (selected != null) sourceFocus.getOrNull(lastSource ?: 0) ?: backFocus else if (restoreOrigin) originFocus else headerFocus
     fun tileRequester(key: String): FocusRequester = if (restoreOrigin && key == lastTile) originFocus else tileFocus.getOrPut(key) { FocusRequester() }
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
-        .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp)) {
-      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        .initialFocusEntry(initial)) {
         val headerActions = buildList {
             add(SportsHeaderAction("Categories", Icons.Default.Category, state.tab == SportsTab.CATEGORIES) { selectTab(SportsTab.CATEGORIES) })
             if (selected == null) add(SportsHeaderAction("Search sports", Icons.Default.Search, searchOpen) {
@@ -155,6 +154,8 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 }
             }
         }
+      Column(Modifier.weight(1f).padding(horizontal = if (compact) 14.dp else 24.dp).padding(top = 10.dp),
+          verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (selected != null) {
             SportsDetailHeader(selected, state.event, state.detail, now, adjacentChannel)
             state.channelFlags[selected.key]?.let { flag -> SportsAvailabilityNotice(flag) {

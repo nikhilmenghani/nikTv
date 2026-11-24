@@ -20,7 +20,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -29,7 +28,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -37,7 +35,6 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nikhil.niktv.R
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.ui.isTvLikeDevice
@@ -62,9 +59,8 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     var categoryTrigger by remember { mutableIntStateOf(0) }
     if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
-        DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true,
-            focusHint = false, onClick = { change(true) })
-        DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
+        PortalOptionsButton("Options") { change(true) }
+        PortalOptionsMenu(expanded, { change(false) }) {
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
             if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
@@ -138,7 +134,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
         library, searchActive)
 }
 
-// Keep wide navigation chrome readable and visually stationary while hero artwork changes behind it.
+// Let the prepared scene show through the glass without loading a second copy of the artwork.
 @Composable
 private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: String,
     tabRequester: FocusRequester, playRequester: FocusRequester,
@@ -150,68 +146,38 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
     val experiment = LocalDiscoveryExperiment.current
     val tabs = rememberScrollState()
     val tabTargets = remember { List(trialSurfaces.size + 2) { FocusRequester() } }
-    val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
-    val naturalProfile = discoveryProfileHeaderWidth(clock = true)
-    val height = if (shortWide) maxOf(46.dp, (20f * density.fontScale + 22f).dp) else maxOf(56.dp, (24f * density.fontScale + 24f).dp)
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = if (shortWide) 12.dp else 24.dp,
-        vertical = if (shortWide) 6.dp else 12.dp)
-        .discoveryHeaderFocusEntry(tabRequester)) {
-    // Keep all ordinary tabs visible before spending a short phone window on
-    // the optional clock. Portals and the person remain separate full targets.
-    val profileSpace = if (shortWide) discoveryProfileHeaderWidth(clock = false).value
-        else naturalProfile.value.coerceAtMost((maxWidth.value * .4f).coerceAtLeast(discoveryProfileHeaderWidth(clock = false).value))
-    val widths = DiscoveryHeaderWidths((maxWidth.value - profileSpace - 12f).coerceAtLeast(0f), profileSpace)
-    Row(Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
-        DiscoveryGlassPanel(Modifier.widthIn(max = widths.menu.dp).height(height), artwork = null,
-            backdropBounds = Rect.Zero, baseColor = WideDiscoveryGlassBase) {
-            CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
-            Row(Modifier.fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Box(Modifier.size(discoveryHeaderActionSize()), contentAlignment = Alignment.Center) {
-                    Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.fillMaxSize()
-                        .graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
-                }
-                DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false, onClick = back)
-                DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive, horizontalPadding = 10.dp,
-                    focusHint = false,
-                    modifier = if (searchActive) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
-                    onFocus = headerFocus) { navigate("Search") }
-                StableTileFocusViewport {
-                    Row(Modifier.weight(1f, fill = false).horizontalScroll(tabs).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        fun tabFocus(index: Int) = Modifier.focusRequester(tabTargets[index])
-                            .focusProperties {
-                                start = tabTargets.getOrNull(index - 1) ?: FocusRequester.Default
-                                end = tabTargets.getOrNull(index + 1) ?: FocusRequester.Default
-                            }
-                        trialSurfaces.forEachIndexed { index, tab ->
-                            val active = !searchActive && library == null && surface == tab
-                            DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
-                                selected = active, horizontalPadding = 12.dp,
-                                modifier = tabFocus(index).discoveryNavigationTab(tab.trialTitle(), active, shared, tabRequester, playRequester),
-                                onFocus = headerFocus) { if (experiment) navigate(tab.trialTitle()) else select(tab) }
-                        }
-                        DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
-                            modifier = tabFocus(tabTargets.lastIndex - 1)
-                                .discoveryNavigationTab("Live TV", library == DiscoveryLibraryDestination.LIVE_TV, shared, tabRequester, playRequester),
-                            onFocus = headerFocus) { navigate("Live TV") }
-                        DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
-                            modifier = tabFocus(tabTargets.lastIndex)
-                                .discoveryNavigationTab("My List", library == DiscoveryLibraryDestination.MY_LIST, shared, tabRequester, playRequester),
-                            onFocus = headerFocus) { navigate("My List") }
+    PortalWideHeader(profile, { navigate("Profile") }, Modifier.discoveryHeaderFocusEntry(tabRequester)) {
+        DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false, onClick = back)
+        DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive, horizontalPadding = 10.dp,
+            focusHint = false,
+            modifier = if (searchActive) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
+            onFocus = headerFocus) { navigate("Search") }
+        StableTileFocusViewport {
+            Row(Modifier.weight(1f, fill = false).horizontalScroll(tabs).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                fun tabFocus(index: Int) = Modifier.focusRequester(tabTargets[index])
+                    .focusProperties {
+                        start = tabTargets.getOrNull(index - 1) ?: FocusRequester.Default
+                        end = tabTargets.getOrNull(index + 1) ?: FocusRequester.Default
                     }
+                trialSurfaces.forEachIndexed { index, tab ->
+                    val active = !searchActive && library == null && surface == tab
+                    DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
+                        selected = active, horizontalPadding = 12.dp,
+                        modifier = tabFocus(index).discoveryNavigationTab(tab.trialTitle(), active, shared, tabRequester, playRequester),
+                        onFocus = headerFocus) { if (experiment) navigate(tab.trialTitle()) else select(tab) }
                 }
-                DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize)
-            }
+                DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
+                    modifier = tabFocus(tabTargets.lastIndex - 1)
+                        .discoveryNavigationTab("Live TV", library == DiscoveryLibraryDestination.LIVE_TV, shared, tabRequester, playRequester),
+                    onFocus = headerFocus) { navigate("Live TV") }
+                DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
+                    modifier = tabFocus(tabTargets.lastIndex)
+                        .discoveryNavigationTab("My List", library == DiscoveryLibraryDestination.MY_LIST, shared, tabRequester, playRequester),
+                    onFocus = headerFocus) { navigate("My List") }
             }
         }
-        Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
-        DiscoveryClockProfile(profile, Modifier.width(widths.profile.dp).height(height), backdrop = null,
-            backdropBounds = Rect.Zero, panelBase = WideDiscoveryGlassBase) { navigate("Profile") }
-    }
+        DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize)
     }
 }
 
@@ -226,12 +192,10 @@ private fun Modifier.discoveryNavigationTab(label: String, active: Boolean, shar
         }
         .focusRequester(if (active) tabRequester else inactiveRequester)
         .focusProperties { down = if (active) playRequester else FocusRequester.Default }
-        .discoveryTabIndicator(active, Color.White.copy(alpha = .8f))
 }
 
 @Composable
-internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect,
-    panelBase: Color = Color(0x77171B24), openPortals: () -> Unit) {
+internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, openPortals: () -> Unit) {
     val context = LocalContext.current
     val openUserProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
     val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
@@ -257,7 +221,7 @@ internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop
             verticalAlignment = Alignment.CenterVertically) {
             if (showPortals) DiscoveryGlassPanel(Modifier.width(portalWidth).fillMaxHeight(), backdrop, backdropBounds,
                 fitArtwork = backdrop != null && LocalMobileGlassFit.current, topAligned = backdrop != null && LocalMobileGlassTopAligned.current,
-                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current, baseColor = panelBase) {
+                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current) {
                 Box(Modifier.fillMaxSize().padding(5.dp), contentAlignment = Alignment.Center) {
                     CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
                         DirectPortalButtons()
@@ -266,7 +230,7 @@ internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop
             }
             DiscoveryGlassPanel(Modifier.width(personWidth).fillMaxHeight(), backdrop, backdropBounds,
                 fitArtwork = backdrop != null && LocalMobileGlassFit.current, topAligned = backdrop != null && LocalMobileGlassTopAligned.current,
-                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current, baseColor = panelBase) {
+                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current) {
                 Row(Modifier.fillMaxSize().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,

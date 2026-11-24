@@ -274,7 +274,7 @@ private fun DiscoveryPreviewContent(
             actions.exit()
         }
     }
-    fun onLanding() = state.detail == null && providerCollection == null && activityCollection == null && !vm.genresOpen &&
+    fun onLanding() = state.detail == null && providerCollection == null && activityCollection == null && vm.genreBrowser == null &&
         app.providerMovieDetails == null
     fun selectRoute(destination: DashboardSurface) {
         if (destination == surface && onLanding()) return
@@ -395,7 +395,7 @@ private fun DiscoveryPreviewContent(
             // VM and saved collection must not cover a newly selected landing.
             actor = null; actorOrigin = null; actorFocusOrigin = null
             activityCollection = null; providerCollection = null; providerCollectionCategory = null
-            chosenWatchProvider = null; menu = false; configure = false
+            chosenWatchProvider = null; vm.genreBrowser = null; menu = false; configure = false
             experimentSettings = false; experimentSettingsReturn = null
             focusOrigins.returningTo = null
         }
@@ -453,7 +453,7 @@ private fun DiscoveryPreviewContent(
         state.collection, state.related, state.details?.collection?.title,
         app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
         app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today, scrollVariant, activityCollection,
-        watchProviders.providers, watchProviders.loading, watchProviders.error, genreState.providers, genreArtwork, displayOrder) { buildList {
+        watchProviders.providers, watchProviders.loading, watchProviders.error, genreState.providers, genreState.series, genreArtwork, displayOrder) { buildList {
         val detail = state.detail
         if (detail == null) {
             val allRecents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
@@ -559,12 +559,18 @@ private fun DiscoveryPreviewContent(
                 }
             }
 
-            if (experiment && genreState.providers.isNotEmpty()) add(Rail("popular-genres", "Popular Genres",
-                genreState.providers.map { genre -> RailEntry("genre:${genreState.series}:${genre.id}", genre.name,
-                    genreArtwork["${genreState.series}:${genre.id}"],
-                    open = { vm.chosenGenre = genre; vm.genresOpen = true },
-                    visible = { genreHolder?.wallpaper(genre.id, genreState.series) }) },
-                viewAll = { vm.chosenGenre = null; vm.genresOpen = true }, hasMore = true))
+            if (experiment && genreState.providers.isNotEmpty()) {
+                val markets = if (surface == DashboardSurface.HOME) GenreMarket.entries else listOf(null)
+                markets.forEach { market ->
+                    val rowKey = market?.let { "popular-genres:${it.name}" } ?: "popular-genres"
+                    add(Rail(rowKey, market?.heading ?: "Popular Genres", genreState.providers.map { genre ->
+                        val artworkKey = GenreArtworkKey(genreState.series, genre.id, market)
+                        RailEntry("$rowKey:${genreState.series}:${genre.id}", genre.name, genreArtwork[artworkKey],
+                            open = { vm.genreBrowser = GenreBrowserDestination(market, genre) },
+                            visible = { genreHolder?.wallpaper(artworkKey) })
+                    }, viewAll = { vm.genreBrowser = GenreBrowserDestination(market, null) }, hasMore = true))
+                }
+            }
             if (surface == DashboardSurface.HOME && experiment && (watchProviders.loading || watchProviders.providers.isNotEmpty() || watchProviders.error != null))
                 add(Rail("watch-providers", "Providers", watchProviders.providers.map { provider ->
                     RailEntry("watch-provider:${provider.id}", provider.name, provider.logo,
@@ -676,13 +682,16 @@ private fun DiscoveryPreviewContent(
             }
         } },
         confirmButton = { NikTvSecondaryActionButton(::closeExperimentSettings) { Text("Close") } })
-    if (vm.genresOpen) androidx.compose.ui.window.Dialog(onDismissRequest = { vm.genresOpen = false },
+    vm.genreBrowser?.let { destination ->
+        fun closeGenres() { vm.genreBrowser = null }
+        androidx.compose.ui.window.Dialog(onDismissRequest = ::closeGenres,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-        WatchProvidersScreen(app, back = { vm.genresOpen = false },
-            select = { vm.genresOpen = false; actions.selectSurface(it) },
-            navigate = { vm.genresOpen = false; actions.navigate(it) }, playCard = currentPlayCard,
-            detailVisibilityChanged = actions.detailVisibilityChanged, initialProvider = vm.chosenGenre,
-            genres = true, initialSeries = genreState.series)
+            WatchProvidersScreen(app, back = ::closeGenres,
+                select = { closeGenres(); actions.selectSurface(it) },
+                navigate = { closeGenres(); actions.navigate(it) }, playCard = currentPlayCard,
+                detailVisibilityChanged = actions.detailVisibilityChanged, initialProvider = destination.genre,
+                genres = true, initialSeries = surface == DashboardSurface.SERIES, genreMarket = destination.market)
+        }
     }
     chosenWatchProvider?.let { provider ->
         WatchProvidersScreen(app, back = { chosenWatchProvider = null },
@@ -718,7 +727,8 @@ private fun DiscoveryPreviewContent(
         }
         var restoreNativeSelection by remember(app.discoveryNavigationId) { mutableStateOf(nativeNavigationId == app.discoveryNavigationId) }
         var awaitingHeaderFocus by remember(app.discoveryNavigationId) {
-            mutableStateOf(sharesLandingHeader && remoteNavigation && nativeNavigationId != app.discoveryNavigationId && !portalFocusReturn.waiting)
+            mutableStateOf(sharesLandingHeader && remoteNavigation &&
+                (nativeNavigationId != app.discoveryNavigationId || portalFocusReturn.waiting))
         }
         // Observe only eligibility: scrolling/focus detail must not recompose the full feed.
         var nativeHeroMayRotate by remember(profile, surface) { mutableStateOf(false) }

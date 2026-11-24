@@ -162,8 +162,7 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
         lastFocusKey?.takeIf { validFocus }?.let { requesters.getOrPut(it) { FocusRequester() } } ?: header
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
-        .initialFocusEntry(initial).padding(horizontal = if (compact) 14.dp else 24.dp)) {
-      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        .initialFocusEntry(initial)) {
         val title = state.collections.firstOrNull { it.id == state.collectionId }?.title ?: "Highlights"
         val headerActions = buildList {
             add(SportsHeaderAction("Categories", Icons.Default.Category) { selectTab(SportsTab.CATEGORIES) })
@@ -187,6 +186,8 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
                 }
             }
         }
+      Column(Modifier.weight(1f).padding(horizontal = if (compact) 14.dp else 24.dp).padding(top = 10.dp),
+          verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (!compact && state.collectionId != null) Text(title, color = Color.White,
             style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         fun Modifier.filterNavigation(requester: FocusRequester): Modifier = focusRequester(requester)

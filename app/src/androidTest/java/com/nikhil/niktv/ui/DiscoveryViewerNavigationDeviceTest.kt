@@ -243,6 +243,7 @@ class DiscoveryViewerNavigationDeviceTest {
         val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
         val opens = java.util.concurrent.atomic.AtomicInteger()
+        val sports = mutableStateOf(true)
         try {
             instrumentation.setInTouchMode(false)
             instrumentation.runOnMainSync { host.setContent {
@@ -256,8 +257,13 @@ class DiscoveryViewerNavigationDeviceTest {
                     LocalSelectedUserProfile provides UserProfile("c93b58be-3b8f-4e78-b8da-270dd3ad67aa", "Header fixture", avatar = "F"),
                     LocalOpenUserProfiles provides { opens.incrementAndGet() }) {
                     MaterialTheme(colorScheme = NikColors) {
-                        com.nikhil.niktv.sports.SportsHeader("Sports", {}, emptyList(), profile, remember { FocusRequester() }, navigation = {})
-                        LaunchedEffect(Unit) { withFrameNanos { }; profile.requestFocus() }
+                        if (sports.value) {
+                            com.nikhil.niktv.sports.SportsHeader("Sports", {}, emptyList(), profile, remember { FocusRequester() }, navigation = {})
+                            LaunchedEffect(Unit) { withFrameNanos { }; profile.requestFocus() }
+                        } else {
+                            DiscoveryPhoneHeader(com.nikhil.niktv.model.DashboardSurface.HOME, false, profile, remember { FocusRequester() },
+                                back = {}, select = {}, navigate = {}, menu = false, changeMenu = {}, customize = null)
+                        }
                     }
                 }
             } }
@@ -271,6 +277,12 @@ class DiscoveryViewerNavigationDeviceTest {
             instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
             await("D-pad activates leading profile") { opens.get() == 1 }
             NavigationAuditEvidence.capture("sports-phone-leading-profile")
+            instrumentation.runOnMainSync { sports.value = false }
+            await("IPTV phone header is visible") { find("Options") != null && find("Sports options") == null }
+            val iptvProfile = android.graphics.Rect().also { find("Switch profile: Header fixture")!!.getBoundsInScreen(it) }
+            val iptvOptions = android.graphics.Rect().also { find("Options")!!.getBoundsInScreen(it) }
+            assertEquals("Both portals align the avatar", profileBounds, iptvProfile)
+            assertEquals("Both portals align the Options tile", optionsBounds, iptvOptions)
         } finally { instrumentation.runOnMainSync { host.finish() }; instrumentation.setInTouchMode(true) }
     }
 

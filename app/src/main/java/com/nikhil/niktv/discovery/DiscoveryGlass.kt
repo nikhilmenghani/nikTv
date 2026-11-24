@@ -83,7 +83,6 @@ internal fun discoveryPrimaryActionWidth(phone: Boolean = false): androidx.compo
 internal val LocalDetailActionGlass = staticCompositionLocalOf { false }
 internal val LocalMobileGlassEnabled = staticCompositionLocalOf { false }
 internal val LocalStableHeroGlass = staticCompositionLocalOf { false }
-internal val WideDiscoveryGlassBase = Color(0xFF10131A)
 internal val LocalMobileGlassBounds = staticCompositionLocalOf { Rect.Zero }
 // Scrolling changes coordinates, not the header's content or measured layout.
 internal val LocalMobileGlassMovingBounds = staticCompositionLocalOf<(() -> Rect)?> { null }
@@ -98,7 +97,7 @@ internal fun DiscoveryMobileGlassContainer(modifier: Modifier = Modifier, focuse
             if (stable) Rect.Zero else LocalMobileGlassBounds.current,
             focused = focused,
             artworkOpacity = artworkOpacity,
-            baseColor = if (stable) WideDiscoveryGlassBase else if (detail) Color(0x66242A34) else Color(0x77171B24),
+            baseColor = if (detail) Color(0x66242A34) else Color(0x77171B24),
             tint = if (detail) Color(0x44242A34) else tint,
             fitArtwork = !stable && LocalMobileGlassFit.current, topAligned = !stable && LocalMobileGlassTopAligned.current,
             fillWidth = !stable && LocalMobileGlassFillWidth.current) { content() }

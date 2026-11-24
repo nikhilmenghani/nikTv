@@ -6,7 +6,6 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -93,59 +92,54 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
     LaunchedEffect(portals.size) { if (portals.size <= 1) portalsOpen = false }
     val portalFocusReturn = LocalPortalFocusReturn.current
     val tabFocus = LocalDiscoveryPhoneTabFocus.current
-    DiscoveryGlassPanel(modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
-        artwork = LocalMobileGlassArtwork.current, backdropBounds = LocalMobileGlassBounds.current,
-        fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
-        fillWidth = LocalMobileGlassFillWidth.current) {
-        Row(Modifier.padding(5.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            (DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS } +
-                if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination ->
-                val active = destination == selected
-                var focused by remember(destination) { mutableStateOf(false) }
-                val icon = when (destination) {
-                    DiscoveryPhoneDestination.HOME -> Icons.Default.Home
-                    DiscoveryPhoneDestination.LIVE -> Icons.Default.LiveTv
-                    DiscoveryPhoneDestination.MOVIES -> Icons.Default.Movie
-                    DiscoveryPhoneDestination.SERIES -> Icons.Default.Tv
-                    DiscoveryPhoneDestination.PROVIDERS -> Icons.Default.Subscriptions
-                    DiscoveryPhoneDestination.LIBRARY -> Icons.Default.VideoLibrary
+    PortalPhoneDock(modifier) {
+        (DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS } +
+            if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination ->
+            val active = destination == selected
+            var focused by remember(destination) { mutableStateOf(false) }
+            val icon = when (destination) {
+                DiscoveryPhoneDestination.HOME -> Icons.Default.Home
+                DiscoveryPhoneDestination.LIVE -> Icons.Default.LiveTv
+                DiscoveryPhoneDestination.MOVIES -> Icons.Default.Movie
+                DiscoveryPhoneDestination.SERIES -> Icons.Default.Tv
+                DiscoveryPhoneDestination.PROVIDERS -> Icons.Default.Subscriptions
+                DiscoveryPhoneDestination.LIBRARY -> Icons.Default.VideoLibrary
+            }
+            Box(Modifier.weight(1f)) {
+            Surface(onClick = { if (destination == DiscoveryPhoneDestination.PROVIDERS) portalsOpen = true else select(destination) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                    .then(tabFocus[destination]?.let { Modifier.focusRequester(it) } ?: Modifier)
+                    .onFocusChanged { focused = it.isFocused }
+                    .semantics { this.selected = active; contentDescription = destination.title
+                        if (destination != DiscoveryPhoneDestination.PROVIDERS) role = Role.Tab }
+                    .discoveryTabIndicator(active, Color(0xFFFF6778)),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(2.dp, if (focused) Color.White else Color.Transparent),
+                color = if (active) Color(0x663D3E45) else Color.Transparent,
+                contentColor = if (active) Color.White else Color(0xFFB1B1B9)) {
+                Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Icon(icon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else Color(0xFFB1B1B9))
+                    BasicText(destination.title, modifier = Modifier.fillMaxWidth(),
+                        style = LocalTextStyle.current.copy(color = if (active) Color.White else Color(0xFFB1B1B9),
+                            fontSize = 11.sp, lineHeight = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium),
+                        maxLines = 1, softWrap = false,
+                        autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 11.sp, stepSize = .5.sp))
                 }
-                Box(Modifier.weight(1f)) {
-                Surface(onClick = { if (destination == DiscoveryPhoneDestination.PROVIDERS) portalsOpen = true else select(destination) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                        .then(tabFocus[destination]?.let { Modifier.focusRequester(it) } ?: Modifier)
-                        .onFocusChanged { focused = it.isFocused }
-                        .semantics { this.selected = active; contentDescription = destination.title
-                            if (destination != DiscoveryPhoneDestination.PROVIDERS) role = Role.Tab }
-                        .discoveryTabIndicator(active, Color(0xFFFF6778)),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(2.dp, if (focused) Color.White else Color.Transparent),
-                    color = if (active) Color(0x663D3E45) else Color.Transparent,
-                    contentColor = if (active) Color.White else Color(0xFFB1B1B9)) {
-                    Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Icon(icon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else Color(0xFFB1B1B9))
-                        BasicText(destination.title, modifier = Modifier.fillMaxWidth(),
-                            style = LocalTextStyle.current.copy(color = if (active) Color.White else Color(0xFFB1B1B9),
-                                fontSize = 11.sp, lineHeight = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium),
-                            maxLines = 1, softWrap = false,
-                            autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 11.sp, stepSize = .5.sp))
-                    }
+            }
+            if (destination == DiscoveryPhoneDestination.PROVIDERS) DropdownMenu(
+                expanded = portalsOpen, onDismissRequest = { portalsOpen = false },
+                containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
+                portals.forEach { portal ->
+                    com.nikhil.niktv.ui.NikDropdownMenuItem(
+                        text = { Text(portal.name) },
+                        leadingIcon = { Icon(portal.icon, null) },
+                        trailingIcon = if (portal.selected) ({ Icon(Icons.Default.Check, "Selected portal") }) else null,
+                        modifier = Modifier.semantics { this.selected = portal.selected },
+                        onClick = { portalsOpen = false; portalFocusReturn.cancel(); portal.open() })
                 }
-                if (destination == DiscoveryPhoneDestination.PROVIDERS) DropdownMenu(
-                    expanded = portalsOpen, onDismissRequest = { portalsOpen = false },
-                    containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
-                    portals.forEach { portal ->
-                        com.nikhil.niktv.ui.NikDropdownMenuItem(
-                            text = { Text(portal.name) },
-                            leadingIcon = { Icon(portal.icon, null) },
-                            trailingIcon = if (portal.selected) ({ Icon(Icons.Default.Check, "Selected portal") }) else null,
-                            modifier = Modifier.semantics { this.selected = portal.selected },
-                            onClick = { portalsOpen = false; portalFocusReturn.cancel(); portal.open() })
-                    }
-                }
-                }
+            }
             }
         }
     }
@@ -170,20 +164,14 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
                 .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play },
             onClick = openUserProfiles)
     }
-    CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (detail) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
-            else profileAction()
-            Spacer(Modifier.weight(1f))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
-                    modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
-                if (!leadingProfile) profileAction()
-                DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
-            }
-        }
-    }
+    PortalPhoneHeader {
+        if (detail) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
+        else profileAction()
+        Spacer(Modifier.weight(1f))
+        DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
+            modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { navigate("Search") }
+        if (!leadingProfile) profileAction()
+        DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize, categoryManagerOpen, categoryPopupChanged)
     }
 }
 

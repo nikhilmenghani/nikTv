@@ -20,6 +20,7 @@ import org.junit.Test
 
 /** The real account gate is mounted with fixture-only account and cached portal sessions. */
 class PortalGateNavigationDeviceTest {
+    private fun request(key: String) { PortalNavigationRequests.pending.value = PortalNavigationRequests.Request(key) }
     private val ins get() = InstrumentationRegistry.getInstrumentation()
     private fun find(text: String): AccessibilityNodeInfo? {
         fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -48,6 +49,8 @@ class PortalGateNavigationDeviceTest {
         val family = runBlocking {
             users.selectAccount(account)
             users.createProfile("Portal gate fixture").also {
+                val secured = users.setProfilePin(it.id, ProfilePin.create("0000"))
+                ProfilePin.remember(context, account, secured)
                 users.setProfileEnabled(it.id, true)
                 users.selectProfile(it.id)
             }
@@ -87,35 +90,35 @@ class PortalGateNavigationDeviceTest {
                 } }
             }
             await("Initial viewer opens cached portal") { find("Fixture portal: Stalker gate") != null }
-            PortalNavigationRequests.pending.value = PortalNavigationRequests.PROFILE_CHOOSER
+            request(PortalNavigationRequests.PROFILE_CHOOSER)
             await("Explicit profile action opens chooser") { find("Who's watching?") != null }
-            PortalNavigationRequests.pending.value = portals[1].cacheKey()
+            request(portals[1].cacheKey())
             await("Hidden content cannot block direct portal switch") { find("Fixture portal: Second gate") != null && PortalNavigationRequests.pending.value == null }
             assertEquals(owner, users.selectedScope.value)
             await("Portal activation settles") { !vm.state.value.loading }
             val reused = vm.state.value.session
-            PortalNavigationRequests.pending.value = portals[1].cacheKey()
+            request(portals[1].cacheKey())
             await("Already-loaded portal request is consumed") { PortalNavigationRequests.pending.value == null }
             assertSame("An already loaded portal is reused", reused, vm.state.value.session)
             runBlocking { users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.SPORTS)) }
             ins.runOnMainSync {
-                PortalNavigationRequests.pending.value = portals[0].cacheKey()
+                request(portals[0].cacheKey())
                 epoch.intValue++
             }
             await("Cold explicit portal wins over remembered Sports") { find("Fixture portal: Stalker gate") != null && PortalNavigationRequests.pending.value == null }
             assertEquals(owner, users.selectedScope.value)
             runBlocking { ProfilePortalAccess.setAllowed(context, owner, ProfilePortalAccess.key(portals[1]), false) }
-            PortalNavigationRequests.pending.value = portals[1].cacheKey()
+            request(portals[1].cacheKey())
             await("Disabled portal request is discarded") { PortalNavigationRequests.pending.value == null && find("Fixture portal: Stalker gate") != null }
             assertNotNull("Disabled requests keep the current content", find("Fixture portal: Stalker gate"))
             assertEquals(portals[0].cacheKey(), vm.state.value.session?.profile?.cacheKey())
-            PortalNavigationRequests.pending.value = "missing-portal"
+            request("missing-portal")
             await("Stale unknown request is discarded") { PortalNavigationRequests.pending.value == null && find("Fixture portal: Stalker gate") != null }
             assertNotNull(find("Fixture portal: Stalker gate"))
             runBlocking { ProfilePortalAccess.setAllowed(context, owner, ProfilePortalAccess.key(portals[1]), true) }
             ins.runOnMainSync {
-                PortalNavigationRequests.pending.value = "stale-request"
-                PortalNavigationRequests.pending.value = portals[1].cacheKey()
+                request("stale-request")
+                request(portals[1].cacheKey())
             }
             await("Latest portal request wins without reopening profiles") {
                 find("Fixture portal: Second gate") != null && PortalNavigationRequests.pending.value == null
@@ -125,7 +128,10 @@ class PortalGateNavigationDeviceTest {
             PortalNavigationRequests.pending.value = null
             ins.runOnMainSync { runCatching { vm.viewModelScope.cancel() }; host.finish() }
             CatalogPreferences.setPreferLocal(context, true)
-            users.disconnect()
+            runBlocking {
+                users.deleteProfile(family.id)
+                users.disconnect()
+            }
             accountState.value = previousAccount
         }
     }

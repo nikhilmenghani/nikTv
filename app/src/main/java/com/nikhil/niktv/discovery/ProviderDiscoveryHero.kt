@@ -149,13 +149,13 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
         if (entries.isNotEmpty()) retain(pool.copy(selectedId = entries[Math.floorMod(index + direction, entries.size)].item.id))
     }
     val fallback = remember(selected, type) { selected?.let { providerDetailFallback(it.item, type).copy(poster = it.artwork) } }
-    var cached by remember(selected?.item?.id) { mutableStateOf<DiscoveryCard?>(null) }
+    var cached by remember(selected?.item) { mutableStateOf<DiscoveryCard?>(null) }
     var presentationReady by remember(selected?.item) { mutableStateOf(false) }
-    LaunchedEffect(selected?.item, display.active, metadataRevision) {
-        if (display.active) {
-            cached = selected?.item?.let { readProviderHeroMetadata(cache, it, type) }
-            presentationReady = true
-        }
+    LaunchedEffect(selected?.item, metadataRevision) {
+        // The visible title needs its local artwork even before the activity resumes.
+        // Only speculative prefetch and rotation depend on foreground presentation.
+        cached = selected?.item?.let { readProviderHeroMetadata(cache, it, type) }
+        presentationReady = true
     }
     val card = cached ?: fallback
     val seriesResume = remember(profile, type, selected?.item, display.seriesRecents, display.progress) {
@@ -181,7 +181,9 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
     // Resolve the local presentation before painting: showing the provider poster
     // first and then its cached backdrop visibly changes the hero's crop/scale.
     // Metadata/actions remain immediate; this read never starts a network lookup.
-    val picture = (card?.backdrop ?: card?.poster).takeIf { presentationReady }
+    val backdrop = cached?.backdrop?.takeIf(String::isNotBlank).takeIf { presentationReady }
+    val poster = (cached?.poster?.takeIf(String::isNotBlank) ?: fallback?.poster).takeIf { presentationReady }
+    val picture = backdrop ?: poster
     val headerArtwork = thumbnailArtworkUrl(picture, 1280)
     var heroGlassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     LaunchedEffect(publishGlass, headerArtwork, display.artwork, heroGlassBounds, framed, portraitPhone) {
@@ -204,7 +206,10 @@ internal fun ProviderDiscoveryHero(profile: String, type: CatalogType, categorie
             LocalMobileGlassBounds provides (if (phone) heroGlassBounds else androidx.compose.ui.geometry.Rect.Zero),
             LocalMobileGlassTopAligned provides (framed && !sceneArtwork),
             LocalMobileGlassFillWidth provides (framed && !sceneArtwork)) {
-        DiscoveryHero(card?.let { if (portraitPhone && display.artwork && presentationReady) it else it.copy(backdrop = null, poster = null) },
+        DiscoveryHero(card?.let {
+            if (portraitPhone && display.artwork) it.copy(backdrop = backdrop, poster = poster)
+            else it.copy(backdrop = null, poster = null)
+        },
             rank = null, height = if (portraitPhone) phoneDiscoveryHeroHeight() - inset else baseHeight.dp + inset, landscape = landscape, compact = true, detail = false,
             contentInset = if (landscape && !phone && !sceneArtwork) 18.dp else 0.dp,
             loading = selected == null && providerHeroWaiting(profile, type, categories, provider, poolPrepared),

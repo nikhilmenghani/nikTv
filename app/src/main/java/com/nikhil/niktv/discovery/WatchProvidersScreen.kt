@@ -35,11 +35,14 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (DashboardSurface) -> Unit,
     navigate: (String) -> Unit, playCard: (DiscoveryCard) -> Unit, detailVisibilityChanged: (Boolean) -> Unit,
-    initialProvider: WatchProvider? = null, genres: Boolean = false, initialSeries: Boolean = false) {
+    initialProvider: WatchProvider? = null, genres: Boolean = false, initialSeries: Boolean = false,
+    genreMarket: GenreMarket? = null) {
     val context = LocalContext.current
     val profile = app.savedProfile?.cacheKey().orEmpty()
     val preferences = remember(context) { com.nikhil.niktv.data.UserProfilePreferences.get(context, "watch_providers") }
-    val model = if (genres) viewModel<PopularGenresViewModel>(key = "genre-browser:${com.nikhil.niktv.ui.LocalViewingOwner.current}:$profile").model
+    val model = if (genres) viewModel<PopularGenresViewModel>(
+        key = "genre-browser:${com.nikhil.niktv.ui.LocalViewingOwner.current}:$profile:$genreMarket:$initialSeries:${initialProvider != null}"
+    ) { PopularGenresViewModel(context.applicationContext as android.app.Application, genreMarket, initialSeries) }.model
         else viewModel<WatchProvidersViewModel>(key = "watch-providers:${com.nikhil.niktv.ui.LocalViewingOwner.current}:$profile").model
     val state by model.state.collectAsState()
     val cardSaver = remember { Saver<DiscoveryCard?, String>(
@@ -49,7 +52,7 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
     val providerSaver = remember { Saver<WatchProvider?, String>(
         save = { it?.let { provider -> kotlinx.serialization.json.Json.encodeToString(WatchProvider.serializer(), provider) } ?: "" },
         restore = { value -> value.takeIf(String::isNotBlank)?.let { kotlinx.serialization.json.Json.decodeFromString(WatchProvider.serializer(), it) } }) }
-    var collection by rememberSaveable(profile, initialProvider?.id, stateSaver = providerSaver) { mutableStateOf(initialProvider) }
+    var collection by rememberSaveable(profile, genreMarket, initialProvider?.id, stateSaver = providerSaver) { mutableStateOf(initialProvider) }
     val pages = rememberSaveableStateHolder()
     val allRequesters = remember(profile) { mutableMapOf<Int, FocusRequester>() }
     val gridRequesters = remember(profile) { mutableMapOf<String, FocusRequester>() }
@@ -66,7 +69,13 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
     fun restore() { scopeForFocus.launch {
         repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { (if (collection != null) gridRequesters[originKey] else originFocus)?.requestFocus() ?: false }.getOrDefault(false)) return@launch }
     } }
-    LaunchedEffect(model) { if (genres) model.select(series = initialSeries) else model.resume() }
+    LaunchedEffect(model) {
+        if (!genres) model.resume()
+        else if (initialProvider == null) {
+            model.select(series = initialSeries)
+            model.resume()
+        }
+    }
     DisposableEffect(model) { onDispose { model.stop() } }
     fun closeCollection() {
         if (initialProvider != null) { back(); return }
@@ -79,7 +88,7 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
         focusNavigationOnEntry = !genres) {
         val provider = collection
         if (provider != null) key(profile, state.region, state.series, provider.id) {
-            WatchProviderCollection(provider, if (genres) "Popular" else state.region, state.series, state.rows[provider.id] ?: WatchProviderRow(loading = true),
+            WatchProviderCollection(provider, if (genres) genreMarket?.label ?: "Popular" else state.region, state.series, state.rows[provider.id] ?: WatchProviderRow(loading = true),
                 load = { more -> model.load(provider.id, more) }, refresh = { model.refreshProvider(provider.id) },
                 close = ::closeCollection, metadataActive = selected == null,
                 controls = if (initialProvider == null || genres) null else ({
@@ -96,7 +105,8 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
             { series -> if (!genres) preferences.edit().putBoolean("series", series).apply(); model.select(series = series) },
             model::refresh,
             open = { card, requester -> originKey = card.key; originFocus = requester; selected = card }, metadataActive = selected == null,
-            viewAll = { provider, requester -> collectionOrigin = requester; collection = provider }, viewAllRequesters = allRequesters, genres = genres) }
+            viewAll = { provider, requester -> collectionOrigin = requester; collection = provider }, viewAllRequesters = allRequesters,
+            genres = genres, genreMarket = genreMarket) }
     }
     if (regions) {
         WatchRegionDialog(state.regions, state.region, dismiss = { regions = false }, choose = { region ->
@@ -131,7 +141,8 @@ internal fun WatchProvidersScreen(app: NikTvState, back: () -> Unit, select: (Da
 internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) -> Unit, leave: (Int) -> Unit,
     query: String, search: Boolean, changeQuery: (String) -> Unit, searchFocus: FocusRequester,
     regionFocus: FocusRequester, chooseRegion: () -> Unit, toggleSearch: () -> Unit,
-    selectType: (Boolean) -> Unit, retry: () -> Unit, open: (DiscoveryCard, FocusRequester) -> Unit, metadataActive: Boolean = true, viewAll: (WatchProvider, FocusRequester) -> Unit = { _, _ -> }, viewAllRequesters: MutableMap<Int, FocusRequester>? = null, genres: Boolean = false) {
+    selectType: (Boolean) -> Unit, retry: () -> Unit, open: (DiscoveryCard, FocusRequester) -> Unit, metadataActive: Boolean = true, viewAll: (WatchProvider, FocusRequester) -> Unit = { _, _ -> }, viewAllRequesters: MutableMap<Int, FocusRequester>? = null, genres: Boolean = false,
+    genreMarket: GenreMarket? = null) {
     val config = LocalConfiguration.current
     val reducedMotion = android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val phone = usesDiscoveryPhoneLayout(config, LocalContext.current.isTvLikeDevice(config))
@@ -162,7 +173,7 @@ internal fun WatchProviderRows(state: WatchProvidersState, load: (Int, Boolean) 
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item(key = "filters") {
             Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 16.dp else 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (genres) "Popular Genres" else "Browse providers", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                Text(if (genres) genreMarket?.heading ?: "Popular Genres" else "Browse providers", color = Color.White, style = MaterialTheme.typography.titleLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     DiscoveryAction("Movies", Icons.Default.Movie, selected = !state.series) { selectType(false) }
                     DiscoveryAction("Series", Icons.Default.Tv, selected = state.series) { selectType(true) }

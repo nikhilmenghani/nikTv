@@ -43,6 +43,76 @@ class SeriesEpisodeNavigationDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
 
+    @Test fun listViewSelectedInOneSeriesCarriesToAnotherSeriesFromOtherSource() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val users = com.nikhil.niktv.data.UserSyncStore.get(context)
+        val previousAccount = users.selectedAccount.value
+        val previousScope = users.selectedScope.value
+        val account = "9${SystemClock.uptimeMillis()}"
+        val viewer = runBlocking {
+            users.selectAccount(account)
+            users.createProfile("Episode layout QA").also { users.setProfileEnabled(it.id, true); users.selectProfile(it.id) }
+        }
+        val owner = com.nikhil.niktv.data.UserScope(account, viewer.id)
+        val providerTitle = MediaItem("layout-provider", "Other IPTV series", null, null)
+        val tmdbTitle = DiscoveryCard(123467, true, "First TMDB series", date = "2020-01-01")
+        val first = DiscoveryState(profile = "layout-fixture", detail = tmdbTitle,
+            details = DiscoveryDetails(tmdbTitle, seasons = listOf(1)), season = 1,
+            episodes = (1..3).map { DiscoveryEpisode(1, it, "TMDB layout episode $it", "") })
+        val next = NikTvState(selectedSeries = providerTitle, selectedType = CatalogType.SERIES,
+            selectedSeriesSeason = 1, availableSeriesSeasons = listOf(1), items = (1..3).map {
+                MediaItem("layout-episode-$it", "IPTV layout episode $it", null, null, seasonNumber = 1, episodeNumber = it)
+            },
+            restoring = false, homeOpen = false, useTmdbEpisodeMetadata = false)
+        val showProvider = mutableStateOf(false)
+        fun activate(text: String) {
+            var node: AccessibilityNodeInfo? = null
+            await("$text is available") {
+                node = generateSequence(label(text)) { it.parent }.firstOrNull { it.isClickable }
+                node != null
+            }
+            assertTrue(node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+        }
+        val activity = startHost()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                if (!showProvider.value) DiscoverySeriesEpisodes(first, SeriesStartSeason.FIRST, remember { FocusRequester() },
+                    loadSeason = {}, play = { _, _, _ -> }, download = { _, _, _ -> }, onFocus = {}, up = { false }, down = { false },
+                    modifier = Modifier.fillMaxSize(), header = { toolbar -> toolbar() })
+                else DiscoverySeriesContent(next, play = {}, closeSeries = {}, toggleFavorite = {}, toggleSeriesWatch = {},
+                    loadSeriesSeason = {}, setUseTmdbEpisodeMetadata = {}, refreshTmdbEpisodeCache = {},
+                    downloadForOffline = { _, _, _ -> }, removeOfflineDownload = { _, _ -> }, openSearch = {}, openSettings = {},
+                    refreshCatalog = {}, loadMoreEpisodes = {}, openTmdbMovie = {}, openTmdbSeries = {})
+            } } }
+            await("The first series starts in a poster row") {
+                val latest = label("TMDB layout episode 3")?.let(::bounds)
+                val other = label("TMDB layout episode 2")?.let(::bounds)
+                latest != null && other != null && latest.left != other.left && latest.top == other.top
+            }
+            activate("Episode options")
+            activate("List view")
+            await("First title saves List view and closes its view picker") {
+                com.nikhil.niktv.data.SeriesEpisodeViewPreferences.listView(context, owner, defaultListView = false) &&
+                    label("List view") == null
+            }
+            instrumentation.runOnMainSync { showProvider.value = true }
+            await("The IPTV title opens with episodes in more than one row") {
+                val latest = label("IPTV layout episode 3")?.let(::bounds)
+                val earlier = (1..2).mapNotNull { label("IPTV layout episode $it")?.let(::bounds) }
+                latest != null && !latest.isEmpty && earlier.any { !it.isEmpty && it.top > latest.top }
+            }
+            NavigationAuditEvidence.capture("series-list-view-inherited")
+        } finally {
+            finishHost(activity)
+            runBlocking {
+                users.deleteProfile(viewer.id)
+                if (previousAccount == null) users.disconnect() else users.selectAccount(previousAccount)
+                previousScope?.let { users.selectProfile(it.profileId) }
+            }
+        }
+    }
+
     @Test fun loadingPopupFocusesCancelAfterTouchAndKeepsItAcrossProgressUpdates() {
         for (touch in listOf(false, true)) {
             val activity = startHost()

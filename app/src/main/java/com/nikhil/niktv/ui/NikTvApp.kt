@@ -503,7 +503,6 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
     val accessiblePortals = state.profiles.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }
     val directPortalScope = rememberCoroutineScope()
     val portalHostView = androidx.compose.ui.platform.LocalView.current
-    val portalFocusReturn = remember(directPortalOwner) { com.nikhil.niktv.discovery.PortalFocusReturn() }
     val directPortals = accessiblePortals.map { portal ->
         com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
             if (portal.portalType == PortalType.STALKER) androidx.compose.material.icons.Icons.Default.Tv else androidx.compose.material.icons.Icons.Default.Key,
@@ -532,8 +531,7 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
                 }
             }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
-        LocalViewerLayout provides viewerLayout,
-        com.nikhil.niktv.discovery.LocalPortalFocusReturn provides portalFocusReturn) {
+        LocalViewerLayout provides viewerLayout) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
         state.portalQualityPicker?.let { PortalQualityDialog(it, vm::closePortalQuality, vm::choosePortalQuality) }

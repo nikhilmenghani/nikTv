@@ -1,9 +1,11 @@
 package com.nikhil.niktv.ui
 
 import android.Manifest
+import android.app.Activity
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -36,11 +38,18 @@ import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.data.ViewerDestination
 import com.nikhil.niktv.data.ViewerDestinationKind
 import com.nikhil.niktv.data.automaticAccountSyncEnabled
+import com.nikhil.niktv.discovery.DiscoveryCache
+import com.nikhil.niktv.discovery.DiscoveryCard
+import com.nikhil.niktv.discovery.GenreMarket
+import com.nikhil.niktv.discovery.WatchProvider
+import com.nikhil.niktv.discovery.WatchProviderPage
+import com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.model.PortalType
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -325,13 +334,221 @@ class ProfileNavigationDeviceTest {
 
     private val tabTitles = setOf("Home", "Movies", "Series", "Live TV", "My List")
 
+    @Test
+    fun homeGenresKeepTheirMarketWhenOpenedWithTheRemote() {
+        val account = "90000008116"
+        val viewerName = "Home genres QA"
+        val comedy = WatchProvider(35, "Comedy")
+        fun title(market: GenreMarket) = "${market.label} comedy fixture"
+        val cache = DiscoveryCache(File(context.cacheDir, "discovery_preview"))
+        runBlocking {
+            cache.write("genre-catalog-v1:false", Json.encodeToString(listOf(comedy)))
+            for (market in GenreMarket.entries) {
+                val page = WatchProviderPage(listOf(DiscoveryCard(8100 + market.ordinal, false, title(market),
+                    date = "2020-01-01", originalLanguage = market.language)), 1, 1)
+                cache.write("genre-titles-v1:false:35:1:${market.name}", Json.encodeToString(page))
+                cache.write("genre-poster-v1:false:35:${market.name}", "null")
+            }
+        }
+        withLocalViewer(account, "Home genres portal", setOf(viewerName), setup = { users, portal ->
+            val owner = createRememberedViewer(account, viewerName)
+            users.selectProfile(owner.profileId)
+            ProfileStore(context).scoped(owner).addProfile(portal)
+            users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.PORTAL, portal.cacheKey()))
+            users.clearSelection()
+        }) { _, _, main ->
+            awaitDashboard(viewerName)
+            fun nativeFocus(): String? {
+                var tag: String? = null
+                instrumentation.runOnMainSync { tag = main.currentFocus?.tag as? String }
+                return tag
+            }
+            fun isComedy(market: GenreMarket) = nativeFocus()?.let {
+                it.startsWith("popular-genres:${market.name}:") && it.endsWith(":35")
+            } == true
+            fun verifyComedy(market: GenreMarket) {
+                await("Comedy opens with the ${market.label} filter") {
+                    find("Movies · ${market.label}") != null && find(title(market)) != null
+                }
+                assertFalse(GenreMarket.entries.filter { it != market }.any { find(title(it)) != null })
+                NavigationAuditEvidence.capture("home-genres-${market.name.lowercase()}")
+                key(KeyEvent.KEYCODE_BACK)
+            }
+            fun verifyHollywoodBrowser() {
+                await("View All keeps the Hollywood filter") {
+                    find("Hollywood Genres") != null && find(title(GenreMarket.HOLLYWOOD)) != null
+                }
+                assertTrue(find(title(GenreMarket.BOLLYWOOD)) == null)
+                key(KeyEvent.KEYCODE_BACK)
+            }
+            val config = main.resources.configuration
+            if (usesDiscoveryPhoneLayout(config, main.isTvLikeDevice(config))) {
+                val screen = main.resources.displayMetrics
+                fun input(command: String) {
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("input $command"))
+                        .use { it.readBytes() }
+                }
+                fun comedyBelowHeading(market: GenreMarket): Rect? {
+                    val heading = find(market.heading)?.let { Rect().also(it::getBoundsInScreen) } ?: return null
+                    return nodes().filter { it.isVisibleToUser && it.isClickable && it.matches(comedy.name) }
+                        .map { Rect().also(it::getBoundsInScreen) }
+                        .filter { it.top >= heading.bottom && it.centerY() < screen.heightPixels * .88f }
+                        .minByOrNull { it.top }
+                }
+                for (market in GenreMarket.entries) {
+                    for (attempt in 1..8) {
+                        if (comedyBelowHeading(market) != null) break
+                        val x = screen.widthPixels / 2
+                        input("swipe $x ${screen.heightPixels * 7 / 10} $x ${screen.heightPixels * 4 / 10} 450")
+                        instrumentation.waitForIdleSync()
+                    }
+                    await("Touch can reach the ${market.label} Comedy tile") { comedyBelowHeading(market) != null }
+                    val tile = requireNotNull(comedyBelowHeading(market))
+                    input("tap ${tile.centerX()} ${tile.centerY()}")
+                    verifyComedy(market)
+                    await("Home returns after closing ${market.label} Comedy") { main.hasWindowFocus() }
+                }
+                click("View all Hollywood Genres")
+                verifyHollywoodBrowser()
+                return@withLocalViewer
+            }
+
+            for (attempt in 1..20) {
+                if (isComedy(GenreMarket.BOLLYWOOD)) break
+                val previous = nativeFocus()
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                // Home's hero is composed; the first move may stay within that header/hero.
+                if (previous != null) await("Remote moves down from $previous") { nativeFocus() != previous }
+            }
+            await("Bollywood Comedy is focused on Home") { isComedy(GenreMarket.BOLLYWOOD) }
+            assertTrue(find("Bollywood Genres") != null)
+
+            for (market in GenreMarket.entries) {
+                if (market == GenreMarket.HOLLYWOOD) {
+                    key(KeyEvent.KEYCODE_DPAD_DOWN)
+                    await("Hollywood Comedy is focused below Bollywood") { isComedy(market) }
+                    assertTrue(find("Hollywood Genres") != null)
+                }
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                verifyComedy(market)
+                await("Close returns focus to the ${market.label} Comedy tile") { main.hasWindowFocus() && isComedy(market) }
+            }
+
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Hollywood View All receives focus") { nativeFocus() == "popular-genres:HOLLYWOOD:all" }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            verifyHollywoodBrowser()
+            await("Close returns focus to Hollywood View All") {
+                main.hasWindowFocus() && nativeFocus() == "popular-genres:HOLLYWOOD:all"
+            }
+        }
+    }
+
+    @Test
+    fun sportsAndPlayfyReturnFocusToTheChosenIptvPortal() {
+        val account = "90000008115"
+        val viewerName = "Portal handoff QA"
+        val firstPortal = "First IPTV fixture"
+        val secondPortal = "Second IPTV fixture"
+        withLocalViewer(account, firstPortal, setOf(viewerName), setup = { users, portal ->
+            val viewer = createRememberedViewer(account, viewerName)
+            users.selectProfile(viewer.profileId)
+            ProfileStore(context).scoped(viewer).apply {
+                addProfile(portal)
+                addProfile(portal.copy(name = secondPortal, username = "second-fixture"))
+            }
+            users.rememberDestination(viewer, ViewerDestination(ViewerDestinationKind.PORTAL, portal.cacheKey()))
+            users.clearSelection()
+        }) { _, portal, main ->
+            val configuration = main.resources.configuration
+            org.junit.Assume.assumeFalse(com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration, main.isTvLikeDevice(configuration)))
+            awaitDashboard(viewerName)
+            fun headerBounds(activity: Activity, label: String, index: Int = 0): androidx.compose.ui.geometry.Rect {
+                var bounds = androidx.compose.ui.geometry.Rect.Zero
+                await("$label is laid out in the header") {
+                    bounds = readDashboardSemantics(activity) { nodes ->
+                        nodes.filter { label in it.dashboardLabels() }
+                            .distinctBy { it.boundsInWindow }.sortedBy { it.boundsInWindow.left }
+                            .elementAtOrNull(index)?.boundsInWindow ?: androidx.compose.ui.geometry.Rect.Zero
+                    }
+                    !bounds.isEmpty && activity.hasWindowFocus()
+                }
+                return bounds
+            }
+            val iptvOptions = headerBounds(main, "Options")
+            val fixedControls = listOf("NikTV", "Back", "Xtream", "Switch profile: $viewerName")
+            val iptvBounds = fixedControls.associateWith { headerBounds(main, it) }
+            fun portalNode(nodes: Sequence<SemanticsNode>, label: String, index: Int) =
+                nodes.filter { label in it.dashboardLabels() && it.config.getOrNull(SemanticsProperties.Selected) != null }
+                    .sortedBy { it.boundsInWindow.left }.elementAtOrNull(index)?.config
+            fun isPortalFocused(activity: Activity, label: String, index: Int = 0, selected: Boolean = false) =
+                readDashboardSemantics(activity) { nodes ->
+                    val portal = portalNode(nodes, label, index)
+                    activity.hasWindowFocus() && portal?.getOrNull(SemanticsProperties.Focused) == true &&
+                        (!selected || portal.getOrNull(SemanticsProperties.Selected) == true)
+                }
+            fun switchFrom(launcherLabel: String, activityClass: Class<out Activity>, movesLeft: Int, destination: Int) {
+                val monitor = instrumentation.addMonitor(activityClass.name, null, false)
+                val sports = try {
+                    await("$launcherLabel accepts remote focus") { readDashboardSemantics(main) { nodes ->
+                        main.hasWindowFocus() && portalNode(nodes, launcherLabel, 0)
+                            ?.getOrNull(SemanticsActions.RequestFocus)?.action?.invoke() == true
+                    } }
+                    await("$launcherLabel is focused on IPTV") { isPortalFocused(main, launcherLabel) }
+                    key(KeyEvent.KEYCODE_DPAD_CENTER)
+                    requireNotNull(instrumentation.waitForMonitorWithTimeout(monitor, 10_000)) { "$launcherLabel did not open" }
+                } finally { instrumentation.removeMonitor(monitor) }
+                val seenFocus = ConcurrentLinkedQueue<String>()
+                val oldEventTypes = automation.serviceInfo.eventTypes
+                try {
+                    await("$launcherLabel retains entry focus") { isPortalFocused(sports, launcherLabel, selected = true) }
+                    val options = headerBounds(sports, if (launcherLabel == "Sports") "Sports options" else "Playfy options")
+                    assertEquals("$launcherLabel options tile dimensions", iptvOptions.size, options.size)
+                    assertEquals("$launcherLabel options alignment", iptvOptions.top, options.top, 1f)
+                    for ((label, iptv) in iptvBounds) {
+                        val other = headerBounds(sports, label)
+                        assertEquals("$launcherLabel keeps $label the same size", iptv.size, other.size)
+                        assertEquals("$launcherLabel keeps $label on the same horizontal anchor", iptv.left, other.left, 1f)
+                        assertEquals("$launcherLabel keeps $label on the same vertical anchor", iptv.top, other.top, 1f)
+                    }
+                    NavigationAuditEvidence.capture("shared-portal-header-$launcherLabel")
+                    repeat(movesLeft) { key(KeyEvent.KEYCODE_DPAD_LEFT) }
+                    await("$launcherLabel focuses IPTV button ${destination + 1}") { isPortalFocused(sports, "Xtream", destination) }
+                    automation.serviceInfo = automation.serviceInfo.apply { eventTypes = eventTypes or AccessibilityEvent.TYPE_VIEW_FOCUSED }
+                    automation.setOnAccessibilityEventListener { event ->
+                        if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED && event.packageName?.toString() == context.packageName) {
+                            (event.contentDescription ?: event.source?.contentDescription ?: event.text.firstOrNull())
+                                ?.toString()?.let(seenFocus::add)
+                        }
+                    }
+                    key(KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("$launcherLabel returns directly to IPTV button ${destination + 1}") {
+                        isPortalFocused(main, "Xtream", destination, selected = true)
+                    }
+                    assertTrue("No dashboard tab receives focus during handoff: $seenFocus", seenFocus.none { it.removeSuffix(" 2") in tabTitles })
+                    NavigationAuditEvidence.capture("portal-return-from-$launcherLabel")
+                } finally {
+                    automation.setOnAccessibilityEventListener(null)
+                    automation.serviceInfo = automation.serviceInfo.apply { eventTypes = oldEventTypes }
+                    instrumentation.runOnMainSync { if (!sports.isFinishing) sports.finish() }
+                }
+            }
+            try {
+                switchFrom("Sports", com.nikhil.niktv.sports.SportsActivity::class.java, movesLeft = 1, destination = 1)
+                switchFrom("Playfy TV", com.nikhil.niktv.sports.PlayfyActivity::class.java, movesLeft = 3, destination = 0)
+            } finally {
+                runBlocking { ProfileStore(context).removeProfile(portal.copy(name = secondPortal, username = "second-fixture")) }
+            }
+        }
+    }
+
     private fun SemanticsNode.dashboardLabels() = config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() +
         config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
 
     private fun SemanticsNode.isDashboardTab(title: String) = config.getOrNull(SemanticsProperties.Role) == Role.Tab &&
         dashboardLabels().any { it == title || it == "$title 2" }
 
-    private fun <T : Any> readDashboardSemantics(activity: MainActivity, read: (Sequence<SemanticsNode>) -> T): T {
+    private fun <T : Any> readDashboardSemantics(activity: Activity, read: (Sequence<SemanticsNode>) -> T): T {
         fun roots(view: View): Sequence<ViewRootForTest> = sequence {
             if (view is ViewRootForTest) yield(view)
             if (view is ViewGroup) for (index in 0 until view.childCount) yieldAll(roots(view.getChildAt(index)))
@@ -546,7 +763,7 @@ class ProfileNavigationDeviceTest {
         val unavailable = AtomicBoolean(false)
 
         override fun serve(session: IHTTPSession): Response {
-            if (session.uri != "/player_api.php" || session.parameters["username"]?.singleOrNull() != "fixture" ||
+            if (session.uri != "/player_api.php" || session.parameters["username"]?.singleOrNull() !in setOf("fixture", "second-fixture") ||
                 session.parameters["password"]?.singleOrNull() != "fixture") {
                 return newFixedLengthResponse(Response.Status.NOT_FOUND, "application/json", "{}")
             }
