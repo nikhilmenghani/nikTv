@@ -8392,15 +8392,23 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         updateProfileLoad(0.12f, "Connecting to ${profile.displayName}; waiting for provider authentication…")
         return authenticateProfileForOpening(profile).also { ownedStore.save(it, owns) }
     }
+    private var portalSwitchJob: Job? = null
     fun switchProfile(profile: PortalProfile) {
         if (!com.nikhil.niktv.data.ProfilePortalAccess.allowed(getApplication(), profile)) {
             _state.update { it.copy(error = "This portal is disabled for this profile.") }
             return
         }
         val destination = PortalSwitchDestination.capture(_state.value)
+        portalSwitchJob?.cancel()
         switchProfileOwned(profile, beginPortalActivation(profile), destination)
     }
-    private fun switchProfileOwned(profile: PortalProfile, activation: Long, destination: PortalSwitchDestination) = task {
+    internal fun cancelPortalSwitch() {
+        portalActivation.incrementAndGet()
+        portalSwitchJob?.cancel()
+        portalRenewalJob?.cancel()
+        resetPortalSession()
+    }
+    private fun switchProfileOwned(profile: PortalProfile, activation: Long, destination: PortalSwitchDestination) = task(trackPortalSwitch = true) {
         movieStructureJob?.cancel()
         movieMatchLookupJob?.cancel()
         pendingDiscoveryEpisode = null
@@ -9092,8 +9100,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
     }
 
-    private fun task(block: suspend () -> Unit) {
-        launchForViewer launch@ {
+    private fun task(trackPortalSwitch: Boolean = false, block: suspend () -> Unit) {
+        val job = launchForViewer launch@ {
             _state.update { it.copy(loading = true, error = null, tmdbIptvLookupMiss = null) }
             try {
                 withTimeout(90_000L) {
@@ -9129,9 +9137,11 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             } catch (error: Throwable) {
                 _state.update { it.copy(error = error.message ?: "Unexpected error") }
             } finally {
-                _state.update { it.copy(loading = false, profileLoadProgress = null, profileLoadMessage = "Preparing profile…") }
+                if (!trackPortalSwitch || coroutineContext.isActive)
+                    _state.update { it.copy(loading = false, profileLoadProgress = null, profileLoadMessage = "Preparing profile…") }
             }
         }
+        if (trackPortalSwitch) portalSwitchJob = job
     }
 
     private fun filterKey(profileKey: String, type: CatalogType): String = "$profileKey|${type.name}"

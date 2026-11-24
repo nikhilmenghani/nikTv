@@ -1925,11 +1925,14 @@ internal fun DeviceProfileSettings(manage: (String) -> Unit) {
 @Composable
 internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.niktv.model.PortalProfile>) {
     val context = LocalContext.current
+    val openConfiguredViewer = LocalOpenConfiguredViewer.current
+    val activeProfile = LocalSelectedUserProfile.current
     val users = remember(context) { com.nikhil.niktv.data.UserSyncStore.get(context) }
     val profiles by users.profiles.collectAsStateWithLifecycle(emptyList())
     val enabled by users.enabledProfiles.collectAsStateWithLifecycle(emptySet())
     val account by users.selectedAccount.collectAsStateWithLifecycle()
     val profile = profiles.firstOrNull { it.id == profileId }
+    val opensDashboard = profile != null && profile.id == activeProfile?.id && openConfiguredViewer != null
     val owner = account?.let { id -> profile?.let { com.nikhil.niktv.data.UserScope(id, it.id) } }
     val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
         .collectAsStateWithLifecycle(emptySet())
@@ -2015,8 +2018,11 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
     if (editingProfile && profile != null) androidx.compose.ui.window.Dialog(
         onDismissRequest = { editingProfile = false }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
         ProfileSetupEditor(profile, { editingProfile = false }, onSave = { draft ->
-            com.nikhil.niktv.data.ProfileSetupStore.save(context, draft); editingProfile = false
-        }, onDelete = null, load = { com.nikhil.niktv.data.ProfileSetupStore.load(context, profile) })
+            val saved = com.nikhil.niktv.data.ProfileSetupStore.save(context, draft)
+            if (opensDashboard && draft.canOpen) openConfiguredViewer.invoke(saved)
+            editingProfile = false
+        }, onDelete = null, openAfterSave = opensDashboard,
+            load = { com.nikhil.niktv.data.ProfileSetupStore.load(context, profile) })
     }
     setupConnection?.let { connection -> androidx.compose.ui.window.Dialog(
         onDismissRequest = { setupConnection = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {

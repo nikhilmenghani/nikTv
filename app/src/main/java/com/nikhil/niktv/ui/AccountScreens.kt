@@ -86,6 +86,10 @@ import com.nikhil.niktv.data.UserProfile
 import com.nikhil.niktv.data.UserProfileType
 import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.data.ProfileStore
+import com.nikhil.niktv.data.ProfilePin
+import com.nikhil.niktv.data.ProfilePortalAccess
+import com.nikhil.niktv.data.ProfilePortalChoice
+import com.nikhil.niktv.data.ProfileSetupStore
 import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.R
@@ -95,6 +99,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import com.nikhil.niktv.data.ViewerDestinationKind
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import org.json.JSONObject
 
 internal val LocalOpenAccountScreen = staticCompositionLocalOf<() -> Unit> { {}
@@ -103,6 +109,7 @@ internal val LocalOpenUserProfiles = staticCompositionLocalOf<() -> Unit> { {} }
 internal val LocalCloseAccountSettings = staticCompositionLocalOf<() -> Unit> { {} }
 internal val LocalSelectedUserProfile = staticCompositionLocalOf<UserProfile?> { null }
 internal val LocalCloseProfileDownloads = staticCompositionLocalOf<(() -> Unit)?> { null }
+internal val LocalOpenConfiguredViewer = staticCompositionLocalOf<((UserProfile) -> Unit)?> { null }
 
 /** Account authentication precedes both the people chooser and every content destination. */
 @Composable
@@ -161,6 +168,10 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     var mappingProfile by remember { mutableStateOf<UserProfile?>(null) }
     var pendingProfilePin by remember { mutableStateOf<ProfilePinRequest?>(null) }
     var settingProfilePin by remember { mutableStateOf<UserProfile?>(null) }
+    var viewerSetup by remember { mutableStateOf<UserProfile?>(null) }
+    var openingConfiguredViewer by remember { mutableStateOf<UserProfile?>(null) }
+    var configuredViewerError by remember { mutableStateOf(false) }
+    var configuredViewerJob by remember { mutableStateOf<Job?>(null) }
     suspend fun authorizeProfile(profile: UserProfile, deleting: Boolean = false, changingPin: Boolean = false): Boolean {
         val accountId = store.selectedAccount.value ?: return false
         if (!deleting && !changingPin && profile.pinVerifier != null && com.nikhil.niktv.data.ProfilePin.remembered(context, accountId, profile)) return true
@@ -223,40 +234,55 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
         if (!vm.state.value.isViewerPortalReady(portalKey, waitForHome))
             throw IllegalStateException(vm.state.value.error ?: "Could not open ${portal.displayName}.")
     }
-    suspend fun openViewer(profileId: String, offlineOnly: Boolean = false, atLaunch: Boolean = false) {
+    suspend fun openViewer(profileId: String, offlineOnly: Boolean = false, atLaunch: Boolean = false,
+        afterSetup: Boolean = false) {
         require(profileId in store.enabledProfileIds(requireNotNull(store.selectedAccount.value))) { "Enable this profile in Settings first." }
-        val targetProfile = store.profiles.first { rows -> rows.any { it.id == profileId } }.first { it.id == profileId }
-        if (!authorizeProfile(targetProfile)) { choosingProfile = true; return }
+        val targetProfile = store.profiles.first().first { it.id == profileId }
+        if (!afterSetup && !authorizeProfile(targetProfile)) { choosingProfile = true; return }
         val owner = UserScope(requireNotNull(store.selectedAccount.value), profileId)
         com.nikhil.niktv.data.UserProfilePreferences.warm(context, owner)
+        val current = vm.state.value
+        val previousOwner = store.selectedScope.value
         store.selectProfile(profileId)
         // Let the ViewModel dispose the previous viewer before starting portal work.
         yield()
-        if (offlineOnly) vm.openProfileDownloads() else vm.resetPortalSession()
         profileDownloads = offlineOnly
-        if (offlineOnly) { selectedUser = profileId; choosingProfile = false; return }
+        if (offlineOnly) {
+            vm.openProfileDownloads()
+            selectedUser = profileId
+            choosingProfile = false
+            return
+        }
         val destination = store.rememberedDestination(owner)
-        val portals = legacyStore.scoped(owner).profiles.first().filter { com.nikhil.niktv.data.ProfilePortalAccess.allowed(context, it, owner) }
+        val portals = legacyStore.scoped(owner).profiles.first().filter {
+            ProfilePortalChoice(it, saved = true).ready && ProfilePortalAccess.allowed(context, it, owner)
+        }
         if (store.selectedScope.value != owner) return
         suspend fun openPortal(portal: PortalProfile) {
             activateViewerPortal(owner, portal, waitForHome = atLaunch)
             if (atLaunch && launchBranding != null) snapshotFlow { launchBranding.value }.first { it >= 1f }
         }
         val sportsDestination = when (destination?.kind) {
-            ViewerDestinationKind.SPORTS -> com.nikhil.niktv.data.ProfilePortalAccess.SPORTS
-            ViewerDestinationKind.PLAYFY -> com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY
+            ViewerDestinationKind.SPORTS -> ProfilePortalAccess.SPORTS
+            ViewerDestinationKind.PLAYFY -> ProfilePortalAccess.PLAYFY
             else -> null
-        }?.let { it !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner) } == true
+        }?.let { it !in ProfilePortalAccess.hidden(context, owner) } == true
         if (portals.isEmpty() && !sportsDestination) {
-            selectedUser = profileId
-            choosingProfile = false
-            settingsEntered = false
-            vm.openAccountSettings()
-            showSettings = true
+            check(!afterSetup) { "This profile has no available starting portal." }
+            vm.resetPortalSession()
+            viewerSetup = store.profiles.first().first { it.id == profileId }
             return
         }
+        val staysOnPortal = afterSetup && previousOwner == owner && !current.loading && destination?.kind == ViewerDestinationKind.PORTAL &&
+            destination.portalKey == current.session?.profile?.cacheKey() && portals.any { it.cacheKey() == destination.portalKey }
+        if (staysOnPortal) {
+            vm.closeSettings()
+            vm.openHome()
+        } else {
+            vm.resetPortalSession()
+        }
         // An explicit Sports -> IPTV handoff takes priority over the saved Sports destination.
-        val requested = PortalNavigationRequests.pending.value?.takeUnless { it == PortalNavigationRequests.PROFILE_CHOOSER }
+        val requested = PortalNavigationRequests.pending.value?.takeUnless { afterSetup || it == PortalNavigationRequests.PROFILE_CHOOSER }
         if (requested != null) {
             try {
                 val portal = portals.firstOrNull { it.cacheKey() == requested }
@@ -271,10 +297,10 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                     ?: legacyStore.scoped(owner).activeProfile.first()?.cacheKey()
                 preferredViewerPortal(portals, previous)?.let { openPortal(it) }
             }
-            ViewerDestinationKind.SPORTS -> if (com.nikhil.niktv.data.ProfilePortalAccess.SPORTS !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner))
+            ViewerDestinationKind.SPORTS -> if (sportsDestination)
                 context.openSports()
                 else portals.firstOrNull()?.let { openPortal(it) }
-            ViewerDestinationKind.PLAYFY -> if (com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in com.nikhil.niktv.data.ProfilePortalAccess.hidden(context, owner))
+            ViewerDestinationKind.PLAYFY -> if (sportsDestination)
                 context.openPlayfy()
                 else portals.firstOrNull()?.let { openPortal(it) }
             ViewerDestinationKind.PORTAL -> preferredViewerPortal(portals, destination.portalKey)?.let { openPortal(it) }
@@ -287,6 +313,35 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
         if (store.selectedScope.value != owner) return
         selectedUser = profileId
         choosingProfile = false
+    }
+    fun openConfiguredViewer(profile: UserProfile) {
+        if (configuredViewerJob?.isActive == true) return
+        openingConfiguredViewer = profile
+        configuredViewerError = false
+        viewerSetup = null
+        // This job belongs to the gate, so removing the editor or Settings leaves
+        // a single visible route until the dashboard or retry screen is ready.
+        configuredViewerJob = scope.launch {
+            try {
+                openViewer(profile.id, afterSetup = true)
+                showSettings = false
+                openingConfiguredViewer = null
+            } catch (_: TimeoutCancellationException) {
+                configuredViewerError = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                configuredViewerError = true
+            }
+        }
+    }
+    fun leaveConfiguredViewer(edit: Boolean) {
+        val profile = openingConfiguredViewer
+        configuredViewerJob?.cancel()
+        vm.cancelPortalSwitch()
+        openingConfiguredViewer = null
+        openProfiles()
+        viewerSetup = profile.takeIf { edit }
     }
     suspend fun restoreViewer(cached: AccountSyncState, atLaunch: Boolean) {
         val id = cached.accountId ?: return
@@ -327,6 +382,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
             mappingProfile = null
             pendingProfilePin?.result?.complete(false)
             settingProfilePin = null
+            viewerSetup = null
+            configuredViewerJob?.cancel()
+            openingConfiguredViewer = null
         }
     }
     LaunchedEffect(launchComplete, account.accountId, account.initialized, account.reconnectRequired) {
@@ -335,9 +393,10 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     // MainActivity can resume behind Who's watching after Sports, so the gate
     // owns external navigation rather than waiting for its hidden content to run.
     LaunchedEffect(requestedPortal, launchComplete, restoringViewer, account.accountId, account.initialized,
-        selectedUser, selectedScope, enabledIds, showAccount, account.reconnectRequired, useCachedProfiles) {
+        selectedUser, selectedScope, enabledIds, showAccount, account.reconnectRequired, useCachedProfiles,
+        openingConfiguredViewer, viewerSetup) {
         val requested = requestedPortal ?: return@LaunchedEffect
-        if (!launchComplete || restoringViewer || !account.initialized) return@LaunchedEffect
+        if (!launchComplete || restoringViewer || !account.initialized || openingConfiguredViewer != null || viewerSetup != null) return@LaunchedEffect
         if (requested == PortalNavigationRequests.PROFILE_CHOOSER) {
             PortalNavigationRequests.pending.compareAndSet(requested, null)
             openProfiles()
@@ -375,7 +434,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     }
     LaunchedEffect(appState.settingsOpen, appState.profileEditorOpen) {
         if (showSettings && appState.settingsOpen) settingsEntered = true
-        if (showSettings && settingsEntered && !appState.settingsOpen && !appState.profileEditorOpen) {
+        if (showSettings && settingsEntered && !appState.settingsOpen && !appState.profileEditorOpen && openingConfiguredViewer == null) {
             showSettings = false
             vm.resetPortalSession()
         }
@@ -388,6 +447,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
     CompositionLocalProvider(LocalOpenAccountScreen provides ::openAccount, LocalOpenUserProfiles provides ::openProfiles,
         LocalCloseProfileDownloads provides if (profileDownloads) ({ vm.closeOfflineDownloads(); openProfiles() }) else null,
         LocalCloseAccountSettings provides { showSettings = false },
+        LocalOpenConfiguredViewer provides ::openConfiguredViewer,
         LocalViewingOwner provides activeOwner,
         LocalSelectedUserProfile provides profiles.firstOrNull { it.id == selectedUser }) {
         MaterialTheme(colorScheme = NikColors) {
@@ -395,6 +455,25 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                 when {
                     !launchComplete -> NikTvLaunchBranding()
                     restoringViewer -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    openingConfiguredViewer != null -> {
+                        val profile = requireNotNull(openingConfiguredViewer)
+                        BackHandler { leaveConfiguredViewer(edit = false) }
+                        if (configuredViewerError) ProfileOpenRecovery(profile.name,
+                            retry = { openConfiguredViewer(profile) },
+                            edit = { leaveConfiguredViewer(edit = true) },
+                            back = { leaveConfiguredViewer(edit = false) })
+                        else ProfileLoadingScreen(profile.name, if (appState.profileLoadProgress != null) appState.profileLoadMessage else "Opening dashboard…",
+                            appState.profileLoadProgress ?: 0f)
+                    }
+                    viewerSetup != null -> {
+                        val profile = requireNotNull(viewerSetup)
+                        ProfileSetupEditor(profile, onDismiss = { viewerSetup = null; openProfiles() }, onSave = { draft ->
+                            val saved = ProfileSetupStore.save(context, draft)
+                            if (draft.canOpen) openConfiguredViewer(saved)
+                            else { viewerSetup = null; openProfiles() }
+                        }, onDelete = null, requirePortal = true, openAfterSave = true,
+                            load = { ProfileSetupStore.load(context, profile) })
+                    }
                     showSettings -> content(checkingUpdate)
                     showAccount || !account.initialized || (account.reconnectRequired && !useCachedProfiles) -> GitHubAccountScreen(
                         state = account,
@@ -429,21 +508,12 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                                 openViewer(profile.id)
                             }
                         } },
-                        onSave = { existing, name, type, color, avatar -> scope.launch {
-                            profileAction("Could not save this profile. Your local data is preserved.") {
-                                if (existing == null) {
-                                    store.clearSelection()
-                                    selectedUser = null
-                                    choosingProfile = true
-                                    val created = store.createProfile(name, type, color, avatar)
-                                    store.setProfileEnabled(created.id, true)
-                                    settingProfilePin = created
-                                } else store.updateProfile(existing.copy(name = name, color = color, avatar = avatar))
-                            }
-                        } },
                         onSaveSetup = { draft ->
-                            com.nikhil.niktv.data.ProfileSetupStore.save(context, draft)
-                            if (!draft.existing) settingProfilePin = draft.profile
+                            val saved = ProfileSetupStore.save(context, draft)
+                            if (!draft.existing) {
+                                if (saved.pinVerifier != null) ProfilePin.remember(context, requireNotNull(draft.accountId), saved)
+                                if (draft.canOpen) openConfiguredViewer(saved)
+                            }
                         },
                         onDelete = { profile -> scope.launch { profileAction("Could not delete this profile. Retry from this screen.") { if (authorizeProfile(profile, deleting = true)) store.deleteProfile(profile.id) } } },
                         onChangePin = { profile -> scope.launch {
@@ -503,6 +573,23 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                     manager.requestProfileSync(it)
                 }
             } }
+        }
+    }
+}
+
+@Composable
+private fun ProfileOpenRecovery(name: String, retry: () -> Unit, edit: () -> Unit, back: () -> Unit) {
+    val retryFocus = remember { FocusRequester() }
+    val remote = LocalContext.current.usesRemoteNavigation(LocalConfiguration.current) ||
+        androidx.compose.ui.platform.LocalInputModeManager.current.inputMode == androidx.compose.ui.input.InputMode.Keyboard
+    Box(Modifier.fillMaxSize().safeDrawingPadding().padding(20.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 380.dp).fillMaxWidth().initialFocusEntry(retryFocus, remote),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Could not open $name", style = MaterialTheme.typography.titleLarge)
+            Text("Check the portal connection or choose another starting portal.", textAlign = TextAlign.Center)
+            NikTvPrimaryActionButton(retry, Modifier.focusRequester(retryFocus)) { Text("Retry") }
+            NikTvSecondaryActionButton(edit) { Text("Edit profile setup") }
+            NikTvTextActionButton(back) { Text("Back to profiles") }
         }
     }
 }
@@ -636,7 +723,7 @@ internal fun GitHubAccountScreen(
 internal fun UserProfilesScreen(
     profiles: List<UserProfile>, state: AccountSyncState, error: String?,
     onSelect: (UserProfile) -> Unit,
-    onSave: (UserProfile?, String, UserProfileType, Long, String) -> Unit,
+    onSave: ((UserProfile?, String, UserProfileType, Long, String) -> Unit)? = null,
     onDelete: (UserProfile) -> Unit, onAccount: () -> Unit, onSync: () -> Unit,
     onImportLegacy: ((UserProfile) -> Unit)? = null,
     onManagePortals: ((UserProfile) -> Unit)? = null,
@@ -660,20 +747,23 @@ internal fun UserProfilesScreen(
     var importing by remember { mutableStateOf<UserProfile?>(null) }
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val remote = context.usesRemoteNavigation(configuration)
+    val remote = context.usesRemoteNavigation(configuration) ||
+        androidx.compose.ui.platform.LocalInputModeManager.current.inputMode == androidx.compose.ui.input.InputMode.Keyboard
     // Entry focus belongs to this visit, not to selection/sync updates while a portal opens.
     val pullOnly by remember(context) { AccountSyncManager.get(context).manualPullOnly }.collectAsStateWithLifecycle()
     val first = remember { FocusRequester() }
     val entryProfileId = remember { selectedProfileId }
     val offlineEntry = remember { FocusRequester() }
+    val managementEntry = remember { FocusRequester() }
+    val managementPickerEntry = remember { FocusRequester() }
+    val deleteCancel = remember { FocusRequester() }
     val preferred = entryProfileId?.takeIf { id -> profiles.any { it.id == id } } ?: profiles.firstOrNull()?.id
     fun edit(profile: UserProfile?) { editing = profile; editorOpen = true; managing = null; managementPicker = false }
 
     if (editorOpen) ProfileSetupEditor(editing, onDismiss = { editorOpen = false }, onSave = { draft ->
         if (onSaveSetup != null) onSaveSetup(draft)
-        else onSave(editing, draft.profile.name, draft.profile.type, draft.profile.color, draft.profile.avatar)
+        else onSave?.invoke(editing, draft.profile.name, draft.profile.type, draft.profile.color, draft.profile.avatar)
         editorOpen = false
-        if (onSaveSetup != null && !draft.existing && draft.canOpen) onSelect(draft.profile)
     }, onDelete = editing?.let { profile -> { deleting = profile } },
         load = { com.nikhil.niktv.data.ProfileSetupStore.load(context, editing) })
     else BoxWithConstraints(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(
@@ -691,9 +781,10 @@ internal fun UserProfilesScreen(
                 modifier = Modifier.size(if (shortWide) 40.dp else 64.dp).graphicsLayer { scaleX = 1.8f; scaleY = 1.8f },
                 contentScale = ContentScale.Fit)
             Spacer(Modifier.height(if (shortWide) 10.dp else 14.dp))
-            if (profiles.isEmpty()) Text("Enable profiles in Settings to show and sync them on this device.",
-                style = MaterialTheme.typography.bodySmall, color = Color(0xFF9699A2), textAlign = TextAlign.Center)
             Text("Who's watching?", style = if (shortWide) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            if (profiles.isEmpty()) Text(
+                if (allProfiles.isEmpty()) "Add a profile to get started." else "Enable a profile in Settings to show it here.",
+                style = MaterialTheme.typography.bodySmall, color = Color(0xFF9699A2), textAlign = TextAlign.Center)
             if (updateVersion != null && onUpdate != null) {
                 Spacer(Modifier.height(8.dp))
                 NikTvPrimaryActionButton(onUpdate, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
@@ -718,7 +809,7 @@ internal fun UserProfilesScreen(
                 }
             }
             Spacer(Modifier.height(if (shortWide) 10.dp else 14.dp))
-            Text(if (remote) "Hold OK or press Menu to manage a profile" else "Touch and hold a profile to manage it",
+            if (profiles.isNotEmpty()) Text(if (remote) "Hold OK or press Menu to manage a profile" else "Touch and hold a profile to manage it",
                 color = Color(0xFF9699A2), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
             val actions = buildList<Triple<String, ImageVector, () -> Unit>> {
@@ -757,10 +848,12 @@ internal fun UserProfilesScreen(
             }
         }
     }
-    if (managementPicker) AlertDialog(onDismissRequest = { managementPicker = false },
+    if (managementPicker) AlertDialog(modifier = Modifier.initialFocusEntry(managementPickerEntry, remote),
+        onDismissRequest = { managementPicker = false },
         title = { Text("Manage profiles", style = MaterialTheme.typography.titleLarge) },
         text = { Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            allProfiles.forEach { profile -> NikTvSecondaryActionButton(onClick = { edit(profile) }, modifier = Modifier.fillMaxWidth()) {
+            allProfiles.forEach { profile -> NikTvSecondaryActionButton(onClick = { edit(profile) }, modifier = Modifier.fillMaxWidth()
+                .then(if (profile.id == (preferred ?: allProfiles.firstOrNull()?.id)) Modifier.focusRequester(managementPickerEntry) else Modifier)) {
                 Column {
                     Text(profile.name)
                     if (profiles.none { it.id == profile.id }) Text("Not shown on this device", style = MaterialTheme.typography.labelSmall)
@@ -783,7 +876,7 @@ internal fun UserProfilesScreen(
     managing?.let { profile -> AlertDialog(
         // The dialog receives the rest of the key gesture that opened it.
         // Swallow its repeats and release, but accept the next deliberate OK.
-        modifier = Modifier.onPreviewKeyEvent { event ->
+        modifier = Modifier.initialFocusEntry(managementEntry, remote).onPreviewKeyEvent { event ->
             val native = event.nativeKeyEvent
             val openingGesture = managementKeyTime == native.downTime && native.keyCode in setOf(
                 android.view.KeyEvent.KEYCODE_DPAD_CENTER, android.view.KeyEvent.KEYCODE_ENTER,
@@ -793,7 +886,7 @@ internal fun UserProfilesScreen(
         }, onDismissRequest = { managing = null },
         title = { Text(profile.name, style = MaterialTheme.typography.titleLarge) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            NikTvSecondaryActionButton(onClick = { edit(profile) }, modifier = Modifier.fillMaxWidth()) { Text("Manage profile") }
+            NikTvSecondaryActionButton(onClick = { edit(profile) }, modifier = Modifier.fillMaxWidth().focusRequester(managementEntry)) { Text("Manage profile") }
             onChangePin?.let { change -> NikTvSecondaryActionButton(onClick = { managing = null; change(profile) }, modifier = Modifier.fillMaxWidth()) { Text("Profile PIN") } }
             if (onImportLegacy != null || onManagePortals != null) NikTvTextActionButton(onClick = { managing = null; tools = profile }, modifier = Modifier.fillMaxWidth()) { Text("Profile tools") }
         } }, confirmButton = { NikTvTextActionButton(onClick = { managing = null }) { Text("Cancel") } }) }
@@ -803,11 +896,11 @@ internal fun UserProfilesScreen(
             onImportLegacy?.let { NikTvSecondaryActionButton(onClick = { tools = null; importing = profile }, modifier = Modifier.fillMaxWidth()) { Text("Import existing device viewing data") } }
             onManagePortals?.let { NikTvSecondaryActionButton(onClick = { tools = null; it(profile) }, modifier = Modifier.fillMaxWidth()) { Text("Map portals on this device") } }
         } }, confirmButton = { NikTvTextActionButton(onClick = { tools = null }) { Text("Done") } }) }
-    deleting?.let { profile -> AlertDialog(
+    deleting?.let { profile -> AlertDialog(modifier = Modifier.initialFocusEntry(deleteCancel, remote),
         onDismissRequest = { deleting = null }, title = { Text("Delete ${profile.name} across devices?") },
         text = { Text("This removes this user profile and its viewing data from the account after the next sync. Local downloaded media files remain on their device.") },
         confirmButton = { NikTvPrimaryActionButton(onClick = { onDelete(profile); deleting = null; editorOpen = false }) { Text("Delete across devices") } },
-        dismissButton = { NikTvTextActionButton(onClick = { deleting = null }) { Text("Cancel") } }) }
+        dismissButton = { NikTvTextActionButton(onClick = { deleting = null }, modifier = Modifier.focusRequester(deleteCancel)) { Text("Cancel") } }) }
     importing?.let { profile -> AlertDialog(onDismissRequest = { importing = null },
         title = { Text("Import into ${profile.name}?") },
         text = { Text("Assign this device's viewing data from the previous NikTV version to this user profile. This import is performed once and preserves existing account data.") },

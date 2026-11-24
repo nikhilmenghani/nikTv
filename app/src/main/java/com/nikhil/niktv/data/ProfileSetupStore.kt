@@ -31,10 +31,11 @@ internal data class ProfileSetupDraft(
     val quality: Int = 0,
     val swipeControls: PlayerSwipeControls = PlayerSwipeControls()
 ) {
-    val canOpen get() = enabled && selected.isNotEmpty()
-    val start get() = startingPortal?.takeIf { it in selected } ?: portals.firstOrNull { it.key in selected }?.key
-        ?: ProfilePortalAccess.SPORTS.takeIf { it in selected }
-        ?: ProfilePortalAccess.PLAYFY.takeIf { it in selected }
+    val canOpen get() = enabled && start != null
+    val start: String? get() {
+        val ready = portals.filter { it.ready }.map { it.key } + listOf(ProfilePortalAccess.SPORTS, ProfilePortalAccess.PLAYFY)
+        return startingPortal?.takeIf { it in selected && it in ready } ?: ready.firstOrNull { it in selected }
+    }
 }
 
 /** Setup operates on the edited owner, never on the profile currently watching. */
@@ -64,7 +65,7 @@ internal object ProfileSetupStore {
         val portals = choices(context)
         val hidden = ProfilePortalAccess.hidden(context, owner)
         val selected = if (owner == null) emptySet() else portals.filter {
-            users.hasPortalAssociation(owner, it.portal) && it.key !in hidden
+            it.ready && users.hasPortalAssociation(owner, it.portal) && it.key !in hidden
         }.mapTo(mutableSetOf()) { it.key }.also {
             if (ProfilePortalAccess.SPORTS !in hidden) it.add(ProfilePortalAccess.SPORTS)
             if (ProfilePortalAccess.PLAYFY !in hidden) it.add(ProfilePortalAccess.PLAYFY)
@@ -92,6 +93,7 @@ internal object ProfileSetupStore {
         require(chosen.all { it.ready }) { "Set up the selected connection first." }
         require(draft.selected.all { key -> key in setOf(ProfilePortalAccess.SPORTS, ProfilePortalAccess.PLAYFY) || chosen.any { it.key == key } })
         val owner = UserScope(account, draft.profile.id)
+        val profile = draft.profile.copy(name = draft.profile.name.trim(), avatar = draft.profile.avatar.trim())
         val connections = ProfileStore(context).scoped(owner)
         // Credentials are device-owned. No association is made with the watching profile.
         chosen.forEach { connections.saveConnection(it.portal) }
@@ -112,7 +114,7 @@ internal object ProfileSetupStore {
         ) + PlayerSwipeGesture.entries.map { UserProfilePreferences.Change("niktv_playback_ui", it.key, draft.swipeControls.enabled(it)) }) {
             check(users.selectedAccount.value == account) { "The account changed. Reopen profile setup." }
             if (draft.existing) check(users.dao.records(account).any { it.collection == "profile" && it.recordId == owner.profileId && !it.deleted }) { "This profile is no longer available." }
-            users.updateProfile(draft.profile.copy(name = draft.profile.name.trim(), avatar = draft.profile.avatar.trim()))
+            users.updateProfile(profile)
             draft.portals.forEach { choice ->
                 if (choice.key in draft.selected) users.associatePortal(owner, choice.portal)
                 else if (users.hasPortalAssociation(owner, choice.portal)) users.removePortal(owner, choice.portal)
@@ -128,7 +130,7 @@ internal object ProfileSetupStore {
             }
         }
         AccountSyncManager.get(context).requestProfileSync(account)
-        draft.profile
+        profile
     }
 
     suspend fun setPortalAllowed(context: Context, owner: UserScope, portal: PortalProfile, allowed: Boolean) = withContext(Dispatchers.IO) {

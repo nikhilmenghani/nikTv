@@ -3,6 +3,7 @@ package com.nikhil.niktv.ui
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -169,27 +170,94 @@ class ProfileSetupDeviceTest {
                 await("D-pad leaves the read-only name field") { walk(root()) { it.className == "android.widget.EditText" && it.isFocused && it.text.isNullOrEmpty() } != null }
                 focusEvents.clear()
                 click("Next")
-                await("Second step focuses the first portal") { focused("Stalker") }
+                await("Second step focuses the first portal") { focused("Fixture") }
                 assertTrue("Step transition must not focus header/footer: $focusEvents",
-                    focusEvents.none { it in listOf("Previous", "Cancel", "Create & open", "Set up later") })
-                val before = bounds(control("Stalker")!!)
+                    focusEvents.none { it in listOf("Previous", "Cancel", "Create & open") })
+                val before = settledBounds("Fixture")
                 ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("One OK enables this portal") { control("Stalker")?.isChecked == true }
-                assertTrue("Toggling must retain focus", focused("Stalker"))
-                assertEquals(before, bounds(control("Stalker")!!))
+                await("One OK enables this portal") { control("Fixture")?.isChecked == true }
+                assertTrue("Toggling must retain focus", focused("Fixture"))
+                assertEquals("Toggling must keep the same screen bounds", before, settledBounds("Fixture"))
                 screenshot(host, "profile-setup-$mode-portals")
                 click("Playback")
                 click("Pinch to zoom")
                 click("Previous")
                 await("Previous restores the name field without an IME") { find("1 of 2 · Profile details") != null }
                 click("Next")
-                await("The selected portal remains enabled") { control("Stalker")?.isChecked == true }
+                await("The selected portal remains enabled") { control("Fixture")?.isChecked == true }
                 click("Create & open")
+                await("New profile prompts for a password before saving") { find("Set password for Setup fixture") != null }
+                await("Password owns entry focus") { focusedField("New password (4 digits)") }
+                ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                enterText("0000")
+                ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Confirmation owns focus") { focusedField("Confirm password") }
+                ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                enterText("0000")
+                ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                await("Password confirmation leaves the editor") { focused("Cancel") }
+                ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Set password is selected and enabled") { focused("Set password") && control("Set password")?.isEnabled == true }
+                ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
                 await("Setup saves all choices together") { saved.get()?.profile?.name == "Setup fixture" && saved.get()?.pinchToZoom == true }
                 assertEquals(setOf(ProfilePortalAccess.key(portal)), saved.get().selected)
+                assertTrue(ProfilePin.verifies(saved.get().profile.pinVerifier, "0000"))
                 saved.set(null)
             }
         } finally { ins.uiAutomation.setOnAccessibilityEventListener(null); ins.runOnMainSync { host.finish() }; ins.setInTouchMode(true) }
+    }
+
+    @Test fun noConnectionsOpensAddPortalAndKeepsSetupFocusAndDraft() {
+        check(context.packageName.endsWith(".regression"))
+        val host = ins.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val focusEvents = java.util.concurrent.CopyOnWriteArrayList<String>()
+        ins.uiAutomation.setOnAccessibilityEventListener { event ->
+            if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                val words = mutableListOf<String>()
+                walk(event.source) { node -> node.text?.toString()?.let(words::add); false }
+                focusEvents += words.joinToString("|")
+            }
+        }
+        try {
+            ins.setInTouchMode(false)
+            ins.runOnMainSync { host.setContent {
+                MaterialTheme(colorScheme = NikColors) {
+                    ProfileSetupForm(ProfileSetupDraft(UserProfile("first-portal-fixture", "No portal fixture"), "9911214321"), {}, {})
+                }
+            } }
+            await("Setup starts at profile details") { find("1 of 2 · Profile details") != null }
+            click("Next")
+            await("Add portal is the first target") { focused("Add portal") }
+            assertFalse("At least one portal is required", control("Create & open")?.isEnabled == true)
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("The connection editor opens") { find("Configure portal") != null }
+            screenshot(host, "profile-setup-first-portal-entry")
+            await("The provider type owns entry focus") { focused("Stalker / MAG") }
+            assertFalse("Provider focus does not open the keyboard", ins.uiAutomation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD })
+            focusEvents.clear()
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("Back returns directly to Add portal") { focused("Add portal") }
+            assertTrue("Closing the editor must not focus setup navigation: $focusEvents",
+                focusEvents.none { it in listOf("Previous", "Cancel", "Create & open") })
+            ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Add portal opens again") { focused("Stalker / MAG") }
+            click("Portal URL")
+            await("Portal URL editor is focused") { walk(root()) { it.isEditable && it.isFocused } != null }
+            enterText(portal.portalUrl)
+            click("Done")
+            await("URL editor closes") { find(portal.portalUrl) != null }
+            click("Generate compatible device identity")
+            click("Use portal")
+            await("New portal is selected in the same draft") { control("Stalker")?.isChecked == true }
+            assertTrue("Create becomes available", control("Create & open")?.isEnabled == true)
+            assertNotNull("Profile name remains in the draft", find("Portals for No portal fixture"))
+            screenshot(host, "profile-setup-first-portal-return")
+        } finally {
+            ins.uiAutomation.setOnAccessibilityEventListener(null)
+            ins.runOnMainSync { host.finish() }
+            ins.setInTouchMode(true)
+        }
     }
 
     private fun root(): AccessibilityNodeInfo? {
@@ -216,12 +284,43 @@ class ProfileSetupDeviceTest {
         }
         fail("$text must be reachable by scrolling")
     }
-    private fun focused(text: String) = control(text)?.isFocused == true
+    private fun focused(text: String) = walk(root()) { node ->
+        node.isFocused && walk(node) { it.text?.toString() == text || it.contentDescription?.toString() == text } != null
+    } != null
+    private fun focusedField(label: String) = walk(root()) { it.isFocused && walk(it) { node -> node.text?.toString() == label } != null } != null
+    private fun enterText(value: String) {
+        await("Focused editor accepts $value") { walk(root()) { it.isFocused && it.isEditable } != null }
+        assertTrue(requireNotNull(walk(root()) { it.isFocused && it.isEditable }).performAction(
+            AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+            }))
+    }
     private fun bounds(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen)
+    private fun settledBounds(label: String): Rect {
+        var previous: Rect? = null
+        var unchangedSince = 0L
+        await("Bounds settle for the focused $label control") {
+            val current = control(label)?.takeIf { it.isVisibleToUser }?.let(::bounds)
+            val now = SystemClock.uptimeMillis()
+            if (current != previous) {
+                previous = current
+                unchangedSince = now
+            }
+            // Entry focus scrolls the row into view. Wait for the accessibility
+            // viewport bounds to settle before comparing the toggle itself.
+            current != null && now - unchangedSince >= 250L
+        }
+        return requireNotNull(previous)
+    }
     private fun await(message: String, check: () -> Boolean) {
         val until = SystemClock.uptimeMillis() + 8000
         while (SystemClock.uptimeMillis() < until) { if (check()) return; Thread.sleep(40) }
-        assertTrue(message, check())
+        if (!check()) {
+            val focused = walk(root()) { it.isFocused }
+            val labels = mutableListOf<String>()
+            walk(focused) { node -> node.text?.toString()?.let(labels::add); false }
+            fail("$message. Focused node: ${focused?.className}, labels: $labels")
+        }
     }
     private fun screenshot(host: PlaybackFixtureHostActivity, name: String) {
         val bitmap = ins.uiAutomation.takeScreenshot()

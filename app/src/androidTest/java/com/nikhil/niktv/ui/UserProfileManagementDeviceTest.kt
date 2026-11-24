@@ -113,8 +113,23 @@ class UserProfileManagementDeviceTest {
             }))
             if (i.uiAutomation.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }) i.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             click("Next")
-            await("Portal setup is the second step") { find("Set up later") != null }
-            click("Set up later")
+            await("Portal setup is the second step") { find("2 of 2 · Portals & preferences") != null }
+            click("Sports")
+            click("Create & open")
+            await("Creation requests a profile password") { find("Set password for New viewer") != null }
+            i.setInTouchMode(false)
+            repeat(2) {
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                fun editablePassword() = roots().firstNotNullOfOrNull { root ->
+                    walk(root) { it.isFocused && it.isEditable && it.isPassword }
+                }
+                await("OK enables the focused password field") { editablePassword() != null }
+                assertTrue(requireNotNull(editablePassword()).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "0000")
+                }))
+                i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            }
+            click("Set password")
             await("A separate profile is created") { created.get() != null }
             assertNotEquals(original.id, created.get().id)
             assertEquals(UserProfileType.GENERAL, created.get().type)

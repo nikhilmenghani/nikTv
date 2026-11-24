@@ -1,13 +1,16 @@
 package com.nikhil.niktv.ui
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.data.AccountTokenVault
 import com.nikhil.niktv.data.ProfileBrowsePreferences
+import com.nikhil.niktv.data.ProfilePin
 import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.data.UserSyncStore
@@ -54,6 +57,8 @@ class CachedLaunchDeviceTest {
         val owner = runBlocking {
             users.selectAccount(account)
             val viewer = users.createProfile("Launch fixture viewer")
+            val secured = users.setProfilePin(viewer.id, ProfilePin.create("0000"))
+            ProfilePin.remember(context, account, secured)
             val scope = UserScope(account, viewer.id)
             users.setProfileEnabled(viewer.id, enabled)
             users.selectProfile(viewer.id)
@@ -87,6 +92,9 @@ class CachedLaunchDeviceTest {
             NavigationAuditEvidence.capture(if (enabled) "cached-launch-home" else "cached-launch-people")
             assertTrue("$destination is expected after launch. Saw $visible", destination in visible)
             if (createNewViewer) {
+                automation.serviceInfo = automation.serviceInfo.apply {
+                    flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                }
                 fun find(node: AccessibilityNodeInfo?, match: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
                     if (node == null) return null
                     if (match(node)) return node
@@ -97,7 +105,9 @@ class CachedLaunchDeviceTest {
                     val deadline = SystemClock.uptimeMillis() + 8_000L
                     while (SystemClock.uptimeMillis() < deadline) {
                         if (Build.VERSION.SDK_INT >= 33) automation.clearCache()
-                        find(automation.rootInActiveWindow, match)?.let { return it }
+                        (listOfNotNull(automation.rootInActiveWindow) + automation.windows.mapNotNull { it.root })
+                            .filter { it.packageName?.toString() == context.packageName }
+                            .firstNotNullOfOrNull { find(it, match) }?.let { return it }
                         Thread.sleep(30)
                     }
                     error("Expected profile control did not appear")
@@ -107,7 +117,7 @@ class CachedLaunchDeviceTest {
                     while (!node.isClickable) node = requireNotNull(node.parent)
                     check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 }
-                click("Add profile")
+                click("Add user profile")
                 val field = awaitNode { it.className?.toString() == "android.widget.EditText" }
                 val rect = android.graphics.Rect().also(field::getBoundsInScreen)
                 val time = android.os.SystemClock.uptimeMillis()
@@ -119,11 +129,29 @@ class CachedLaunchDeviceTest {
                 check(editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "Created here fixture")
                 }))
+                if (automation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }) {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                }
                 click("Next")
-                awaitNode { it.text?.toString() == "Set up later" }
-                click("Set up later")
+                click(portal.name)
+                instrumentation.setInTouchMode(false)
+                click("Create & open")
+                awaitNode { it.text?.toString() == "Set password for Created here fixture" }
+                for (label in listOf("New password (4 digits)", "Confirm password")) {
+                    awaitNode { node ->
+                        node.text?.toString() == label && generateSequence(node) { it.parent }.any { it.isFocused }
+                    }
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                    val password = awaitNode { it.isFocused && it.isEditable && it.isPassword }
+                    check(password.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "0000")
+                    }))
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                }
+                click("Set password")
+                click("Switch profile: Created here fixture")
                 awaitNode { it.text?.toString() == "Who's watching?" }
-                awaitNode { it.text?.toString() == "Created here fixture" }
+                awaitNode { it.contentDescription?.toString() == "Watch as Created here fixture" }
                 val created = runBlocking { users.profiles.first().first { it.name == "Created here fixture" } }
                 assertTrue(users.enabledProfileIds(account).contains(created.id))
                 assertFalse(users.enabledProfileIds(account).contains(owner.profileId))
@@ -132,6 +160,7 @@ class CachedLaunchDeviceTest {
             return visible
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
+            if (createNewViewer) instrumentation.setInTouchMode(true)
             vault.preferences.edit().apply {
                 oldAuth.forEach { (key, value) -> putString(key, value) }
                 remove("initialized:$account")
@@ -141,6 +170,7 @@ class CachedLaunchDeviceTest {
                     users.deleteProfile(it.id)
                 }
                 users.deleteProfile(owner.profileId)
+                ProfileStore(context).removeProfile(portal)
                 if (oldAccount == null) users.disconnect() else users.selectAccount(oldAccount)
                 oldViewer?.let { users.selectProfile(it.profileId) }
             }

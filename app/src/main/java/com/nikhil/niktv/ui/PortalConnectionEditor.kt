@@ -30,7 +30,7 @@ import com.nikhil.niktv.model.*
 @Composable
 internal fun PortalConnectionEditor(saved: PortalProfile?, loading: Boolean,
     connect: (PortalProfile) -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit,
-    confirmLabel: String? = null, showImport: Boolean = true) {
+    confirmLabel: String? = null, showImport: Boolean = true, focusFormOnEntry: Boolean = false) {
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(importBackup) }
     val context = LocalContext.current
     val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
@@ -43,13 +43,6 @@ internal fun PortalConnectionEditor(saved: PortalProfile?, loading: Boolean,
     var username by remember(saved) { mutableStateOf(initial.username) }
     var password by remember(saved) { mutableStateOf(initial.password) }
     var advanced by remember(saved) { mutableStateOf(initial.serialNumber.isNotBlank()) }
-    fun useDefaults(type: PortalType) {
-        portalType = type
-        if (saved == null) {
-            name = ""; url = ""; mac = ""; serial = ""; username = ""; password = ""
-            advanced = false
-        }
-    }
     val keyboard = LocalSoftwareKeyboardController.current
     val entry = remember { FocusRequester() }
     val remote = context.usesRemoteNavigation(LocalConfiguration.current) ||
@@ -60,14 +53,20 @@ internal fun PortalConnectionEditor(saved: PortalProfile?, loading: Boolean,
         Card(Modifier.widthIn(max = 520.dp).fillMaxHeight(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    NikTvSecondaryActionButton(cancelEditor, Modifier.size(48.dp).focusRequester(entry), contentPadding = PaddingValues(0.dp)) {
+                    NikTvSecondaryActionButton(cancelEditor, Modifier.size(48.dp)
+                        .then(if (focusFormOnEntry) Modifier else Modifier.focusRequester(entry)), contentPadding = PaddingValues(0.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                     Column { Text(if (saved == null) "Configure portal" else "Edit portal", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Portal credentials stay local to this device", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SegmentedButton(portalType == PortalType.STALKER, { useDefaults(PortalType.STALKER) }, uniformSegmentShape(0, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(0, 2))) { Text("Stalker / MAG") }
-                    SegmentedButton(portalType == PortalType.XTREAM, { useDefaults(PortalType.XTREAM) }, uniformSegmentShape(1, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(1, 2))) { Text("Xtream") }
+                    val stalkerShape = uniformSegmentShape(0, 2)
+                    val xtreamShape = uniformSegmentShape(1, 2)
+                    SegmentedButton(portalType == PortalType.STALKER, { portalType = PortalType.STALKER }, stalkerShape,
+                        modifier = Modifier.then(if (focusFormOnEntry) Modifier.focusRequester(entry) else Modifier)
+                            .remoteFocusFrame(stalkerShape)) { Text("Stalker / MAG") }
+                    SegmentedButton(portalType == PortalType.XTREAM, { portalType = PortalType.XTREAM }, xtreamShape,
+                        modifier = Modifier.remoteFocusFrame(xtreamShape)) { Text("Xtream") }
                 }
                 SettingsTextEditRow("Portal name", name, { name = it }, "An optional label for this content connection.")
                 SettingsTextEditRow("Portal URL", url, { url = it }, "The provider portal address.", placeholder = "https://provider.example")
@@ -88,9 +87,23 @@ internal fun PortalConnectionEditor(saved: PortalProfile?, loading: Boolean,
                     NikTvTextActionButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
                     if (advanced) SettingsTextEditRow("Portal serial number (optional)", serial, { serial = it }, "Use the serial registered for this MAC, or leave blank to generate one.")
                 }
-                val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
+                val xtream = portalType == PortalType.XTREAM
+                val credentialsReady = if (xtream) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NikTvPrimaryActionButton(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim().ifBlank { if (portalType == PortalType.STALKER) "Stalker" else "Xtream" }, url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) { Text(confirmLabel ?: if (saved == null) "Connect portal" else "Save portal") }
+                    NikTvPrimaryActionButton(onClick = {
+                        keyboard?.hide()
+                        connect(PortalProfile(
+                            name = name.trim().ifBlank { if (xtream) "Xtream" else "Stalker" },
+                            portalUrl = url.trim(),
+                            macAddress = mac.trim().takeUnless { xtream }.orEmpty(),
+                            serialNumber = serial.trim().takeUnless { xtream }.orEmpty(),
+                            portalType = portalType,
+                            username = username.trim().takeIf { xtream }.orEmpty(),
+                            password = password.takeIf { xtream }.orEmpty()
+                        ))
+                    }, enabled = !loading && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) {
+                        Text(confirmLabel ?: if (saved == null) "Connect portal" else "Save portal")
+                    }
                     if (saved == null) NikTvSecondaryActionButton(onClick = { keyboard?.hide(); cancelEditor() }, modifier = Modifier.weight(1f)) { Text("Cancel") }
                 }
                 if (showImport) NikTvSecondaryActionButton(

@@ -7,6 +7,8 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,9 +23,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.data.*
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.CancellationException
@@ -32,6 +38,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun ProfileSetupEditor(profile: UserProfile?, onDismiss: () -> Unit,
     onSave: suspend (ProfileSetupDraft) -> Unit, onDelete: (() -> Unit)?,
+    requirePortal: Boolean = false, openAfterSave: Boolean = false,
     load: suspend () -> ProfileSetupDraft = { error("A setup loader is required") }) {
     var initial by remember(profile?.id) { mutableStateOf<ProfileSetupDraft?>(null) }
     var failed by remember { mutableStateOf(false) }
@@ -42,7 +49,7 @@ internal fun ProfileSetupEditor(profile: UserProfile?, onDismiss: () -> Unit,
         catch (_: Exception) { failed = true }
     }
     val ready = initial
-    if (ready != null) ProfileSetupForm(ready, onDismiss, onSave, onDelete)
+    if (ready != null) ProfileSetupForm(ready, onDismiss, onSave, onDelete, requirePortal, openAfterSave)
     else {
         BackHandler(onBack = onDismiss)
         Surface(Modifier.fillMaxSize(), color = Color(0xFF090B10), contentColor = Color.White) {
@@ -60,21 +67,29 @@ internal fun ProfileSetupEditor(profile: UserProfile?, onDismiss: () -> Unit,
 
 @Composable
 internal fun ProfileSetupForm(initial: ProfileSetupDraft, onDismiss: () -> Unit,
-    onSave: suspend (ProfileSetupDraft) -> Unit, onDelete: (() -> Unit)? = null) {
-    key(initial.profile.id) { ProfileSetupFormContent(initial, onDismiss, onSave, onDelete) }
+    onSave: suspend (ProfileSetupDraft) -> Unit, onDelete: (() -> Unit)? = null,
+    requirePortal: Boolean = false, openAfterSave: Boolean = false) {
+    key(initial.profile.id) {
+        ProfileSetupFormContent(initial, onDismiss, onSave, onDelete, requirePortal, openAfterSave)
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () -> Unit,
-    onSave: suspend (ProfileSetupDraft) -> Unit, onDelete: (() -> Unit)?) {
-    var draft by remember(initial.profile.id) { mutableStateOf(initial) }
+    onSave: suspend (ProfileSetupDraft) -> Unit, onDelete: (() -> Unit)?,
+    requirePortal: Boolean, openAfterSave: Boolean) {
+    val alwaysOpen = !initial.existing || requirePortal
+    var draft by remember {
+        val unavailable = initial.portals.filterNot { it.ready }.map { it.key }.toSet()
+        mutableStateOf(initial.copy(enabled = alwaysOpen || initial.enabled, selected = initial.selected - unavailable))
+    }
     var step by remember { mutableIntStateOf(0) }
     var options by remember { mutableIntStateOf(0) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var editConnection by remember { mutableStateOf(false) }
-    var connection by remember { mutableStateOf<PortalProfile?>(null) }
+    var addingPortal by remember { mutableStateOf(false) }
+    var settingPassword by remember { mutableStateOf(false) }
     var pendingSafety by remember { mutableStateOf<ProfileParentalPolicy?>(null) }
     var pin by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf<String?>(null) }
@@ -85,19 +100,26 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
     val keyboard = LocalSoftwareKeyboardController.current
     val nameFocus = remember { FocusRequester() }
     val portalFocus = remember { FocusRequester() }
-    val connectionFocus = remember { FocusRequester() }
-    val backFocus = remember { FocusRequester() }
-    var returningFromConnection by remember { mutableStateOf(false) }
+    val addPortalFocus = remember { FocusRequester() }
+    var entryPortal by remember { mutableStateOf<String?>(null) }
     var pendingStepFocus by remember { mutableStateOf(false) }
+    val readyPortals = draft.portals.filter { it.ready }
+    val opensDashboard = alwaysOpen || (openAfterSave && draft.enabled)
+    val hasPortal = readyPortals.any { it.key in draft.selected } ||
+        ProfilePortalAccess.SPORTS in draft.selected || ProfilePortalAccess.PLAYFY in draft.selected
+    val canSave = !saving && (!opensDashboard || hasPortal)
     fun change(value: ProfileSetupDraft) { if (!saving) { draft = value; error = null } }
     fun leave() { if (!saving) onDismiss() }
     fun previous() { if (!saving) { keyboard?.hide(); if (step > 0) { pendingStepFocus = remote; step-- } else onDismiss() } }
-    fun save(later: Boolean = false) {
-        if (saving) return
+    fun save(captured: ProfileSetupDraft = draft) {
+        if (!canSave) return
+        if (!initial.existing && captured.profile.pinVerifier == null) {
+            settingPassword = true
+            return
+        }
         saving = true
         error = null
         keyboard?.hide()
-        val captured = if (later) draft.copy(selected = emptySet(), startingPortal = null) else draft
         scope.launch {
             try { onSave(captured) }
             catch (cancelled: CancellationException) { throw cancelled }
@@ -105,22 +127,9 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
             finally { saving = false }
         }
     }
-    BackHandler(enabled = !WindowInsets.isImeVisible && !editConnection && pendingSafety == null) { previous() }
+    BackHandler(enabled = !WindowInsets.isImeVisible && !addingPortal && !settingPassword && pendingSafety == null) { previous() }
     ProfileSetupFocusScope {
-    if (editConnection) {
-        PortalConnectionEditor(connection, false, connect = { portal ->
-            val choice = ProfilePortalChoice(portal, false)
-            val old = connection?.let(ProfilePortalAccess::key)
-            change(draft.copy(portals = (draft.portals.filterNot { it.key == old || it.key == choice.key ||
-                (!it.ready && it.portal.portalType == portal.portalType) } + choice),
-                selected = (draft.selected - listOfNotNull(old).toSet()) + choice.key,
-                startingPortal = if (draft.startingPortal == old) choice.key else draft.startingPortal))
-            returningFromConnection = true; pendingStepFocus = remote; editConnection = false
-        }, cancelEditor = { returningFromConnection = true; pendingStepFocus = remote; editConnection = false }, importBackup = {},
-            confirmLabel = "Use connection", showImport = false)
-        return@ProfileSetupFocusScope
-    }
-    val target = if (step == 0) nameFocus else if (returningFromConnection) connectionFocus else portalFocus
+    val target = if (step == 0) nameFocus else if (entryPortal == null) addPortalFocus else portalFocus
     Surface(Modifier.fillMaxSize(), color = Color(0xFF090B10), contentColor = Color.White) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal = 16.dp, vertical = 10.dp)
             .initialFocusEntry(target, remote), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -130,7 +139,7 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
                     Text(if (step == 0) "1 of 2 · Profile details" else "2 of 2 · Portals & preferences",
                         color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
                 }
-                if (step > 0) NikTvTextActionButton(::previous, Modifier.focusRequester(backFocus)) { Text("Previous") }
+                if (step > 0) NikTvTextActionButton(::previous) { Text("Previous") }
                 NikTvTextActionButton(::leave) { Text("Cancel") }
             }
             key(step) {
@@ -164,37 +173,43 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
                         else SettingsControlRow("Profile type", if (draft.profile.type == UserProfileType.KIDS) "Kids profile" else "General profile")
                         SettingsPickerRow("App layout", ViewerLayout.entries.map { it to it.label }, draft.layout,
                             { change(draft.copy(layout = it)) }, "Easy offers simpler IPTV navigation. Standard includes discovery features.")
-                        SettingsControlRow("Show and sync on this device", checked = draft.enabled,
-                            description = "Show this profile on Who’s watching and sync its viewing data here.",
+                        if (!alwaysOpen) SettingsControlRow(
+                            if (BuildConfig.DEBUG) "Show on this device" else "Show and sync on this device",
+                            checked = draft.enabled,
+                            description = if (BuildConfig.DEBUG) "Show this profile on Who’s watching."
+                                else "Show this profile on Who’s watching and sync its viewing data here.",
                             onToggle = { change(draft.copy(enabled = it)) })
                     } else {
                         BoxWithConstraints(Modifier.fillMaxWidth()) {
                             val portalColumn: @Composable () -> Unit = {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("Portals for ${draft.profile.name}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    Text("Turn on the portals this profile can use. Existing connections are reused.", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
-                                    draft.portals.forEachIndexed { index, choice ->
-                                        SettingsControlRow(choice.portal.displayName,
-                                            description = if (choice.ready) "Ready" else "Needs connection setup",
-                                            modifier = if (index == 0) Modifier.focusRequester(portalFocus) else Modifier,
-                                            checked = choice.key in draft.selected,
-                                            onToggle = { enabled ->
-                                                if (enabled && !choice.ready) { connection = choice.portal; editConnection = true }
-                                                else change(draft.copy(selected = if (enabled) draft.selected + choice.key else draft.selected - choice.key))
-                                            })
+                                    Text(if (readyPortals.isEmpty()) "Add an IPTV portal or select an available service below."
+                                        else "Select the portals this profile can use.", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
+                                    NikTvSecondaryActionButton({ addingPortal = true }, Modifier.fillMaxWidth().focusRequester(addPortalFocus)) {
+                                        Text("Add portal")
+                                    }
+                                    readyPortals.forEach { choice ->
+                                        key(choice.key) {
+                                            SettingsControlRow(choice.portal.setupName,
+                                                description = choice.portal.displayName.takeUnless { it == choice.portal.setupName },
+                                                modifier = if (choice.key == entryPortal) Modifier.focusRequester(portalFocus) else Modifier,
+                                                checked = choice.key in draft.selected,
+                                                onToggle = { change(draft.copy(selected = if (it) draft.selected + choice.key else draft.selected - choice.key)) })
+                                        }
                                     }
                                     SettingsControlRow("Sports", checked = ProfilePortalAccess.SPORTS in draft.selected,
-                                        modifier = if (draft.portals.isEmpty()) Modifier.focusRequester(portalFocus) else Modifier,
                                         onToggle = { change(draft.copy(selected = if (it) draft.selected + ProfilePortalAccess.SPORTS else draft.selected - ProfilePortalAccess.SPORTS)) })
                                     SettingsControlRow("Playfy TV", checked = ProfilePortalAccess.PLAYFY in draft.selected,
                                         onToggle = { change(draft.copy(selected = if (it) draft.selected + ProfilePortalAccess.PLAYFY else draft.selected - ProfilePortalAccess.PLAYFY)) })
-                                    NikTvSecondaryActionButton({ connection = null; editConnection = true }, Modifier.fillMaxWidth().focusRequester(connectionFocus)) { Text("Add connection") }
-                                    val starts = draft.portals.filter { it.key in draft.selected }.map { it.key to it.portal.displayName } +
+                                    val starts = readyPortals.filter { it.key in draft.selected }.map { it.key to it.portal.setupName } +
                                         listOfNotNull(
                                             (ProfilePortalAccess.SPORTS to "Sports").takeIf { ProfilePortalAccess.SPORTS in draft.selected },
                                             (ProfilePortalAccess.PLAYFY to "Playfy TV").takeIf { ProfilePortalAccess.PLAYFY in draft.selected })
                                     if (starts.size > 1) SettingsPickerRow("Open first", starts, draft.start ?: starts.first().first, { change(draft.copy(startingPortal = it)) })
-                                    else Text(starts.firstOrNull()?.let { "Opens ${it.second}" } ?: "Choose a portal, or set it up later.", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
+                                    else Text(starts.firstOrNull()?.let { "Opens ${it.second}" }
+                                        ?: if (opensDashboard) "Select at least one portal to continue." else "No portals selected.",
+                                        color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             val preferences: @Composable () -> Unit = {
@@ -241,15 +256,23 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (step == 0) {
-                        onDelete?.let { NikTvTextActionButton(it) { Text("Delete profile") } }
-                        NikTvPrimaryActionButton({ if (!saving) { keyboard?.hide(); returningFromConnection = false; pendingStepFocus = remote; step = 1 } },
+                        onDelete?.let { NikTvTextActionButton(it, enabled = !saving) { Text("Delete profile") } }
+                        NikTvPrimaryActionButton({
+                            keyboard?.hide()
+                            entryPortal = readyPortals.firstOrNull { it.key in draft.selected }?.key ?: readyPortals.firstOrNull()?.key
+                            pendingStepFocus = remote
+                            step = 1
+                        },
                             Modifier.weight(1f), enabled = draft.profile.name.isNotBlank()) { Text("Next") }
                     } else {
-                        if (!initial.existing) NikTvTextActionButton({ save(later = true) }) { Text("Set up later") }
-                        NikTvPrimaryActionButton({ save() }, Modifier.weight(1f),
-                            enabled = initial.existing || draft.selected.isNotEmpty()) {
+                        NikTvPrimaryActionButton({ save() }, Modifier.weight(1f), enabled = canSave) {
                             if (saving) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
-                            Text(if (saving) "Saving…" else if (initial.existing) "Save changes" else if (draft.canOpen) "Create & open" else "Create profile")
+                            Text(when {
+                                saving -> "Saving…"
+                                !initial.existing -> "Create & open"
+                                opensDashboard -> "Save & open"
+                                else -> "Save changes"
+                            })
                         }
                     }
                 }
@@ -261,8 +284,29 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
             if (ParentalControls.accepts(context, pin)) { change(draft.copy(parental = pendingSafety!!)); pendingSafety = null }
             else pinError = "Incorrect PIN"
         })
+    if (addingPortal) Dialog(
+        onDismissRequest = { addingPortal = false },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        PortalConnectionEditor(null, false, connect = { portal ->
+            val choice = ProfilePortalChoice(portal, false)
+            val choices = draft.portals.toMutableList()
+            val index = choices.indexOfFirst { it.key == choice.key }
+            if (index == -1) choices.add(choice) else choices[index] = choice
+            change(draft.copy(portals = choices, selected = draft.selected + choice.key))
+            addingPortal = false
+        }, cancelEditor = { addingPortal = false }, importBackup = {}, confirmLabel = "Use portal", showImport = false,
+            focusFormOnEntry = true)
+    }
+    if (settingPassword) SetProfilePinPrompt(draft.profile, dismiss = { settingPassword = false }, save = { verifier ->
+        val securedDraft = draft.copy(profile = draft.profile.copy(pinVerifier = verifier))
+        change(securedDraft)
+        save(securedDraft)
+    })
     }
 }
+
+private val PortalProfile.setupName: String get() = name.ifBlank { displayName }
 
 @Composable
 private fun ProfileSetupFocusScope(content: @Composable () -> Unit) {
@@ -301,6 +345,7 @@ private fun ProfileSetupContentOptions(policy: XtreamContentPolicy, change: (Xtr
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileSetupTextField(label: String, value: String, change: (String) -> Unit, focus: FocusRequester,
     modifier: Modifier = Modifier) {
@@ -308,15 +353,32 @@ private fun ProfileSetupTextField(label: String, value: String, change: (String)
     var editor by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val imeVisible = WindowInsets.isImeVisible
+    var imeWasVisible by remember { mutableStateOf(false) }
     LaunchedEffect(value) { if (editor.text != value) editor = TextFieldValue(value, TextRange(value.length)) }
-    fun activate() { editing = true; focus.requestFocus(); keyboard?.show() }
+    LaunchedEffect(editing) {
+        if (editing) {
+            withFrameNanos { }
+            keyboard?.show()
+        }
+    }
+    LaunchedEffect(imeVisible) {
+        if (!imeVisible && imeWasVisible) editing = false
+        imeWasVisible = imeVisible
+    }
+    fun stopEditing() { editing = false; keyboard?.hide() }
+    fun activate() { focus.requestFocus(); editing = true }
+    // Android can deliver Back before the IME has attached, including from a remote.
+    BackHandler(enabled = editing && !imeVisible, onBack = ::stopEditing)
     OutlinedTextField(editor, { editor = it; if (it.text != value) change(it.text) }, readOnly = !editing,
         label = { Text(label) }, singleLine = true, shape = RoundedCornerShape(10.dp),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, showKeyboardOnFocus = false),
+        keyboardActions = KeyboardActions(onDone = { stopEditing() }),
         modifier = modifier.fillMaxWidth().focusRequester(focus)
-            .onFocusChanged { if (!it.isFocused && editing) { editing = false; keyboard?.hide() } }
+            .onFocusChanged { if (!it.isFocused && editing) stopEditing() }
             .onPreInterceptKeyBeforeSoftKeyboard { event ->
                 if (editing && event.key == Key.Back) {
-                    if (event.type == KeyEventType.KeyUp) { editing = false; keyboard?.hide() }
+                    if (event.type == KeyEventType.KeyUp) stopEditing()
                     true
                 } else false
             }
@@ -324,7 +386,8 @@ private fun ProfileSetupTextField(label: String, value: String, change: (String)
                 if (!editing && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
                     if (event.type == KeyEventType.KeyUp) activate()
                     true
-                } else if (!editing && event.key in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
+                } else if (event.key == Key.DirectionUp || event.key == Key.DirectionDown ||
+                    (!editing && (event.key == Key.DirectionLeft || event.key == Key.DirectionRight))) {
                     if (event.type == KeyEventType.KeyDown) focusManager.moveFocus(when (event.key) {
                         Key.DirectionUp -> FocusDirection.Up; Key.DirectionDown -> FocusDirection.Down
                         Key.DirectionLeft -> FocusDirection.Left; else -> FocusDirection.Right
