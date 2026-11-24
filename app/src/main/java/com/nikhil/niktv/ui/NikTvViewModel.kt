@@ -3244,6 +3244,13 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
     }
 
+    internal fun observeUpNextEpisodeTitle(playing: PlayingMedia): Flow<String?> {
+        val owner = playing.userScope ?: store.captureScope()
+        val playbackStore = owner?.let(store::scoped) ?: store
+        return playbackStore.episodeSeasonCaches.map { cachedUpNextEpisodeTitle(playing, it) }
+            .distinctUntilChanged().flowOn(Dispatchers.Default)
+    }
+
     private fun MediaItem.tmdbEpisodeCacheKey(): String =
         "${seasonNumber ?: -1}:${episodeNumber ?: title.episodeOrderFromTitle() ?: -1}:$id"
 

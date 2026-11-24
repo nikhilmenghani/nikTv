@@ -531,7 +531,7 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
                 }
             }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
-        LocalViewerLayout provides viewerLayout) {
+        LocalViewerLayout provides viewerLayout, LocalUpNextEpisodeTitle provides remember(vm) { vm::observeUpNextEpisodeTitle }) {
     MaterialTheme(colorScheme = profileColors) {
         state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
         state.portalQualityPicker?.let { PortalQualityDialog(it, vm::closePortalQuality, vm::choosePortalQuality) }

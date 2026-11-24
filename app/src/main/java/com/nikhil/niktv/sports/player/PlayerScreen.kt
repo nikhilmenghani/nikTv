@@ -3190,31 +3190,11 @@ fun PlayerScreen(
         val countdown = remainingSeconds
         modeFeedback?.let { PlayerModeFeedback(it) }
         if (countdown != null && showAutoPlayPrompt) {
-            Surface(
-                modifier = Modifier.align(Alignment.BottomCenter)
-                    .zIndex(20f)
-                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
-                    .padding(16.dp).widthIn(max = 560.dp),
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp
-            ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Up next in ${countdown}s", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        Text(media.nextEpisode.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    }
-                    NikTvTextActionButton(onClick = {
-                        autoPlayCancelled = true
-                        playerViewRef?.requestFocus()
-                    }) { Text("Cancel") }
-                    NikTvPrimaryActionButton(
-                        onClick = { advancing = true; onPlayNext() },
-                        modifier = Modifier.focusRequester(playNextFocusRequester)
-                    ) { Text("Play now") }
-                }
-            }
+            PlayerUpNextPrompt(media, countdown, playNextFocusRequester,
+                onCancel = { autoPlayCancelled = true; playerViewRef?.requestFocus() },
+                onPlay = { advancing = true; onPlayNext() },
+                modifier = Modifier.align(Alignment.BottomCenter).zIndex(20f)
+                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier).padding(16.dp))
         }
         if (subtitleDialogOpen) {
             SubtitleSelectionDialog(
