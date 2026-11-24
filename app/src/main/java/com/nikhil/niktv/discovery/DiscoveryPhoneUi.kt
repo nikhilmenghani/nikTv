@@ -6,6 +6,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -49,6 +50,14 @@ internal enum class DiscoveryPhoneDestination(val title: String) {
 }
 
 internal val LocalPhoneBottomChromeHeight = staticCompositionLocalOf { 0.dp }
+internal val LocalDiscoveryPhoneTabFocus = staticCompositionLocalOf<Map<DiscoveryPhoneDestination, FocusRequester>> { emptyMap() }
+
+internal fun DashboardSurface.phoneTab(): DiscoveryPhoneDestination = when (this) {
+    DashboardSurface.MOVIES -> DiscoveryPhoneDestination.MOVIES
+    DashboardSurface.SERIES -> DiscoveryPhoneDestination.SERIES
+    DashboardSurface.LIVE_TV -> DiscoveryPhoneDestination.LIVE
+    else -> DiscoveryPhoneDestination.HOME
+}
 
 /** Both feeds anchor hero actions to the same full-screen safe viewport. */
 @Composable
@@ -83,11 +92,12 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
     val portals = LocalDirectPortalActions.current
     LaunchedEffect(portals.size) { if (portals.size <= 1) portalsOpen = false }
     val portalFocusReturn = LocalPortalFocusReturn.current
+    val tabFocus = LocalDiscoveryPhoneTabFocus.current
     DiscoveryGlassPanel(modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
         artwork = LocalMobileGlassArtwork.current, backdropBounds = LocalMobileGlassBounds.current,
         fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
         fillWidth = LocalMobileGlassFillWidth.current) {
-        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.padding(5.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             (DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS } +
                 if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination ->
                 val active = destination == selected
@@ -103,7 +113,11 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                 Box(Modifier.weight(1f)) {
                 Surface(onClick = { if (destination == DiscoveryPhoneDestination.PROVIDERS) portalsOpen = true else select(destination) },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                        .onFocusChanged { focused = it.isFocused }.semantics { this.selected = active; contentDescription = destination.title },
+                        .then(tabFocus[destination]?.let { Modifier.focusRequester(it) } ?: Modifier)
+                        .onFocusChanged { focused = it.isFocused }
+                        .semantics { this.selected = active; contentDescription = destination.title
+                            if (destination != DiscoveryPhoneDestination.PROVIDERS) role = Role.Tab }
+                        .discoveryTabIndicator(active, Color(0xFFFF6778)),
                     shape = RoundedCornerShape(8.dp),
                     border = BorderStroke(2.dp, if (focused) Color.White else Color.Transparent),
                     color = if (active) Color(0x663D3E45) else Color.Transparent,

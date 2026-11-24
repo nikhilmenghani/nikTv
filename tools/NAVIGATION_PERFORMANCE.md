@@ -93,3 +93,23 @@ The performance build completed its required vital lint checks. This is not a fu
 lint run or an R8-minified release. Ordinary Android Studio builds stay debuggable.
 The isolated regression build required a 6 GiB Gradle heap override after APK
 packaging exhausted the default heap; no permanent Gradle memory setting changed.
+
+## Tab switching through MainActivity
+
+`ProfileNavigationDeviceTest#productionTabsKeepFocusAcrossRapidSwitchesBackAndProviderOutage` drives the regular Home, Movies, Series, Live TV, and My List tabs. It checks D-pad selection, repeated OK, Back, and cached Live TV when the local Xtream fixture starts returning HTTP 503. The test uses the separate `.regression` package and a synthetic viewer without GitHub credentials.
+
+Build the isolated non-debuggable app and test APK. Run the same command for both revisions and install the ABI matching the device.
+
+```powershell
+.\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true -PperformanceBuild=true -PskipLocalGithubToken=true -PskipLocalCricketConfiguration=true
+$serial = '<device serial>'
+$abi = '<arm64-v8a or armeabi-v7a>'
+adb -s $serial install -g -r "app/build-regression/outputs/apk/debug/app-$abi-debug.apk"
+adb -s $serial install -r app/build-regression/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+$scenario = 'com.nikhil.niktv.ui.ProfileNavigationDeviceTest#productionTabsKeepFocusAcrossRapidSwitchesBackAndProviderOutage'
+adb -s $serial shell am instrument -w -e class $scenario com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner
+adb -s $serial shell am instrument -w -e class $scenario -e tabFrameMetrics true com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner
+adb -s $serial pull /sdcard/Android/data/com.nikhil.niktv.regression/cache/navigation-audit/tab-navigation-metrics.json
+```
+
+Use the smoke run for focus-event history and a separate short recording for visual verification. The timing run records physical-window frame duration, frame overrun and missed deadlines on API 31+, and dropped callbacks. Selection and useful-content timings come from accessibility observations and include polling time. A trial with no delivered frames, such as an already-selected tab that causes no redraw, has a null frame percentile. The fixture uses local catalogues, so run separate cold artwork and real-provider trials to evaluate those workloads. Compare the same device, orientation, refresh rate, compilation mode, and cache conditions. Keep recording and method tracing out of timing runs.

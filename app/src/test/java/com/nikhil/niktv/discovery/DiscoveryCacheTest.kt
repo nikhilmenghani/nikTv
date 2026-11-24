@@ -77,7 +77,7 @@ class DiscoveryCacheTest {
         val cache = DiscoveryCache(temp.newFolder(), { now })
         assertEquals("first", cache.load("feed", 100, String.serializer()) { calls++; "first" })
         now = 1050
-        assertEquals("first", cache.load("feed", 100, String.serializer()) { calls++; "wrong" })
+        assertEquals("first", cache.load("feed", 100, String.serializer(), { fail("A fresh hit is returned once") }) { calls++; "wrong" })
         assertEquals(1, calls)
         now = 1200
         var published: String? = null

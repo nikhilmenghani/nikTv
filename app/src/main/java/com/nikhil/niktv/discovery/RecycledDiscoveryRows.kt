@@ -78,7 +78,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false, focusRestorer: NativeDiscoveryFocusRestorer? = null,
     popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false,
     navigationTrace: ((String) -> Unit)? = null, restoreTouchSelection: Boolean = false, reconcileSkeletons: Boolean = false,
-    transparentBackground: Boolean = false) {
+    transparentBackground: Boolean = false, restoreViewportOnEntry: Boolean = restoreSelection) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -97,6 +97,7 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
             view.setBackgroundColor(if (transparentBackground) Color.TRANSPARENT else Color.rgb(9, 11, 16))
             view.animateFocus = animateFocus
             view.restoreSelection = restoreSelection
+            view.restoreViewportOnEntry = restoreViewportOnEntry
             view.heroContent = hero; view.heroFocusEntry = heroFocusEntry
             view.onHeroActivity = heroActivity
             view.onPopupAnchor = popupAnchor
@@ -294,6 +295,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     var heroContent by mutableStateOf<RecycledHeroContent?>(null)
     var heroFocusEntry: (String) -> Boolean = { false }
     var restoreSelection = true
+    var restoreViewportOnEntry = true
     var animateFocus = true
         set(value) {
             if (field && !value) findFocus()?.let { it.animate().cancel(); it.scaleX = 1f; it.scaleY = 1f }
@@ -352,11 +354,11 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         override fun onCurrentListChanged(previous: MutableList<NativeDiscoveryRow>, current: MutableList<NativeDiscoveryRow>) {
             if (!viewportInitialized && current.isNotEmpty()) {
                 val anchor = current.indexOfFirst { it.id == savedAnchorRow }
-                if (!restoreSelection || anchor >= 0 || current.any { !it.isHero } || savedAnchorRow.isBlank()) {
+                if (!restoreViewportOnEntry || anchor >= 0 || current.any { !it.isHero } || savedAnchorRow.isBlank()) {
                     viewportInitialized = true
-                    if (restoreSelection && anchor >= 0) {
+                    if (restoreViewportOnEntry && anchor >= 0) {
                         restoringViewport = true
-                        restoringSelectionViewport = true
+                        restoringSelectionViewport = restoreSelection
                         vertical.scrollToPositionWithOffset(anchor, savedAnchorOffset)
                     }
                 }
@@ -443,9 +445,13 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     override fun onRequestFocusInDescendants(direction: Int, previouslyFocusedRect: Rect?): Boolean {
         trace("entry")
         ownsRemoteFocus = true
-        val row = if (heroContent != null && !restoreSelection) models[HERO_ROW] else
-            models[position.row]?.takeIf { it.isHero || it.items.isNotEmpty() } ?: rowAdapter.currentList.firstOrNull { it.isHero || it.items.isNotEmpty() }
-        val target = if (heroContent != null && !restoreSelection) HERO_ROW to "play" else
+        val resumeViewport = restoreViewportOnEntry && savedAnchorRow.isNotBlank()
+        val enterHero = heroContent != null && !restoreSelection && !resumeViewport
+        val row = if (enterHero) models[HERO_ROW] else
+            models[position.row]?.takeIf { it.isHero || it.items.isNotEmpty() }
+                ?: models[savedAnchorRow]?.takeIf { resumeViewport && (it.isHero || it.items.isNotEmpty()) }
+                ?: rowAdapter.currentList.firstOrNull { it.isHero || it.items.isNotEmpty() }
+        val target = if (enterHero) HERO_ROW to "play" else
             pending ?: row?.let { it.id to selectionFor(it) }
         target?.let {
             if (restoringViewport) { pending = it; epoch++; return false }

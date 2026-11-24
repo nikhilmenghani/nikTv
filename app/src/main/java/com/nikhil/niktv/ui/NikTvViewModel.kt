@@ -77,6 +77,7 @@ data class NikTvState(
     val categories: List<Category> = emptyList(),
     val rawCategoriesByType: Map<CatalogType, List<Category>> = emptyMap(),
     val categoryRefreshes: Set<Pair<String, CatalogType>> = emptySet(),
+    internal val categoryRootLoading: Pair<String, CatalogType>? = null,
     val selectedCategory: Category? = null,
     val items: List<MediaItem> = emptyList(),
     internal val historyRecommendations: List<com.nikhil.niktv.data.HistoryRecommendationRow> = emptyList(),
@@ -324,6 +325,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private var liveGuideCacheSaveJob: Job? = null
     private var liveGuideExpiryJob: Job? = null
     private var profilePreparationJob: Job? = null
+    private val dashboardVisible = MutableStateFlow(false)
+    private val foregroundCatalogueReads = MutableStateFlow(0)
+    private val catalogueInteraction = MutableStateFlow(0L)
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
 
@@ -604,57 +608,52 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                 catch (_: Exception) { /* Optional preparation retries when its destination opens. */ }
             }
+            // Publish lightweight category previews before decoding or fetching full catalogues.
+            for (type in dashboardCatalogueOrder(_state.value.dashboardCatalogueType())) {
+                step { loadTypeMetadataInternal(session, type) }
+            }
+            launch { warmDashboardCataloguesWhenQuiet(session) }
             step { store.discardLegacyBrowseCatalogs() }
-            if (session.profile.portalType == PortalType.XTREAM) launch {
-                // Xtream supplies each complete media listing in one request.
-                // Warm the established profile-scoped file cache off the UI path;
-                // collectionCatalog reuses fresh data and obeys refresh intervals.
-                for (type in listOf(CatalogType.MOVIES, CatalogType.SERIES, CatalogType.LIVE_TV)) {
-                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    try { collectionCatalog(session, type, force = false) }
-                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                    catch (_: Exception) { /* A destination/search retries when needed. */ }
-                }
-                // Leave the active type decoded and its normalized titles ready,
-                // rather than making the first query build the index on demand.
-                if (_state.value.session?.profile?.cacheKey() == profileKey) {
-                    val primeType = if (_state.value.searchOpen && _state.value.searchType != SearchContentType.ALL)
-                        catalogTypeForSearch(_state.value.searchType) else _state.value.selectedType
-                    try {
-                        val cache = collectionCatalog(session, primeType, force = false)
-                        if (_state.value.session?.profile?.cacheKey() == profileKey &&
-                            cache.items.sumOf { it.title.length.toLong() } <= Runtime.getRuntime().maxMemory() / 64 &&
-                            catalogueTitleIndex?.isFor(cache.items) != true) {
-                            catalogueTitleIndex = withContext(Dispatchers.Default) { CatalogueTitleIndex(cache.items, profileKey, primeType) }
-                        }
-                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                    catch (_: Exception) { /* Search can prime it on demand. */ }
-                }
-            }
-            // Live TV is the most latency-sensitive destination and is commonly
-            // opened immediately after profile selection. Warm its lightweight
-            // category metadata before the larger VOD catalogues.
-            for (type in listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) {
-                step {
-                    loadTypeMetadataInternal(session, type)
-                }
-            }
-            run {
-                // Category tiles are ready at this point. Hydrate the much
-                // larger media maps afterward so profile navigation never
-                // waits for full catalogue deserialization.
-                launch {
-                    for (type in listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) {
-                        step { hydrateTypeCacheFromDisk(session, type) }
-                    }
-                }
-            }
             // These are optional enrichments, never a prerequisite for opening Home.
             // Opening a profile must reconcile subscribed series before the
             // viewer has to visit each series. Later checks remain interval-bound.
             step { refreshWatchedSeriesIfDue(force = true) }
             loadDashboardDiscovery()
             step { enrichHomeArtwork(profileKey) }
+        }
+    }
+
+    internal fun setDashboardVisible(visible: Boolean) {
+        dashboardVisible.value = visible
+    }
+
+    private suspend fun warmDashboardCataloguesWhenQuiet(session: PortalSession) {
+        val profileKey = session.profile.cacheKey()
+        val hydrated = mutableSetOf<CatalogType>()
+        val warmed = mutableSetOf<CatalogType>()
+        val routes = state.map { it.dashboardCatalogueWarmupRoute(profileKey) }.distinctUntilChanged()
+        combine(routes, foregroundCatalogueReads, catalogueInteraction, dashboardVisible) { route, reads, interaction, visible ->
+            route?.takeIf { reads == 0 && visible } to interaction
+        }.distinctUntilChanged().collectLatest { (route, _) ->
+            if (route == null) return@collectLatest
+            val order = dashboardCatalogueOrder(route.type)
+            val xtream = session.profile.portalType == PortalType.XTREAM
+            if (hydrated.containsAll(order) && (!xtream || warmed.containsAll(order))) return@collectLatest
+            delay(CatalogueWarmupIdleMillis)
+            for (type in order) {
+                if (type !in hydrated) {
+                    try { withTimeoutOrNull(15_000L) { hydrateTypeCacheFromDisk(session, type) } }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* A collection can read its own cache on entry. */ }
+                    hydrated += type
+                }
+                if (xtream && type !in warmed) {
+                    try { withTimeoutOrNull(45_000L) { collectionCatalog(session, type, force = false, background = true) } }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* Search and collections can retry on demand. */ }
+                    warmed += type
+                }
+            }
         }
     }
 
@@ -1073,13 +1072,34 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         }
     }
 
+    private var catalogRootMetadataJob: Job? = null
+
     fun openCatalogType(type: CatalogType) {
         searchSeriesReturn = null
         com.nikhil.niktv.discovery.modernCatalogSurface(type)?.let { openDiscovery(it); return }
+        val snapshot = _state.value
+        val session = snapshot.session
+        val profileKey = session?.profile?.cacheKey()
+        if (profileKey != null && snapshot.ownsCatalogRoot(profileKey, type) &&
+            (snapshot.categoryRootLoading == (profileKey to type) || type in snapshot.rawCategoriesByType)) return
         cancelPendingPlayback()
         movieStructureJob?.cancel()
+        catalogRootMetadataJob?.cancel()
+        val metadataOnly = type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+        val cached = snapshot.browseCachesByType[type]?.takeIf { it.profileKey == profileKey }
+        val known = if (metadataOnly && profileKey != null) {
+            snapshot.rawCategoriesByType[type] ?: cached?.categories?.takeIf { it.isNotEmpty() }
+        } else null
+        val filtered = known?.let { filterCategories(it, profileKey, type, snapshot.categoryFilters) }.orEmpty()
+        val selected = filtered.firstOrNull { type != CatalogType.SERIES || it.id != "*" } ?: filtered.firstOrNull()
+        val loadingKey = if (metadataOnly && profileKey != null && known == null) profileKey to type else null
         _state.update { current ->
             current.enterCatalogRoot(type).copy(
+                categoryRootLoading = loadingKey,
+                categories = if (metadataOnly) filtered else current.categories,
+                selectedCategory = if (metadataOnly) selected else current.selectedCategory,
+                items = if (metadataOnly) emptyList() else current.items,
+                browseCache = if (metadataOnly) cached else current.browseCache,
                 modernTmdbSection = null,
                 modernIptvCategory = null,
                 modernSectionOriginHome = false,
@@ -1096,67 +1116,33 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             )
         }
 
-        if (type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
-        ) {
-            val snapshot = _state.value
-            val session = snapshot.session ?: return
-            val cached = snapshot.browseCachesByType[type]
-            val categories = cached?.categories.orEmpty()
-
-            if (categories.isNotEmpty()) {
-                val filtered = filterCategories(
-                    categories,
-                    session.profile.cacheKey(),
-                    type,
-                    snapshot.categoryFilters
-                )
-                val selected = filtered.firstOrNull {
-                    type != CatalogType.SERIES || it.id != "*"
-                } ?: filtered.firstOrNull()
-                _state.update {
-                    it.copy(
-                        homeOpen = false,
-                        favoritesOpen = false,
-                        settingsOpen = false,
-                        searchOpen = false,
-                        selectedType = type,
-                        categories = filtered,
-                        selectedCategory = selected,
-                        items = emptyList(),
-                        selectedSeries = null,
-                        browseCache = cached
-                    )
-                }
-                return
-            }
-
-            _state.update {
-                it.copy(
-                    homeOpen = false,
-                    favoritesOpen = false,
-                    settingsOpen = false,
-                    searchOpen = false,
-                    selectedType = type,
-                    items = emptyList(),
-                    selectedSeries = null
-                )
-            }
-            launchForViewer launch@ {
-                runCatching {
+        if (metadataOnly) {
+            if (session == null || loadingKey == null) return
+            val request = launchForViewer(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                val owner = coroutineContext[Job]
+                try {
                     withAutomaticSessionRetry(session) { activeSession ->
                         loadTypeMetadataInternal(activeSession, type)
                     }
-                }
-                    .onFailure { error ->
-                        _state.update {
-                            it.copy(
-                                error =
-                                    error.message
-                                        ?: "Could not load ${type.title} categories"
-                            )
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    _state.update { current ->
+                        if (catalogRootMetadataJob == owner && current.ownsCatalogRoot(loadingKey.first, type))
+                            current.copy(error = error.message ?: "Could not load ${type.title} categories")
+                        else current
+                    }
+                } finally {
+                    if (catalogRootMetadataJob == owner) {
+                        catalogRootMetadataJob = null
+                        _state.update { current ->
+                            if (current.categoryRootLoading == loadingKey) current.copy(categoryRootLoading = null) else current
                         }
                     }
+                }
             }
+            catalogRootMetadataJob = request
+            request.start()
             return
         }
 
@@ -1235,7 +1221,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
         val fetchedCategories = cachedBrowse?.categories.isNullOrEmpty()
         val allCategories = cachedBrowse?.categories?.takeIf { it.isNotEmpty() }
-            ?: portal.categories(session, type)
+            ?: categoryMetadataLookup(session, type, false)
 
         val filteredCategories = filterCategories(
             allCategories,
@@ -1261,7 +1247,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         _state.update { current ->
             if (current.session?.profile?.cacheKey() != profileKey) return@update current
-            val active = current.selectedType == type
+            val active = current.ownsCatalogRoot(profileKey, type)
             current.copy(
                 rawCategoriesByType =
                     current.rawCategoriesByType + (type to allCategories),
@@ -1292,7 +1278,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 }
             }
         }
-        if (!fetchedCategories && _state.value.selectedType == type && _state.value.nowPlaying == null &&
+        if (!fetchedCategories && _state.value.ownsCatalogRoot(profileKey, type) &&
             categoryMetadataExpired(cache.categoriesCachedAtMillis, System.currentTimeMillis(), _state.value.cacheIntervalMinutes)) {
             refreshProviderCategories(type, userRequested = false)
         }
@@ -2416,16 +2402,21 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
     /** Refresh category names/IDs only; retain media pages, history, filters and current selection. */
     fun refreshProviderCategories(type: CatalogType = _state.value.selectedType, userRequested: Boolean = true) {
-        val session = _state.value.session ?: return
-        if (!userRequested && _state.value.nowPlaying != null) return
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        if (!userRequested && snapshot.nowPlaying != null) return
         val profile = session.profile.cacheKey()
         val key = profile to type
+        val rootRefresh = snapshot.ownsCatalogRoot(profile, type)
+        fun isOriginVisible(current: NikTvState) = current.session?.profile == session.profile &&
+            (!rootRefresh || current.ownsCatalogRoot(profile, type))
         if (categoryMetadataRefreshJobs[key]?.isActive == true) return
         val now = SystemClock.elapsedRealtime()
         if (!userRequested && categoryRefreshAttempts[key]?.let { now - it < 5 * 60_000L } == true) return
         categoryRefreshAttempts[key] = now
         val job = launchForViewer(start = kotlinx.coroutines.CoroutineStart.LAZY) launch@ {
-            _state.update { it.copy(categoryRefreshes = it.categoryRefreshes + key, error = if (userRequested) null else it.error) }
+            _state.update { it.copy(categoryRefreshes = it.categoryRefreshes + key,
+                error = if (userRequested && isOriginVisible(it)) null else it.error) }
             try {
                 val fresh = categoryRefreshSlots.withPermit {
                     withAutomaticSessionRetry(session) { active -> categoryMetadataLookup(active, type, !userRequested) }
@@ -2438,12 +2429,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                         val old = current.browseCachesByType[type]?.takeIf { it.profileKey == profile }
                             ?: BrowseCatalogCache(profile, type, refreshedAt, emptyList(), emptyMap())
                         val cache = old.copy(categories = fresh, categoriesCachedAtMillis = refreshedAt)
-                        val active = current.selectedType == type
+                        val active = current.selectedType == type && isOriginVisible(current)
                         current.copy(rawCategoriesByType = current.rawCategoriesByType + (type to fresh),
                             categories = if (active) filterCategories(fresh, profile, type, current.categoryFilters) else current.categories,
                             selectedCategory = if (active) current.selectedCategory?.let { selected -> fresh.firstOrNull { it.id == selected.id } ?: selected } else current.selectedCategory,
                             browseCachesByType = current.browseCachesByType + (type to cache),
-                            browseCache = if (current.browseCache?.type == type) cache else current.browseCache)
+                            browseCache = if (active && current.browseCache?.type == type) cache else current.browseCache)
                     }
                 }
                 if (_state.value.session?.profile == session.profile) {
@@ -2452,7 +2443,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (userRequested) _state.update { current -> if (current.session?.profile != session.profile) current
+                if (userRequested) _state.update { current -> if (!isOriginVisible(current)) current
                     else current.copy(error = error.message ?: "Could not refresh IPTV categories") }
             } finally {
                 val owner = kotlinx.coroutines.currentCoroutineContext()[Job]
@@ -3035,28 +3026,34 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private var collectionCatalogMemory: SearchCatalogCache? = null
 
     private suspend fun collectionCatalog(
-        session: PortalSession, type: CatalogType, force: Boolean
-    ): SearchCatalogCache = collectionCatalogMutex.withLock {
-        val profile = session.profile.cacheKey()
-        val now = System.currentTimeMillis()
-        val ttl = _state.value.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L
-        val memory = collectionCatalogMemory?.takeIf { it.profileKey == profile && it.type == type }
-        val cached = if (force) null else memory ?: store.searchCatalog(type, profile).first()
-        if (!force && cached != null && "*" in cached.completedCategoryIds &&
-            now >= cached.cachedAtMillis && now - cached.cachedAtMillis < ttl) {
-            collectionCatalogMemory = cached
-            Log.i("NikTvCollections", "$type: local catalogue hit (${cached.items.size} titles)")
-            return@withLock cached
-        }
-        if (force || cached != null) withContext(Dispatchers.IO) { portal.invalidateFullCatalog(session.profile, type) }
-        val started = SystemClock.elapsedRealtime()
-        val items = portal.fullCatalog(session, type, emptyList())
-        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-        Log.i("NikTvCollections", "$type: full catalogue ready (${items.size} titles) in ${SystemClock.elapsedRealtime() - started} ms")
-        SearchCatalogCache(profile, type, System.currentTimeMillis(), items, setOf("*")).also {
-            collectionCatalogMemory = it
-            // This is the existing file search cache, not the experimental Room catalogue.
-            store.saveSearchCatalog(it, scheduleMetadataSync = false)
+        session: PortalSession, type: CatalogType, force: Boolean, background: Boolean = false
+    ): SearchCatalogCache {
+        if (!background) foregroundCatalogueReads.update { it + 1 }
+        try {
+            return collectionCatalogMutex.withLock {
+                val profile = session.profile.cacheKey()
+                val now = System.currentTimeMillis()
+                val ttl = _state.value.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L
+                val memory = collectionCatalogMemory?.takeIf { it.profileKey == profile && it.type == type }
+                val cached = if (force) null else memory ?: store.searchCatalog(type, profile).first()
+                if (!force && cached != null && "*" in cached.completedCategoryIds &&
+                    now >= cached.cachedAtMillis && now - cached.cachedAtMillis < ttl) {
+                    if (!background) collectionCatalogMemory = cached
+                    Log.i("NikTvCollections", "$type: local catalogue hit (${cached.items.size} titles)")
+                    return@withLock cached
+                }
+                if (force || cached != null) withContext(Dispatchers.IO) { portal.invalidateFullCatalog(session.profile, type) }
+                val started = SystemClock.elapsedRealtime()
+                val items = portal.fullCatalog(session, type, emptyList())
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                Log.i("NikTvCollections", "$type: full catalogue ready (${items.size} titles) in ${SystemClock.elapsedRealtime() - started} ms")
+                SearchCatalogCache(profile, type, System.currentTimeMillis(), items, setOf("*")).also {
+                    if (!background) collectionCatalogMemory = it
+                    store.saveSearchCatalog(it, scheduleMetadataSync = false)
+                }
+            }
+        } finally {
+            if (!background) foregroundCatalogueReads.update { it - 1 }
         }
     }
 
@@ -6942,6 +6939,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private fun beginPlaybackRequest(): Long {
+        catalogueInteraction.update { it + 1 }
         closePortalQuality()
         movieStructureJob?.cancel()
         categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }

@@ -14,10 +14,12 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.model.DashboardSurface
+import com.nikhil.niktv.data.UserScope
+import com.nikhil.niktv.ui.LocalViewingOwner
 
 // Prepared artwork only, bounded and scoped to a portal profile. Returning to
 // a tab can paint its cached backdrop while its retained catalogue reattaches.
-private val preparedScenes = linkedMapOf<Pair<String, DashboardSurface>, String>()
+private val preparedScenes = linkedMapOf<Pair<UserScope?, Pair<String, DashboardSurface>>, String>()
 
 /** Reserve control space without moving the artwork below the glass navigation. */
 internal val LocalHeroNavigationInset = staticCompositionLocalOf { 0.dp }
@@ -34,14 +36,15 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     var inset by remember(phone) { mutableStateOf(if (phone) 64.dp else 80.dp) }
     var viewportTop by remember { mutableFloatStateOf(0f) }
     var viewportBounds by remember { mutableStateOf(Rect.Zero) }
-    val prepared = remember(artworkIdentity) { artworkIdentity?.let { identity -> preparedScenes[identity]
-        ?: preparedScenes.entries.lastOrNull { it.key.first == identity.first }?.value } }
-    var published by remember(artworkIdentity) { mutableStateOf(false) }
-    var failedArtwork by remember(artworkIdentity) { mutableStateOf<String?>(null) }
-    var artwork by remember(artworkIdentity) { mutableStateOf((prepared ?: initialSceneArtwork)?.let { MobileGlassSource(it, Rect.Zero) }) }
+    val owner = LocalViewingOwner.current
+    val sceneIdentity = artworkIdentity?.let { owner to it }
+    val prepared = remember(sceneIdentity) { sceneIdentity?.let(preparedScenes::get) }
+    var published by remember(sceneIdentity) { mutableStateOf(false) }
+    var failedArtwork by remember(sceneIdentity) { mutableStateOf<String?>(null) }
+    var artwork by remember(sceneIdentity) { mutableStateOf((prepared ?: initialSceneArtwork)?.let { MobileGlassSource(it, Rect.Zero) }) }
     val artworkBounds = remember { mutableStateOf(Rect.Zero) }
     val movingBounds = remember { { artworkBounds.value } }
-    val publish = remember(artworkIdentity, backdropBehindRows) { { value: MobileGlassSource? ->
+    val publish = remember(sceneIdentity, backdropBehindRows) { { value: MobileGlassSource? ->
         artworkBounds.value = value?.bounds ?: Rect.Zero
         if (!value?.artwork.isNullOrBlank()) published = true
         if (clearFailedArtwork && value?.artwork == failedArtwork && failedArtwork != null) artwork = null
@@ -54,10 +57,10 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
         if (overlay) {
             // Match Previous Home: one prepared backdrop behind the hero and
             // activity rows, independent of the recycled feed's composition.
-            if (backdropBehindRows) DiscoveryBackdropArtwork(artwork?.artwork, reduceMotion, onPrepared = { url ->
-                if (published && artworkIdentity != null && url == artwork?.artwork) {
-                    preparedScenes.remove(artworkIdentity)
-                    preparedScenes[artworkIdentity] = url
+            if (backdropBehindRows) DiscoveryBackdropArtwork(artwork?.artwork, reduceMotion, firstRevealMillis = 140, onPrepared = { url ->
+                if (published && sceneIdentity != null && url == artwork?.artwork) {
+                    preparedScenes.remove(sceneIdentity)
+                    preparedScenes[sceneIdentity] = url
                     while (preparedScenes.size > 12) preparedScenes.remove(preparedScenes.keys.first())
                 }
             }, onFailure = { url ->

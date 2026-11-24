@@ -140,7 +140,7 @@ enum class InstallHandoff {
 
 object AppUpdates {
     private val distribution = UpdateChannel.forPackage(BuildConfig.APPLICATION_ID)
-    private val isolatedRegression = BuildConfig.DEBUG && BuildConfig.APPLICATION_ID == "com.nikhil.niktv.regression"
+    private val isolatedRegression = isIsolatedUpdateRegression(BuildConfig.APPLICATION_ID)
     private const val PERIODIC = "niktv-periodic-update"
     private const val STARTUP = "niktv-startup-update"
     private const val PREFS = "app_update_download"

@@ -101,4 +101,55 @@ class CategoryMetadataRefreshTest {
         vm.refreshProviderCategories(CatalogType.LIVE_TV, userRequested = false); scheduler.runCurrent()
         assertEquals("Automatic retry backoff prevents repeated tab-entry requests", 1, calls)
     }
+
+    @Test fun coldLiveEntryPublishesLoadingAndALateFailureStaysOffMovies() {
+        val request = CompletableDeferred<List<Category>>()
+        val started = CompletableDeferred<Unit>()
+        vm.categoryMetadataLookup = { _, _, _ -> started.complete(Unit); request.await() }
+        val cold = profile.copy(portalUrl = "https://cold-category-failure.invalid")
+        state.value = NikTvState(savedProfile = cold,
+            session = PortalSession(cold, "fixture", cold.portalUrl, "", "", ""), restoring = false)
+
+        vm.openCatalogType(CatalogType.LIVE_TV)
+        assertEquals(cold.cacheKey() to CatalogType.LIVE_TV, state.value.categoryRootLoading)
+        awaitCondition("Cold catalogue lookup did not start") { started.isCompleted }
+
+        vm.openDiscovery(DashboardSurface.MOVIES)
+        request.completeExceptionally(IllegalStateException("Delayed category failure"))
+        scheduler.runCurrent()
+
+        assertEquals(DashboardSurface.MOVIES, state.value.discoverySurface)
+        assertNull(state.value.categoryRootLoading)
+        assertNull(state.value.error)
+    }
+
+    @Test fun lateLiveMetadataWarmsTheCacheWithoutReplacingMovies() {
+        val request = CompletableDeferred<List<Category>>()
+        val started = CompletableDeferred<Unit>()
+        vm.categoryMetadataLookup = { _, _, _ -> started.complete(Unit); request.await() }
+        val cold = profile.copy(portalUrl = "https://cold-category-success.invalid")
+        state.value = NikTvState(savedProfile = cold,
+            session = PortalSession(cold, "fixture", cold.portalUrl, "", "", ""), restoring = false)
+
+        vm.openCatalogType(CatalogType.LIVE_TV)
+        awaitCondition("Cold catalogue lookup did not start") { started.isCompleted }
+        vm.openDiscovery(DashboardSurface.MOVIES)
+        val previousHeading = Category("movies", "Previous heading", CatalogType.MOVIES)
+        state.value = state.value.copy(categories = listOf(previousHeading), selectedCategory = previousHeading)
+        request.complete(listOf(added))
+        awaitCondition("Live metadata was not retained for the next visit") {
+            state.value.rawCategoriesByType[CatalogType.LIVE_TV] == listOf(added)
+        }
+
+        assertEquals(DashboardSurface.MOVIES, state.value.discoverySurface)
+        assertEquals(listOf(previousHeading), state.value.categories)
+        assertEquals(previousHeading, state.value.selectedCategory)
+    }
+
+    private fun awaitCondition(message: String, ready: () -> Boolean) {
+        val end = System.nanoTime() + 6_000_000_000L
+        do { scheduler.runCurrent(); if (ready()) return; Thread.sleep(10) }
+        while (System.nanoTime() < end)
+        fail(message)
+    }
 }

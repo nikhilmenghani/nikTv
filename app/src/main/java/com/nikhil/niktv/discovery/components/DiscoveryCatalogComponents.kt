@@ -518,33 +518,19 @@ private fun ModernDestinationHub(
             }
         }, categoryPins.tmdbOrder(dashboardSurface)) { it.name }
 
-    val rawLiveCategories =
-        if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.LIVE_TV)) {
-            state.modernVisibleIptvCategories(
-                CatalogType.LIVE_TV,
-                requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
-            ).sortedBy { it.id !in pinnedLiveCategories }
-        } else {
-            emptyList()
+    @Composable fun visibleCategories(type: CatalogType, surface: DashboardSurface, pinned: Set<String>): List<Category> {
+        if (dashboardSurface != DashboardSurface.HOME && dashboardSurface != surface) return emptyList()
+        val cache = state.browseCachesByType[type]
+        return remember(profileKey, dashboardSurface, state.rawCategoriesByType[type], cache?.profileKey, cache?.categories,
+            state.categoryFilters["$profileKey|${type.name}"], pinned) {
+            state.modernVisibleIptvCategories(type, requireExplicitSelection = dashboardSurface == DashboardSurface.HOME)
+                .sortedBy { it.id !in pinned }
         }
-    val rawMovieCategories =
-        if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.MOVIES)) {
-            state.modernVisibleIptvCategories(
-                CatalogType.MOVIES,
-                requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
-            ).sortedBy { it.id !in pinnedMovieCategories }
-        } else {
-            emptyList()
-        }
-    val rawSeriesCategories =
-        if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.SERIES)) {
-            state.modernVisibleIptvCategories(
-                CatalogType.SERIES,
-                requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
-            ).sortedBy { it.id !in pinnedSeriesCategories }
-        } else {
-            emptyList()
-        }
+    }
+
+    val rawLiveCategories = visibleCategories(CatalogType.LIVE_TV, DashboardSurface.LIVE_TV, pinnedLiveCategories)
+    val rawMovieCategories = visibleCategories(CatalogType.MOVIES, DashboardSurface.MOVIES, pinnedMovieCategories)
+    val rawSeriesCategories = visibleCategories(CatalogType.SERIES, DashboardSurface.SERIES, pinnedSeriesCategories)
 
     val organizedBrowse = state.savedProfile?.portalType == PortalType.XTREAM && dashboardSurface != DashboardSurface.HOME
     val browseType = when (dashboardSurface) {
@@ -560,17 +546,29 @@ private fun ModernDestinationHub(
     var customCollections by remember(profileKey, browseType) {
         mutableStateOf(CategoryCollectionPreferences.read(context, profileKey, browseType))
     }
-    val providerCategories = rawLiveCategories + rawMovieCategories + rawSeriesCategories
-    val organizedCategories by produceState(if (organizedBrowse) emptyList<Category>() else providerCategories,
-        providerCategories, categoryBrowseMode, customCollections, organizedBrowse) {
-        value = if (!organizedBrowse) providerCategories else withContext(Dispatchers.Default) {
-            if (categoryBrowseMode == CategoryBrowseMode.CUSTOM) {
-                CategoryCollectionPreferences.visible(customCollections, providerCategories)
-            } else CategoryOrganization.organize(providerCategories, categoryBrowseMode)
+    val providerCategories = remember(rawLiveCategories, rawMovieCategories, rawSeriesCategories) {
+        rawLiveCategories + rawMovieCategories + rawSeriesCategories
+    }
+    val organizeInBackground = organizedBrowse && categoryBrowseMode != CategoryBrowseMode.PROVIDER && providerCategories.isNotEmpty()
+    val projectionKey = CategoryBrowseProjectionKey(LocalViewingOwner.current, profileKey, browseType, categoryBrowseMode)
+    val input = remember(providerCategories, categoryBrowseMode, customCollections) {
+        CategoryBrowseInput(providerCategories, customCollections.takeIf { categoryBrowseMode == CategoryBrowseMode.CUSTOM }.orEmpty())
+    }
+    val retained = remember(projectionKey, input, organizeInBackground) {
+        if (organizeInBackground) CategoryBrowseProjectionMemory.get(projectionKey)?.takeIf { it.canDisplayFor(input) } else null
+    }
+    val projection by produceState<Pair<CategoryBrowseProjectionKey, CategoryBrowseProjection>?>(null, projectionKey, input, organizeInBackground) {
+        if (organizeInBackground && retained?.input != input) {
+            val grouped = withContext(Dispatchers.Default) { organizeCategoryBrowse(input, categoryBrowseMode) }
+            CategoryBrowseProjectionMemory.put(projectionKey, grouped)
+            value = projectionKey to grouped
         }
     }
-    val matchingCategories = remember(organizedCategories, providerCategories, state.rawCategoriesByType, categoryQuery, pinnedLiveCategories, pinnedMovieCategories, pinnedSeriesCategories, categoryPins) {
-        CategoryOrganization.search(organizedCategories, state.rawCategoriesByType[browseType].orEmpty(), categoryQuery)
+    val current = projection?.takeIf { (key, result) -> key == projectionKey && result.input == input }?.second
+    val organizedCategories = if (organizeInBackground) (current ?: retained)?.categories.orEmpty() else providerCategories
+    val rawBrowseCategories = state.rawCategoriesByType[browseType].orEmpty()
+    val matchingCategories = remember(organizedCategories, rawBrowseCategories, categoryQuery, pinnedLiveCategories, pinnedMovieCategories, pinnedSeriesCategories, categoryPins) {
+        CategoryOrganization.search(organizedCategories, rawBrowseCategories, categoryQuery)
             .sortedBy { category -> category.id !in when (category.type) {
                 CatalogType.LIVE_TV -> pinnedLiveCategories
                 CatalogType.MOVIES -> pinnedMovieCategories
@@ -661,6 +659,10 @@ private fun ModernDestinationHub(
     }
     val libraryOptions = com.nikhil.niktv.discovery.LocalDiscoveryLibraryOptions.current
     val refreshProviderCategories = LocalRefreshProviderCategories.current
+    val metadataLoading = state.categoryRootLoading == (profileKey to browseType)
+    val metadataRefreshing = (profileKey to browseType) in state.categoryRefreshes
+    val categoriesLoading = metadataLoading || (metadataRefreshing && providerCategories.isEmpty()) ||
+        (organizeInBackground && current == null && retained?.input != input)
 
     Column(modifier.fillMaxSize()) {
         if (libraryOptions?.live != true) {
@@ -754,14 +756,15 @@ private fun ModernDestinationHub(
                     }, onQuery = { categoryQuery = it; hubGridState.requestScrollToItem(0) },
                     create = { createCollection = true }, organized = organizedBrowse,
                     refresh = { refreshProviderCategories(browseType) },
-                    refreshing = (profileKey to browseType) in state.categoryRefreshes,
+                    refreshing = metadataLoading || metadataRefreshing,
                     visibleCount = providerCategories.size,
                     totalCount = state.rawCategoriesByType[browseType]?.size ?: providerCategories.size,
                     arrange = if (matchingCategories.size > 1) ({ arrangingCategories = true }) else null)
             }
             if (matchingCategories.isEmpty()) {
-                item("no-matching-categories", span = fullSpan) {
-                    Text(if (categoryBrowseMode == CategoryBrowseMode.CUSTOM && categoryQuery.isBlank())
+                item("category-browse-status", span = fullSpan) {
+                    Text(if (categoriesLoading) "Loading categories…"
+                    else if (categoryBrowseMode == CategoryBrowseMode.CUSTOM && categoryQuery.isBlank())
                         "Create a collection with + to combine your provider categories."
                     else "No matching categories. Try another browse option or Provider categories.")
                 }
@@ -1188,7 +1191,7 @@ internal fun NikTvState.modernVisibleIptvCategories(
     val raw = rawCategoriesByType[type]
         .orEmpty()
         .ifEmpty {
-            browseCachesByType[type]?.categories.orEmpty()
+            browseCachesByType[type]?.takeIf { it.profileKey == profileKey }?.categories.orEmpty()
         }
     val enabledIds =
         categoryFilters["$profileKey|${type.name}"]

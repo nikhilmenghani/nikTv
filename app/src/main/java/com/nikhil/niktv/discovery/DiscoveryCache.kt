@@ -61,7 +61,10 @@ internal class DiscoveryCache(private val directory: File, private val now: () -
         try { return flight.mutex.withLock {
             val entry = read(key)
             val old = withContext(Dispatchers.IO) { entry?.let { runCatching { json.decodeFromString(serializer, it.payload) }.getOrNull() } }
-            if (old != null) { stale(old); if (entry?.fresh(now(), ttl) == true) return@withLock old }
+            if (old != null) {
+                if (entry?.fresh(now(), ttl) == true) return@withLock old
+                stale(old)
+            }
             try {
                 val value = network()
                 runCatching { write(key, withContext(Dispatchers.IO) { json.encodeToString(serializer, value) }) }.onFailure { if (it is CancellationException) throw it }

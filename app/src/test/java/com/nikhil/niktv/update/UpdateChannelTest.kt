@@ -1,5 +1,6 @@
 package com.nikhil.niktv.update
 
+import com.nikhil.niktv.BuildConfig
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -11,6 +12,14 @@ class UpdateChannelTest {
 
     @Test(expected = IllegalStateException::class)
     fun unknownPackageFailsClosed() { UpdateChannel.forPackage("com.nikhil.other") }
+
+    @Test fun regressionUpdateIsolationFollowsTheVariantEvenInPerformanceMode() {
+        val regression = "com.nikhil.niktv.regression"
+        assertEquals(BuildConfig.BUILD_TYPE == "debug", isIsolatedUpdateRegression(regression))
+        if (BuildConfig.BUILD_TYPE == "debug") assertEquals(UpdateChannel.DEVELOPMENT, UpdateChannel.forPackage(regression))
+        assertFalse(isIsolatedUpdateRegression(UpdateChannel.STABLE.applicationId))
+        assertFalse(isIsolatedUpdateRegression(UpdateChannel.DEVELOPMENT.applicationId))
+    }
 
     @Test fun allApkVariantsStayInTheirChannel() {
         for (channel in UpdateChannel.entries) {

@@ -1,14 +1,20 @@
 package com.nikhil.niktv.data
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 
 class CatalogResponseCacheTest {
-    @Test fun reusesExpiresAndInvalidates() {
+    @Test fun reusesExpiresAndInvalidates() = runTest {
         var time = 0L
         var calls = 0
         val cache = CatalogResponseCache<String, Int>(now = { time }, ttlMillis = 100)
-        fun read() = cache.get("a") { calls++; listOf(1, 2) }
+        suspend fun read() = cache.get("a") { calls++; listOf(1, 2) }
         read(); read()
         assertEquals(1, calls)
         time = 100
@@ -18,38 +24,40 @@ class CatalogResponseCacheTest {
         read()
         assertEquals(3, calls)
     }
-    @Test fun isolatesAndEvicts() {
+    @Test fun isolatesAndEvicts() = runTest {
         val cache = CatalogResponseCache<String, Int>(maxRecords = 3)
         cache.get("a") { listOf(1, 2) }
         cache.get("b") { listOf(3, 4) }
         assertEquals(listOf(3, 4), cache.get("b") { error("cached") })
         assertEquals(listOf(5), cache.get("a") { listOf(5) })
     }
-    @Test fun retriesFailure() {
+    @Test fun retriesFailure() = runTest {
         val cache = CatalogResponseCache<String, Int>()
         runCatching { cache.get("a") { error("offline") } }
         assertEquals(listOf(1), cache.get("a") { listOf(1) })
     }
 
-    @Test fun slowFetchDoesNotBlockInvalidationOrOtherCategoriesAndCannotRepopulateAfterRefresh() {
+    @Test fun slowFetchDoesNotBlockInvalidationOrOtherCategoriesAndCannotRepopulateAfterRefresh() = runTest {
         val cache = CatalogResponseCache<String, Int>()
-        val started = java.util.concurrent.CountDownLatch(1)
-        val release = java.util.concurrent.CountDownLatch(1)
-        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
-        try {
-            val old = executor.submit<List<Int>> {
-                cache.get("a") { started.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS)); listOf(1) }
-            }
-            assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS))
-            val refreshed = executor.submit<List<Int>> {
-                cache.invalidate("a")
-                assertEquals(listOf(3), cache.get("b") { listOf(3) })
-                cache.get("a") { listOf(2) }
-            }
-            assertEquals(listOf(2), refreshed.get(2, java.util.concurrent.TimeUnit.SECONDS))
-            release.countDown()
-            assertEquals(listOf(1), old.get(2, java.util.concurrent.TimeUnit.SECONDS))
-            assertEquals(listOf(2), cache.get("a") { error("New cache must survive old completion") })
-        } finally { release.countDown(); executor.shutdownNow() }
+        val release = CompletableDeferred<Unit>()
+        val old = async(start = CoroutineStart.UNDISPATCHED) {
+            cache.get("a") { release.await(); listOf(1) }
+        }
+        cache.invalidate("a")
+        assertEquals(listOf(3), cache.get("b") { listOf(3) })
+        assertEquals(listOf(2), cache.get("a") { listOf(2) })
+        release.complete(Unit)
+        assertEquals(listOf(1), old.await())
+        assertEquals(listOf(2), cache.get("a") { error("New cache must survive old completion") })
+    }
+
+    @Test fun cancellingWarmupLetsAnAttachedReaderTakeOverTheFetch() = runTest {
+        val cache = CatalogResponseCache<String, Int>()
+        val warmup = async(start = CoroutineStart.UNDISPATCHED) { cache.get("movies") { awaitCancellation() } }
+        val foreground = async(start = CoroutineStart.UNDISPATCHED) { cache.get("movies") { listOf(42) } }
+        assertFalse(foreground.isCompleted)
+        warmup.cancelAndJoin()
+        assertEquals(listOf(42), foreground.await())
+        assertEquals(listOf(42), cache.get("movies") { error("Foreground result should be cached") })
     }
 }

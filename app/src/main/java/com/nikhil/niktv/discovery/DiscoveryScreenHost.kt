@@ -601,7 +601,8 @@ internal fun DiscoveryScreenHost(
                 state, discoveryLibrary,
                 back = { if (libraryBrowseAll) libraryBrowseAll = false else if (state.favoritesOpen) closeFavorites() else if (modernSectionOpen) closeModernSection() else landingHome() },
                 select = openTrial, navigate = navigateDiscovery,
-                presentation = libraryPresentation.takeIf { (!useEstablishedLibrary || state.favoritesOpen) && !modernSectionOpen && !libraryBrowseAll }) {
+                presentation = libraryPresentation.takeIf { (!useEstablishedLibrary || state.favoritesOpen) && !modernSectionOpen && !libraryBrowseAll },
+                atTabRoot = !modernSectionOpen && !libraryBrowseAll) {
                     Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f).fillMaxWidth()) {
                             if (!useEstablishedLibrary && !modernSectionOpen && !libraryBrowseAll) browseStateHolder.SaveableStateProvider("library-feed:${state.savedProfile?.cacheKey()}:$discoveryLibrary") {
@@ -626,7 +627,13 @@ internal fun DiscoveryScreenHost(
         }
         }
     }
-    CompositionLocalProvider(LocalEasyNavigation provides easyNavigation) {
+    val sharedHeader = remember { SharedDiscoveryHeader() }
+    val phoneTabFocus = remember {
+        DiscoveryPhoneDestination.entries.associateWith { FocusRequester() }
+    }
+    CompositionLocalProvider(LocalEasyNavigation provides easyNavigation,
+        LocalSharedDiscoveryHeader provides sharedHeader,
+        LocalDiscoveryPhoneTabFocus provides if (phoneExperience && !easyLayout) phoneTabFocus else emptyMap()) {
     if (state.settingsOpen) {
         // Settings owns its header, navigation and system insets on every layout.
         MainContent(Modifier.fillMaxSize())
@@ -709,7 +716,10 @@ internal fun DiscoveryScreenHost(
         @Composable fun PhoneBottomBar() {
             @OptIn(ExperimentalLayoutApi::class)
             val keyboardVisible = WindowInsets.isImeVisible
-            DiscoveryPhoneBottomNavigation(destination, select = { page -> when (page) {
+            DiscoveryPhoneBottomNavigation(destination, select = { page ->
+                val atLanding = !providersVisible && !previewProviderCategory && !modernSectionOpen &&
+                    !state.offlineDownloadsOpen && !libraryBrowseAll && !phoneDetailOpen
+                if (page != destination || !atLanding) when (page) {
                 DiscoveryPhoneDestination.HOME -> openTrial(DashboardSurface.HOME)
                 DiscoveryPhoneDestination.LIVE -> selectType(CatalogType.LIVE_TV)
                 DiscoveryPhoneDestination.MOVIES -> openTrial(DashboardSurface.MOVIES)
@@ -756,7 +766,7 @@ internal fun DiscoveryScreenHost(
         // Secondary destinations, including downloads, use the same modern header.
         com.nikhil.niktv.discovery.DiscoveryLibraryScreen(
             state, com.nikhil.niktv.discovery.DiscoveryLibraryDestination.MY_LIST,
-            back = ::landingHome, select = openTrial, navigate = navigateDiscovery
+            back = ::landingHome, select = openTrial, navigate = navigateDiscovery, atTabRoot = false
         ) {
             Column(Modifier.fillMaxSize()) {
                 MainContent(Modifier.weight(1f).fillMaxWidth())

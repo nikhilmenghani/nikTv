@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -830,11 +831,11 @@ class StalkerPortalClient(private val context: Context) {
         }
     }
 
-    private fun xtreamCatalog(session: PortalSession, category: Category): List<MediaItem> =
+    private suspend fun xtreamCatalog(session: PortalSession, category: Category): List<MediaItem> =
         xtreamCatalog(session, category.type, category.id)
 
     @OptIn(ExperimentalSerializationApi::class)
-    private fun xtreamCatalog(session: PortalSession, type: CatalogType, categoryId: String?, offset: Int = 0, limit: Int = Int.MAX_VALUE): List<MediaItem> {
+    private suspend fun xtreamCatalog(session: PortalSession, type: CatalogType, categoryId: String?, offset: Int = 0, limit: Int = Int.MAX_VALUE): List<MediaItem> {
         val action = when (type) {
             CatalogType.LIVE_TV -> "get_live_streams"
             CatalogType.MOVIES -> "get_vod_streams"
@@ -850,13 +851,15 @@ class StalkerPortalClient(private val context: Context) {
             .build()
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").header("Accept", "application/json").build()
         return xtreamCatalogCache.get(Triple(profile, type, categoryId)) {
-        http.newCall(request).execute().use { response ->
+        val requestContext = currentCoroutineContext()
+        http.newCall(request).readCancellable { response ->
             if (!response.isSuccessful) error("Xtream server returned HTTP ${response.code}")
             val body = response.body ?: error("Xtream server returned an empty response")
             // Xtream returns the selected category as one response rather than
             // exposing provider-side catalogue pages. Decode the complete
             // sequence so valid media is not silently hidden after item 120.
             json.decodeToSequence<JsonElement>(body.byteStream()).mapNotNull { node ->
+            requestContext.ensureActive()
             val o = node as? JsonObject ?: return@mapNotNull null
             val id = o.string("stream_id") ?: o.string("series_id") ?: return@mapNotNull null
             val extension = o.string("container_extension") ?: "mp4"

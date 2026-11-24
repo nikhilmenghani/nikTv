@@ -1,5 +1,11 @@
 package com.nikhil.niktv.update
 
+import com.nikhil.niktv.BuildConfig
+
+/** The regression debug variant also has a non-debuggable performance mode. */
+internal fun isIsolatedUpdateRegression(applicationId: String): Boolean =
+    BuildConfig.BUILD_TYPE == "debug" && applicationId == "com.nikhil.niktv.regression"
+
 /** Distribution identity follows the installed package, never its signing key or debugger flag. */
 internal enum class UpdateChannel(val applicationId: String, val development: Boolean, val appName: String) {
     STABLE("com.nikhil.niktv", false, "NikTV"),
@@ -23,7 +29,7 @@ internal enum class UpdateChannel(val applicationId: String, val development: Bo
     companion object {
         fun forPackage(applicationId: String): UpdateChannel =
             entries.singleOrNull { it.applicationId == applicationId }
-                ?: DEVELOPMENT.takeIf { com.nikhil.niktv.BuildConfig.DEBUG && applicationId == "com.nikhil.niktv.regression" }
+                ?: DEVELOPMENT.takeIf { isIsolatedUpdateRegression(applicationId) }
                 ?: error("No update channel configured for $applicationId")
     }
 }

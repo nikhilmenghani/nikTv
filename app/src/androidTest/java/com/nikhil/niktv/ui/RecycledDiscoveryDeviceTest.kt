@@ -35,6 +35,8 @@ class RecycledDiscoveryDeviceTest {
     @Test fun pendingRowSurvivesTemporaryComposeHostFocus() = verify(true, true, exercisePressure = true, exerciseHostHandoff = true)
     @Test fun rapidHeaderEntryDoesNotReviveAnObsoleteHeroRequest() = verify(true, true, withHero = true, exerciseRapidEntry = true)
     @Test fun detailsReturnPreservesBothViewportAxes() = verify(true, true, withHero = true, exerciseViewport = true)
+    @Test fun revisitedTabKeepsItsViewportAndWaitsForDpadEntry() =
+        verify(true, true, withHero = true, exerciseViewport = true, exerciseTabRevisit = true)
     @Test fun fixedHeightHeroReturnPreservesBothViewportAxes() = verify(true, true, withHero = true, fixedHero = true, exerciseViewport = true, tallHero = true)
     @Test fun reducedFocusMotionRetainsNavigationAndRestoration() = verify(true, true, withHero = true, reducedFocusMotion = true)
     @Test fun touchDetailsReturnHardwareEntryKeepsTouchedMovieAndModalFocus() =
@@ -238,7 +240,7 @@ class RecycledDiscoveryDeviceTest {
             }
         } finally { i.runOnMainSync { host.finish() } }
     }
-    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false, tallHero: Boolean = false, reversalRounds: Int = 1, exerciseHostHandoff: Boolean = false, exerciseTouchReentry: Boolean = false, touchFeedRetained: Boolean = false) {
+    private fun verify(containedCaptions: Boolean, cardShadows: Boolean, withHero: Boolean = false, fixedHero: Boolean = false, exerciseHold: Boolean = false, exercisePressure: Boolean = false, exerciseRapidEntry: Boolean = false, exerciseViewport: Boolean = false, reducedFocusMotion: Boolean = false, tallHero: Boolean = false, reversalRounds: Int = 1, exerciseHostHandoff: Boolean = false, exerciseTouchReentry: Boolean = false, touchFeedRetained: Boolean = false, exerciseTabRevisit: Boolean = false) {
         val i = InstrumentationRegistry.getInstrumentation()
         val c = i.targetContext
         check(c.packageName.endsWith(".regression"))
@@ -311,6 +313,7 @@ class RecycledDiscoveryDeviceTest {
                             }) else null,
                             showSkeletons = tallHero,
                             restoreSelection = restoreSelection.value,
+                            restoreViewportOnEntry = restoreSelection.value || exerciseTabRevisit,
                             heroHeightPx = if (fixedHero) (heroHeight * c.resources.displayMetrics.density).toInt() else null,
                             heroActivity = if (withHero) ({ activity.set(it) }) else null,
                             hero = if (withHero) ({ focused, down, up ->
@@ -460,18 +463,37 @@ class RecycledDiscoveryDeviceTest {
                     return value
                 }
                 fun bounds(): Rect = Rect().also { rect -> i.runOnMainSync { host.currentFocus!!.getGlobalVisibleRect(rect) } }
+                val source = if (exerciseTabRevisit) {
+                    i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                    await("First lower row is focused") { focus() == "r1:i0" }
+                    i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                    await("Second lower row is focused") { focus() == "r2:i0" }
+                    i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("A specific lower-row item is focused") { focus() == "r2:i1" }
+                    "r2:i1"
+                } else "r0:i15"
                 await("Source viewport settled", ::settled); Thread.sleep(650)
                 val before = bounds()
                 i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
                 await("Detail hides source", { focus() == null })
-                i.runOnMainSync { rowsShown.value = true }
+                i.runOnMainSync {
+                    if (exerciseTabRevisit) {
+                        header.requestFocus()
+                        restoreSelection.value = false
+                    }
+                    rowsShown.value = true
+                }
                 Thread.sleep(200)
-                i.runOnMainSync { entry.requestFocus() }
-                await("Selected source restored", { focus() == "r0:i15" })
+                if (exerciseTabRevisit) {
+                    assertTrue("Reattaching the viewport keeps focus in the header", headerFocused.get())
+                    i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                } else i.runOnMainSync { entry.requestFocus() }
+                await("Selected source restored", { focus() == source })
                 await("Restored viewport settled", ::settled); Thread.sleep(650)
                 val after = bounds()
                 assertTrue("Horizontal viewport retained: $before -> $after", kotlin.math.abs(before.left - after.left) <= 2)
                 assertTrue("Vertical viewport retained: $before -> $after", kotlin.math.abs(before.top - after.top) <= 2)
+                if (exerciseTabRevisit) return
             }
             for (r in 1..12) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN); await("Vertical $r") { focus() == "r$r:i0" } }
             if (withHero) await("Offscreen hero blocks rotation") { activity.get()?.visible == false }

@@ -99,6 +99,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.compose.SubcomposeAsyncImage
@@ -419,6 +422,18 @@ internal fun NikTvAuthenticatedApp(vm: NikTvViewModel, checkingForRequiredUpdate
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boolean) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(vm, lifecycle) {
+        val observer = LifecycleEventObserver { _, _ ->
+            vm.setDashboardVisible(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        }
+        lifecycle.addObserver(observer)
+        vm.setDashboardVisible(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        onDispose {
+            lifecycle.removeObserver(observer)
+            vm.setDashboardVisible(false)
+        }
+    }
     val openAccount = LocalOpenAccountScreen.current
     val openUserProfiles = LocalOpenUserProfiles.current
     val closeProfileDownloads = LocalCloseProfileDownloads.current

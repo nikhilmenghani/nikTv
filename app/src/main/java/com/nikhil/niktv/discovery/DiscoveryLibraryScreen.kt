@@ -28,7 +28,8 @@ internal val LocalLibraryArtworkCache = staticCompositionLocalOf<DiscoveryCache?
 @Composable
 internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLibraryDestination,
     back: () -> Unit, select: (DashboardSurface) -> Unit, navigate: (String) -> Unit,
-    presentation: DiscoveryCard? = null, focusNavigationOnEntry: Boolean = true, content: @Composable () -> Unit) {
+    presentation: DiscoveryCard? = null, focusNavigationOnEntry: Boolean = true,
+    atTabRoot: Boolean = true, content: @Composable () -> Unit) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val artworkCache = remember(context) { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")) }
@@ -41,13 +42,28 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
     val publishGlass: (MobileGlassSource?) -> Unit = remember(destination, state.savedProfile?.cacheKey()) { { glassSource = it } }
     val tab = remember(destination) { FocusRequester() }
     val body = remember(destination) { FocusRequester() }
+    val phoneTab = LocalDiscoveryPhoneTabFocus.current[when (destination) {
+        DiscoveryLibraryDestination.LIVE_TV -> DiscoveryPhoneDestination.LIVE
+        DiscoveryLibraryDestination.MY_LIST -> DiscoveryPhoneDestination.LIBRARY
+        DiscoveryLibraryDestination.PROVIDERS -> DiscoveryPhoneDestination.HOME
+    }]
+    val sharedHeader = LocalSharedDiscoveryHeader.current
+    val libraryLabel = when (destination) {
+        DiscoveryLibraryDestination.LIVE_TV -> "Live TV"
+        DiscoveryLibraryDestination.MY_LIST -> "My List"
+        DiscoveryLibraryDestination.PROVIDERS -> null
+    }
+    val navigateFromLibrary: (String) -> Unit = { label ->
+        if (!atTabRoot || trialCollection || state.modernIptvCategory != null || label != libraryLabel) navigate(label)
+    }
     val options = remember(destination) { DiscoveryLibraryOptions(destination == DiscoveryLibraryDestination.LIVE_TV) }
     var menu by remember(destination) { mutableStateOf(false) }
     val remote = tv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     LaunchedEffect(destination, remote, trialCollection) {
-        if (focusNavigationOnEntry && remote && !trialCollection && state.modernIptvCategory == null) repeat(8) {
+        if (focusNavigationOnEntry && remote && !trialCollection && state.modernIptvCategory == null &&
+            (libraryLabel == null || sharedHeader?.focusedTab != libraryLabel)) repeat(8) {
             withFrameNanos { }
-            if (runCatching { tab.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            if (runCatching { (phoneTab ?: tab).requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
     }
     Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
@@ -62,10 +78,11 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
         libraryFavoriteHeroes(state.favorites, state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()).isNotEmpty()
     DiscoveryArtworkShell(artworkHero, phone, backdropBehindRows = artworkHero && !phone,
         clearFailedArtwork = true, header = {
-        if (phone) DiscoveryPhoneNavigation(navigationSurface, tab, body, back, select, navigate,
+        if (phone) DiscoveryPhoneNavigation(navigationSurface, tab, body, back, select, navigateFromLibrary,
             menu, { menu = it }, library = navigationLibrary, profile = state.savedProfile?.displayName.orEmpty())
         else DiscoveryTopNavigation(navigationSurface, state.savedProfile?.displayName.orEmpty(), tab, body,
-            back, select, navigate, {}, menu, { menu = it }, null, library = navigationLibrary)
+            back, select, navigateFromLibrary, {}, menu, { menu = it }, null, library = navigationLibrary,
+            shareAcrossTabs = !trialCollection && destination != DiscoveryLibraryDestination.PROVIDERS)
     }, content = {
         Box(Modifier.fillMaxSize().focusRequester(body).focusGroup()) { content() }
     })

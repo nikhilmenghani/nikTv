@@ -36,10 +36,12 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
 
     /** Explicit top-level navigation clears every nested detail, even on the selected tab.
      * Recomposition and Back returning from Search retain the current detail instead. */
+    fun isNewLanding(navigationId: Long): Boolean = landingNavigationId?.let { it != navigationId } == true
+
     fun enterLanding(navigationId: Long): Boolean {
-        val previous = landingNavigationId
+        val changed = isNewLanding(navigationId)
         landingNavigationId = navigationId
-        if (previous == null || previous == navigationId) return false
+        if (!changed) return false
         stack.clear()
         clearFocusedPresentation()
         preparedPresentation = null
@@ -109,8 +111,14 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         jobs[key] = viewModelScope.launch {
             _state.update { it.copy(loading = it.loading + key, errors = it.errors - key) }
             try {
-                val cards = repository.feedPage(section) { cached -> if (screen.accepts(token)) publishFeed(section, cached) }
-                if (screen.accepts(token)) publishFeed(section, cards)
+                var published: DiscoveryFeedPage? = null
+                fun publish(page: DiscoveryFeedPage) {
+                    if (screen.accepts(token) && page != published) {
+                        published = page
+                        publishFeed(section, page)
+                    }
+                }
+                publish(repository.feedPage(section, ::publish))
             } catch (c: CancellationException) { throw c }
               catch (_: Exception) { if (screen.accepts(token)) _state.update { it.copy(errors = it.errors + (key to "Could not load ${section.title}. Retry when connected.")) } }
             finally { if (screen.accepts(token)) _state.update { it.copy(loading = it.loading - key) } }
@@ -201,8 +209,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private fun clearDetails() {
         detail.next(); seasonGeneration.next()
         jobs.keys.filter { !it.startsWith("feed:") }.forEach { jobs.remove(it)?.cancel() }
-        _state.update { it.copy(detail = null, details = null, episodes = emptyList(), related = emptyList(), collection = emptyList(), reviews = emptyList(), season = null,
-            loading = it.loading.filter { key -> key.startsWith("feed:") }.toSet(), errors = it.errors.filterKeys { key -> key.startsWith("feed:") }) }
+        _state.update { it.withoutDetails() }
     }
     private fun showDetails(card: DiscoveryCard) {
         pauseHeroMetadata()
@@ -253,3 +260,9 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         }
     }
 }
+
+internal fun DiscoveryState.withoutDetails(): DiscoveryState = copy(
+    detail = null, details = null, episodes = emptyList(), related = emptyList(), collection = emptyList(),
+    reviews = emptyList(), season = null, loading = loading.filter { it.startsWith("feed:") }.toSet(),
+    errors = errors.filterKeys { it.startsWith("feed:") }
+)

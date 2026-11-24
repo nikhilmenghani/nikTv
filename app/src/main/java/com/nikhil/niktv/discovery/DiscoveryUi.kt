@@ -179,6 +179,9 @@ private fun DiscoveryPreviewContent(
     val scrollVariant = discoveryVariantForRoute(experiment, experimentVariant)
     val phonePortrait = phone && configuration.screenHeightDp >= configuration.screenWidthDp
     val remoteNavigation = context.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val sharedHeader = LocalSharedDiscoveryHeader.current
+    val phoneTabFocus = LocalDiscoveryPhoneTabFocus.current[surface.phoneTab()]
+    val sharesLandingHeader = !phone && experiment && scrollVariant.nativeRows && sharedHeader != null
     val landscape = !phone
     val compactLandscape = if (television) configuration.screenWidthDp > configuration.screenHeightDp && configuration.screenHeightDp < 480
         else configuration.usesShortWideLayout()
@@ -188,104 +191,18 @@ private fun DiscoveryPreviewContent(
         hiddenTrialRows = rows
         heroPreferences.edit().putStringSet(hiddenRowsKey, rows).apply()
     }
-    // Nested TMDB details use a different discovery VM; they must not rebind the
-    // underlying collection or retain another profile's catalogue in memory.
-    val providerVm: ProviderDiscoveryViewModel = viewModel(key = "provider-discovery:$profile:${System.identityHashCode(vm)}")
-    val providerLoaded by providerVm.state.collectAsStateWithLifecycle()
     val openProvider = LocalOpenProviderDiscovery.current
     val configureProvider = LocalConfigureProviderDiscovery.current
     val displayOrder = rememberIptvPins(profile)
     val playProvider = LocalPlayProviderDiscovery.current
     val downloadProvider = LocalDownloadProviderDiscovery.current
-    val providerPageLoader = LocalProviderDiscoveryPageLoader.current
-    val fullProviderSelections = remember(profile, surface, app.categoryFilters, app.rawCategoriesByType, app.browseCachesByType.mapValues { it.value.categories }, displayOrder) {
-        listOf(CatalogType.MOVIES, CatalogType.SERIES)
-            .filter { surface != DashboardSurface.HOME && (it == CatalogType.SERIES) == (surface == DashboardSurface.SERIES) }
-            .associateWith { type -> orderedForDisplay(providerDiscoveryCategoryRows(
-                app.modernVisibleIptvCategories(type, requireExplicitSelection = surface == DashboardSurface.HOME),
-                implicitSelection = app.categoryFilters["$profile|${type.name}"] == null), displayOrder.categoryOrder(type), ::categoryDisplayOrderId) }
-    }
-    // The experiment bounds request/cache scope as well as drawing. Full collections
-    // still receive all selected categories, and persistent selections are untouched.
-    val providerSelections = remember(fullProviderSelections, scrollVariant.rowLimit) {
-        fullProviderSelections.mapValues { (_, categories) -> discoveryTrialProviderScope(categories, scrollVariant.rowLimit) }
-    }
     var nearbyRow by remember(profile, surface) { mutableStateOf<String?>(null) }
-    val providerBindingSelections = remember(providerSelections, scrollVariant, nearbyRow) {
-        if (!scrollVariant.recycledRows) providerSelections else
-            providerSelections.mapValues { (type, categories) ->
-                discoveryRecycledProviderScope(categories, nearbyRow?.removePrefix("provider:${type.name}:"))
-            }
-    }
-    val providerCatalog = discoveryProviderCatalog(surface)
-    val windowedProviderPreview = experiment && providerCatalog != null && scrollVariant.recycledRows
-    val providerBindingScope = if (windowedProviderPreview) providerSelections else providerBindingSelections
-    val previewWindow = remember(providerBindingSelections) {
-        providerBindingSelections.mapValues { providerDiscoverySources(it.value).mapTo(linkedSetOf()) { category -> category.id } }
-    }
-    val expectedProviderCategories = remember(providerBindingScope) {
-        providerBindingScope.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
-    }
-    val providerRawState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
-        ?: ProviderDiscoveryState(profile = profile, categories = expectedProviderCategories)
-    val providerState = remember(providerRawState, app.xtreamContentPolicy, app.hideSensitiveIptv, app.contentPolicyCategories) {
-        providerRawState.withContentPolicy(app)
-    }
-    val providerRawQueues by produceState(providerVm.retainedRows.takeIf { it.first == profile }
-        ?: (profile to emptyMap<String, List<MediaItem>>()), profile, providerSelections, providerRawState.pages, scrollVariant) {
-        val retained = providerVm.retainedRows.takeIf { it.first == profile }?.second.orEmpty()
-        val previous = value.takeIf { it.first == profile }?.second.orEmpty()
-        value = profile to withContext(Dispatchers.Default) {
-            buildMap { providerSelections.forEach { (type, categories) -> categories.forEach { category ->
-                val key = "provider:${type.name}:${category.id}"
-                val sources = providerDiscoverySources(listOf(category))
-                val pages = providerRawState.pages[type].orEmpty()
-                val items = if (!scrollVariant.recycledRows || sources.any { it.id in pages }) providerDiscoveryItems(sources, pages)
-                    else retained[key].orEmpty()
-                put(key, if (windowedProviderPreview) previous[key]?.takeIf { it == items } ?: items else items)
-            } } }
-        }
-    }
-    SideEffect { if (providerRawQueues.first == profile) {
-        providerVm.retainedRows = if (!scrollVariant.recycledRows) providerRawQueues else {
-            val hot = providerBindingSelections.flatMap { (type, cats) -> cats.map { "provider:${type.name}:${it.id}" } }.toSet()
-            val values = providerRawQueues.second
-            profile to (values.filterKeys { it in hot } + values.filter { it.key !in hot && it.value.isNotEmpty() }).entries.take(100).associate { it.toPair() }
-        }
-    } }
-    val providerQueues = remember(providerRawQueues, app.xtreamContentPolicy, app.hideSensitiveIptv, app.contentPolicyCategories) {
-        val gate = com.nikhil.niktv.ui.XtreamContentGate(app)
-        if (!gate.active) providerRawQueues else providerRawQueues.first to providerRawQueues.second.mapValues { (key, items) ->
-            val type = if (key.startsWith("provider:SERIES:")) CatalogType.SERIES else CatalogType.MOVIES
-            items.filter { gate.allows(it, type) }
-        }
-    }
+    val (providerVm, providerCatalog, fullProviderSelections, providerSelections, windowedProviderPreview,
+        providerState, providerQueues) = rememberDiscoveryProviderPreview(app, profile, surface, vm,
+        scrollVariant, experiment, nearbyRow, displayOrder)
     var providerCollection by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
     var providerCollectionVisit by rememberSaveable(profile, surface) { mutableIntStateOf(0) }
     var providerCollectionCategory by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
-    LaunchedEffect(profile, app.session, providerBindingScope, app.cacheIntervalMinutes, windowedProviderPreview) {
-        providerVm.bind(app.session, providerBindingScope, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true,
-            pageLoader = providerPageLoader, initialPreviewWindow = previewWindow.takeIf { windowedProviderPreview })
-    }
-    LaunchedEffect(profile, providerState.identity, previewWindow, windowedProviderPreview) {
-        if (windowedProviderPreview) providerVm.updatePreviewWindow(previewWindow)
-    }
-    // Keep bounded landing previews for an immediate return from details; nested detail
-    // routes release their private catalogue copies. No network work survives disposal.
-    DisposableEffect(providerVm) { onDispose { providerVm.pause(release = vm.state.value.detail != null) } }
-    val providerLifecycle = LocalLifecycleOwner.current.lifecycle
-    val bindProvider by rememberUpdatedState {
-        providerVm.bind(app.session, providerBindingScope, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader,
-            initialPreviewWindow = previewWindow.takeIf { windowedProviderPreview })
-    }
-    DisposableEffect(providerLifecycle, providerVm) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) providerVm.pause()
-            else if (event == Lifecycle.Event.ON_START) bindProvider()
-        }
-        providerLifecycle.addObserver(observer)
-        onDispose { providerLifecycle.removeObserver(observer) }
-    }
     val isolateNativeHero = discoveryIsolateHero(experiment, scrollVariant)
     val feedState = remember(vm, isolateNativeHero) {
         vm.state.map { it.recycledFeedState(isolateNativeHero) }.distinctUntilChanged()
@@ -294,8 +211,10 @@ private fun DiscoveryPreviewContent(
     val loadedState by if (isolateNativeHero)
         feedState.collectAsStateWithLifecycle(initialValue = initialFeedState)
     else vm.state.collectAsStateWithLifecycle()
-    val state = remember(loadedState, profile, surface, app.xtreamContentPolicy, app.contentPolicyCategories) {
-        (loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)).withContentPolicy(app)
+    val enteringLanding = honorLandingNavigation && vm.isNewLanding(app.discoveryNavigationId)
+    val state = remember(loadedState, profile, surface, enteringLanding, app.xtreamContentPolicy, app.contentPolicyCategories) {
+        val route = loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)
+        (if (enteringLanding) route.withoutDetails().copy(focusedEntryKey = null, focusedPresentation = null) else route).withContentPolicy(app)
     }
     // TV browsing prioritizes one decisive focus change over full-screen presentation work.
     // Explicit detail routes keep their artwork, metadata and actions.
@@ -357,8 +276,19 @@ private fun DiscoveryPreviewContent(
             actions.exit()
         }
     }
-    fun selectRoute(destination: DashboardSurface) { parkRouteFocus(); actions.selectSurface(destination) }
-    fun navigateRoute(destination: String) { parkRouteFocus(); actions.navigate(destination) }
+    fun onLanding() = state.detail == null && providerCollection == null && activityCollection == null && !vm.genresOpen &&
+        app.providerMovieDetails == null
+    fun selectRoute(destination: DashboardSurface) {
+        if (destination == surface && onLanding()) return
+        if (!sharesLandingHeader) parkRouteFocus()
+        actions.selectSurface(destination)
+    }
+    fun navigateRoute(destination: String) {
+        val topTab = trialSurfaces.firstOrNull { it.trialTitle() == destination }
+        if (topTab == surface && onLanding()) return
+        if (!sharesLandingHeader || (topTab == null && destination != "Live TV" && destination != "My List")) parkRouteFocus()
+        actions.navigate(destination)
+    }
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
@@ -677,11 +607,12 @@ private fun DiscoveryPreviewContent(
     val candidate = state.heroPresentation?.takeIf { state.detail == null && it.key == rawCandidate?.key } ?: rawCandidate
     // Selection and actions change immediately. Retain only the previous background
     // while artwork prepares; a slow image must never leave another title's Play active.
-    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait || !showBackdrop }, vm.preparedPresentation, presentationActive && showBackdrop)
+    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait || !showBackdrop },
+        vm.preparedPresentation.takeUnless { enteringLanding }, presentationActive && showBackdrop)
     SideEffect { if (showBackdrop) prepared?.let(vm::retainPreparedPresentation) }
     val displayed = candidate
     var glassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
-    providerCollection?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
+    providerCollection.takeUnless { enteringLanding }?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
         DisposableEffect(Unit) { actions.detailVisibilityChanged(true); onDispose { actions.detailVisibilityChanged(false) } }
         saved.SaveableStateProvider("provider-collection:${type.name}:$providerCollectionCategory:$providerCollectionVisit") {
             val category = fullProviderSelections[type].orEmpty().firstOrNull { it.id == providerCollectionCategory }
@@ -944,7 +875,7 @@ private fun DiscoveryPreviewContent(
                     else setHiddenTrialRows(hiddenTrialRows + row.key)
                 }), viewAll = all.takeIf { recycled && row.hasMore }, loading = row.key in loadingRows)
         } }
-        if (activityCollection != null) {
+        if (!enteringLanding && activityCollection != null) {
             val row = rails.firstOrNull { it.key == activityCollection }
             if (row != null) {
                 DisposableEffect(Unit) { actions.detailVisibilityChanged(true); onDispose { actions.detailVisibilityChanged(false) } }
@@ -973,12 +904,14 @@ private fun DiscoveryPreviewContent(
                     back = ::closeRoute, select = ::selectRoute, navigate = ::navigateRoute, headerFocus = { restoreNativeSelection = false },
                     menu = menu, changeMenu = { menu = it }, customize = if (surface == DashboardSurface.HOME) ({ configure = true }) else null,
                     categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = false,
-                    categoryPopupChanged = { categoryPopup = it })
+                    categoryPopupChanged = { categoryPopup = it }, shareAcrossTabs = sharesLandingHeader)
             }, content = {
                 saved.SaveableStateProvider("native:$routeKey") {
                     LaunchedEffect(app.discoveryNavigationId) {
                         val menuEntry = nativeNavigationId != app.discoveryNavigationId
                         nativeNavigationId = app.discoveryNavigationId
+                        if (menuEntry && !portalFocusReturn.waiting &&
+                            (phone && !remoteNavigation || sharesLandingHeader && sharedHeader?.focusedTab == surface.trialTitle())) return@LaunchedEffect
                         if (portalFocusReturn.waiting) {
                             repeat(20) {
                                 withFrameNanos { }
@@ -995,7 +928,7 @@ private fun DiscoveryPreviewContent(
                             if (!menuEntry && restoreNativeSelection && recycled) {
                                 if (nativeFocusRestorer.restore()) return@LaunchedEffect
                             } else {
-                                val target = if (menuEntry) tabRequester else playRequester
+                                val target = if (menuEntry) phoneTabFocus ?: tabRequester else playRequester
                                 if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
                             }
                         }
@@ -1013,7 +946,8 @@ private fun DiscoveryPreviewContent(
                         heroHeightPx = if (nativeHero != null && landscape && !phone) with(LocalDensity.current) {
                             (trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeHeroFraming, television), fontScale).dp + LocalHeroNavigationInset.current).roundToPx()
                         } else null,
-                        hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null, restoreSelection = restoreNativeSelection, heroFocusEntry = { id ->
+                        hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null,
+                        restoreSelection = restoreNativeSelection, restoreViewportOnEntry = true, heroFocusEntry = { id ->
                             runCatching { (if (id == "info" && surface != DashboardSurface.HOME) heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
                         })
                     else NativeDiscoveryRows(nativeRows, Modifier.fillMaxSize(), playRequester,
@@ -1555,12 +1489,13 @@ internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alig
 @Composable
 internal fun DiscoveryBackdropArtwork(requested: String?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center,
     shaded: Boolean = true, viewportShade: Boolean = false, fillWidth: Boolean = false,
-    onPrepared: (String) -> Unit = {}, onFailure: (String) -> Unit = {}) {
+    onPrepared: (String) -> Unit = {}, onFailure: (String) -> Unit = {}, firstRevealMillis: Int = 300) {
     val context = LocalContext.current
     var ready by remember { mutableStateOf(requested) }
+    var duration by remember { mutableIntStateOf(firstRevealMillis) }
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
-        Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else 300), label = "discoveryBackdrop") { url ->
+        Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else duration), label = "discoveryBackdrop") { url ->
             val request = remember(context, url, shaded, viewportShade) { ImageRequest.Builder(context).data(url).size(1280, 720)
                 .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
             AsyncImage(request, null, if (fillWidth) Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).aspectRatio(16f / 9f) else Modifier.fillMaxSize(),
@@ -1573,7 +1508,10 @@ internal fun DiscoveryBackdropArtwork(requested: String?, reduceMotion: Boolean,
             val request = remember(context, requested, shaded, viewportShade) { ImageRequest.Builder(context).data(requested).size(1280, 720)
                 .apply { if (shaded) transformations(DiscoveryBackdropTransformation(verticalShade = !viewportShade)) }.crossfade(false).build() }
             AsyncImage(request, null,
-                Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) ready = requested },
+                Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) {
+                    duration = if (ready == null) firstRevealMillis else 300
+                    ready = requested
+                } },
                 onError = { if (currentRequest == requested) onFailure(requested) })
         }
         LaunchedEffect(requested) { if (requested == null) ready = null }
