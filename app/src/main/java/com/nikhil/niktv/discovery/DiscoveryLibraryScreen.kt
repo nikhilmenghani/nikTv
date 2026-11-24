@@ -75,7 +75,7 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
         LocalMobileGlassFit provides (glassSource?.fit ?: false), LocalMobileGlassTopAligned provides (glassSource?.topAligned ?: false),
         LocalMobileGlassFillWidth provides (glassSource?.fillWidth ?: false), LocalPublishMobileGlassSource provides publishGlass) {
     val artworkHero = !trialCollection && destination == DiscoveryLibraryDestination.MY_LIST &&
-        libraryFavoriteHeroes(state.favorites, state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()).isNotEmpty()
+        hasLibraryFavoriteHero(state.favorites, state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty())
     DiscoveryArtworkShell(artworkHero, phone, backdropBehindRows = artworkHero && !phone,
         clearFailedArtwork = true, header = {
         if (phone) DiscoveryPhoneNavigation(navigationSurface, tab, body, back, select, navigateFromLibrary,

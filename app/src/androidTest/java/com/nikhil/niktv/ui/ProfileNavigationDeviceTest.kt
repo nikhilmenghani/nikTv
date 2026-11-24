@@ -203,6 +203,7 @@ class ProfileNavigationDeviceTest {
                 } } else tab(title)?.let { (!selected || it.isSelected) && (!focused || it.isFocused) } == true
             await("Home is selected on startup") { ownsTab("Home", selected = true) }
             val measure = InstrumentationRegistry.getArguments().getString("tabFrameMetrics") == "true"
+            val saveProfile = InstrumentationRegistry.getArguments().getString("tabSaveProfile") == "true"
             val traceFocus = InstrumentationRegistry.getArguments().getString("tabFocusDiagnostics") == "true"
             var frames: TabFrameCapture? = null
             if (measure) instrumentation.runOnMainSync { frames = TabFrameCapture(activity.window) }
@@ -291,7 +292,7 @@ class ProfileNavigationDeviceTest {
                     repeat(3) { key(KeyEvent.KEYCODE_DPAD_LEFT) }
                     activate("Home", alreadyFocused = true)
                 }
-                if (measure) {
+                if (measure || saveProfile) {
                     repeat(3) {
                         activate("Home")
                         activate("Movies")
@@ -299,6 +300,14 @@ class ProfileNavigationDeviceTest {
                         activate("Live TV", liveCollection)
                         activate("My List")
                     }
+                }
+                if (saveProfile) {
+                    // Save while this regression process still owns the exercised code.
+                    SystemClock.sleep(5_000)
+                    android.os.Process.sendSignal(android.os.Process.myPid(), android.system.OsConstants.SIGUSR1)
+                    SystemClock.sleep(1_000)
+                }
+                if (measure) {
                     val report = requireNotNull(frames).report()
                     File(context.externalCacheDir, "navigation-audit/tab-navigation-metrics.json").apply {
                         parentFile?.mkdirs()

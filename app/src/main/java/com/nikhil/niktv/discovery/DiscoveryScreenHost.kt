@@ -631,7 +631,10 @@ internal fun DiscoveryScreenHost(
     val phoneTabFocus = remember {
         DiscoveryPhoneDestination.entries.associateWith { FocusRequester() }
     }
+    // Read pin and order preferences once for the dashboard, across tab replacement.
+    val pinObservation = state.savedProfile?.cacheKey()?.let { rememberIptvPinObservation(it) }
     CompositionLocalProvider(LocalEasyNavigation provides easyNavigation,
+        LocalIptvPinObservation provides pinObservation,
         LocalSharedDiscoveryHeader provides sharedHeader,
         LocalDiscoveryPhoneTabFocus provides if (phoneExperience && !easyLayout) phoneTabFocus else emptyMap()) {
     if (state.settingsOpen) {

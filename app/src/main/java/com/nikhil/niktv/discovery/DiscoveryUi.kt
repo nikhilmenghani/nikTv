@@ -408,8 +408,8 @@ private fun DiscoveryPreviewContent(
     // detail page has resolved TMDB artwork. Reuse that local presentation first;
     // any bounded public metadata repair runs asynchronously, without provider requests.
     val continueArtworkCache = remember(context) { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")) }
-    val recentArtworkRepository = remember(context, profile) { DiscoveryRepository(context, providerProfile = profile) }
-    val recentPresentationStore = remember(context) { ProfileStore(context) }
+    val recentArtworkRepository = remember(context, profile) { lazy { DiscoveryRepository(context, providerProfile = profile) } }
+    val recentPresentationStore = remember(context) { lazy { ProfileStore(context) } }
     val recentPresentationOwner = com.nikhil.niktv.ui.LocalViewingOwner.current
     val continueArtwork by produceState<Map<String, String>>(emptyMap(), profile, app.recentlyPlayed,
         surface, scrollVariant.tileLimit, activityCollection, app.selectedSeries?.id, state.detail?.key, foreground, recentPresentationOwner) {
@@ -422,9 +422,10 @@ private fun DiscoveryPreviewContent(
         // with public metadata only; this cannot search or open provider streams.
         loadRecentArtwork(continueArtworkCache, recents, if (foreground) 6 else 0,
             lookup = { item, type ->
-                val card = recentArtworkRepository.providerDetails(item, type).card
+                val repository = withContext(Dispatchers.IO) { recentArtworkRepository.value }
+                val card = repository.providerDetails(item, type).card
                 if (recentPresentationOwner != null && publicRecentArtwork(card, item, type) != null)
-                    recentPresentationStore.updateRecentPresentation(recentPresentationOwner) {
+                    withContext(Dispatchers.IO) { recentPresentationStore.value }.updateRecentPresentation(recentPresentationOwner) {
                         confirmedProviderRecents(it, profile, item, type, card)
                     }
                 card

@@ -77,8 +77,12 @@ internal fun libraryLiveQueue(state: NikTvState, profile: String, entry: Library
 
 /** Only current-profile movie/series favorites may appear as ambient hero artwork. */
 internal fun libraryFavoriteHeroes(favorites: List<FavoriteItem>, profile: String): List<FavoriteItem> =
-    favorites.filter {
-        it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) &&
-            !it.media.isAdult && !com.nikhil.niktv.data.adultContentLabel(it.media.title) &&
-            !com.nikhil.niktv.data.adultContentLabel(it.categoryTitle.orEmpty())
-    }.distinctBy { it.key }
+    favorites.filter { it.canBeLibraryHero(profile) }.distinctBy { it.key }
+
+internal fun hasLibraryFavoriteHero(favorites: List<FavoriteItem>, profile: String): Boolean =
+    favorites.any { it.canBeLibraryHero(profile) }
+
+private fun FavoriteItem.canBeLibraryHero(profile: String): Boolean =
+    profileKey == profile && (kind == FavoriteKind.MOVIE || kind == FavoriteKind.SERIES) &&
+        !media.isAdult && !com.nikhil.niktv.data.adultContentLabel(media.title) &&
+        !com.nikhil.niktv.data.adultContentLabel(categoryTitle.orEmpty())

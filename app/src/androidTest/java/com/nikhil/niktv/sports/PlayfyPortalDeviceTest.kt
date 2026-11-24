@@ -2,10 +2,20 @@ package com.nikhil.niktv.sports
 
 import android.app.Activity
 import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inspector.WindowInspector
+import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.ui.NavigationAuditEvidence
 import com.nikhil.niktv.ui.isTvLikeDevice
@@ -54,27 +64,57 @@ class PlayfyPortalDeviceTest {
 
     @Test fun productionPlayfyOptionsOpenOwnServerPickerAndRestoreOrigin() {
         val activity = start()
+        // The Fire OS accessibility cache can still describe the previous window.
+        val readCompose = Build.VERSION.SDK_INT in 29..32
+        fun shown(label: String) = if (readCompose) activeSemantics { nodes -> nodes.any { it.matches(label) } } else find(label) != null
+        fun ownsFocus(label: String) = if (readCompose) activeSemantics { nodes ->
+            nodes.any { it.matches(label) && it.config.getOrNull(SemanticsProperties.Focused) == true }
+        } else focused(label)
+        fun activate(label: String, focus: Boolean) {
+            if (!readCompose) return action(label, if (focus) AccessibilityNodeInfo.ACTION_FOCUS else AccessibilityNodeInfo.ACTION_CLICK)
+            await("Reachable $label") { activeSemantics { nodes ->
+                val key = if (focus) SemanticsActions.RequestFocus else SemanticsActions.OnClick
+                nodes.filter { it.matches(label) }.firstNotNullOfOrNull { it.config.getOrNull(key)?.action }?.invoke() == true
+            } }
+        }
         try {
-            await("Playfy production header") { find("Playfy options") != null }
-            action("Playfy options", AccessibilityNodeInfo.ACTION_FOCUS)
+            await("Playfy production header") { shown("Playfy options") }
+            activate("Playfy options", focus = true)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Playfy-specific server action") { find("Playfy servers") != null }
-            assertNull("Cricfy server action must not be present in Playfy", find("Sports servers"))
-            action("Playfy servers", AccessibilityNodeInfo.ACTION_FOCUS)
+            await("Playfy-specific server action") { shown("Playfy servers") }
+            assertFalse("Cricfy server action must not be present in Playfy", shown("Sports servers"))
+            activate("Playfy servers", focus = true)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Automatic gets server-picker entry focus") { focused("Automatic") }
+            await("Automatic gets server-picker entry focus") { ownsFocus("Automatic") }
             NavigationAuditEvidence.capture("playfy-portal-server-picker")
-            action("Close", AccessibilityNodeInfo.ACTION_FOCUS)
+            activate("Close", focus = true)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Close restores the Playfy options origin") { find("Playfy servers") == null && focused("Playfy options") }
+            await("Close restores the Playfy options origin") { !shown("Playfy servers") && ownsFocus("Playfy options") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Playfy menu reopens") { find("Playfy servers") != null }
-            action("Playfy servers", AccessibilityNodeInfo.ACTION_CLICK)
-            await("Server picker reopens") { focused("Automatic") }
+            await("Playfy menu reopens") { shown("Playfy servers") }
+            activate("Playfy servers", focus = false)
+            await("Server picker reopens") { ownsFocus("Automatic") }
             key(KeyEvent.KEYCODE_BACK)
-            await("Back restores the same Playfy options origin") { find("Playfy servers") == null && focused("Playfy options") }
+            await("Back restores the same Playfy options origin") { !shown("Playfy servers") && ownsFocus("Playfy options") }
             NavigationAuditEvidence.capture("playfy-portal-options-restored")
         } finally { ins.runOnMainSync { activity.finish() } }
+    }
+
+    private fun SemanticsNode.matches(label: String) = label in config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() ||
+        config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text.lineSequence().any { line -> line == label } }
+
+    private fun <T : Any> activeSemantics(read: (Sequence<SemanticsNode>) -> T): T {
+        fun roots(view: View): Sequence<ViewRootForTest> = sequence {
+            if (view is ViewRootForTest) yield(view)
+            if (view is ViewGroup) for (index in 0 until view.childCount) yieldAll(roots(view.getChildAt(index)))
+        }
+        lateinit var result: T
+        ins.runOnMainSync {
+            result = read(WindowInspector.getGlobalWindowViews().asSequence().filter { it.hasWindowFocus() }.flatMap(::roots)
+                .flatMap { it.semanticsOwner.getAllSemanticsNodes(mergingEnabled = true).asSequence() }
+                .filter { !it.boundsInWindow.isEmpty })
+        }
+        return result
     }
 
     @Test fun realHeaderDpadSwitchesBetweenSeparateSportsAndPlayfyActivities() {
