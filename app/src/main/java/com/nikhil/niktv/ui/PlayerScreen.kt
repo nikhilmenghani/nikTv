@@ -1140,6 +1140,13 @@ fun PlayerScreen(
         ?.takeIf { player.isCurrentMediaItemSeekable }
     val introAvailable = introSecondsRemaining != null
     val watching = rememberWatchingCheck(media)
+    val playbackControlsVisible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture
+    val controlsTransition = rememberPlayerControlsTransition(playbackControlsVisible)
+    val showAutoPlayPrompt = remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled &&
+        !playbackControlsVisible && !controlsTransition.currentState && controlsTransition.isIdle &&
+        !queueVisible && !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen &&
+        !subtitleDialogOpen && !audioDialogOpen && !inPictureInPicture && !introAvailable &&
+        !watching.awaiting && playbackError == null && !startupTimedOut
     WatchPlayback(watching, isPlaying = { player.isPlaying }, pause = {
         if (playbackRequested) {
             playbackRequested = false
@@ -1539,14 +1546,6 @@ fun PlayerScreen(
             delay(500)
         }
     }
-    val showAutoPlayPrompt =
-        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable && !watching.awaiting
-    LaunchedEffect(showAutoPlayPrompt) {
-        if (showAutoPlayPrompt) {
-            delay(120L)
-            runCatching { playNextFocusRequester.requestFocus() }
-        }
-    }
     LaunchedEffect(player, media.progressKey) {
         var lastProgressSave = android.os.SystemClock.elapsedRealtime()
         var lastHealthSample = lastProgressSave
@@ -1706,8 +1705,6 @@ fun PlayerScreen(
             if (embeddedMode) {
                 suppressNextEmbeddedPlayerFocusHandoff = true
                 playerViewRef?.requestFocus()
-            } else {
-                coroutineScope.launch { delay(80L); if (!watching.awaiting) runCatching { videoSurfaceFocusRequester.requestFocus() } }
             }
         }
     }
@@ -1784,12 +1781,14 @@ fun PlayerScreen(
         embeddedMode,
         inPictureInPicture,
         introAvailable,
+        showAutoPlayPrompt,
         media.progressKey,
         watching.awaiting
     ) {
         if (
             !embeddedMode &&
             !controlsVisible &&
+            !showAutoPlayPrompt &&
             !queueVisible &&
             !pictureEditorVisible &&
             !playerOptionsOpen &&
@@ -1850,7 +1849,8 @@ fun PlayerScreen(
                 enabled = swipeControls.channels && focusMode && hasPlaybackQueue && !pictureEditorVisible,
                 onOpen = ::showEpisodeQueue
             )
-            .playerRemoteBack(controlsVisible)
+            .playerRemoteBack(controlsVisible || showAutoPlayPrompt)
+            .playerUpNextControls(showAutoPlayPrompt, ::showControlsAndFocusPlayPause)
             .playerActivityObserver {
                 dpadInteraction++
                 watching.interact()
@@ -2344,7 +2344,7 @@ fun PlayerScreen(
             }
         )
         }
-        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+        PlayerControlsLayer(transition = controlsTransition) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
@@ -3300,7 +3300,8 @@ fun PlayerScreen(
                 onCancel = { autoPlayCancelled = true; playerViewRef?.requestFocus() },
                 onPlay = { advancing = true; onPlayNext() },
                 modifier = Modifier.align(Alignment.BottomCenter).zIndex(20f)
-                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier).padding(16.dp))
+                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier).padding(16.dp),
+                onShowControls = ::showControlsAndFocusPlayPause)
         }
         if (subtitleDialogOpen) {
             SubtitleSelectionDialog(

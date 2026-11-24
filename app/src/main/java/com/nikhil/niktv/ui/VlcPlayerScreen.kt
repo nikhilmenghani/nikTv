@@ -629,6 +629,13 @@ internal fun VlcPlayerScreen(
     val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
         ?.takeIf { player.isSeekable }
     val introAvailable = introSecondsRemaining != null
+    val playbackControlsVisible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture
+    val controlsTransition = rememberPlayerControlsTransition(playbackControlsVisible)
+    val showAutoPlayPrompt = remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled &&
+        !playbackControlsVisible && !controlsTransition.currentState && controlsTransition.isIdle &&
+        !queueVisible && !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen &&
+        !subtitleDialogOpen && !audioDialogOpen && !inPictureInPicture && !introAvailable &&
+        !watching.awaiting && error == null
     WatchPlayback(watching, isPlaying = { player.isPlaying }, pause = {
         if (playbackRequested || player.isPlaying) focus.request(false)
     })
@@ -759,8 +766,6 @@ internal fun VlcPlayerScreen(
             if (embeddedMode) {
                 suppressNextEmbeddedPlayerFocusHandoff = true
                 videoView?.requestFocus()
-            } else {
-                scope.launch { delay(80L); if (!watching.awaiting) runCatching { videoSurfaceFocusRequester.requestFocus() } }
             }
         }
     }
@@ -795,12 +800,14 @@ internal fun VlcPlayerScreen(
         embeddedMode,
         inPictureInPicture,
         introAvailable,
+        showAutoPlayPrompt,
         media.progressKey,
         watching.awaiting
     ) {
         if (
             !embeddedMode &&
             !controlsVisible &&
+            !showAutoPlayPrompt &&
             !queueVisible &&
             !pictureEditorVisible &&
             !playerOptionsOpen &&
@@ -1229,14 +1236,6 @@ internal fun VlcPlayerScreen(
             delay(500L)
         }
     }
-    val showAutoPlayPrompt =
-        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable && !watching.awaiting
-    LaunchedEffect(showAutoPlayPrompt) {
-        if (showAutoPlayPrompt) {
-            delay(120L)
-            runCatching { playNextNowRequester.requestFocus() }
-        }
-    }
 
     PlayerSurfaceHost(
         modifier.fillMaxSize()
@@ -1250,7 +1249,8 @@ internal fun VlcPlayerScreen(
                     queueVisible = true
                 }
             )
-            .playerRemoteBack(controlsVisible)
+            .playerRemoteBack(controlsVisible || showAutoPlayPrompt)
+            .playerUpNextControls(showAutoPlayPrompt, ::showControls)
             .playerActivityObserver {
                 dpadInteraction++
                 watching.interact()
@@ -1663,7 +1663,7 @@ internal fun VlcPlayerScreen(
         )
 
         }
-        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+        PlayerControlsLayer(transition = controlsTransition) {
             DisposableEffect(videoView) {
                 val captionLayout = videoView as? VlcCaptionSafeLayout
                 captionLayout?.setControlsMounted(true)
@@ -2539,7 +2539,8 @@ internal fun VlcPlayerScreen(
                 onCancel = { autoPlayCancelled = true; videoView?.requestFocus() },
                 onPlay = { advancing = true; onPlayNext() },
                 modifier = Modifier.align(Alignment.BottomCenter).zIndex(20f)
-                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier).padding(16.dp))
+                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier).padding(16.dp),
+                onShowControls = ::showControls)
         }
         if (subtitleDialogOpen) {
             SubtitleSelectionDialog(

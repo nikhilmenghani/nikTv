@@ -27,7 +27,7 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicBoolean
 
 class PlayerUpNextDeviceTest {
-    @Test fun longTitleUsesTheFullPromptWidthAndKeepsRemoteActionsReachable() {
+    @Test fun longTitleWrapsWithoutCoveringPromptActions() {
         val ins = InstrumentationRegistry.getInstrumentation()
         val context = ins.targetContext
         check(context.packageName.endsWith(".regression"))
@@ -68,7 +68,9 @@ class PlayerUpNextDeviceTest {
                         CompositionLocalProvider(LocalUpNextEpisodeTitle provides { cached }) {
                             val play = remember { FocusRequester() }
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                PlayerUpNextPrompt(media, 15, play, { cancelled.set(true) }, { played.set(true) }, Modifier.width(width.dp))
+                                Box(Modifier.width(width.dp)) {
+                                    PlayerUpNextPrompt(media, 15, play, { cancelled.set(true) }, { played.set(true) })
+                                }
                             }
                             LaunchedEffect(play) { withFrameNanos {}; play.requestFocus() }
                         }
@@ -76,20 +78,36 @@ class PlayerUpNextDeviceTest {
                 } }
                 await("Clean provider fallback is visible at ${width}dp") { node(fallback) != null }
                 await("Play now keeps initial focus at ${width}dp") { hasFocus("Play now") }
+                if (width == 640) {
+                    val shortTitle = Rect().also(requireNotNull(node(fallback))::getBoundsInScreen)
+                    val cancel = Rect().also(requireNotNull(node("Cancel"))::getBoundsInScreen)
+                    val playNow = Rect().also(requireNotNull(node("Play now"))::getBoundsInScreen)
+                    val tolerance = 2 * host.resources.displayMetrics.density
+                    assertTrue("The short title lines up with both buttons", shortTitle.right <= cancel.left &&
+                        kotlin.math.abs(shortTitle.centerY() - cancel.centerY()) <= tolerance &&
+                        kotlin.math.abs(shortTitle.centerY() - playNow.centerY()) <= tolerance)
+                }
                 cached.value = title
                 await("The full cached title and the buttons are visible at ${width}dp") {
                     val heading = node(title)?.let { Rect().also(it::getBoundsInScreen) }
                     val action = node("Play now")?.let { Rect().also(it::getBoundsInScreen) }
-                    heading != null && action != null && heading.bottom <= action.top && hasFocus("Play now") &&
+                    heading != null && action != null && (heading.bottom <= action.top || heading.right <= action.left) && hasFocus("Play now") &&
                         heading.height() > 26 * host.resources.displayMetrics.density
                 }
                 val heading = Rect().also(requireNotNull(node(title))::getBoundsInScreen)
+                val timer = Rect().also(requireNotNull(node("Up next in 15s"))::getBoundsInScreen)
                 val screen = requireNotNull(ins.uiAutomation.takeScreenshot())
                 try {
                     assertTrue("Title text is light on the dark player panel", (heading.top until heading.bottom step 3).any { y ->
                         (heading.left until heading.right step 3).any { x ->
                             val pixel = screen.getPixel(x, y)
                             Color.red(pixel) > 200 && Color.green(pixel) > 200 && Color.blue(pixel) > 200
+                        }
+                    })
+                    assertTrue("The countdown uses the original red accent", (timer.top until timer.bottom step 2).any { y ->
+                        (timer.left until timer.right step 2).any { x ->
+                            val pixel = screen.getPixel(x, y)
+                            Color.red(pixel) > 170 && Color.green(pixel) < 75 && Color.blue(pixel) < 75
                         }
                     })
                 } finally { screen.recycle() }

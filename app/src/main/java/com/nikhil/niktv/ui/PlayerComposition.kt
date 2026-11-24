@@ -2,6 +2,7 @@ package com.nikhil.niktv.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,17 +76,21 @@ internal fun BoxScope.PlayerVideoLayer(content: @Composable BoxScope.() -> Unit)
 }
 
 @Composable
+internal fun rememberPlayerControlsTransition(visible: Boolean): MutableTransitionState<Boolean> =
+    remember { MutableTransitionState(visible) }.apply { targetState = visible }
+
+@Composable
 internal fun BoxScope.PlayerControlsLayer(
-    visible: Boolean,
+    transition: MutableTransitionState<Boolean>,
     content: @Composable BoxScope.() -> Unit
 ) {
     AnimatedVisibility(
-        visible = visible,
+        visibleState = transition,
         modifier = Modifier.fillMaxSize(),
         enter = fadeIn(tween(240, easing = FastOutSlowInEasing)),
         exit = fadeOut(tween(200, easing = FastOutSlowInEasing))
     ) {
-        Box(Modifier.fillMaxSize().focusProperties { canFocus = visible }, content = content)
+        Box(Modifier.fillMaxSize().focusProperties { canFocus = transition.targetState }, content = content)
     }
 }
 

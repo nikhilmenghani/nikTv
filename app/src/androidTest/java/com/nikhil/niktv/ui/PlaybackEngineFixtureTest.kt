@@ -406,8 +406,9 @@ class PlaybackEngineFixtureTest {
     @Test fun failedEpisodeNavigationCanBeRetriedWithDpadWithoutLeavingThePlayer() {
         check(context.packageName.endsWith(".regression"))
         val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val previousVolume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
         audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
-        for (sports in listOf(false, true)) for (engine in listOf(
+        try { for (sports in listOf(false, true)) for (engine in listOf(
             com.nikhil.niktv.model.PlaybackEngine.MEDIA3, com.nikhil.niktv.model.PlaybackEngine.VLC)) {
             FixtureServer().use { server ->
                 val activity = host()
@@ -428,17 +429,35 @@ class PlaybackEngineFixtureTest {
                             onRetryAlternateDecoder = {}, onPlaybackAuthorizationFailure = {},
                             onPlayPrevious = { previous.incrementAndGet() }, onPlayNext = { next.incrementAndGet() },
                             onProgress = { _, _, _ -> }, playbackEngine = engine, controlsTimeoutSeconds = 0,
-                            startFullscreen = false, onVideoFrameRendered = { frames.incrementAndGet() })
+                            startFullscreen = true, onVideoFrameRendered = { frames.incrementAndGet() })
                         else PlayerScreen(media, onBack = {}, onRetry = {}, onRetryAlternateDecoder = {},
                             onPlaybackAuthorizationFailure = {}, onPlayPrevious = { previous.incrementAndGet() },
                             onPlayNext = { next.incrementAndGet() }, onProgress = { _, _, _ -> },
-                            playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = false,
+                            playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = true,
                             onVideoFrameRendered = { frames.incrementAndGet() })
                     } } }
                     await("$sports/$engine renders the navigation fixture") { frames.get() > 0 }
-                    // The 20-second sample immediately enters the real 30-second
-                    // next-episode prompt. Dismiss it before testing manual controls.
-                    await("The short sample offers automatic Next") { control("Cancel") != null }
+                    fun focused(label: String) = generateSequence(control(label)) { it.parent }.any { it.isFocused }
+                    fun nextPromptReady() = control("Play now") != null && control("Next") == null
+                    fun playbackControlsReady() = control("Play now") == null && control("Next") != null && focused("Pause")
+                    instrumentation.setInTouchMode(false)
+                    await("Up Next can take focus with controls hidden") { nextPromptReady() && focused("Play now") }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_UP)
+                    await("Up gives the playback controls priority") { playbackControlsReady() }
+                    NavigationAuditEvidence.capture("up-next-yields-to-controls-$sports-$engine")
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    await("Up Next returns when the transport finishes closing") { nextPromptReady() && focused("Play now") }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_MENU)
+                    await("Menu gives the playback controls priority") { playbackControlsReady() }
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    await("The prompt reappears once the controls close") { nextPromptReady() && focused("Play now") }
+                    showStabilityControls(activity, "Navigation failure fixture")
+                    await("Tapping the video shows controls with no Up Next panel covering them") {
+                        control("Next") != null && control("Play now") == null
+                    }
+                    instrumentation.setInTouchMode(false)
+                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    await("Dismissing the transport after touch restores the prompt") { nextPromptReady() && focused("Play now") }
                     clickControl("Cancel")
                     await("The automatic prompt has closed") { control("Play now") == null }
                     showStabilityControls(activity, "Navigation failure fixture")
@@ -475,7 +494,7 @@ class PlaybackEngineFixtureTest {
                     throw failure
                 } finally { main { activity.finish() }; instrumentation.setInTouchMode(true) }
             }
-        }
+        } } finally { audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, previousVolume, 0) }
     }
 
     @Test fun offlineRecordedTransportStreamSeeksWithoutLongPlaybackStalls() = exerciseLocalFileSeek(false)
