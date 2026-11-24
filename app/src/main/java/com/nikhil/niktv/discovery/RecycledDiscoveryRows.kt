@@ -78,7 +78,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     hero: RecycledHeroContent? = null, heroFocusEntry: (String) -> Boolean = { false }, restoreSelection: Boolean = true, heroActivity: ((HeroActivity) -> Unit)? = null, heroHeightPx: Int? = null, cacheTileDrawing: Boolean = false, focusRestorer: NativeDiscoveryFocusRestorer? = null,
     popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false,
     navigationTrace: ((String) -> Unit)? = null, restoreTouchSelection: Boolean = false, reconcileSkeletons: Boolean = false,
-    transparentBackground: Boolean = false, restoreViewportOnEntry: Boolean = restoreSelection) {
+    transparentBackground: Boolean = false, restoreViewportOnEntry: Boolean = restoreSelection,
+    allowFocus: Boolean = true) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -90,8 +91,11 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     key(containedCaptions, cardShadows, homeTileProportions, heroHeightPx, cacheTileDrawing, showSkeletons, restoreTouchSelection, reconcileSkeletons,
         configuration.screenWidthDp, configuration.screenHeightDp, configuration.fontScale,
         configuration.smallestScreenWidthDp, configuration.uiMode) {
-    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing, showSkeletons, restoreTouchSelection, reconcileSkeletons) }, modifier = modifier.focusRequester(focusEntry),
+    AndroidView(factory = { RailRecycler(it, position, containedCaptions, cardShadows, homeTileProportions, heroHeightPx, parentComposition, cacheTileDrawing, showSkeletons, restoreTouchSelection, reconcileSkeletons).apply {
+        allowEntryFocus(allowFocus)
+    } }, modifier = modifier.focusRequester(focusEntry),
         onRelease = { focusRestorer?.detach(it); it.release() }, update = { view ->
+            view.allowEntryFocus(allowFocus)
             focusRestorer?.attach(view) { runCatching { focusEntry.requestFocus() }; view.requestSavedFocus() }
             view.navigationInsetPx = navigationInsetPx
             view.setBackgroundColor(if (transparentBackground) Color.TRANSPARENT else Color.rgb(9, 11, 16))
@@ -145,6 +149,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
     private var touchingHeroFeed = false
     private val scrollingChildren = mutableSetOf<RecyclerView>()
     private var ownsRemoteFocus = false
+    private var entryFocusAllowed = true
     private var touchEntryKeyThrough = Long.MIN_VALUE
     private val touchModeObserver = ViewTreeObserver.OnTouchModeChangeListener { touching ->
         if (onNavigationTrace != null) trace("touch-mode:$touching")
@@ -393,6 +398,13 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         setBackgroundColor(Color.rgb(9, 11, 16)); outlineProvider = ViewOutlineProvider.BOUNDS; clipToOutline = true
         isFocusable = true; isFocusableInTouchMode = true
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+    }
+    fun allowEntryFocus(allowed: Boolean) {
+        if (entryFocusAllowed == allowed) return
+        entryFocusAllowed = allowed
+        descendantFocusability = if (allowed && !parkingLoadingFocus) ViewGroup.FOCUS_AFTER_DESCENDANTS else ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        isFocusableInTouchMode = allowed
+        isFocusable = allowed
     }
     fun update(rows: List<NativeDiscoveryRow>) {
         if (submitted === rows) return

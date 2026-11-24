@@ -716,6 +716,9 @@ private fun DiscoveryPreviewContent(
             localScope.launch { withFrameNanos { }; restoreNativePopupFocus() }
         }
         var restoreNativeSelection by remember(app.discoveryNavigationId) { mutableStateOf(nativeNavigationId == app.discoveryNavigationId) }
+        var awaitingHeaderFocus by remember(app.discoveryNavigationId) {
+            mutableStateOf(sharesLandingHeader && remoteNavigation && nativeNavigationId != app.discoveryNavigationId && !portalFocusReturn.waiting)
+        }
         // Observe only eligibility: scrolling/focus detail must not recompose the full feed.
         var nativeHeroMayRotate by remember(profile, surface) { mutableStateOf(false) }
         val mayRotateHero = nativeHeroMayRotate && presentationActive &&
@@ -905,12 +908,14 @@ private fun DiscoveryPreviewContent(
                     LaunchedEffect(app.discoveryNavigationId) {
                         val menuEntry = nativeNavigationId != app.discoveryNavigationId
                         nativeNavigationId = app.discoveryNavigationId
-                        if (menuEntry && !portalFocusReturn.waiting &&
-                            (phone && !remoteNavigation || sharesLandingHeader && sharedHeader?.focusedTab == surface.trialTitle())) return@LaunchedEffect
+                        if (menuEntry && !portalFocusReturn.waiting && phone && !remoteNavigation) return@LaunchedEffect
                         if (portalFocusReturn.waiting) {
                             repeat(20) {
                                 withFrameNanos { }
-                                if (portalFocusReturn.restore()) return@LaunchedEffect
+                                if (portalFocusReturn.restore()) {
+                                    awaitingHeaderFocus = false
+                                    return@LaunchedEffect
+                                }
                             }
                             portalFocusReturn.cancel()
                         }
@@ -919,14 +924,24 @@ private fun DiscoveryPreviewContent(
                             // The phone bottom bar also participates in Android focus search.
                             // Restore the committed control itself on every detail return;
                             // focusing only the Compose/native bridge leaves the next arrow
-                            // free to enter that bar. Fresh menu entry still belongs to its tab.
+                            // free to enter that bar. Confirm focus on the mounted tab even if the
+                            // movable header reported focus just before it changed parents.
                             if (!menuEntry && restoreNativeSelection && recycled) {
                                 if (nativeFocusRestorer.restore()) return@LaunchedEffect
                             } else {
                                 val target = if (menuEntry) phoneTabFocus ?: tabRequester else playRequester
-                                if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                                if (runCatching { target.requestFocus() }.getOrDefault(false)) {
+                                    if (menuEntry && sharesLandingHeader) {
+                                        withFrameNanos { }
+                                        if (hostView.isFocused && sharedHeader.focusedTab != null) {
+                                            awaitingHeaderFocus = false
+                                            return@LaunchedEffect
+                                        }
+                                    } else return@LaunchedEffect
+                                }
                             }
                         }
+                        awaitingHeaderFocus = false
                     }
                     if (recycled) RecycledDiscoveryRows(nativeRows, Modifier.fillMaxSize(), playRequester,
                         up = { restoreNativeSelection = false; runCatching { tabRequester.requestFocus() } }, visible = { nearbyRow = it }, animateFocus = discoveryNativeFocusMotion(scrollVariant, television),
@@ -942,7 +957,7 @@ private fun DiscoveryPreviewContent(
                             (trialHeroFrameHeight(trialHeroBaseHeight(configuration.screenHeightDp.toFloat(), homeHeroFraming, television), fontScale).dp + LocalHeroNavigationInset.current).roundToPx()
                         } else null,
                         hero = nativeHero, heroActivity = if (scrollVariant.heroAutoRotate) ({ nativeHeroMayRotate = it.mayRotate }) else null,
-                        restoreSelection = restoreNativeSelection, restoreViewportOnEntry = true, heroFocusEntry = { id ->
+                        restoreSelection = restoreNativeSelection, restoreViewportOnEntry = true, allowFocus = !awaitingHeaderFocus, heroFocusEntry = { id ->
                             runCatching { (if (id == "info" && surface != DashboardSurface.HOME) heroInfoRequester else heroPlayRequester).requestFocus() }.getOrDefault(false)
                         })
                     else NativeDiscoveryRows(nativeRows, Modifier.fillMaxSize(), playRequester,

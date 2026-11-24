@@ -31,6 +31,8 @@ import coil3.request.crossfade
 import coil3.request.transformations
 import kotlinx.coroutines.flow.first
 
+private data class PreparedBackdrop(val url: String?, val painter: Painter?)
+
 @Composable
 internal fun DiscoveryBackdropArtwork(
     requested: String?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center,
@@ -40,12 +42,12 @@ internal fun DiscoveryBackdropArtwork(
     val context = LocalContext.current
     val currentRequest by rememberUpdatedState(requested)
     val reportFailure by rememberUpdatedState(onFailure)
-    var prepared by remember { mutableStateOf<Painter?>(null) }
+    var prepared by remember { mutableStateOf<PreparedBackdrop?>(null) }
     var visible by remember { mutableStateOf<Painter?>(null) }
     var outgoing by remember { mutableStateOf<Painter?>(null) }
     val progress = remember { Animatable(1f) }
 
-    if (prepare && requested == null) LaunchedEffect(Unit) { prepared = null }
+    if (prepare && requested == null) LaunchedEffect(Unit) { prepared = PreparedBackdrop(null, null) }
     if (prepare && requested != null) {
         val request = remember(context, requested, shaded, viewportShade) {
             ImageRequest.Builder(context).data(requested).size(1280, 720)
@@ -58,8 +60,11 @@ internal fun DiscoveryBackdropArtwork(
                 val result = loader.state.first { it is AsyncImagePainter.State.Success || it is AsyncImagePainter.State.Error }
                 if (currentRequest != requested) return@LaunchedEffect
                 when (result) {
-                    is AsyncImagePainter.State.Success -> prepared = result.painter
-                    is AsyncImagePainter.State.Error -> reportFailure(requested)
+                    is AsyncImagePainter.State.Success -> prepared = PreparedBackdrop(requested, result.painter)
+                    is AsyncImagePainter.State.Error -> {
+                        prepared = PreparedBackdrop(requested, null)
+                        reportFailure(requested)
+                    }
                     else -> Unit
                 }
             }
@@ -71,7 +76,10 @@ internal fun DiscoveryBackdropArtwork(
     LaunchedEffect(reduceMotion) {
         // Finish the current fade before drawing the latest prepared image. If several
         // requests finish in that interval, snapshotFlow delivers the last one.
-        snapshotFlow { prepared }.collect { next ->
+        snapshotFlow { prepared }.collect { frame ->
+            // New selection can supersede a decoded frame while a fade is finishing.
+            if (frame == null || frame.url != currentRequest) return@collect
+            val next = frame.painter
             if (reduceMotion) {
                 visible = next
                 outgoing = null

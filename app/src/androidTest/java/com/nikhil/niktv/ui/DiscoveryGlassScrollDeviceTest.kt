@@ -34,10 +34,12 @@ class DiscoveryGlassScrollDeviceTest {
         val releaseGreen = CountDownLatch(1)
         val revisitStarted = CountDownLatch(1)
         val releaseRevisit = CountDownLatch(1)
+        val latestStarted = CountDownLatch(1)
+        val releaseLatest = CountDownLatch(1)
         val server = object : NanoHTTPD("127.0.0.1", 0) {
             override fun serve(session: IHTTPSession): Response {
                 val color = when (session.uri) {
-                    "/red.png" -> Color.RED
+                    "/red.png", "/fade.png" -> Color.RED
                     "/blue.png" -> Color.BLUE
                     "/green.png" -> {
                         greenStarted.countDown()
@@ -49,6 +51,12 @@ class DiscoveryGlassScrollDeviceTest {
                         releaseRevisit.await(10, TimeUnit.SECONDS)
                         Color.RED
                     }
+                    "/latest.png" -> {
+                        latestStarted.countDown()
+                        releaseLatest.await(12, TimeUnit.SECONDS)
+                        Color.GREEN
+                    }
+                    "/missing.png" -> return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Missing artwork")
                     else -> Color.GREEN
                 }
                 val bitmap = Bitmap.createBitmap(64, 36, Bitmap.Config.ARGB_8888).apply { eraseColor(color) }
@@ -67,6 +75,7 @@ class DiscoveryGlassScrollDeviceTest {
         val origin = "http://127.0.0.1:${server.listeningPort}"
         val surface = mutableStateOf(DashboardSurface.HOME)
         val artwork = mutableStateOf("$origin/red.png")
+        val exerciseQueuedArtwork = mutableStateOf(false)
         val headerPixel = IntArray(2)
         val artworkPixel = IntArray(2)
         fun sample(at: IntArray): Int {
@@ -87,13 +96,14 @@ class DiscoveryGlassScrollDeviceTest {
             ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
                 val tab = remember { FocusRequester() }
                 val body = remember { FocusRequester() }
-                DiscoveryArtworkShell(overlay = true, phone = false, backdropBehindRows = true,
+                DiscoveryArtworkShell(overlay = true, phone = false, backdropBehindRows = !exerciseQueuedArtwork.value,
                     initialSceneArtwork = artwork.value, artworkIdentity = "scene fixture" to surface.value, header = {
                         DiscoveryTopNavigation(surface.value, "Fixture", tab, body, {}, {}, {}, {}, false, {}, null)
                     }, content = {
                         val publish = LocalPublishMobileGlassSource.current
                         val current = artwork.value
-                        LaunchedEffect(publish, current) { publish(MobileGlassSource(current, Rect.Zero)) }
+                        if (exerciseQueuedArtwork.value) DiscoveryBackdropArtwork(current, reduceMotion = false, firstRevealMillis = 2_000)
+                        else LaunchedEffect(publish, current) { publish(MobileGlassSource(current, Rect.Zero)) }
                     })
             } } }
             ins.waitForIdleSync()
@@ -144,9 +154,35 @@ class DiscoveryGlassScrollDeviceTest {
             releaseRevisit.countDown()
             awaitColor("Home revisit uses its current selection") { Color.red(it) > 130 && Color.blue(it) < 35 }
             NavigationAuditEvidence.capture("wide-glass-revisited")
+
+            ins.runOnMainSync {
+                exerciseQueuedArtwork.value = true
+                artwork.value = "$origin/fade.png"
+            }
+            awaitColor("The first reveal is in progress") { Color.red(it) in 40..125 && Color.blue(it) < 40 }
+            // Blue is already decoded in Coil's cache. Queue it during the fade,
+            // then select a different image that deliberately takes longer.
+            ins.runOnMainSync { artwork.value = "$origin/blue.png" }
+            ins.waitForIdleSync()
+            SystemClock.sleep(200)
+            ins.runOnMainSync { artwork.value = "$origin/latest.png" }
+            assertTrue("The last image request is pending", latestStarted.await(6, TimeUnit.SECONDS))
+            val until = SystemClock.uptimeMillis() + 2_300
+            while (SystemClock.uptimeMillis() < until) {
+                val color = sample(artworkPixel)
+                assertTrue("A decoded but superseded image cannot appear after the earlier fade", Color.blue(color) < 48)
+                SystemClock.sleep(65)
+            }
+            releaseLatest.countDown()
+            awaitColor("The last ready image is shown") { Color.green(it) > 130 && Color.red(it) < 35 }
+            ins.runOnMainSync { artwork.value = "$origin/missing.png" }
+            awaitColor("A failed replacement clears the previous hero") {
+                Color.red(it) < 50 && Color.green(it) < 50 && Color.blue(it) < 50
+            }
         } finally {
             releaseGreen.countDown()
             releaseRevisit.countDown()
+            releaseLatest.countDown()
             server.stop()
             ins.runOnMainSync { activity.finish() }
         }

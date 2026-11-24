@@ -95,14 +95,17 @@ internal val LocalSharedDiscoveryHeader = staticCompositionLocalOf<SharedDiscove
 internal fun Modifier.discoveryTabIndicator(active: Boolean, color: Color): Modifier {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val duration = if (context.isTvLikeDevice(configuration)) 0 else 120
-    val opacity = animateFloatAsState(if (active) 1f else 0f, tween(duration), label = "discoveryTabIndicator")
+    val television = context.isTvLikeDevice(configuration)
+    // TV selection is immediate. Skip the transition state and draw pass on hidden marks.
+    if (television && !active) return this
+    val opacity = if (television) null else animateFloatAsState(if (active) 1f else 0f, tween(120), label = "discoveryTabIndicator")
     return drawWithContent {
         drawContent()
-        if (opacity.value > 0f) {
+        val alpha = opacity?.value ?: 1f
+        if (alpha > 0f) {
             val width = 18.dp.toPx()
             val thickness = 2.dp.toPx()
-            drawRoundRect(color.copy(alpha = color.alpha * opacity.value),
+            drawRoundRect(color.copy(alpha = color.alpha * alpha),
                 topLeft = Offset((size.width - width) / 2, size.height - 5.dp.toPx()),
                 size = Size(width, thickness), cornerRadius = CornerRadius(thickness / 2))
         }
@@ -146,6 +149,7 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
     shared: SharedDiscoveryHeader? = null) {
     val experiment = LocalDiscoveryExperiment.current
     val tabs = rememberScrollState()
+    val tabTargets = remember { List(trialSurfaces.size + 2) { FocusRequester() } }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val shortWide = configuration.usesShortWideLayout(LocalContext.current.isTvLikeDevice(configuration))
@@ -178,18 +182,25 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
                 StableTileFocusViewport {
                     Row(Modifier.weight(1f, fill = false).horizontalScroll(tabs).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        trialSurfaces.forEach { tab ->
+                        fun tabFocus(index: Int) = Modifier.focusRequester(tabTargets[index])
+                            .focusProperties {
+                                start = tabTargets.getOrNull(index - 1) ?: FocusRequester.Default
+                                end = tabTargets.getOrNull(index + 1) ?: FocusRequester.Default
+                            }
+                        trialSurfaces.forEachIndexed { index, tab ->
                             val active = !searchActive && library == null && surface == tab
                             DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
                                 selected = active, horizontalPadding = 12.dp,
-                                modifier = Modifier.discoveryNavigationTab(tab.trialTitle(), active, shared, tabRequester, playRequester),
+                                modifier = tabFocus(index).discoveryNavigationTab(tab.trialTitle(), active, shared, tabRequester, playRequester),
                                 onFocus = headerFocus) { if (experiment) navigate(tab.trialTitle()) else select(tab) }
                         }
                         DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
-                            modifier = Modifier.discoveryNavigationTab("Live TV", library == DiscoveryLibraryDestination.LIVE_TV, shared, tabRequester, playRequester),
+                            modifier = tabFocus(tabTargets.lastIndex - 1)
+                                .discoveryNavigationTab("Live TV", library == DiscoveryLibraryDestination.LIVE_TV, shared, tabRequester, playRequester),
                             onFocus = headerFocus) { navigate("Live TV") }
                         DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
-                            modifier = Modifier.discoveryNavigationTab("My List", library == DiscoveryLibraryDestination.MY_LIST, shared, tabRequester, playRequester),
+                            modifier = tabFocus(tabTargets.lastIndex)
+                                .discoveryNavigationTab("My List", library == DiscoveryLibraryDestination.MY_LIST, shared, tabRequester, playRequester),
                             onFocus = headerFocus) { navigate("My List") }
                     }
                 }
@@ -206,14 +217,17 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
 
 @Composable
 private fun Modifier.discoveryNavigationTab(label: String, active: Boolean, shared: SharedDiscoveryHeader?,
-    tabRequester: FocusRequester, playRequester: FocusRequester): Modifier =
-    semantics { contentDescription = label; selected = active; role = Role.Tab }
+    tabRequester: FocusRequester, playRequester: FocusRequester): Modifier {
+    val inactiveRequester = remember { FocusRequester() }
+    return semantics { contentDescription = label; selected = active; role = Role.Tab }
         .onFocusChanged { focus ->
             if (focus.isFocused) shared?.focusedTab = label
             else if (shared?.focusedTab == label) shared.focusedTab = null
         }
-        .then(if (active) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier)
+        .focusRequester(if (active) tabRequester else inactiveRequester)
+        .focusProperties { down = if (active) playRequester else FocusRequester.Default }
         .discoveryTabIndicator(active, Color.White.copy(alpha = .8f))
+}
 
 @Composable
 internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect,

@@ -11,10 +11,19 @@ import android.os.HandlerThread
 import android.os.SystemClock
 import android.view.FrameMetrics
 import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
 import android.view.Window
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.MainActivity
@@ -185,8 +194,16 @@ class ProfileNavigationDeviceTest {
             users.clearSelection()
         }) { provider, _, activity ->
             awaitDashboard(viewerName)
-            await("Home is selected on startup") { tab("Home")?.isSelected == true }
+            // Fire OS can retain the previous virtual accessibility tree even after drawing the new tab.
+            val readCompose = Build.VERSION.SDK_INT < 33
+            fun ownsTab(title: String, selected: Boolean = false, focused: Boolean = false): Boolean =
+                if (readCompose) readDashboardSemantics(activity) { nodes -> nodes.any { node ->
+                    node.isDashboardTab(title) && (!selected || node.config.getOrNull(SemanticsProperties.Selected) == true) &&
+                        (!focused || node.config.getOrNull(SemanticsProperties.Focused) == true)
+                } } else tab(title)?.let { (!selected || it.isSelected) && (!focused || it.isFocused) } == true
+            await("Home is selected on startup") { ownsTab("Home", selected = true) }
             val measure = InstrumentationRegistry.getArguments().getString("tabFrameMetrics") == "true"
+            val traceFocus = InstrumentationRegistry.getArguments().getString("tabFocusDiagnostics") == "true"
             var frames: TabFrameCapture? = null
             if (measure) instrumentation.runOnMainSync { frames = TabFrameCapture(activity.window) }
             val focusLabels = ConcurrentLinkedQueue<String>()
@@ -200,17 +217,19 @@ class ProfileNavigationDeviceTest {
                     }
                 }
                 fun activate(target: String, useful: String? = null, alreadyFocused: Boolean = false) {
-                    if (!alreadyFocused) {
-                        var control: AccessibilityNodeInfo? = null
-                        await("$target is reachable") { tab(target).also { control = it } != null }
-                        if (control?.isFocused != true) {
-                            assertTrue("$target accepts D-pad focus", control?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true)
+                    if (!alreadyFocused && !ownsTab(target, focused = true)) {
+                        await("$target accepts D-pad focus") {
+                            if (readCompose) readDashboardSemantics(activity) { nodes ->
+                                nodes.firstOrNull { it.isDashboardTab(target) }?.config
+                                    ?.getOrNull(SemanticsActions.RequestFocus)?.action?.invoke() == true
+                            } else tab(target)?.performAction(AccessibilityNodeInfo.ACTION_FOCUS) == true
                         }
                     }
-                    await("$target owns focus before OK") { tab(target)?.isFocused == true }
+                    await("$target owns focus before OK") { ownsTab(target, focused = true) }
                     focusLabels.clear()
                     frames?.begin(target)
                     key(KeyEvent.KEYCODE_DPAD_CENTER)
+                    var focusState = ""
                     fun checkLiveStatus(snapshot: List<AccessibilityNodeInfo>) {
                         if (useful != null && tab(target, snapshot)?.isSelected == true) {
                             assertFalse("Live TV must keep cached or loading content during setup", snapshot.any {
@@ -219,15 +238,33 @@ class ProfileNavigationDeviceTest {
                         }
                     }
                     await("$target becomes selected and stays focused") {
-                        val snapshot = nodes()
-                        checkLiveStatus(snapshot)
-                        tab(target, snapshot)?.let { it.isSelected && it.isFocused } == true
+                        if (!readCompose && useful != null) checkLiveStatus(nodes())
+                        val ready = ownsTab(target, selected = true, focused = true)
+                        if (!ready && traceFocus && readCompose) {
+                            val now = readDashboardSemantics(activity) { nodes ->
+                                val native = activity.window.decorView.findFocus()
+                                val labels = nodes.filter { it.config.getOrNull(SemanticsProperties.Focused) == true }
+                                    .flatMap { it.dashboardLabels() }.toList()
+                                "native=${native?.javaClass?.name}/${native?.tag} focused=$labels"
+                            }
+                            if (now != focusState) {
+                                android.util.Log.i("NikTvFireNavigation", "$target after OK: $now")
+                                focusState = now
+                            }
+                        }
+                        ready
                     }
                     frames?.selected()
                     useful?.let { label -> await("$target shows category $label") {
-                        val snapshot = nodes()
-                        checkLiveStatus(snapshot)
-                        snapshot.any { it.isVisibleToUser && it.matches(label) }
+                        if (readCompose) {
+                            val labels = readDashboardSemantics(activity) { nodes -> nodes.flatMap { it.dashboardLabels() }.toList() }
+                            assertFalse("Live TV must keep cached or loading content during setup", labels.any { it.startsWith("No matching categories") })
+                            label in labels
+                        } else {
+                            val snapshot = nodes()
+                            checkLiveStatus(snapshot)
+                            snapshot.any { it.isVisibleToUser && it.matches(label) }
+                        }
                     } }
                     frames?.finish(hasUsefulContent = useful != null)
                     assertTrue("OK on $target must not focus another tab: $focusLabels", focusLabels.none {
@@ -241,7 +278,7 @@ class ProfileNavigationDeviceTest {
                 key(KeyEvent.KEYCODE_DPAD_RIGHT)
                 activate("Series", alreadyFocused = true)
                 key(KeyEvent.KEYCODE_BACK)
-                await("Back from Series returns to Home") { tab("Home")?.isSelected == true }
+                await("Back from Series returns to Home") { ownsTab("Home", selected = true) }
                 activate("Live TV", liveCollection)
                 assertTrue("The isolated provider supplied the fresh catalogue", provider.liveCategoryRequests.get() > 0)
                 provider.unavailable.set(true)
@@ -249,7 +286,11 @@ class ProfileNavigationDeviceTest {
                 activate("My List", alreadyFocused = !measure)
                 if (!measure) key(KeyEvent.KEYCODE_DPAD_LEFT)
                 activate("Live TV", liveCollection, alreadyFocused = !measure)
-                if (!measure) NavigationAuditEvidence.capture("tab-navigation-live-offline")
+                if (!measure) {
+                    NavigationAuditEvidence.capture("tab-navigation-live-offline")
+                    repeat(3) { key(KeyEvent.KEYCODE_DPAD_LEFT) }
+                    activate("Home", alreadyFocused = true)
+                }
                 if (measure) {
                     repeat(3) {
                         activate("Home")
@@ -258,7 +299,12 @@ class ProfileNavigationDeviceTest {
                         activate("Live TV", liveCollection)
                         activate("My List")
                     }
-                    requireNotNull(frames).write(File(context.externalCacheDir, "navigation-audit/tab-navigation-metrics.json"))
+                    val report = requireNotNull(frames).report()
+                    File(context.externalCacheDir, "navigation-audit/tab-navigation-metrics.json").apply {
+                        parentFile?.mkdirs()
+                        writeText(report.toString(2))
+                    }
+                    instrumentation.sendStatus(2, Bundle().apply { putString("stream", "\nTAB_NAVIGATION_RESULT=$report\n") })
                 }
             } finally {
                 automation.setOnAccessibilityEventListener(null)
@@ -269,6 +315,26 @@ class ProfileNavigationDeviceTest {
     }
 
     private val tabTitles = setOf("Home", "Movies", "Series", "Live TV", "My List")
+
+    private fun SemanticsNode.dashboardLabels() = config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() +
+        config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
+
+    private fun SemanticsNode.isDashboardTab(title: String) = config.getOrNull(SemanticsProperties.Role) == Role.Tab &&
+        dashboardLabels().any { it == title || it == "$title 2" }
+
+    private fun <T : Any> readDashboardSemantics(activity: MainActivity, read: (Sequence<SemanticsNode>) -> T): T {
+        fun roots(view: View): Sequence<ViewRootForTest> = sequence {
+            if (view is ViewRootForTest) yield(view)
+            if (view is ViewGroup) for (index in 0 until view.childCount) yieldAll(roots(view.getChildAt(index)))
+        }
+        lateinit var result: T
+        instrumentation.runOnMainSync {
+            result = read(roots(activity.window.decorView)
+                .flatMap { it.semanticsOwner.getAllSemanticsNodes(mergingEnabled = true).asSequence() }
+                .filter { !it.boundsInWindow.isEmpty })
+        }
+        return result
+    }
 
     private fun tab(title: String, snapshot: List<AccessibilityNodeInfo> = nodes()): AccessibilityNodeInfo? {
         val candidates = snapshot.filter { it.isVisibleToUser && (it.matches(title) || it.matches("$title 2")) }
@@ -493,11 +559,22 @@ class ProfileNavigationDeviceTest {
 
     /** Window timings and observed UI milestones are separate measurements. */
     private class TabFrameCapture(private val window: Window) : AutoCloseable {
-        private data class Frame(val total: Long, val overrun: Long?)
+        private data class Frame(val total: Long, val overrun: Long?, val stages: LongArray)
+        private val measuredStages = linkedMapOf(
+            "beforeInput" to FrameMetrics.UNKNOWN_DELAY_DURATION,
+            "input" to FrameMetrics.INPUT_HANDLING_DURATION,
+            "animation" to FrameMetrics.ANIMATION_DURATION,
+            "layout" to FrameMetrics.LAYOUT_MEASURE_DURATION,
+            "draw" to FrameMetrics.DRAW_DURATION,
+            "sync" to FrameMetrics.SYNC_DURATION,
+            "commands" to FrameMetrics.COMMAND_ISSUE_DURATION,
+            "swap" to FrameMetrics.SWAP_BUFFERS_DURATION,
+        )
         private val thread = HandlerThread("tab-navigation-frame-metrics").apply { start() }
         private val lock = Any()
         private var start = Long.MAX_VALUE
         private val frames = mutableListOf<Frame>()
+        private val frameDurations = mutableListOf<Long>()
         private var dropped = 0
         private val transitions = JSONArray()
         private var target = ""
@@ -510,7 +587,8 @@ class ProfileNavigationDeviceTest {
                 if (frameStart >= start) {
                     val total = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
                     val deadline = if (Build.VERSION.SDK_INT >= 31) metrics.getMetric(FrameMetrics.DEADLINE) else -1L
-                    if (total > 0) frames.add(Frame(total, (total - deadline).takeIf { deadline > 0 }))
+                    if (total > 0) frames.add(Frame(total, (total - deadline).takeIf { deadline > 0 },
+                        measuredStages.values.map { metrics.getMetric(it) }.toLongArray()))
                     dropped += droppedCallbacks
                 }
             }
@@ -540,11 +618,17 @@ class ProfileNavigationDeviceTest {
                 frames.toList() to dropped
             }
             val overruns = snapshot.mapNotNull { it.overrun }
+            frameDurations.addAll(snapshot.map { it.total })
+            val longest = snapshot.maxByOrNull { it.total }
+            val longestStages = longest?.let { frame ->
+                JSONObject().apply { measuredStages.keys.forEachIndexed { index, label -> put(label, frame.stages[index] / 1_000_000.0) } }
+            }
             transitions.put(JSONObject().put("tab", target)
                 .put("observedSelectionMs", selectionNs / 1_000_000.0)
                 .put("observedUsefulContentMs", if (hasUsefulContent) contentNs / 1_000_000.0 else JSONObject.NULL)
                 .put("frames", snapshot.size).put("droppedCallbacks", droppedCallbacks)
                 .put("frameTotalP95Ms", percentile(snapshot.map { it.total }))
+                .put("longestFrameStagesMs", longestStages ?: JSONObject.NULL)
                 .put("frameOverrunP95Ms", percentile(overruns))
                 .put("missedDeadlines", if (overruns.isEmpty()) JSONObject.NULL else overruns.count { it > 0 }))
         }
@@ -555,11 +639,13 @@ class ProfileNavigationDeviceTest {
             return values.sorted()[index] / 1_000_000.0
         }
 
-        fun write(path: File) {
-            path.parentFile?.mkdirs()
-            path.writeText(JSONObject().put("device", Build.MODEL).put("sdk", Build.VERSION.SDK_INT)
+        fun report(): JSONObject {
+            val interval = refreshRate?.takeIf { it > 0f }?.let { 1_000_000_000.0 / it }
+            return JSONObject().put("device", Build.MODEL).put("sdk", Build.VERSION.SDK_INT)
                 .put("debuggable", debuggable).put("refreshRateHz", refreshRate ?: JSONObject.NULL)
-                .put("transitions", transitions).toString(2))
+                .put("frameCount", frameDurations.size).put("frameTotalP95Ms", percentile(frameDurations))
+                .put("framesOverRefreshInterval", interval?.let { ns -> frameDurations.count { it > ns } } ?: JSONObject.NULL)
+                .put("transitions", transitions)
         }
 
         override fun close() {

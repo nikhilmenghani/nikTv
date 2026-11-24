@@ -104,6 +104,14 @@ configurations.configureEach {
     if (name != dnsJavaAndroidSource.name) exclude(group = "dnsjava", module = "dnsjava")
 }
 dependencies { add("implementation", files(prepareAndroidDnsJava.flatMap { it.output })) }
+if (providers.gradleProperty("regressionBuild").orNull == "true" &&
+    providers.gradleProperty("performanceBuild").orNull.equals("true", ignoreCase = true)) {
+    androidComponents.beforeVariants(androidComponents.selector().withBuildType("debug")) { variant ->
+        // Keep the target non-debuggable. Its instrumentation APK must use the target's
+        // desugared runtime rather than shadowing it with a second, test-only subset.
+        variant.deviceTests[com.android.build.api.variant.DeviceTestBuilder.ANDROID_TEST_TYPE]?.debuggable = true
+    }
+}
 androidComponents.onVariants { variant ->
     variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareMpvNativeRuntime) { it.outputDirectory }
 }
