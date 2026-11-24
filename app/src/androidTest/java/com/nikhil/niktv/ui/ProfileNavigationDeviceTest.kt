@@ -245,8 +245,10 @@ class ProfileNavigationDeviceTest {
                 activate("Live TV", liveCollection)
                 assertTrue("The isolated provider supplied the fresh catalogue", provider.liveCategoryRequests.get() > 0)
                 provider.unavailable.set(true)
-                activate("My List")
-                activate("Live TV", liveCollection)
+                if (!measure) key(KeyEvent.KEYCODE_DPAD_RIGHT)
+                activate("My List", alreadyFocused = !measure)
+                if (!measure) key(KeyEvent.KEYCODE_DPAD_LEFT)
+                activate("Live TV", liveCollection, alreadyFocused = !measure)
                 if (!measure) NavigationAuditEvidence.capture("tab-navigation-live-offline")
                 if (measure) {
                     repeat(3) {

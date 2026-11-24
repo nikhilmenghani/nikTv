@@ -174,6 +174,11 @@ class CachedAccountStartupTest {
         auth.edit().putString("accountId", "101").putBoolean("retryNeeded:101", true).commit()
         val manager = manager()
         manager.requestManualPullOnly(true).join()
+        if (!com.nikhil.niktv.BuildConfig.DEBUG) {
+            assertFalse(manager.manualPullOnly.value)
+            assertFalse(manager().manualPullOnly.value)
+            return@runBlocking
+        }
         assertTrue(manager.manualPullOnly.value)
         val restored = manager()
         assertTrue(restored.manualPullOnly.value)

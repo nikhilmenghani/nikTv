@@ -297,10 +297,12 @@ internal fun DiscoveryCatalogContent(
 
     val destinationStateHolder = rememberSaveableStateHolder()
     val destinationKey = "${dashboardSurface}:${activeTmdb}:${activeIptv?.id}"
+    val liveRoot = dashboardSurface == DashboardSurface.LIVE_TV && activeTmdb == null && activeIptv == null
     StableTileFocusViewport {
     destinationStateHolder.SaveableStateProvider(destinationKey) {
+        val destinationModifier = Modifier.fillMaxSize()
         Surface(
-            modifier = Modifier.fillMaxSize().destinationEntrance(destinationKey, isTv),
+            modifier = if (liveRoot) destinationModifier else destinationModifier.destinationEntrance(destinationKey, isTv),
             color = ModernAppBackground
         ) {
             when {

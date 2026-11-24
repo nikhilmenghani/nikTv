@@ -410,7 +410,9 @@ class RecycledDiscoveryDeviceTest {
                     Thread.sleep(150)
                     assertEquals("Modal remains focused after native entry work settles", "modal:second", dialog.window?.decorView?.findFocus()?.tag)
                 } finally { i.runOnMainSync { dialog.dismiss() } }
-                await("Source keeps its selected movie after modal dismissal") { focus() == "r0:i0" }
+                await("Source window regains input with its selected movie after modal dismissal") {
+                    host.window.decorView.hasWindowFocus() && focus() == "r0:i0"
+                }
             }
             if (reducedFocusMotion) i.runOnMainSync { assertEquals(1f, host.currentFocus!!.scaleX, 0f) }
             if (exercisePressure) {
