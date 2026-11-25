@@ -1465,6 +1465,7 @@ internal fun ModernSettingsScreen(
                                     runCatching { AppUpdates.check() }
                                         .onSuccess { update ->
                                             availableUpdate = update
+                                            if (update != null) AppUpdates.notifyAvailable(context, update)
                                             updateMessage =
                                                 if (update == null) {
                                                     "You're up to date"

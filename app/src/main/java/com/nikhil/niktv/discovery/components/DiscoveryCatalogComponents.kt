@@ -141,6 +141,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -3038,6 +3039,7 @@ internal fun ModernIptvCollection(
     val isLiveTv = category.type == CatalogType.LIVE_TV
     val isPhone = configuration.usesPhoneLayout(isTv)
     val wideLiveCollection = isLiveTv && !isPhone
+    val modernLiveCards = rememberModernLiveChannelCards()
     val compactPhoneHeader = isLiveTv && isPhone
     val shortWide = configuration.usesShortWideLayout(isTv)
     val localTitleSearch = state.savedProfile?.portalType == PortalType.XTREAM
@@ -3698,17 +3700,20 @@ internal fun ModernIptvCollection(
                     collectionSearch(Modifier.fillMaxWidth())
                 }
                 if (isLiveTv) {
+                    if (compactPhoneHeader) LiveChannelCardDesignSwitch(modernLiveCards) { LiveChannelCardStyle.set(context, it) }
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Channels", style = MaterialTheme.typography.titleSmall, color = Color.White, modifier = Modifier.weight(1f))
+                        if (!compactPhoneHeader) {
+                            LiveChannelCardDesignSwitch(modernLiveCards) { LiveChannelCardStyle.set(context, it) }
+                            Spacer(Modifier.width(10.dp))
+                        }
                         if (pinnedChannelIds.size > 1) {
-                            NikTvSecondaryActionButton({ arrangingPins = true }, Modifier.size(40.dp)
-                                .semantics { contentDescription = "Arrange pinned channels" },
-                                shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(0.dp)) {
-                                Icon(Icons.Default.SwapVert, null, Modifier.size(20.dp))
+                            LiveChannelViewTab("Arrange pinned channels", false, Modifier, icon = Icons.Default.SwapVert) {
+                                arrangingPins = true
                             }
                             Spacer(Modifier.width(8.dp))
                         }
@@ -4018,7 +4023,29 @@ internal fun ModernIptvCollection(
 }
 
 @Composable
-private fun LiveChannelViewTab(label: String, active: Boolean, modifier: Modifier, onClick: () -> Unit) {
+internal fun LiveChannelCardDesignSwitch(checked: Boolean, modifier: Modifier = Modifier, onCheckedChange: (Boolean) -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    var focused by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    Surface(modifier.height(36.dp).onFocusChanged { focused = it.isFocused }.clip(shape)
+        .toggleable(checked, interactionSource = interaction, indication = null,
+            role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onCheckedChange),
+        shape = shape, color = Color(0xFF181C24),
+        border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF35383F))) {
+        Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Modern cards", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            Box(Modifier.size(28.dp, 16.dp).background(if (checked) ModernBrandAccent else Color(0xFF505660), RoundedCornerShape(8.dp))) {
+                Box(Modifier.align(if (checked) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 2.dp)
+                    .size(12.dp).background(Color.White, CircleShape))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun LiveChannelViewTab(label: String, active: Boolean, modifier: Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit) {
     val shape = RoundedCornerShape(8.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -4033,7 +4060,8 @@ private fun LiveChannelViewTab(label: String, active: Boolean, modifier: Modifie
         border = if (focused) BorderStroke(2.dp, Color(0xFFE7E9EF)) else null
     ) {
         Box(Modifier.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
-            Text(label, color = if (active) Color.White else SettingsMuted, style = MaterialTheme.typography.labelLarge)
+            if (icon != null) Icon(icon, label, Modifier.size(18.dp), tint = Color.White)
+            else Text(label, color = if (active) Color.White else SettingsMuted, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -4226,7 +4254,8 @@ internal fun ModernLiveChannelTile(
     onMenuVisibilityChange: (Boolean) -> Unit = {},
     availabilityProfile: String = "",
     onAvailabilityChanged: () -> Unit = {},
-    pinFeedback: String? = null
+    pinFeedback: String? = null,
+    modernCards: Boolean = rememberModernLiveChannelCards()
 ) {
     val availability = rememberIptvAvailability(availabilityProfile)
     val availabilityFlag = availability.flags[item.id]
@@ -4238,6 +4267,10 @@ internal fun ModernLiveChannelTile(
     val isPhone = configuration.usesPhoneLayout(isTv)
     val shortWide = configuration.usesShortWideLayout(isTv)
     val shape = RoundedCornerShape(if (compact) 12.dp else if (isPhone) 14.dp else 16.dp)
+    val titleStyle = if (!isPhone) modernTvTileTitleStyle().copy(fontSize = 11.sp, lineHeight = 13.sp)
+        else MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp)
+    val metadataStyle = if (!isPhone) modernTvTileSubtitleStyle().copy(fontSize = 9.sp, lineHeight = 11.sp)
+        else MaterialTheme.typography.labelSmall
     val interactionSource = remember { MutableInteractionSource() }
     val palette = remember(item.id, item.title) {
         destinationPalette("live:${item.id}:${item.title}")
@@ -4284,13 +4317,19 @@ internal fun ModernLiveChannelTile(
                 .then(
                     // Programme delivery must never change row geometry or its
                     // scroll/focus anchor. Reserve room before guide data arrives.
-                    Modifier.height((when {
+                    Modifier.height(((if (!modernCards) when {
                         compact && shortWide -> 76f
                         compact && !isPhone -> 80f
                         compact -> 92f
                         isPhone -> 100f
                         else -> 98f
-                    } * configuration.fontScale.coerceAtLeast(1f)).dp)
+                    } else when {
+                        compact && shortWide -> 68f
+                        compact && !isPhone -> 68f
+                        compact -> 92f
+                        isPhone -> 100f
+                        else -> 84f
+                    }) * configuration.fontScale.coerceAtLeast(1f)).dp)
                 )
                 .onFocusChanged {
                     focused = it.isFocused
@@ -4321,7 +4360,9 @@ internal fun ModernLiveChannelTile(
             Box(
                 Modifier.fillMaxWidth().background(
                     Brush.horizontalGradient(
-                        if (currentProgrammeTitle == null) {
+                        if (modernCards) {
+                            listOf(Color(0xFF1A1D24), Color(0xFF12151B))
+                        } else if (currentProgrammeTitle == null) {
                             listOf(palette.first.copy(alpha = .42f), Color(0xFF24282F), Color(0xFF171A20))
                         } else {
                             listOf(palette.first.copy(alpha = .35f), Color(0xFF202228), Color(0xFF16181D))
@@ -4329,7 +4370,7 @@ internal fun ModernLiveChannelTile(
                     )
                 )
             ) {
-                Canvas(Modifier.matchParentSize()) {
+                if (!modernCards) Canvas(Modifier.matchParentSize()) {
                     val center = Offset(size.width * .94f, size.height * .50f)
                     drawCircle(palette.first.copy(alpha = .25f),
                         radius = size.height * .68f, center = center)
@@ -4339,6 +4380,77 @@ internal fun ModernLiveChannelTile(
                     drawCircle(accent, radius = size.height * .84f, center = center,
                         style = Stroke(width = 1.dp.toPx()))
                 }
+                if (modernCards) {
+                val badges: @Composable () -> Unit = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.animation.AnimatedVisibility(pinFeedback != null,
+                            enter = androidx.compose.animation.fadeIn(tween(160)),
+                            exit = androidx.compose.animation.fadeOut(tween(180))) {
+                            Icon(Icons.Default.Check, pinFeedback, Modifier.size(12.dp), tint = ModernBrandAccent)
+                        }
+                        quality?.takeIf { showQualityBadge || xtream }?.let {
+                            Surface(color = Color.White.copy(alpha = .10f), shape = RoundedCornerShape(5.dp),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = .22f))) {
+                                Text(it, Modifier.padding(horizontal = if (isPhone) 6.dp else 4.dp, vertical = if (isPhone) 2.dp else 1.dp),
+                                    color = Color.White.copy(alpha = .85f), style = metadataStyle)
+                            }
+                        }
+                        if (availabilityFlag != null) Icon(Icons.Default.Flag, availabilityFlag.label,
+                            Modifier.size(12.dp), tint = IptvAvailabilityAmber)
+                        if (isPinned) Icon(Icons.Default.PushPin, "Pinned channel", Modifier.size(12.dp), tint = ModernBrandAccent)
+                    }
+                }
+                Column(Modifier.fillMaxSize().padding(
+                    start = if (compact) 10.dp else 12.dp,
+                    end = if (compact) 10.dp else 12.dp,
+                    top = if (isPhone) 6.dp else 4.dp,
+                    // Reserve a small, fixed gap above the inset progress track.
+                    bottom = if (isPhone) 18.dp else 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (currentProgrammeTitle != null) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(channelName, Modifier.weight(1f), color = Color.White.copy(alpha = .68f),
+                                style = metadataStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            badges()
+                        }
+                        // Quality/pin indicators occupy only the channel header;
+                        // the programme can wrap across the entire card width.
+                        Text(currentProgrammeTitle, color = Color.White, style = titleStyle,
+                            fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(Modifier.size(5.dp).background(ModernBrandAccent, CircleShape))
+                            Text(scheduleText ?: "Live", color = Color.White.copy(alpha = .72f),
+                                style = metadataStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                presentation.context?.takeUnless { compact }?.let {
+                                    Text(it, color = Color(0xFFB9BDD0), style = metadataStyle,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Text(channelName, color = Color.White, style = titleStyle,
+                                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                if (programmeLoading) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        CircularProgressIndicator(Modifier.size(10.dp), strokeWidth = 1.5.dp,
+                                            color = Color.White.copy(alpha = .72f))
+                                        Text(providerWaitSeconds?.let { "Waiting for provider · ${it}s" } ?: "Loading programme…",
+                                            color = Color.White.copy(alpha = .68f), style = metadataStyle,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                } else detail?.let {
+                                    Text(it, color = Color.White.copy(alpha = .68f), style = metadataStyle,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            badges()
+                        }
+                    }
+                }
+                } else {
                 Row(
                     Modifier.fillMaxSize()
                         .align(Alignment.Center).padding(
@@ -4471,12 +4583,14 @@ internal fun ModernLiveChannelTile(
 
                     }
                 }
+                }
                 programmeProgress?.takeIf { currentProgrammeTitle != null }?.let { progress ->
                     Canvas(
                         Modifier.align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, bottom = 6.dp)
-                            .height(4.dp)
+                            .padding(start = if (modernCards) 10.dp else 12.dp, end = if (modernCards) 10.dp else 12.dp,
+                                bottom = if (modernCards) 4.dp else 6.dp)
+                            .height(if (modernCards) 3.dp else 4.dp)
                     ) {
                         val radius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
                         drawRoundRect(Color.White.copy(alpha = .28f), cornerRadius = radius)

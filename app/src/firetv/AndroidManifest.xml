@@ -3,4 +3,7 @@
     <!-- Fire OS 8 omits the document picker. This optional grant is used by installer cleanup. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- Fire OS 8's all-files settings handler grants this compatibility
+         permission first; without it its Files and media toggle cannot stick. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 </manifest>

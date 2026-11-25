@@ -143,6 +143,9 @@ object AppUpdates {
     private val isolatedRegression = isIsolatedUpdateRegression(BuildConfig.APPLICATION_ID)
     private const val PERIODIC = "niktv-periodic-update"
     private const val STARTUP = "niktv-startup-update"
+    private const val BACKGROUND_DOWNLOAD = "niktv-background-update-download"
+    private const val PREF_BACKGROUND_TARGET = "background_download_target"
+    private const val PREF_PRIVATE_DOWNLOAD = "private_download"
     private const val PREFS = "app_update_download"
     private const val PREF_ID = "download_id"
     private const val PREF_VERSION = "version"
@@ -206,6 +209,7 @@ object AppUpdates {
             runCatching {
                 WorkManager.getInstance(appContext).cancelUniqueWork(STARTUP)
                 WorkManager.getInstance(appContext).cancelUniqueWork(PERIODIC)
+                WorkManager.getInstance(appContext).cancelUniqueWork(BACKGROUND_DOWNLOAD)
             }
             return
         }
@@ -241,6 +245,7 @@ object AppUpdates {
             workManager.cancelUniqueWork(STARTUP)
         }
         restoreDownload()
+        mutablePendingUpdate.value?.let(::scheduleBackgroundDownload)
     }
 
     fun refreshPreferences() {
@@ -354,7 +359,7 @@ object AppUpdates {
     }
 
     @Synchronized
-    fun download(context: Context, update: UpdateInfo): Long {
+    fun download(context: Context, update: UpdateInfo, background: Boolean = false): Long {
         check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
         require(update.version.isNotBlank()) { "Update version is missing" }
@@ -363,16 +368,16 @@ object AppUpdates {
             val channel = if (distribution.development) "debug" else "release"
             "The requested APK does not belong to the $channel update channel"
         }
-        if (!canWritePublicDownloads(context)) {
+        reusableUpdateDownload(mutableDownloadState.value, update)?.let { id ->
+            clearPendingUpdate(update)
+            return id
+        }
+        if (!background && !canWritePublicDownloads(context)) {
             persistPendingUpdate(update)
             throw SecurityException(PUBLIC_DOWNLOADS_PERMISSION_MESSAGE)
         }
 
         currentDownloadIfUsable()?.let { current ->
-            if (!isNewer(update.version, current.version)) {
-                clearPendingUpdate(update)
-                return current.downloadId
-            }
             pollJob?.cancel()
             runCatching { downloadManager().remove(current.downloadId) }
                 .onFailure {
@@ -388,7 +393,8 @@ object AppUpdates {
         }
 
         val fileName = apkFileName(update.version, update.updatePackage)
-        val request = DownloadManager.Request(Uri.parse(update.downloadUrl))
+        val request = if (background) backgroundUpdateRequest(appContext, update, fileName)
+            else DownloadManager.Request(Uri.parse(update.downloadUrl))
             .setTitle("${distribution.appName} ${update.version}")
             .setDescription("Downloading NikTV update")
             .setMimeType(APK_MIME)
@@ -401,11 +407,15 @@ object AppUpdates {
             )
 
         return try {
+            // Only a user-initiated install may arm installer handoff. A stale
+            // failed/manual request must never turn prefetch into an app switch.
+            if (background) preferences().edit().putBoolean(PREF_INSTALL_AFTER_DOWNLOAD, false).apply()
             val id = downloadManager().enqueue(request)
             preferences().edit()
                 .putLong(PREF_ID, id)
                 .putString(PREF_VERSION, update.version)
                 .putString(PREF_URL, update.downloadUrl)
+                .putBoolean(PREF_PRIVATE_DOWNLOAD, background)
                 .apply()
             mutableDownloadState.value = UpdateDownloadState.Queued(id, update.version, update.downloadUrl)
             clearPendingUpdate(update)
@@ -429,6 +439,7 @@ object AppUpdates {
     }
 
     /** Starts one user-visible update flow and hands the APK to Android's installer when ready. */
+    @Synchronized
     fun downloadAndInstall(context: Context, update: UpdateInfo): Long {
         check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
@@ -457,7 +468,7 @@ object AppUpdates {
             ) == PackageManager.PERMISSION_GRANTED
 
     fun canStartDownload(update: UpdateInfo): Boolean =
-        !isolatedRegression && currentDownloadIfUsable()?.let { isNewer(update.version, it.version) } != false
+        !isolatedRegression && reusableUpdateDownload(mutableDownloadState.value, update) == null
 
     fun deferDownload(context: Context, update: UpdateInfo) {
         check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
@@ -476,6 +487,7 @@ object AppUpdates {
         clearPendingUpdate(update)
     }
 
+    @Synchronized
     fun install(context: Context): InstallHandoff {
         check(!isolatedRegression) { "App updates are disabled in the isolated regression build." }
         ensureInitialized(context)
@@ -586,7 +598,9 @@ object AppUpdates {
     }
 
     fun savedLocation(version: String): String =
-        "Downloads/NikTV/${apkFileName(version, effectiveUpdatePackage())}"
+        if (initialized && preferences().getBoolean(PREF_PRIVATE_DOWNLOAD, false) && preferences().getString(PREF_VERSION, null) == version)
+            "NikTV update cache/${apkFileName(version, effectiveUpdatePackage())}"
+        else "Downloads/NikTV/${apkFileName(version, effectiveUpdatePackage())}"
 
     suspend fun obsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
         withContext(Dispatchers.IO) {
@@ -641,6 +655,8 @@ object AppUpdates {
         preferences().edit().putString(PREF_UPDATE_PACKAGE, updatePackage.name).apply()
         mutableUpdatePackage.value = updatePackage
         mutablePendingUpdate.value?.let(::clearPendingUpdate)
+        WorkManager.getInstance(appContext).cancelUniqueWork(BACKGROUND_DOWNLOAD)
+        preferences().edit().remove(PREF_BACKGROUND_TARGET).apply()
     }
 
     fun effectiveUpdatePackage(): UpdatePackage = resolveUpdatePackage(
@@ -654,6 +670,13 @@ object AppUpdates {
         if (!isUpdateForCurrentChannel(update) || !isNewer(update.version, BuildConfig.VERSION_NAME)) return
         // In-app discovery must work even when Android/Fire OS hides notifications.
         persistPendingUpdate(update)
+        runCatching { scheduleBackgroundDownload(update) }
+            .onFailure { Log.w(TAG, "Could not schedule background update download", it) }
+        val ready = mutableDownloadState.value as? UpdateDownloadState.Ready
+        if (ready?.version == update.version && ready.downloadUrl == update.downloadUrl) {
+            notifyReadyToInstall(update.version)
+            return
+        }
         if (!notificationsAllowed(context)) return
         val intent = Intent(context, UpdateActionReceiver::class.java)
             .setAction(UpdateActionReceiver.DOWNLOAD_AND_INSTALL)
@@ -671,11 +694,21 @@ object AppUpdates {
             NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("${distribution.appName} ${update.version} is available")
-                .setContentText("Download the update and open Android's installer.")
+                .setContentText("Downloads in the background on Wi-Fi. Install when ready.")
                 .setAutoCancel(true)
                 .addAction(android.R.drawable.stat_sys_download, "Download & Install", action)
                 .build()
         )
+    }
+
+    private fun scheduleBackgroundDownload(update: UpdateInfo) {
+        if (isolatedRegression || !isUpdateForCurrentChannel(update)) return
+        val target = "${update.version}|${update.downloadUrl}"
+        val sameTarget = preferences().getString(PREF_BACKGROUND_TARGET, null) == target
+        WorkManager.getInstance(appContext).enqueueUniqueWork(BACKGROUND_DOWNLOAD,
+            if (sameTarget) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE,
+            backgroundUpdateWork(update))
+        preferences().edit().putString(PREF_BACKGROUND_TARGET, target).apply()
     }
 
     private fun notifyReadyToInstall(version: String) {
@@ -695,6 +728,8 @@ object AppUpdates {
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("${distribution.appName} $version is ready")
                 .setContentText("Tap to finish installing the update.")
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
                 .setContentIntent(action)
                 .setAutoCancel(true)
                 .addAction(android.R.drawable.stat_sys_download_done, "Install", action)
@@ -754,7 +789,22 @@ object AppUpdates {
         }
     }
 
+    internal suspend fun refreshCompletedDownload(context: Context, id: Long): Unit = withContext(Dispatchers.IO) {
+        if (isolatedRegression) return@withContext
+        ensureInitialized(context)
+        val prefs = preferences()
+        // The receiver is exported for Download Manager, so never trust the
+        // broadcast itself: inspect only this app's persisted, owned download.
+        if (id != prefs.getLong(PREF_ID, -1L)) return@withContext
+        queryDownload(id, prefs.getString(PREF_VERSION, null).orEmpty(), prefs.getString(PREF_URL, null).orEmpty())
+        Unit
+    }
+
+    @Synchronized
     private fun queryDownload(id: Long, version: String, url: String): Boolean {
+        if (id != preferences().getLong(PREF_ID, -1L)) return false
+        if (mutableDownloadState.value is UpdateDownloadState.Installing ||
+            mutableDownloadState.value is UpdateDownloadState.InstallerLaunched) return false
         val query = DownloadManager.Query().setFilterById(id)
         val result = downloadManager().query(query)
             ?: error("Android Download Manager returned no status cursor")
@@ -806,6 +856,9 @@ object AppUpdates {
                     }
                     if (uri != null && preferences().getBoolean(PREF_INSTALL_AFTER_DOWNLOAD, false)) {
                         handOffCompletedDownload()
+                    } else if (uri != null) {
+                        notificationManager().cancel(AVAILABLE_NOTIFICATION_ID)
+                        notifyReadyToInstall(version)
                     }
                     return false
                 }
