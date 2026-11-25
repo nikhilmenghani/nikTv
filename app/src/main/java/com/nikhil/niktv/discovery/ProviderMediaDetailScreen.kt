@@ -428,8 +428,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
                 portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = !wideSeries, compactDetail = true,
                 categoryActions = ({
-                    if (wideSeries) DiscoveryAction("Description", Icons.Default.Info,
-                        iconOnly = true, enabled = !metadata.card.overview.isNullOrBlank(),
+                    if (wideSeries && !metadata.card.overview.isNullOrBlank()) DiscoveryAction("Description", Icons.Default.Info,
+                        iconOnly = true,
                         modifier = Modifier.focusRequester(synopsisRequester)) { compactInfoOpen = true }
                     val extraActions = LocalProviderSynopsisActions.current
                     if (extraActions != null) extraActions()

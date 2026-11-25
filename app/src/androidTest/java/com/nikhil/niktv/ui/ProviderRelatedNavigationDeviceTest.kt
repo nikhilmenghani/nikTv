@@ -24,6 +24,57 @@ import org.junit.Test
 
 /** Provider actor/related destinations use the same retained VM and route host as production. */
 class ProviderRelatedNavigationDeviceTest {
+    @Test fun blankSeriesDescriptionHidesInfoAndKeepsAdjacentActionsReachable() = checkSeriesDescription(null)
+    @Test fun availableSeriesDescriptionIsReachableInBothDirectionsAndReturnsFromDialog() = checkSeriesDescription("Series synopsis fixture")
+
+    private fun checkSeriesDescription(description: String?) {
+        check(context.packageName.endsWith(".regression"))
+        org.junit.Assume.assumeTrue(context.resources.configuration.smallestScreenWidthDp >= 600 ||
+            context.isTvLikeDevice(context.resources.configuration))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val play = FocusRequester()
+        try {
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync {
+                host.setContent { MaterialTheme(colorScheme = NikColors) {
+                    LazyColumn(Modifier.fillMaxSize()) { item {
+                        ProviderDetailHeader(MediaItem("missing-description", "Unmatched IPTV series", null, null), CatalogType.SERIES,
+                            NikTvState(restoring = false), {}, {}, {}, false, {}, {},
+                            playRequester = play, discoveryDetails = DiscoveryDetails(DiscoveryCard(0, true, "Unmatched IPTV series", overview = description)))
+                    } }
+                } }
+            }
+            await("Hero attached") { label("Play") != null }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            instrumentation.runOnMainSync { play.requestFocus() }
+            await("Play focused") { focused("Play") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Add") { focused("My List") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Trailer") { focused("Watch trailer") }
+            if (description == null) assertNull("No empty Info action", label("Description"))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches next visible action") { focused(if (description == null) "More" else "Description") }
+            if (description != null) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right reaches More") { focused("More") }
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Left reaches previous visible action") { focused(if (description == null) "Watch trailer" else "Description") }
+            if (description != null) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Description opens") { label(description) != null }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                await("Dialog closes directly to Description") { focused("Description") }
+            }
+            NavigationAuditEvidence.capture("series-description-${if (description == null) "blank" else "present"}-focus")
+        } finally {
+            NavigationAuditEvidence.capture("series-description-final")
+            instrumentation.runOnMainSync { host.finish() }; instrumentation.setInTouchMode(true)
+        }
+    }
+
     @Test fun movieActionsAreCompactAndDpadFollowsRelatedThenCast() {
         check(context.packageName.endsWith(".regression"))
         val movie = DiscoveryCard(810101, false, "IPTV movie fixture", date = "2020-01-01", overview = "Movie synopsis fixture")

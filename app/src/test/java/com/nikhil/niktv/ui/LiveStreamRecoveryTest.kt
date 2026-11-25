@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -13,7 +14,18 @@ class LiveStreamRecoveryTest {
         assertFalse(recovery.shouldRecover(6_999, pictures.sample(30, 16_999)!!, true, false))
         assertTrue(recovery.shouldRecover(7_000, pictures.sample(30, 17_000)!!, true, false))
         assertEquals(10_000L, pictures.positionMillis)
-        assertFalse(recovery.shouldRecover(14_000, pictures.sample(null, 24_000)!!, true, false))
+        assertFalse(recovery.shouldRecover(14_000, pictures.sample(30, 24_000)!!, true, false))
+    }
+
+    @Test fun missingVlcStatsDoNotRepeatTheLastKnownFrameCount() {
+        val pictures = VlcPictureProgress()
+        // Audio-only live sources can still use their clock.
+        assertEquals(1_000L, pictures.sample(0, 1_000, useClockBeforeFirstPicture = true))
+        assertEquals(30L, pictures.sample(30, 2_000, useClockBeforeFirstPicture = true))
+        assertNull(pictures.sample(null, 10_000, useClockBeforeFirstPicture = true))
+        assertEquals(2_000L, pictures.positionMillis)
+        assertEquals(31L, pictures.sample(31, 11_000, useClockBeforeFirstPicture = true))
+        assertEquals(11_000L, pictures.positionMillis)
     }
 
     @Test fun vlcCanResumeNaturallyBeforeTheWatchdogReopensTheSource() {

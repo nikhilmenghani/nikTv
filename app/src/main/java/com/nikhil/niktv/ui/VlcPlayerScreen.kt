@@ -1116,13 +1116,13 @@ internal fun VlcPlayerScreen(
             val displayed = if (playingRequested()) player.vlcDisplayedPictures() else null
             val now = android.os.SystemClock.elapsedRealtime()
             val clock = player.time
-            val videoProgress = pictures.sample(displayed, clock)
-            val eligible = playingRequested() && if (live) channelHasPlayed else
-                streamWasPlaying && !streamTerminated && pendingInitialResumePosition == 0L &&
-                    !seekTarget.isPending(now) && videoProgress != null && player.isSeekable &&
-                    pictures.positionMillis > 0L && duration - clock > 3_000L
+            val progress = pictures.sample(displayed, clock, useClockBeforeFirstPicture = live)
             val stopped = live && streamTerminated
-            if (recovery.shouldRecover(now, videoProgress ?: clock, eligible, stopped)) {
+            val eligible = playingRequested() && (progress != null || stopped) && if (live) channelHasPlayed else
+                streamWasPlaying && !streamTerminated && pendingInitialResumePosition == 0L &&
+                    !seekTarget.isPending(now) && player.isSeekable &&
+                    pictures.positionMillis > 0L && duration - clock > 3_000L
+            if (recovery.shouldRecover(now, progress ?: clock, eligible, stopped)) {
                 if (live) {
                     android.util.Log.w("NikTvPlayback", "VLC live stream stalled; requesting fresh stream")
                     streamTerminated = true

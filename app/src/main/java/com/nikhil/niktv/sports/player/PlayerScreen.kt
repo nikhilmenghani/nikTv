@@ -1782,14 +1782,14 @@ fun PlayerScreen(
                 appearancePreview = null
             }
             controlsVisible -> {
-                controlsVisible = false
-                controlsFocused = false
                 if (embeddedMode && playerViewRef != null) {
                     suppressNextEmbeddedPlayerFocusHandoff = true
                     playerViewRef?.requestFocus()
                 } else {
-                    coroutineScope.launch { delay(80L); runCatching { videoSurfaceFocusRequester.requestFocus() } }
+                    runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
+                controlsVisible = false
+                controlsFocused = false
             }
             // Hide visible controls first; the next Back leaves playback.
             startFullscreen -> onBack()
@@ -1808,7 +1808,7 @@ fun PlayerScreen(
                 enabled = swipeControls.channels && focusMode && hasPlaybackQueue && !pictureEditorVisible,
                 onOpen = ::showEpisodeQueue
             )
-            .playerRemoteBack(showAutoPlayPrompt)
+            .playerRemoteBack(controlsVisible || showAutoPlayPrompt)
             .playerUpNextControls(showAutoPlayPrompt, ::showControlsAndFocusPlayPause)
             .playerActivityObserver {
                 dpadInteraction++

@@ -4285,10 +4285,11 @@ internal fun ModernLiveChannelTile(
                     // Programme delivery must never change row geometry or its
                     // scroll/focus anchor. Reserve room before guide data arrives.
                     Modifier.height((when {
-                        compact && shortWide -> 84f
+                        compact && shortWide -> 76f
+                        compact && !isPhone -> 80f
                         compact -> 92f
                         isPhone -> 100f
-                        else -> 112f
+                        else -> 98f
                     } * configuration.fontScale.coerceAtLeast(1f)).dp)
                 )
                 .onFocusChanged {
@@ -4345,7 +4346,7 @@ internal fun ModernLiveChannelTile(
                         end = if (compact) 10.dp else 12.dp,
                         top = 6.dp,
                         // Keep the track's space even while EPG is missing.
-                        bottom = 18.dp
+                        bottom = if (isPhone) 18.dp else 14.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)

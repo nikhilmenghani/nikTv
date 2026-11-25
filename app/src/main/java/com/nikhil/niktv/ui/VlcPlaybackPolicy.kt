@@ -16,12 +16,15 @@ internal class VlcPictureProgress {
     var positionMillis: Long = 0L
         private set
 
-    fun sample(displayed: Int?, position: Long): Long? {
-        if (displayed != null && displayed > 0 && displayed != pictures) {
+    fun sample(displayed: Int?, position: Long, useClockBeforeFirstPicture: Boolean = false): Long? {
+        val clockProgress = position.takeIf { useClockBeforeFirstPicture && pictures == null }
+        // A failed stats read says nothing about whether the picture advanced.
+        if (displayed == null) return clockProgress
+        if (displayed > 0 && displayed != pictures) {
             pictures = displayed
             positionMillis = position.coerceAtLeast(0L)
         }
-        return pictures?.toLong()
+        return pictures?.toLong() ?: clockProgress
     }
 }
 

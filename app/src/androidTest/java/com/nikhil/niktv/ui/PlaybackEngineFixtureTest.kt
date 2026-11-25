@@ -209,14 +209,23 @@ class PlaybackEngineFixtureTest {
     @Test fun liveMedia3DownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MEDIA3, true)
     @Test fun liveVlcDownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.VLC, true)
     @Test fun liveMpvDownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MPV, true)
+    @Test fun sportsMedia3DownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MEDIA3, true, true)
+    @Test fun sportsVlcDownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.VLC, true, true)
+    @Test fun sportsMpvDownBackHidesControls() = exerciseBackLayers(com.nikhil.niktv.model.PlaybackEngine.MPV, true, true)
 
-    private fun exerciseBackLayers(engine: com.nikhil.niktv.model.PlaybackEngine, live: Boolean = false) {
+    private fun exerciseBackLayers(engine: com.nikhil.niktv.model.PlaybackEngine, live: Boolean = false, sports: Boolean = false) {
         check(context.packageName.endsWith(".regression"))
+        (context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager)
+            .setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
         fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
         fun focused(label: String): Boolean {
             var node = control(label)
-            while (node != null && !node.isFocusable) node = node.parent
-            return node?.isFocused == true
+            node?.refresh()
+            while (node != null && !node.isFocusable) { node = node.parent; node?.refresh() }
+            // API 30 keeps a stale isFocused flag after ACTION_FOCUS. Query the
+            // current input owner rather than trusting the cached node snapshot.
+            return node != null && node == instrumentation.uiAutomation.rootInActiveWindow
+                ?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
         }
         fun activate(label: String) {
             await("$label accepts focus") {
@@ -240,7 +249,13 @@ class PlaybackEngineFixtureTest {
                     CompositionLocalProvider(LocalViewerLayout provides com.nikhil.niktv.data.ViewerLayout.EASY) {
                         val media = remember { PlayingMedia(item, "${server.base}/movie.mp4", if (live) CatalogType.LIVE_TV else CatalogType.SERIES,
                             episodeQueue = listOf(item, next), progressKey = "back-$engine", profileKey = "isolated-back") }
-                        PlayerScreen(media, onBack = { exits.incrementAndGet() }, onRetry = {}, onRetryAlternateDecoder = {},
+                        if (sports) com.nikhil.niktv.sports.player.PlayerScreen(media,
+                            playbackDomain = PlaybackDomain.SPORTS,
+                            onBack = { exits.incrementAndGet() }, onRetry = {}, onRetryAlternateDecoder = {},
+                            onPlaybackAuthorizationFailure = {}, onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
+                            playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = true,
+                            onVideoFrameRendered = { frames.incrementAndGet() })
+                        else PlayerScreen(media, onBack = { exits.incrementAndGet() }, onRetry = {}, onRetryAlternateDecoder = {},
                             onPlaybackAuthorizationFailure = {}, onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
                             playbackEngine = engine, controlsTimeoutSeconds = 0, startFullscreen = true,
                             onVideoFrameRendered = { frames.incrementAndGet() })
@@ -260,7 +275,35 @@ class PlaybackEngineFixtureTest {
                 assertTrue("Dismissal must not visit Previous", focusEvents.drop(downBackAt).none { it.contains("Previous", true) })
                 key(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
                 await("Down reopens controls") { focused("Pause") }
-                if (live) return
+                if (live) {
+                    if (sports) {
+                        // Follow the actual live transport path; ACTION_FOCUS on
+                        // API 30 can leave accessibility snapshots behind Compose.
+                        // Native engines also expose seek buttons for this local
+                        // MP4 fixture, unlike the nonseekable live Media3 path.
+                        for (step in 0 until 8) {
+                            if (focused("More controls")) break
+                            key(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+                            instrumentation.waitForIdleSync()
+                        }
+                        await("Sports Right reaches More controls") { focused("More controls") }
+                        key(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                        await("Sports settings retain their trigger on opening") { focused("Hide extra controls") }
+                        key(android.view.KeyEvent.KEYCODE_DPAD_LEFT)
+                        await("Left enters the last revealed setting") { focused("Playback information") }
+                        val settingsBackAt = focusEvents.size
+                        key(android.view.KeyEvent.KEYCODE_BACK)
+                        await("Sports Back closes settings onto its trigger") { focused("More controls") && control("Playback information") == null }
+                        assertTrue("Closing Sports settings must not visit transport controls: ${focusEvents.drop(settingsBackAt)}",
+                            focusEvents.drop(settingsBackAt).none { it in listOf("Previous", "Play", "Pause") })
+                        key(android.view.KeyEvent.KEYCODE_BACK)
+                        await("Sports next Back hides controls") { control("More controls") == null }
+                        assertEquals(0, exits.get())
+                        key(android.view.KeyEvent.KEYCODE_BACK)
+                        await("Sports Back from bare video exits") { exits.get() == 1 }
+                    }
+                    return
+                }
                 activate("Episodes")
                 await("Episodes opens a separate queue") { control("Next fixture episode") != null }
                 val beforeQueueBack = focusEvents.size
