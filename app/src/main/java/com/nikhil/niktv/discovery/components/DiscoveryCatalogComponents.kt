@@ -3241,8 +3241,14 @@ internal fun ModernIptvCollection(
     val viewportKey = "$viewer:$profileKey:${category.type.name}:${category.id}:$visitId"
     // Opening from the category hub is a new visit. Returning from playback keeps
     // the same visit, so its position must survive without restoring a loading row.
-    val restoredViewport = remember(viewportKey) { ModernCollectionViewportMemory.entry(viewportKey) }
-    var initialTilesPositioned by remember(viewportKey) { mutableStateOf(restoredViewport.ready) }
+    val collectionLayout = "$columns:$isPhone:${configuration.orientation}"
+    val restoredViewport = remember(viewportKey, collectionLayout) {
+        ModernCollectionViewportMemory.entry(viewportKey).forLayout(collectionLayout)
+    }
+    // Every mount/reflow must wait for real projected rows. A retained "ready"
+    // visit can otherwise anchor to the temporary footer before channels return.
+    var positionedLayout by remember(viewportKey) { mutableStateOf<String?>(null) }
+    val initialTilesPositioned = positionedLayout == collectionLayout
     // Use standard prefetching: the cache-window strategy crashes when visible rows become empty.
     // Saved LazyGridState can override its initializer, even for a fresh opening.
     // The visit memory owns restoration; a new visit always constructs position 0.
@@ -3265,22 +3271,31 @@ internal fun ModernIptvCollection(
                 }
             }
     }
-    LaunchedEffect(viewportKey, visitId, displayedItems.isNotEmpty(), state.loading) {
-        if (!initialTilesPositioned && displayedItems.isNotEmpty() && !state.loading) {
-            lastFocusedOccurrenceKey = null
-            lastFocusedMediaId = null
-            focusedPosterIndex = -1
+    LaunchedEffect(viewportKey, collectionLayout, collectionProjectionReady, displayedItems.isNotEmpty(), state.loading) {
+        if (!initialTilesPositioned && collectionProjectionReady && displayedItems.isNotEmpty() && !state.loading) {
+            if (!restoredViewport.ready) {
+                lastFocusedOccurrenceKey = null
+                lastFocusedMediaId = null
+                focusedPosterIndex = -1
+            }
             // Apply on the next measure so a temporary loading/footer key cannot
             // retain its bottom position when the first channel batch is inserted.
-            gridState.requestScrollToItem(0, 0)
+            val target = restoredViewport.index.coerceAtMost(sectionGrid.gridIndex(displayedItems.lastIndex))
+            gridState.requestScrollToItem(target, restoredViewport.offset)
+            snapshotFlow {
+                gridState.layoutInfo.visibleItemsInfo.any { it.index == target &&
+                    (it.key.toString().startsWith("modern-iptv-") || it.key.toString().startsWith("channel-section-")) } &&
+                    (target != 0 || restoredViewport.offset != 0 ||
+                        (gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0))
+            }.first { it }
             ModernCollectionViewportMemory.markReady(viewportKey)
-            initialTilesPositioned = true
+            positionedLayout = collectionLayout
         }
     }
-    LaunchedEffect(isLiveTv, availability.filter, collectionProjectionReady, displayedItems.isEmpty(), remoteNavigationActive, state.loading) {
+    LaunchedEffect(isLiveTv, collectionLayout, availability.filter, collectionProjectionReady, displayedItems.isEmpty(), remoteNavigationActive, state.loading) {
         if (isLiveTv && !initialTilesPositioned && collectionProjectionReady && displayedItems.isEmpty() && !state.loading) {
             ModernCollectionViewportMemory.markReady(viewportKey)
-            initialTilesPositioned = true
+            positionedLayout = collectionLayout
             collectionControlsOwnNavigation = true
             if (remoteNavigationActive) {
                 val target = if (availability.filter == IptvAvailabilityFilter.ALL) channelViewFocus else availabilityFocus
@@ -3292,17 +3307,20 @@ internal fun ModernIptvCollection(
     LaunchedEffect(trimmedChannelQuery, sourceFilter) {
         if (trimmedChannelQuery.isNotEmpty() || sourceFilter != null) gridState.scrollToItem(0)
     }
-    LaunchedEffect(viewportKey, gridState) {
+    val viewportCanPersist by rememberUpdatedState(initialTilesPositioned && collectionProjectionReady && displayedItems.isNotEmpty())
+    val viewportLayout by rememberUpdatedState(collectionLayout)
+    LaunchedEffect(viewportKey, gridState, collectionLayout, initialTilesPositioned, collectionProjectionReady) {
+        if (!initialTilesPositioned || !collectionProjectionReady || displayedItems.isEmpty()) return@LaunchedEffect
         snapshotFlow {
             gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
         }.collect { (index, offset) ->
-            ModernCollectionViewportMemory.put(viewportKey, index, offset)
+            ModernCollectionViewportMemory.put(viewportKey, index, offset, collectionLayout)
         }
     }
     DisposableEffect(viewportKey, gridState) {
         onDispose {
-            ModernCollectionViewportMemory.put(viewportKey,
-                gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+            if (viewportCanPersist) ModernCollectionViewportMemory.put(viewportKey,
+                gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset, viewportLayout)
         }
     }
     val currentGuideItems by rememberUpdatedState(displayedItems)
@@ -4268,9 +4286,9 @@ internal fun ModernLiveChannelTile(
     val shortWide = configuration.usesShortWideLayout(isTv)
     val shape = RoundedCornerShape(if (compact) 12.dp else if (isPhone) 14.dp else 16.dp)
     val titleStyle = if (!isPhone) modernTvTileTitleStyle().copy(fontSize = 11.sp, lineHeight = 13.sp)
-        else MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp)
+        else MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 14.sp)
     val metadataStyle = if (!isPhone) modernTvTileSubtitleStyle().copy(fontSize = 9.sp, lineHeight = 11.sp)
-        else MaterialTheme.typography.labelSmall
+        else MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp)
     val interactionSource = remember { MutableInteractionSource() }
     val palette = remember(item.id, item.title) {
         destinationPalette("live:${item.id}:${item.title}")
@@ -4326,9 +4344,8 @@ internal fun ModernLiveChannelTile(
                     } else when {
                         compact && shortWide -> 68f
                         compact && !isPhone -> 68f
-                        compact -> 92f
-                        isPhone -> 100f
-                        else -> 84f
+                        isPhone -> 72f
+                        else -> 68f
                     }) * configuration.fontScale.coerceAtLeast(1f)).dp)
                 )
                 .onFocusChanged {
@@ -4391,7 +4408,7 @@ internal fun ModernLiveChannelTile(
                         quality?.takeIf { showQualityBadge || xtream }?.let {
                             Surface(color = Color.White.copy(alpha = .10f), shape = RoundedCornerShape(5.dp),
                                 border = BorderStroke(1.dp, Color.White.copy(alpha = .22f))) {
-                                Text(it, Modifier.padding(horizontal = if (isPhone) 6.dp else 4.dp, vertical = if (isPhone) 2.dp else 1.dp),
+                                Text(it, Modifier.padding(horizontal = if (isPhone) 6.dp else 4.dp, vertical = 1.dp),
                                     color = Color.White.copy(alpha = .85f), style = metadataStyle)
                             }
                         }
@@ -4403,10 +4420,10 @@ internal fun ModernLiveChannelTile(
                 Column(Modifier.fillMaxSize().padding(
                     start = if (compact) 10.dp else 12.dp,
                     end = if (compact) 10.dp else 12.dp,
-                    top = if (isPhone) 6.dp else 4.dp,
+                    top = 4.dp,
                     // Reserve a small, fixed gap above the inset progress track.
-                    bottom = if (isPhone) 18.dp else 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    bottom = if (currentProgrammeTitle != null) 10.dp else 4.dp),
+                    verticalArrangement = if (currentProgrammeTitle != null) Arrangement.spacedBy(2.dp) else Arrangement.Center) {
                     if (currentProgrammeTitle != null) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -4418,13 +4435,16 @@ internal fun ModernLiveChannelTile(
                         // the programme can wrap across the entire card width.
                         Text(currentProgrammeTitle, color = Color.White, style = titleStyle,
                             fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        // Keep the schedule next to its progress track, regardless
+                        // of whether the programme occupies one or two lines.
+                        Spacer(Modifier.weight(1f))
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Box(Modifier.size(5.dp).background(ModernBrandAccent, CircleShape))
                             Text(scheduleText ?: "Live", color = Color.White.copy(alpha = .72f),
                                 style = metadataStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     } else {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top,
+                        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 presentation.context?.takeUnless { compact }?.let {
@@ -4446,7 +4466,7 @@ internal fun ModernLiveChannelTile(
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
-                            badges()
+                            Box(Modifier.align(Alignment.Top)) { badges() }
                         }
                     }
                 }

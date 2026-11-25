@@ -4,6 +4,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CollectionVisitViewportTest {
+    @Test fun layoutChangeKeepsTheChannelButDiscardsOldRowPixelOffset() {
+        val memory = CollectionVisitViewportMemory()
+        memory.markReady("rotation")
+        memory.put("rotation", 12, 190, "portrait")
+        assertEquals(CollectionViewport(12, 190, true, "portrait"), memory.entry("rotation").forLayout("portrait"))
+        assertEquals(CollectionViewport(12, 0, true, "portrait"), memory.entry("rotation").forLayout("landscape"))
+        memory.put("rotation", 0, 0, "landscape")
+        assertEquals(0, memory.entry("rotation").forLayout("portrait").index)
+        assertEquals(0, memory.entry("rotation").forLayout("portrait").offset)
+    }
+
     @Test fun reopeningTheSameCategoryStartsAtTopButPlaybackReturnKeepsPosition() {
         val memory = CollectionVisitViewportMemory()
         val firstVisit = "viewer:portal:LIVE_TV:hindi:${CatalogVisitIds.next()}"

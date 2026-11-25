@@ -52,7 +52,8 @@ class CompactLiveProgrammeDeviceTest {
         }
         val title = "Aquaman and the Lost Kingdom (2023)"
         val now = System.currentTimeMillis()
-        for ((tv, font) in listOf(true to 1f, false to 1f, false to 1.3f)) {
+        for ((tv, font, phone) in listOf(Triple(true, 1f, false), Triple(false, 1f, false),
+            Triple(false, 1.3f, false), Triple(false, 1f, true), Triple(false, 1.3f, true))) {
             val host = ins.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
             val hasProgramme = mutableStateOf(false)
@@ -64,7 +65,8 @@ class CompactLiveProgrammeDeviceTest {
                 LiveChannelCardStyle.set(context, true)
                 ins.runOnMainSync { host.setContent {
                     val config = Configuration(LocalConfiguration.current).apply {
-                        screenWidthDp = 960; screenHeightDp = if (tv) 540 else 400; fontScale = font
+                        screenWidthDp = if (phone) 390 else 960
+                        screenHeightDp = if (phone) 840 else if (tv) 540 else 400; fontScale = font
                     }
                     CompositionLocalProvider(LocalConfiguration provides config, LocalDensity provides Density(2f, font)) {
                         MaterialTheme(colorScheme = NikColors) {
@@ -91,6 +93,9 @@ class CompactLiveProgrammeDeviceTest {
                 } }
                 await("Cards attached") { node("DC") != null }
                 val before = bounds("DC", true)
+                val nameOnlyCard = bounds("Second channel", true)
+                assertTrue("Channel without programme is vertically centered",
+                    kotlin.math.abs(bounds("Second channel").centerY() - nameOnlyCard.centerY()) <= 3)
                 assertEquals(bounds("All", true).height(), bounds("Arrange pinned channels", true).height())
                 ins.runOnMainSync { hasProgramme.value = true }
                 await("Programme arrives") { node(title) != null }
@@ -110,7 +115,7 @@ class CompactLiveProgrammeDeviceTest {
                 ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
                 await("Up restores the programme card") { focused == 0 }
                 ins.waitForIdleSync()
-                NavigationAuditEvidence.capture("compact-programme-$tv-$font")
+                NavigationAuditEvidence.capture("compact-programme-$tv-$font-$phone")
                 ins.runOnMainSync { design.requestFocus() }
                 ins.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
                 await("Switch restores classic card geometry") { bounds("DC", true).height() > after.height() }

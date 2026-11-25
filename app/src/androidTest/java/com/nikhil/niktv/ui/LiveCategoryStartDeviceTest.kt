@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.discovery.CatalogVisitIds
 import com.nikhil.niktv.discovery.components.ModernIptvCollection
@@ -68,6 +69,62 @@ class LiveCategoryStartDeviceTest {
     @Test fun firstBatchPagingAndAnotherCategoryStartAtFirstChannel() = scenario(false, false)
     @Test fun landscapeGuideUpdatesKeepUniformRowsAndStartAtTop() = scenario(true, false)
     @Test fun tvRemoteGuideUpdatesKeepFirstRowAndFocus() = scenario(true, true)
+
+    @Test fun repeatedRotationKeepsPinnedHeadingAndFirstChannelAtTop() {
+        val context = test.targetContext
+        check(context.packageName.endsWith(".regression"))
+        test.setInTouchMode(true)
+        val host = test.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        val visit = CatalogVisitIds.next()
+        val profile = PortalProfile("Rotation fixture", "https://rotation-$visit.invalid", "fixture")
+        val category = Category("rotation", "Rotation channels", CatalogType.LIVE_TV)
+        val now = System.currentTimeMillis()
+        val rows = (0 until 80).map { MediaItem("rotation-$it", "Rotation channel $it", null, null,
+            liveProgramme = LiveProgramme("Programme $it", now - 300_000, now + 600_000)) }
+        val state = NikTvState(savedProfile = profile, items = rows, restoring = false, modernIptvCategoryOpenId = visit)
+        for (item in rows.take(5)) IptvPinPreferences.toggleChannel(context, profile.cacheKey(), category.id, item.id)
+        fun headingVisible(): Boolean {
+            if (Build.VERSION.SDK_INT >= 33) test.uiAutomation.clearCache()
+            fun find(n: AccessibilityNodeInfo?): Boolean {
+                n ?: return false
+                if (n.text?.toString() == "Pinned") {
+                    var p = n.parent
+                    var clickable = false
+                    while (p != null) { clickable = clickable || p.isClickable; p = p.parent }
+                    if (!clickable) return Rect().also(n::getBoundsInScreen).height() > 0
+                }
+                for (i in 0 until n.childCount) if (find(n.getChild(i))) return true
+                return false
+            }
+            return find(test.uiAutomation.rootInActiveWindow)
+        }
+        try {
+            test.runOnMainSync {
+                host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                host.setContent { MaterialTheme(colorScheme = NikColors) {
+                    val holder = rememberSaveableStateHolder()
+                    val phone = LocalConfiguration.current.usesPhoneLayout(false)
+                    holder.SaveableStateProvider("same-category") { key(phone) {
+                        ModernIptvCollection(state, category, {}, {}, {}, {}, {}, { _, _ -> }, {}, {}, {}, {}, isTv = false)
+                    } }
+                } }
+            }
+            for (orientation in listOf(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
+                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)) {
+                test.runOnMainSync { host.requestedOrientation = orientation }
+                val expected = if (orientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE
+                await("Rotation applied") { host.resources.configuration.orientation == expected }
+                await("Pinned heading and first channel survive rotation") { headingVisible() && node("Rotation channel 0") != null }
+                assertTopStaysVisible("Rotation channel 0")
+                assertTrue("Pinned section stays above its first tile", headingVisible())
+                NavigationAuditEvidence.capture("channel-rotation-$expected")
+            }
+        } finally {
+            for (item in rows.take(5)) IptvPinPreferences.toggleChannel(context, profile.cacheKey(), category.id, item.id)
+            test.runOnMainSync { host.finish() }
+        }
+    }
 
     private fun scenario(landscape: Boolean, remote: Boolean) {
         check(test.targetContext.packageName.endsWith(".regression"))
