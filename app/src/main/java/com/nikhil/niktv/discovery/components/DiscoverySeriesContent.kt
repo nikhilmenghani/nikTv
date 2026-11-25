@@ -1148,7 +1148,7 @@ internal fun DiscoverySeriesContent(
                 .padding(start = if (shortLandscapeEpisodes) 16.dp else 24.dp,
                     end = if (shortLandscapeEpisodes) 16.dp else 24.dp,
                     bottom = if (shortLandscapeEpisodes) 8.dp else 16.dp),
-                compact = shortLandscapeEpisodes, loading = (state.loading && state.items.isEmpty()) || pendingPlaybackReturnId != null,
+                compact = shortLandscapeEpisodes, loading = seriesEpisodePanelLoading(state.loading, episodeIds, entryFocusTarget),
                 loadingColumns = if (posterRow) 6 else viewportColumns, posterRow = posterRow, toolbar = null, episodes = {
                     Column(Modifier.fillMaxSize()) {
                         state.episodePagingError?.takeIf { it.profile == profile && it.series == series.id && it.season == selectedSeason }?.let {

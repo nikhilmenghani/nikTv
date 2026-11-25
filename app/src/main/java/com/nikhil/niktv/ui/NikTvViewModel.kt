@@ -2462,7 +2462,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val series = snapshot.selectedSeries
         if (series != null) {
             task {
-                _state.update { it.copy(items = emptyList()) }
+                // Refresh replaces the catalogue only after a successful response.
+                // Keep existing episodes playable when the provider request fails.
                 loadSeriesEpisodes(series, snapshot.selectedSeriesSeason, forceRefresh = true)
             }
             return
@@ -3464,6 +3465,17 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             seasonIndexValidated = true,
             totalEpisodes = loaded.totalEpisodes
         )
+        // An alternate source may remember a season absent from this portal.
+        // The provider-selected fallback is authoritative for this request; the
+        // normal cache publisher otherwise rejects it as an old-season result.
+        _state.update { current ->
+            if (destinationRevision == episodeDestinationRequest &&
+                current.session?.profile?.cacheKey() == session.profile.cacheKey() &&
+                current.selectedSeries?.id == providerSeries.id &&
+                current.selectedSeriesSeason == requestedSeason)
+                current.copy(selectedSeriesSeason = base.season)
+            else current
+        }
         cacheSeason(base)
         if (backgroundTmdb) {
             launchEpisodeMetadataEnrichment(providerSeries, base, forceTmdb)

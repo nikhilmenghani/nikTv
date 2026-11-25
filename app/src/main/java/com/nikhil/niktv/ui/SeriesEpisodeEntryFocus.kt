@@ -6,6 +6,10 @@ internal sealed interface SeriesEpisodeEntryFocus {
     data class Episode(val index: Int, val id: String) : SeriesEpisodeEntryFocus
 }
 
+/** A remembered alternate-source ID is not evidence that provider work is still running. */
+internal fun seriesEpisodePanelLoading(loading: Boolean, episodeIds: List<String>, target: SeriesEpisodeEntryFocus?): Boolean =
+    episodeIds.isEmpty() && (loading || target == SeriesEpisodeEntryFocus.Loading)
+
 /** Select once on entry, or restore the played episode after asynchronous loading. */
 internal fun seriesEpisodeEntryFocusTarget(
     episodeIds: List<String>,

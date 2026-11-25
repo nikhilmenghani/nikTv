@@ -7,6 +7,14 @@ import org.junit.Test
 class SeriesEpisodeEntryFocusTest {
     private val episodes = listOf("latest", "previous", "earliest")
 
+    @Test fun `alternate return id never hides loaded episodes or leaves failed load in skeleton`() {
+        val target = seriesEpisodeEntryFocusTarget(episodes, false, "series:alternate:1:435", false)
+        assertEquals(false, seriesEpisodePanelLoading(false, episodes, target))
+        val empty = seriesEpisodeEntryFocusTarget(emptyList(), false, "series:alternate:1:435", false)
+        assertEquals(false, seriesEpisodePanelLoading(false, emptyList(), empty))
+        assertEquals(true, seriesEpisodePanelLoading(true, emptyList(), SeriesEpisodeEntryFocus.Loading))
+    }
+
     @Test fun `fresh entry waits inside episode screen then chooses topmost episode`() {
         assertEquals(SeriesEpisodeEntryFocus.Loading,
             seriesEpisodeEntryFocusTarget(emptyList(), true, null, true))

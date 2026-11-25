@@ -38,6 +38,7 @@ class EpisodeRefreshFailureTest {
     private val providerRequests = AtomicInteger()
     private val response = CompletableDeferred<List<TmdbEpisode>>()
     private var metadataRequested = false
+    private var providerBody: String? = null
     private val episode = MediaItem("episode", "Episode 1", null, "fixture-command", seasonNumber = 1,
         episodeNumber = 1, description = "Provider description")
     private val metadata = TmdbEpisode(1, 1, "Pilot", "TMDB synopsis", "1994-09-22", "https://fixture.invalid/still.jpg")
@@ -47,7 +48,9 @@ class EpisodeRefreshFailureTest {
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/player_api.php") { exchange ->
                 providerRequests.incrementAndGet()
-                exchange.sendResponseHeaders(404, -1)
+                val body = providerBody?.toByteArray()
+                exchange.sendResponseHeaders(if (body == null) 404 else 200, body?.size?.toLong() ?: -1)
+                body?.let { exchange.responseBody.write(it) }
                 exchange.close()
             }
             start()
@@ -107,6 +110,29 @@ class EpisodeRefreshFailureTest {
 
     private fun backgroundCache() = EpisodeSeasonCache(
         state.value.session!!.profile.cacheKey(), "series", 1, listOf(1), listOf(episode), iptvEpisodes = listOf(episode))
+
+    @Test fun providerSeasonFallbackAfterAlternatePlaybackPublishesEpisodesAndActualSeason() {
+        providerBody = """{"info":{"name":"Fixture"},"episodes":{"2":[{"id":"200","episode_num":1,"title":"Provider episode","container_extension":"mp4","season":2}]}}"""
+        val series = state.value.selectedSeries!!
+        state.value = state.value.copy(items = emptyList(), selectedSeriesSeason = 1,
+            recentlyPlayed = listOf(RecentItem(FavoriteKind.SERIES, series,
+                lastPlayed = episode.copy(id = "series:alternate:1:1"), profileKey = state.value.session!!.profile.cacheKey(),
+                alternateTarget = com.nikhil.niktv.data.AlternateSourceTarget("Friends", true, season = 1, episode = 1))))
+        vm.episodeTmdbSeriesLookup = { null }
+        vm.refreshCatalog()
+        await { providerRequests.get() > 0 && !state.value.loading }
+        assertEquals(listOf(2), state.value.availableSeriesSeasons)
+        assertEquals(2, state.value.selectedSeriesSeason)
+        assertEquals(1, state.value.items.size)
+        assertEquals(2, state.value.items.single().seasonNumber)
+    }
+
+    @Test fun providerRefreshFailureDoesNotClearAlreadyLoadedEpisodes() {
+        vm.refreshCatalog()
+        await { providerRequests.get() > 0 && !state.value.loading && state.value.error != null }
+        assertEquals(listOf(episode), state.value.items)
+        assertEquals(1, state.value.selectedSeriesSeason)
+    }
 
     @Test fun backgroundForcedRefreshWithoutConfidentMatchDoesNotCrash() {
         vm.episodeTmdbSeriesLookup = { null }
