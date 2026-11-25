@@ -25,6 +25,8 @@ import java.util.Collections
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class TmdbMovieLookupViewModelTest {
     private val scheduler = TestCoroutineScheduler()
+    @get:Rule val temporary = org.junit.rules.TemporaryFolder()
+    private lateinit var storageScope: CoroutineScope
     private lateinit var vm: NikTvViewModel
     private lateinit var state: MutableStateFlow<NikTvState>
     private lateinit var store: ProfileStore
@@ -39,21 +41,33 @@ class TmdbMovieLookupViewModelTest {
 
     @Before fun setup() {
         Dispatchers.setMain(StandardTestDispatcher(scheduler))
-        vm = NikTvViewModel(RuntimeEnvironment.getApplication())
+        val app = RuntimeEnvironment.getApplication()
+        UserSyncStore.get(app).disconnect()
+        // Own the preference actor and file. The application's delegated store
+        // survives Robolectric SDK reuse and can retain another test's lifetime.
+        storageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val preferences = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(scope = storageScope,
+            produceFile = { temporary.newFolder().resolve("movie-lookup.preferences_pb") })
+        store = ProfileStore(app, preferences)
+        vm = NikTvViewModel(app, store)
         vm.viewModelScope.coroutineContext.cancelChildren()
         scheduler.runCurrent()
         @Suppress("UNCHECKED_CAST")
         val mutable = NikTvViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }
             .get(vm) as MutableStateFlow<NikTvState>
         state = mutable
-        store = NikTvViewModel::class.java.getDeclaredField("store").apply { isAccessible = true }.get(vm) as ProfileStore
         state.value = NikTvState(savedProfile = profile, restoring = false,
             session = PortalSession(profile, "fixture", "https://lookup.invalid", "", "", ""))
         cache(versions)
     }
-    @After fun cleanup() { vm.viewModelScope.cancel(); scheduler.runCurrent(); provider?.stop(0); Dispatchers.resetMain() }
+    @After fun cleanup() {
+        vm.viewModelScope.cancel(); scheduler.runCurrent(); provider?.stop(0)
+        storageScope.cancel(); Dispatchers.resetMain()
+    }
     private fun cache(items: List<MediaItem>) = runBlocking {
-        store.saveSearchCatalog(SearchCatalogCache(profile.cacheKey(), CatalogType.MOVIES, 1, items), scheduleMetadataSync = false)
+        withTimeout(10_000) {
+            store.saveSearchCatalog(SearchCatalogCache(profile.cacheKey(), CatalogType.MOVIES, 1, items), scheduleMetadataSync = false)
+        }
     }
     private fun awaitPicker(expected: Set<String>) {
         val end = System.nanoTime() + 8_000_000_000L
