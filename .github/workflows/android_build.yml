@@ -184,7 +184,6 @@ jobs:
             for ABI in arm64-v8a armeabi-v7a universal; do
               cp "app/build/outputs/apk/release/app-${ABI}-release.apk" "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-${ABI}.apk"
             done
-            cp "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-universal.apk" "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}.apk"
           fi
       - name: Verify published APK identities
         shell: bash
@@ -200,6 +199,13 @@ jobs:
               exit 1
             }
           done
+      - name: Preserve release crash mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-mapping-${{ env.TAG }}-${{ matrix.distribution }}
+          path: app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Preserve signed APKs
         timeout-minutes: 3
         uses: actions/upload-artifact@v4
@@ -243,7 +249,7 @@ jobs:
           path: ${{ runner.temp }}/niktv-apks
       - name: Verify complete APK set
         run: |
-          for SUFFIX in '-arm64-v8a' '-armeabi-v7a' '-universal' '-firetv' ''; do
+          for SUFFIX in '-arm64-v8a' '-armeabi-v7a' '-universal' '-firetv'; do
             test -s "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}${SUFFIX}.apk"
           done
       - name: Publish release

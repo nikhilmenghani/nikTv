@@ -26,7 +26,10 @@ plugins {
 }
 
 // Test-only manifests and package IDs must never overwrite Android Studio's normal debug outputs.
-if (providers.gradleProperty("regressionBuild").orNull == "true") {
+val releaseSmokeBuild = providers.gradleProperty("releaseSmokeBuild").orNull == "true"
+if (releaseSmokeBuild) {
+    layout.buildDirectory.set(layout.projectDirectory.dir("build-release-smoke"))
+} else if (providers.gradleProperty("regressionBuild").orNull == "true") {
     layout.buildDirectory.set(layout.projectDirectory.dir("build-regression"))
 }
 
@@ -129,6 +132,7 @@ android {
         versionName = "0.1.0"
         buildConfigField("String", "LOCAL_GITHUB_TOKEN", "\"\"")
         buildConfigField("boolean", "PLAYBACK_SYNC_DIAGNOSTICS", "false")
+        buildConfigField("boolean", "TORRENT_FOCUS_DIAGNOSTICS", releaseSmokeBuild.toString())
         buildConfigField("boolean", "FIRE_TV_APK", fireTvApk.get().toString())
         listOf("NIKTV_CRICBUZZ_AUTH_KEY", "NIKTV_CRICBUZZ_AUTH_MODE", "NIKTV_CRICBUZZ_APP_VERSION").forEach {
             buildConfigField("String", it, "\"\"")
@@ -195,6 +199,16 @@ android {
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
             manifestPlaceholders["appBanner"] = "@drawable/tv_banner"
             if (providers.environmentVariable("RELEASE_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")
+            if (releaseSmokeBuild) {
+                // Run the actual minified release on existing Dev setup without
+                // replacing or re-signing the user's stable installation.
+                applicationIdSuffix = ".debug"
+                versionNameSuffix = "-release-smoke"
+                signingConfig = signingConfigs.getByName("debug")
+                manifestPlaceholders["appLabel"] = "NikTV Dev"
+                manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_debug"
+                manifestPlaceholders["appBanner"] = "@drawable/tv_banner_debug"
+            }
         }
     }
     if (providers.gradleProperty("regressionBuild").orNull == "true") {

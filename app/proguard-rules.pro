@@ -16,3 +16,10 @@
 
 # Google Cast instantiates the provider named in AndroidManifest metadata.
 -keep class com.nikhil.niktv.cast.CastOptionsProvider { *; }
+
+# Retain the generated slot checks in the large Compose landing coordinator.
+# Optimizing it in 0.6.40 caused a startup ClassCastException while initializing
+# remembered UI state. Other methods remain optimized and names may be obfuscated.
+-keepclassmembers,allowobfuscation class com.nikhil.niktv.discovery.DiscoveryUiKt {
+    private static void DiscoveryPreviewContent(...);
+}

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +23,7 @@ import com.nikhil.niktv.discovery.DiscoveryAction
 import com.nikhil.niktv.discovery.DiscoveryCard
 import com.nikhil.niktv.ui.NikColors
 import com.nikhil.niktv.ui.PlaybackFixtureHostActivity
+import com.nikhil.niktv.ui.InitialFocusEntry
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
@@ -49,6 +51,7 @@ class TorrentHomeScrollFocusDeviceTest {
         val focus = AtomicReference<String?>()
         val events = CopyOnWriteArrayList<String>()
         val positions = ConcurrentHashMap<String, Float>()
+        val attachedEntries = ConcurrentHashMap<String, () -> Unit>()
         val loadCalls = AtomicInteger()
         fun tile(i: Int) = "home:${sections[i].name}:${if (sections[i].series) "tv" else "movie"}:${i + 1}"
         fun await(label: String, condition: () -> Boolean) {
@@ -57,6 +60,15 @@ class TorrentHomeScrollFocusDeviceTest {
             fail("$label; focus=$focus; events=$events")
         }
         fun key(code: Int) { ins.sendKeyDownUpSync(code); ins.waitForIdleSync() }
+        fun visibleText(label: String): Boolean {
+            if (android.os.Build.VERSION.SDK_INT >= 33) ins.uiAutomation.clearCache()
+            fun contains(node: AccessibilityNodeInfo?): Boolean {
+                node ?: return false
+                if (node.text?.contains(label) == true || node.contentDescription?.contains(label) == true) return true
+                return (0 until node.childCount).any { contains(node.getChild(it)) }
+            }
+            return contains(ins.uiAutomation.rootInActiveWindow)
+        }
         fun settledPosition(k: String): Float {
             var previous = Float.NaN
             var stableFrames = 0
@@ -83,17 +95,26 @@ class TorrentHomeScrollFocusDeviceTest {
                 }
                 CompositionLocalProvider(LocalConfiguration provides cfg) {
                     var pending by remember { mutableStateOf<String?>(null) }
+                    val entryTarget = pending
+                    val entryPolicy = remember(entryTarget) { InitialFocusEntry() }
                     fun request(k: String) = requests.getOrPut(k) { FocusRequester() }
                     fun restore() {
-                        val k = pending ?: return
-                        if (runCatching { requests[k]?.requestFocus() == true }.getOrDefault(false)) pending = null
+                        val k = entryTarget ?: return
+                        entryPolicy.request {
+                            val success = runCatching { requests[k]?.requestFocus() == true }.getOrDefault(false)
+                            if (success) pending = null
+                            success
+                        }
                     }
                     fun modifier(k: String) = Modifier.focusRequester(request(k)).onPlaced { restore() }
                         .onFocusChanged {
                             if (it.isFocused) { focus.set(k); events += k }
                             else if (focus.compareAndSet(k, null)) events += "lost:$k"
                         }.onGloballyPositioned { positions[k] = it.boundsInWindow().top }
-                    SideEffect { restore() }
+                    SideEffect {
+                        if (entryTarget != null) attachedEntries[entryTarget] = { restore() }
+                        restore()
+                    }
                     Column(Modifier.size(cfg.screenWidthDp.dp, cfg.screenHeightDp.dp)) {
                         DiscoveryAction("Search", modifier = modifier("search"), onClick = {})
                         TorrentHomeContent(data.value, TorrentLibraryState(),
@@ -115,6 +136,14 @@ class TorrentHomeScrollFocusDeviceTest {
                 key(KeyEvent.KEYCODE_DPAD_DOWN)
                 await("Down reaches row $i") { focus.get() == tile(i) }
             }
+            settledPosition(tile(4))
+            events.clear()
+            // An already-consumed previous onPlaced callback can arrive after
+            // a newer move. It must not focus the still-mounted previous rail.
+            ins.runOnMainSync { attachedEntries.getValue(tile(3)).invoke() }
+            ins.waitForIdleSync()
+            assertEquals("A stale entry cannot reclaim the previous row", tile(4), focus.get())
+            assertTrue("A stale entry never flashes focus backward: $events", events.isEmpty())
             val before = settledPosition(tile(4))
             events.clear()
             val loadsBefore = loadCalls.get()
@@ -129,7 +158,9 @@ class TorrentHomeScrollFocusDeviceTest {
                     else shelf.copy(cards = shelf.cards.map { it.copy(poster = "", title = "Updated ${it.title}") })
                 })
             }
-            await("Loaded posters are placed") { positions.containsKey(tile(5)) }
+            // The next rail may legitimately remain outside a short viewport.
+            // Observe publication on the visible focused tile before pressing Down.
+            await("Visible posters reflect published data") { visibleText("Updated Tile 4") }
             ins.waitForIdleSync()
             assertEquals("Publishing data retains focus", tile(4), focus.get())
             assertTrue("Publishing never focuses a fallback: $events", events.isEmpty())

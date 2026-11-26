@@ -4,6 +4,7 @@
 /local.properties
 **/build/
 **/build-regression/
+**/build-release-smoke/
 *.iml
 /execute_python.py
 /execute_python.bat

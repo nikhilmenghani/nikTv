@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.niktv.discovery.*
+import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.usesPhoneLayout
@@ -126,6 +127,9 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         }, state.providersLoading || (!state.providersLoaded && state.providersError == null), state.providersError, actions.providers, square = true)
     }
     val rows = remember(history, shelves, genres, providers) { listOfNotNull(history) + shelves + genres + listOfNotNull(providers) }
+    if (BuildConfig.TORRENT_FOCUS_DIAGNOSTICS) LaunchedEffect(scroll) {
+        snapshotFlow { scroll.firstVisibleItemIndex }.collect { traceTorrentFocus { "viewport first=$it" } }
+    }
     if (phone) {
         val nativeRows = remember(rows) {
             rows.map { row ->
@@ -164,6 +168,7 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
     fun target(row: HomeRail): String? = rowSelection[row.key]?.takeIf { row.indexOf(it) >= 0 }
         ?: row.entries.firstOrNull()?.key ?: "home:${row.key}:retry".takeIf { row.error != null }
     fun move(from: Int, delta: Int) {
+        traceTorrentFocus { "move from=$from delta=$delta rows=${rows.size}" }
         val indices = if (delta > 0) (from + 1)..rows.lastIndex else (from - 1 downTo 0)
         val next = indices.firstOrNull { index ->
             index in rows.indices && (target(rows[index]) != null || rows[index].loading)
@@ -172,10 +177,11 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         // mounted and focused, and let the next Down enter once data arrives.
         // A bottom boundary must never wrap to Search and scroll Home upward.
         if (next != null && target(rows[next]) == null) {
+            traceTorrentFocus { "wait row=${rows[next].key}" }
             rows[next].load()
             return
         }
-        if (next == null && delta > 0) return
+        if (next == null && delta > 0) { traceTorrentFocus { "bottom from=$from" }; return }
         val key = next?.let { target(rows[it]) }
             ?: if (state.hero != null) "home:hero" else "search"
         focus.handoff(key) {
@@ -288,6 +294,10 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
                     .background(Color.White.copy(alpha = .07f), RoundedCornerShape(10.dp)))
             }
             items(row.entries, key = { it.key }, contentType = { "poster" }) { tile ->
+                if (BuildConfig.TORRENT_FOCUS_DIAGNOSTICS) DisposableEffect(tile.key) {
+                    traceTorrentFocus { "attach key=${tile.key}" }
+                    onDispose { traceTorrentFocus { "detach key=${tile.key}" } }
+                }
                 tile.visible?.let { visible -> LaunchedEffect(tile.key) { visible() } }
                 TorrentLibraryPoster(tile.title, tile.artwork, tile.subtitle, width, progress = tile.progress,
                     badge = tile.badge, aspect = if (row.square) 1f else if (phone && row.wide) 16f / 9f else 2f / 3f,

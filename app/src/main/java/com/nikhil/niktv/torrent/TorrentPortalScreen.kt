@@ -153,17 +153,23 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
             else -> routeEntry
         }
         val target = requesters[targetKey] ?: return false
-        val success = runCatching { target.requestFocus() }.getOrDefault(false)
-        if (success) {
-            enteringRoute = false
-            explicitEntry = null
-            if (state.returnFocus != null) model.focusRestored()
+        // onPlaced and SideEffect can still hold the previous composition's
+        // pending target after a successful handoff. They must share the same
+        // one-shot owner as onEnter, rather than reclaiming the old tile later.
+        return entryPolicy.request {
+            val success = runCatching { target.requestFocus() }.getOrDefault(false)
+            traceTorrentFocus { "entry target=$targetKey success=$success explicit=$explicitEntry returning=${state.returnFocus}" }
+            if (success) {
+                enteringRoute = false
+                explicitEntry = null
+                if (state.returnFocus != null) model.focusRestored()
+            }
+            success
         }
-        return success
     }
     fun entryModifier(key: String) = Modifier.focusRequester(requester(key)).onPlaced {
         if (entryPending && routeEntry == key) requestRouteEntry()
-    }
+    }.onFocusChanged { traceTorrentFocus { "focus key=$key focused=${it.isFocused} pending=$entryPending entry=$routeEntry" } }
     fun navigate(action: () -> Unit) {
         searchOwnsFocus = false
         explicitEntry = null
@@ -177,6 +183,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         action()
     }
     fun handoff(key: String, action: () -> Unit) {
+        traceTorrentFocus { "handoff target=$key touch=${view.isInTouchMode}" }
         searchOwnsFocus = false
         if (!view.isInTouchMode) {
             explicitEntry = key
@@ -375,7 +382,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         .clearAndSetSemantics { hideFromAccessibility() })
     Column(Modifier.fillMaxSize().safeDrawingPadding().focusProperties {
         onEnter = {
-            if (!searchOwnsFocus && entryPending && !entryPolicy.request { requestRouteEntry() }) cancelFocusChange()
+            if (!searchOwnsFocus && entryPending && !requestRouteEntry()) cancelFocusChange()
         }
     }.focusGroup()) {
         if (!phone) header()
