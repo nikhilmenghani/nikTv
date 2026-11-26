@@ -58,10 +58,13 @@ class TorrentActivity : ComponentActivity(), PlayerPictureInPictureHost {
         }.build() else null
     override fun setPlayerActiveForPip(active: Boolean) {
         playerActive = active
-        if (pipSupported) pipParams()?.let(::setPictureInPictureParams)
+        if (Build.VERSION.SDK_INT >= 26 && pipSupported) pipParams()?.let(::setPictureInPictureParams)
     }
-    override fun enterPlayerPictureInPicture(): Boolean = if (!pipSupported || !playerActive) false
-        else pipParams()?.let { runCatching { enterPictureInPictureMode(it) }.getOrDefault(false) } ?: false
+    override fun enterPlayerPictureInPicture(): Boolean {
+        if (Build.VERSION.SDK_INT < 26 || !pipSupported || !playerActive) return false
+        val params = pipParams() ?: return false
+        return runCatching { enterPictureInPictureMode(params) }.getOrDefault(false)
+    }
     override fun onUserLeaveHint() { super.onUserLeaveHint(); if (Build.VERSION.SDK_INT in 26 until 31 && playerActive) enterPlayerPictureInPicture() }
     override fun onPictureInPictureModeChanged(inPip: Boolean, config: Configuration) {
         super.onPictureInPictureModeChanged(inPip, config); pipModeListener?.invoke(inPip)

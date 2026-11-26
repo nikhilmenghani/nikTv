@@ -53,6 +53,7 @@ internal data class TorrentPortalState(
 private data class TorrentDownloadTarget(val card: DiscoveryCard?, val episode: TmdbEpisode?, val source: TorrentSource)
 
 /** Torrent URLs live only in this playback owner; IPTV mappings and sync stay untouched. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = TorrentSearchRepository()
     private val homeRepository = TorrentHomeRepository(app)
