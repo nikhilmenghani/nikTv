@@ -165,10 +165,19 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         ?: row.entries.firstOrNull()?.key ?: "home:${row.key}:retry".takeIf { row.error != null }
     fun move(from: Int, delta: Int) {
         val indices = if (delta > 0) (from + 1)..rows.lastIndex else (from - 1 downTo 0)
-        val next = indices.firstOrNull { index -> index in rows.indices && target(rows[index]) != null }
-        val key = next?.let { target(rows[it]) } ?: if (delta < 0) {
-            if (state.hero != null) "home:hero" else "search"
-        } else if (phone) "home:dock" else "search"
+        val next = indices.firstOrNull { index ->
+            index in rows.indices && (target(rows[index]) != null || rows[index].loading)
+        }
+        // Loading rows have no focusable posters yet. Keep the current tile
+        // mounted and focused, and let the next Down enter once data arrives.
+        // A bottom boundary must never wrap to Search and scroll Home upward.
+        if (next != null && target(rows[next]) == null) {
+            rows[next].load()
+            return
+        }
+        if (next == null && delta > 0) return
+        val key = next?.let { target(rows[it]) }
+            ?: if (state.hero != null) "home:hero" else "search"
         focus.handoff(key) {
             val position = next?.plus(1) ?: 0.takeIf { delta < 0 }
             if (position != null && scroll.layoutInfo.visibleItemsInfo.none { it.index == position }) {
@@ -256,8 +265,10 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         Row(Modifier.fillMaxWidth().padding(horizontal = if (phone) 0.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, Modifier.weight(1f), color = Color.White, fontSize = if (phone) 19.sp else 16.sp,
                 lineHeight = if (phone) 24.sp else 20.sp, fontWeight = FontWeight.SemiBold)
+            // Keep skeleton and loaded rails the same height; a separate
+            // progress line shrinks the content and shifts a bottom viewport.
+            if (row.loading && row.entries.isEmpty()) LinearProgressIndicator(Modifier.width(64.dp).height(3.dp))
         }
-        if (row.loading && row.entries.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
         row.error?.let { message ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(message, Modifier.weight(1f), color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
