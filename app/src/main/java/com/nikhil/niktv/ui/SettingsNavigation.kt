@@ -87,6 +87,7 @@ internal enum class SettingsPage(val destination: SettingsDestination, val title
     CATALOG_MEDIA_TYPES(SettingsDestination.CATALOG, "Update by media type", CATALOG_UPDATES),
     CATALOG_TOOLS(SettingsDestination.CATALOG, "Catalog tools", CATALOG_UPDATES),
     BROWSE_REFRESH(SettingsDestination.CATALOG, "Browse refresh", LIBRARY),
+    STORAGE(SettingsDestination.CATALOG, "Storage", LIBRARY),
     BACKUPS(SettingsDestination.CATALOG, "Back up & restore", LIBRARY),
     CATALOG_BACKUP(SettingsDestination.CATALOG, "Catalog backup", BACKUPS),
     CATALOG_TRANSFER_PROGRESS(SettingsDestination.CATALOG, "Transfer progress", CATALOG_BACKUP),

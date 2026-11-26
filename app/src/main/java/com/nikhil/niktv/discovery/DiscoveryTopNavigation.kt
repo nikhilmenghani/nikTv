@@ -202,56 +202,7 @@ private fun Modifier.discoveryNavigationTab(label: String, active: Boolean, shar
 
 @Composable
 internal fun DiscoveryClockProfile(profile: String, modifier: Modifier, backdrop: String?, backdropBounds: Rect, openPortals: () -> Unit) {
-    val context = LocalContext.current
-    val openUserProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
-    val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
-    val viewerName = viewer?.name ?: profile
-    val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
-        ?: profile.firstOrNull()?.uppercase() ?: "N"
-    val time by produceState(DateFormat.getTimeFormat(context).format(Date())) {
-        while (true) {
-            delay(60_000L - System.currentTimeMillis() % 60_000L)
-            value = DateFormat.getTimeFormat(context).format(Date())
-        }
-    }
-    val portalFocusReturn = LocalPortalFocusReturn.current
-    BoxWithConstraints(modifier) {
-        val shortWide = LocalConfiguration.current.usesShortWideLayout(context.isTvLikeDevice(LocalConfiguration.current))
-        val portalWidth = portalHeaderWidth()
-        val showPortals = portalWidth > 0.dp
-        LaunchedEffect(showPortals) { if (!showPortals) portalFocusReturn.cancel() }
-        val clockWidth = discoveryProfileHeaderWidth(clock = true)
-        val showClock = !shortWide && with(LocalDensity.current) { maxWidth.roundToPx() >= clockWidth.roundToPx() }
-        val personWidth = if (showClock) (124f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp else if (shortWide) 46.dp else 56.dp
-        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-            verticalAlignment = Alignment.CenterVertically) {
-            if (showPortals) DiscoveryGlassPanel(Modifier.width(portalWidth).fillMaxHeight(), backdrop, backdropBounds,
-                fitArtwork = backdrop != null && LocalMobileGlassFit.current, topAligned = backdrop != null && LocalMobileGlassTopAligned.current,
-                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current) {
-                Box(Modifier.fillMaxSize().padding(5.dp), contentAlignment = Alignment.Center) {
-                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
-                        DirectPortalButtons()
-                    }
-                }
-            }
-            DiscoveryGlassPanel(Modifier.width(personWidth).fillMaxHeight(), backdrop, backdropBounds,
-                fitArtwork = backdrop != null && LocalMobileGlassFit.current, topAligned = backdrop != null && LocalMobileGlassTopAligned.current,
-                fillWidth = backdrop != null && LocalMobileGlassFillWidth.current) {
-                Row(Modifier.fillMaxSize().padding(5.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (showClock) Text(time, color = Color.White, fontSize = 12.sp, maxLines = 1,
-                        modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    CompositionLocalProvider(LocalDiscoveryGlassButtons provides true, LocalDiscoveryHeaderActionSizing provides true) {
-                        DiscoveryAction("Profile: $viewerName", visualLabel = viewerAvatar,
-                            containerColor = viewer?.let { Color(it.color) } ?: Color(0xFFE50925), horizontalPadding = 0.dp,
-                            modifier = Modifier.size(discoveryHeaderActionSize())
-                                .semantics { contentDescription = "Switch profile: $viewerName" },
-                            onClick = { portalFocusReturn.cancel(); openUserProfiles() })
-                    }
-                }
-            }
-        }
-    }
+    ProfilePortalMenu(profile, modifier, backdrop, backdropBounds)
 }
 
 @Composable

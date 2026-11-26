@@ -24,6 +24,46 @@ import java.util.UUID
 class TorrentStreamCacheDeviceTest {
     private val ins get() = InstrumentationRegistry.getInstrumentation()
     private fun main(block: () -> Unit) = ins.runOnMainSync(block)
+    @Test fun storageListsOnlyItsOwnerAndClearsInactivePiecesWithoutFollowingLinks() = runBlocking {
+        val context = ins.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val person = com.nikhil.niktv.data.UserScope("14012", UUID.randomUUID().toString())
+        val owner = "${person.accountId}|${person.profileId}"
+        val a = checkNotNull(TorrentStreamCache.acquire(context, owner, "v1_" + "1".repeat(40)))
+        val b = checkNotNull(TorrentStreamCache.acquire(context, "$owner-other", "v1_" + "1".repeat(40)))
+        try {
+            TorrentStreamCache.select(a, TorrentVideoFile(0, "folder/episode.mkv", 1024L * 1024 * 1024))
+            val sparse = File(a.directory, "episode.mkv")
+            java.io.RandomAccessFile(sparse, "rw").use { file -> file.setLength(1024L * 1024 * 1024); file.write(ByteArray(4096) { 5 }) }
+            val otherFile = File(b.directory, "keep.mkv").apply { writeBytes(ByteArray(8192) { 7 }) }
+            val entries = TorrentStreamCache.entries(context, owner)
+            assertEquals(1, entries.size)
+            assertEquals(listOf("episode.mkv"), entries.single().names)
+            assertTrue(entries.single().inUse)
+            assertTrue(entries.single().bytes in 1 until sparse.length())
+            val managed = com.nikhil.niktv.data.ProfileStorage.snapshot(context, person).files
+                .filter { it.kind == com.nikhil.niktv.data.StorageFileKind.STREAM }
+            assertEquals(1, managed.size)
+            assertEquals("torrents", managed.single().portal)
+            assertEquals("episode.mkv", managed.single().title)
+            assertTrue(managed.single().inUse)
+            assertFalse("Active playback pieces cannot be deleted", TorrentStreamCache.clearEntry(context, owner, a.key))
+            try { TorrentStreamCache.clearEntry(context, owner, b.key); fail("Cannot clear another profile") }
+            catch (_: IllegalArgumentException) { }
+            try { TorrentStreamCache.clearEntry(context, owner, "../outside"); fail("Cannot clear arbitrary paths") }
+            catch (_: IllegalArgumentException) { }
+            TorrentStreamCache.release(a)
+            android.system.Os.symlink(b.directory.path, File(a.directory, "other-profile-link").path)
+            assertTrue(TorrentStreamCache.clearEntry(context, owner, a.key))
+            assertFalse(a.directory.exists())
+            assertTrue("Deleting cached stream links must preserve their targets", otherFile.exists())
+            assertTrue(TorrentStreamCache.entries(context, owner).isEmpty())
+            assertEquals(1, TorrentStreamCache.entries(context, "$owner-other").size)
+        } finally {
+            a.discard = true; TorrentStreamCache.release(a)
+            b.discard = true; TorrentStreamCache.release(b)
+        }
+    }
     private fun playerView(view: View): PlayerView? = when (view) {
         is PlayerView -> view
         is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { playerView(view.getChildAt(it)) }

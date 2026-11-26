@@ -673,7 +673,7 @@ internal fun ModernSettingsScreen(
                     if (entered) enterSettingsPage = false
                 }
             }
-            .then(if (activePage == SettingsPage.XTREAM_CONTENT) Modifier else Modifier.verticalScroll(pageScroll))
+            .then(if (activePage in setOf(SettingsPage.XTREAM_CONTENT, SettingsPage.STORAGE)) Modifier else Modifier.verticalScroll(pageScroll))
             .padding(
                 horizontal =
                     when {
@@ -731,6 +731,9 @@ internal fun ModernSettingsScreen(
         if (activePage == SettingsPage.XTREAM_CONTENT) {
             Box(Modifier.weight(1f)) { XtreamContentSettings(managedViewerId, state.profiles) { managedViewerId = it } }
         }
+        if (activePage == SettingsPage.STORAGE) {
+            Box(Modifier.weight(1f)) { ProfileStorageSettings(state) }
+        }
         if (activePage == SettingsPage.LIBRARY) {
             SettingsSection("Library & backup", page = SettingsPage.LIBRARY) {
                 SettingsLinkRow(SettingsPage.CATALOG_UPDATES, catalogProfile?.name ?: "Choose portal")
@@ -739,6 +742,7 @@ internal fun ModernSettingsScreen(
                     com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(context, it)
                 })
                 SettingsLinkRow(SettingsPage.BROWSE_REFRESH, "Cache & initial load")
+                SettingsLinkRow(SettingsPage.STORAGE, "Files & stream cache by profile and portal")
                 SettingsLinkRow(SettingsPage.BACKUPS, "App data & settings")
                 SettingsControlRow("Backup activity", backupEvents.firstOrNull()?.status ?: "No activity", onClick = { backupActivityOpen = true })
             }

@@ -15,6 +15,13 @@ class RecordingOwnership(context: Context) {
     fun unassigned(recordings: List<RecordedLiveTvMedia>): List<RecordedLiveTvMedia> =
         synchronized(lock) { recordings.filter { validUri(it.uri) && read(it.uri) == null } }
 
+    fun portal(uri: Uri): String? = synchronized(lock) {
+        if (!validUri(uri)) null else runCatching {
+            JSONObject(preferences.getString(uri.toString(), null) ?: return@synchronized null)
+                .optString("portal").takeIf(String::isNotBlank)
+        }.getOrNull()
+    }
+
     /** Explicit legacy import cannot take a recording away from an existing account/person. */
     fun assignUnassigned(owner: UserScope, recordings: List<RecordedLiveTvMedia>): Int = synchronized(lock) {
         validate(owner)
@@ -29,10 +36,15 @@ class RecordingOwnership(context: Context) {
     }
 
     /** Only called immediately after inserting a new physical MediaStore item. */
-    internal fun created(uri: Uri, owner: UserScope?) = synchronized(lock) {
+    internal fun created(uri: Uri, owner: UserScope?, portalKey: String? = null) = synchronized(lock) {
         require(validUri(uri)) { "Invalid recording URI." }
         val edit = preferences.edit()
-        if (owner == null) edit.remove(uri.toString()) else { validate(owner); edit.putString(uri.toString(), encode(owner)) }
+        if (owner == null) edit.remove(uri.toString()) else {
+            validate(owner)
+            val value = JSONObject(encode(owner))
+            portalKey?.takeIf(String::isNotBlank)?.let { value.put("portal", storagePortalId(it)) }
+            edit.putString(uri.toString(), value.toString())
+        }
         check(edit.commit()) { "Could not save recording ownership." }
     }
 

@@ -70,11 +70,17 @@ internal object TorrentOfflineDownloads {
         if (job.genericFile) return null
         return ownedOutput(context, job).takeIf { job.state == "complete" && it.isFile && it.length() == job.sizeBytes }?.let { Uri.fromFile(it).toString() }
     }
-    fun files(context: Context, owner: UserScope): List<TorrentDownloadJob> =
+    fun jobs(context: Context, owner: UserScope): List<TorrentDownloadJob> =
         File(context.filesDir, "torrent_download_jobs").listFiles().orEmpty()
             .filter { it.extension == "json" }.sortedByDescending { it.lastModified() }
             .mapNotNull { load(context, it.nameWithoutExtension) }
-            .filter { it.owner == owner && it.genericFile && it.state != "cancelled" }
+            .filter { it.owner == owner && it.state != "cancelled" }
+
+    fun files(context: Context, owner: UserScope): List<TorrentDownloadJob> = jobs(context, owner).filter { it.genericFile }
+
+    fun storedBytes(context: Context, job: TorrentDownloadJob): Long =
+        TorrentStreamCache.allocatedBytes(ownedOutput(context, job)) +
+            TorrentStreamCache.allocatedBytes(File(context.filesDir, "torrent_partial/${job.id}"))
 
     fun fileUri(context: Context, job: TorrentDownloadJob): Uri? {
         val saved = load(context, job.id) ?: return null

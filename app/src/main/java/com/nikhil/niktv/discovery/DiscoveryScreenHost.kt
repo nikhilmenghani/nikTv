@@ -125,7 +125,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
-private enum class LibraryPane { MY_LIST, DOWNLOADS, STORAGE }
 
 @Composable
 internal fun DiscoveryScreenHost(
@@ -233,7 +232,6 @@ internal fun DiscoveryScreenHost(
     val phoneExperience = com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration, isTv)
     var phoneDetailOpen by remember(state.savedProfile?.cacheKey()) { mutableStateOf(false) }
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
-    var libraryPane by rememberSaveable { mutableStateOf(LibraryPane.MY_LIST) }
     val exitFocusRequester = remember { FocusRequester() }
     val modernSectionOpen =
         (state.modernTmdbSection != null || state.modernIptvCategory != null)
@@ -355,19 +353,7 @@ internal fun DiscoveryScreenHost(
     } }
 
 
-    fun openDownloadsPane() {
-        libraryPane = LibraryPane.DOWNLOADS
-        openOfflineDownloads()
-    }
-
-    fun openStoragePane() {
-        libraryPane = LibraryPane.STORAGE
-        openOfflineDownloads()
-    }
-
-    LaunchedEffect(state.favoritesOpen) {
-        if (state.favoritesOpen) libraryPane = LibraryPane.MY_LIST
-    }
+    fun openDownloadsPane() { openOfflineDownloads() }
 
     // One owner follows MainContent's visible-screen precedence. Editors and
     // dialogs composed below keep their own Back override before this handler.
@@ -413,13 +399,7 @@ internal fun DiscoveryScreenHost(
     fun MainContent(modifier: Modifier = Modifier) {
         Box(modifier) {
             when {
-                state.offlineDownloadsOpen -> if (libraryPane == LibraryPane.STORAGE) {
-                    OfflineStorageScreen(
-                        state = state,
-                        removeAll = removeAllOfflineDownloads,
-                        close = closeOfflineDownloads
-                    )
-                } else {
+                state.offlineDownloadsOpen -> {
                     OfflineDownloadsScreen(
                         state = state,
                         play = playOfflineDownload,
@@ -618,9 +598,8 @@ internal fun DiscoveryScreenHost(
                             } else MainContent(Modifier.fillMaxSize())
                         }
                         if (state.favoritesOpen && !phoneExperience) MobileLibrarySwitcher(
-                            downloadsSelected = false, storageSelected = false,
-                            openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane,
-                            openStorage = ::openStoragePane)
+                            downloadsSelected = false,
+                            openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane)
                     }
                 }
             else MainContent(Modifier.fillMaxSize())
@@ -700,6 +679,8 @@ internal fun DiscoveryScreenHost(
             EasyCategoriesPage(state, easyCatalogType, ::landingHome, { refresh(easyCatalogType) },
                 edit = { openCategoryManager(easyCatalogType) }, select = openModernIptvCategory)
         }
+    } else if (state.settingsOpen) {
+        MainContent(Modifier.fillMaxSize())
     } else if (phoneExperience) {
         val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&
             state.movieMatchSelection == null && state.seriesMatchSelection == null && !state.categoryManagerOpen
@@ -758,8 +739,8 @@ internal fun DiscoveryScreenHost(
                 bottomChromeHeight = with(chromeDensity) { it.height.toDp() }
             }) {
                 if (!state.searchOpen && (state.favoritesOpen || state.offlineDownloadsOpen)) MobileLibrarySwitcher(
-                    downloadsSelected = state.offlineDownloadsOpen, storageSelected = libraryPane == LibraryPane.STORAGE,
-                    openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane, openStorage = ::openStoragePane)
+                    downloadsSelected = state.offlineDownloadsOpen,
+                    openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane)
                 PhoneBottomBar()
             }
         }
@@ -774,9 +755,8 @@ internal fun DiscoveryScreenHost(
             Column(Modifier.fillMaxSize()) {
                 MainContent(Modifier.weight(1f).fillMaxWidth())
                 if (state.offlineDownloadsOpen) MobileLibrarySwitcher(
-                    downloadsSelected = true, storageSelected = libraryPane == LibraryPane.STORAGE,
-                    openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane,
-                    openStorage = ::openStoragePane)
+                    downloadsSelected = true,
+                    openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane)
             }
         }
     }

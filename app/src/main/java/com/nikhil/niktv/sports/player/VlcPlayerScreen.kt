@@ -1929,7 +1929,7 @@ internal fun VlcPlayerScreen(
                                 livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying))
                             else LiveTvRecorder.start(context, media.media.title, media.url,
                                 playbackElapsedMillis = livePlaybackClock.sample(
-                                    android.os.SystemClock.elapsedRealtime(), player.isPlaying), owner = media.userScope)
+                                    android.os.SystemClock.elapsedRealtime(), player.isPlaying), owner = media.userScope, portalKey = "sports")
                         },
                         modifier = Modifier
                             .focusRequester(downloadRequester)

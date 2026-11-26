@@ -13,8 +13,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.test.platform.app.InstrumentationRegistry
-import com.nikhil.niktv.data.AppStorageSnapshot
+import com.nikhil.niktv.data.*
 import com.nikhil.niktv.discovery.*
 import com.nikhil.niktv.discovery.components.DiscoveryFavoritesContent
 import com.nikhil.niktv.model.*
@@ -26,6 +30,69 @@ import org.junit.Test
 /** Production My List bodies and Storage; all data and actions stay inside the fixture. */
 class LibraryStorageNavigationAuditDeviceTest {
     private val ins get() = InstrumentationRegistry.getInstrumentation()
+    @Test fun wideHeaderKeepsFullMenuAndRestoresProfileAfterPortalSelection() = checkWideHeader(0)
+    @Test fun tvSizedHeaderKeepsFullMenuAndRestoresProfileAfterPortalSelection() = checkWideHeader(1)
+    @Test fun mobileLandscapeHeaderKeepsFullMenuAndScrollsPortalPopup() = checkWideHeader(2)
+    private fun checkWideHeader(mode: Int) {
+        val activity = host()
+        val switches = AtomicInteger()
+        val profileOpens = AtomicInteger()
+        try {
+            main { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                var selected by remember { mutableStateOf(1) }
+                val names = listOf("Xtream", "Stalker", "Sports", "Playfy TV", "Torrents")
+                val icons = listOf(Icons.Default.Key, Icons.Default.Tv, Icons.Default.SportsCricket, Icons.Default.LiveTv, Icons.Default.Download)
+                val actions = names.mapIndexed { index, name -> DirectPortalAction(name, icons[index], selected == index, id = name) {
+                    selected = index; switches.incrementAndGet()
+                } }
+                val cfg = android.content.res.Configuration(LocalConfiguration.current).apply {
+                    if (mode == 1) { screenWidthDp = 960; screenHeightDp = 540; uiMode = android.content.res.Configuration.UI_MODE_TYPE_TELEVISION }
+                    if (mode == 2) { screenWidthDp = 800; screenHeightDp = 360; smallestScreenWidthDp = 360; orientation = android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+                }
+                CompositionLocalProvider(LocalConfiguration provides cfg, LocalDirectPortalActions provides actions,
+                    LocalOpenUserProfiles provides { profileOpens.incrementAndGet() }) {
+                    Column(Modifier.widthIn(max = if (mode == 1) androidx.compose.ui.unit.Dp(960f) else if (mode == 2) androidx.compose.ui.unit.Dp(800f) else androidx.compose.ui.unit.Dp.Infinity).fillMaxSize()) {
+                        PortalWideHeader("Test", {}) {
+                            DiscoveryAction("Back", Icons.Default.ArrowBack, iconOnly = true, onClick = {})
+                            DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, onClick = {})
+                            listOf("Home" to Icons.Default.Home, "Movies" to Icons.Default.Movie, "Series" to Icons.Default.Tv,
+                                "Live TV" to Icons.Default.LiveTv, "My List" to Icons.Default.VideoLibrary).forEach { (name, icon) ->
+                                DiscoveryAction(name, icon, onClick = {})
+                            }
+                            PortalOptionsButton("Options", open = {})
+                        }
+                        Text("Content below menu")
+                    }
+                }
+            } } }
+            val profile = "Profile and portals: Test"
+            await("Wide menu is mounted") { control(root(), profile) != null && control(root(), "My List") != null }
+            assertNull("Portal buttons use no space before the menu opens", find(root(), "Stalker"))
+            for (label in listOf("Home", "Movies", "Series", "Live TV", "My List")) {
+                val before = android.graphics.Rect().also { control(root(), label)!!.getBoundsInScreen(it) }
+                focus(label)
+                val after = android.graphics.Rect().also { control(root(), label)!!.getBoundsInScreen(it) }
+                assertEquals("Focus does not resize $label", before, after)
+                assertTrue("$label has room for its caption", after.width() > 70)
+            }
+            NavigationAuditEvidence.capture("wide-menu-full-labels")
+            focus(profile); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Active portal is focused when opening") { isFocused("Stalker") }
+            NavigationAuditEvidence.capture("profile-expanded-portal-menu")
+            key(KeyEvent.KEYCODE_BACK)
+            await("Back returns directly to profile") { isFocused(profile) && find(root(), "Stalker") == null }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Portal menu reopens") { isFocused("Stalker") }
+            focus("Xtream"); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Selecting portal retains the profile target") { switches.get() == 1 && isFocused(profile) && find(root(), "Xtream") == null }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Newly selected portal is the popup entry") { isFocused("Xtream") }
+            if (mode == 2) repeat(5) { key(KeyEvent.KEYCODE_DPAD_DOWN) } else focus("Switch profile")
+            assertTrue("Profile action is reachable below the portal choices", isFocused("Switch profile"))
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Profile chooser remains independently accessible") { profileOpens.get() == 1 }
+        } finally { main { activity.finish() } }
+    }
     private fun main(block: () -> Unit) = ins.runOnMainSync(block)
     private fun host(): PlaybackFixtureHostActivity {
         check(ins.targetContext.packageName.endsWith(".regression"))
@@ -138,8 +205,8 @@ class LibraryStorageNavigationAuditDeviceTest {
                             }
                         }
                         if (phone) {
-                            com.nikhil.niktv.discovery.components.MobileLibrarySwitcher(false, false,
-                                { browsing.value = null }, { closed.value = true }, { closed.value = true })
+                            com.nikhil.niktv.discovery.components.MobileLibrarySwitcher(false,
+                                { browsing.value = null }, { closed.value = true })
                             DiscoveryPhoneBottomNavigation(DiscoveryPhoneDestination.LIBRARY, { closed.value = true },
                                 Modifier.windowInsetsPadding(WindowInsets.navigationBars))
                         }
@@ -191,46 +258,38 @@ class LibraryStorageNavigationAuditDeviceTest {
         } finally { main { activity.finish() } }
     }
 
-    @Test fun storageAllCleanupActionsReachCancelAndBackWithoutDeletingData() {
+    @Test fun settingsStorageFiltersPortalAndCancellationKeepsTheFile() {
         val activity = host()
-        val deletes = AtomicInteger()
         val closed = mutableStateOf(false)
-        val snapshot = AppStorageSnapshot(1_000_000, 500_000, 100, 100, 100, 100, 100, 100, 100)
-        val rows = listOf(
-            "Live TV recordings" to "Clear Live TV recordings?", "Media cache" to "Clear media cache?",
-            "Offline downloads" to "Clear offline downloads?", "Artwork cache" to "Clear artwork cache?",
-            "Downloaded subtitles" to "Clear downloaded subtitles?", "Temporary cache" to "Clear temporary cache?")
-        fun clearFor(screen: AccessibilityNodeInfo?, row: String): AccessibilityNodeInfo? {
-            var parent = find(screen, row)
-            repeat(7) {
-                control(parent, "Clear")?.let { return it }
-                parent = parent?.parent
-            }
-            return null
-        }
+        val person = UserProfile("11111111-2222-3333-4444-555555555555", "Storage test")
+        val snapshot = ProfileStorageSnapshot(10_000_000, 5_000_000, listOf(
+            ProfileStorageFile("fixture-stream", "Cached episode.mkv", "torrents", StorageFileKind.STREAM, 4096),
+            ProfileStorageFile("fixture-iptv", "IPTV movie", "stalker:fixture", StorageFileKind.DOWNLOAD, 8192)),
+            100, 100, 100, 100)
         try {
             main { activity.setContent { MaterialTheme(colorScheme = NikColors) { Surface(Modifier.fillMaxSize()) {
-                if (closed.value) Text("Storage closed") else {
-                    BackHandler { closed.value = true }
-                    OfflineStorageScreen(NikTvState(restoring = false), { deletes.incrementAndGet() },
-                        { closed.value = true }, storageSnapshot = snapshot)
-                }
+                BackHandler { closed.value = true }
+                if (closed.value) Text("Storage closed") else ProfileStorageSettings(NikTvState(restoring = false),
+                    snapshotOverride = snapshot, profilesOverride = listOf(person))
             } } } }
-            await("Storage controls loaded from synthetic snapshot") { clearFor(root(), rows.last().first)?.isEnabled == true }
-            NavigationAuditEvidence.capture("storage-six-cleanup-controls")
-            rows.forEach { (row, title) ->
-                focus("Clear $row") { clearFor(it, row) }
-                key(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("$row confirmation opens") { find(root(), title) != null }
-                focus("Cancel")
-                NavigationAuditEvidence.capture("storage-cancel-${row.lowercase().replace(' ', '-')}")
-                key(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("$row cancellation returns to Storage") { find(root(), title) == null && find(root(), row) != null }
-                assertEquals("Cancellation never removes data", 0, deletes.get())
+            await("Profile storage files loaded") { find(root(), "Cached episode.mkv") != null && find(root(), "IPTV movie") != null }
+            focus("Portal · All portals"); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Portal dropdown opens on selected item") { isFocused("All portals") }
+            focus("Torrents"); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Only the chosen portal files remain") { find(root(), "Cached episode.mkv") != null && find(root(), "IPTV movie") == null }
+            focus("Clear Cached episode.mkv"); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Clear confirmation focuses Cancel") { isFocused("Cancel") }
+            NavigationAuditEvidence.capture("settings-storage-confirmation-focus")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Cancel preserves the file and returns focus") {
+                find(root(), "Clear Cached episode.mkv?") == null && isFocused("Clear Cached episode.mkv")
             }
-            focus("Back"); key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("Visible Back leaves Storage") { closed.value }
-            assertEquals(0, deletes.get())
+            focus("Portal · Torrents"); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            focus("Shared app caches"); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Shared caches are clearly separate") { find(root(), "Shared across all profiles on this device") != null }
+            NavigationAuditEvidence.capture("settings-storage-shared-caches")
+            key(KeyEvent.KEYCODE_BACK)
+            await("Back leaves settings content") { closed.value }
         } finally { main { activity.finish() } }
     }
 }

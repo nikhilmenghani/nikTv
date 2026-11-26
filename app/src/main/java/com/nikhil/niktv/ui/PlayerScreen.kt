@@ -2687,7 +2687,7 @@ fun PlayerScreen(
                                 media.url,
                                 player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L },
                                 livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying),
-                                owner = media.userScope
+                                owner = media.userScope, portalKey = media.profileKey
                             )
                         },
                         modifier = Modifier

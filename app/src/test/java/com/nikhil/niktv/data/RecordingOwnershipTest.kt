@@ -37,6 +37,19 @@ class RecordingOwnershipTest {
         assertEquals(listOf(one), RecordingOwnership(context).visible(all, family))
     }
 
+    @Test fun newRecordingKeepsAnOpaquePortalAssociationWithoutConnectionCredentials() {
+        val store = RecordingOwnership(context)
+        val portal = "catalog-v5|STALKER|https://private.invalid|private-user"
+        store.created(media(1).uri, family, portal)
+        store.created(media(2).uri, family)
+        assertEquals(storagePortalId(portal), store.portal(media(1).uri))
+        assertNull(store.portal(media(2).uri))
+        assertEquals("Stalker", storagePortalLabel(store.portal(media(1).uri)!!, emptyList()))
+        val encoded = context.getSharedPreferences("niktv_recording_ownership", 0).all.toString()
+        assertFalse(encoded.contains("private.invalid"))
+        assertFalse(encoded.contains("private-user"))
+    }
+
     @Test fun explicitImportAssignsOnlyMissingRecordingsAndCannotTakeAnotherPersonsMedia() {
         val store = RecordingOwnership(context)
         val one = media(1); val two = media(2); val three = media(3)

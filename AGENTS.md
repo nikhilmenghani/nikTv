@@ -6,7 +6,8 @@
 - Preserve the established Home artwork, hero fading, and navigation styling unless the task explicitly changes them.
 - Support touch, accessibility, keyboard, and TV remote navigation. Check relevant UI changes on phone and tablet; keep distinct actions as separate, reachable targets.
 - Match press, hold, and focus feedback to the target's shape and bounds. Avatar tile feedback uses the avatar's rounded shape and must not cast a rectangular overlay behind its separate name label.
-- On tablet/TV headers, keep Profile and Portals as independent glass tiles on the right; the clock is separate. Preserve the mobile header unless explicitly changing it.
+- On tablet/TV and mobile-landscape headers, keep the profile button with its clock on the right. Portal choices belong in a compact glass popup below the profile button, alongside a Switch profile action. Do not reserve header space for portal buttons or resize the menu when the popup opens. Preserve the mobile portrait header unless explicitly changing it.
+- Storage belongs in Settings → Library & backup, with files scoped by viewing profile and portal. Label shared app caches separately, measure allocated torrent bytes, and preserve active stream leases during cleanup. My List and Downloads navigation must not expose a separate Storage tab.
 - Network requests, sync merges, and storage decoding must not run on the UI thread or block navigation. Show quiet progress and recovery status using the existing visual language.
 
 - Apply shared tablet/TV UI changes to mobile landscape as well, with compact proportions for short windows. Verify the production navigation entry path in portrait and landscape; testing an isolated component alone does not verify that the app opens it.

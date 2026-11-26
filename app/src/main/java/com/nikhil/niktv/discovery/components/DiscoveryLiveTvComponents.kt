@@ -222,10 +222,8 @@ internal fun ModernSectionHeader(title: String, subtitle: String? = null, action
 @Composable
 internal fun MobileLibrarySwitcher(
     downloadsSelected: Boolean,
-    storageSelected: Boolean,
     openFavorites: () -> Unit,
     openOfflineDownloads: () -> Unit,
-    openStorage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -241,21 +239,16 @@ internal fun MobileLibrarySwitcher(
             MobileLibraryTab(
                 label = "My List",
                 icon = Icons.Default.FavoriteBorder,
-                selected = !downloadsSelected && !storageSelected,
+                selected = !downloadsSelected,
                 onClick = openFavorites
             )
             MobileLibraryTab(
                 label = "Downloads",
                 icon = Icons.Default.DownloadDone,
-                selected = downloadsSelected && !storageSelected,
+                selected = downloadsSelected,
                 onClick = openOfflineDownloads
             )
-            MobileLibraryTab(
-                label = "Storage",
-                icon = Icons.Default.Storage,
-                selected = storageSelected,
-                onClick = openStorage
-            )
+
         }
     }
 }

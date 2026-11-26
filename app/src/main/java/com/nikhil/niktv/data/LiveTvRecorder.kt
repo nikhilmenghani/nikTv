@@ -44,7 +44,8 @@ data class LiveRecordingState(
     val recordedDurationMillis: Long = 0L,
     val bytesWritten: Long = 0L,
     val error: String? = null,
-    val owner: UserScope? = null
+    val owner: UserScope? = null,
+    val outputUri: String? = null
 )
 
 data class RecordedLiveTvMedia(
@@ -72,7 +73,7 @@ object LiveTvRecorder {
     }?.elapsedMillis
 
     fun start(context: Context, title: String, url: String, liveOffsetMillis: Long? = null,
-              playbackElapsedMillis: Long? = null, owner: UserScope? = null) {
+              playbackElapsedMillis: Long? = null, owner: UserScope? = null, portalKey: String? = null) {
         if (mutableState.value.active) return
         mutableState.value = LiveRecordingState(
             active = true,
@@ -83,6 +84,7 @@ object LiveTvRecorder {
         val intent = Intent(context, LiveTvRecordingService::class.java)
             .setAction(LiveTvRecordingService.ACTION_START)
             .putExtra(LiveTvRecordingService.EXTRA_TITLE, title)
+            .putExtra(LiveTvRecordingService.EXTRA_STORAGE_PORTAL, portalKey)
             .putExtra(LiveTvRecordingService.EXTRA_URL, url)
             .putExtra(LiveTvRecordingService.EXTRA_LIVE_OFFSET_MILLIS, liveOffsetMillis ?: -1L)
             .putExtra(LiveTvRecordingService.EXTRA_PLAYBACK_ELAPSED_MILLIS, playbackElapsedMillis ?: -1L)
@@ -245,14 +247,14 @@ class LiveTvRecordingService : Service() {
                 if (url.isNotBlank() && recordingJob?.isActive != true) {
                     requestedLiveOffsetMillis = intent.getLongExtra(EXTRA_LIVE_OFFSET_MILLIS, -1L)
                         .takeIf { it >= 0L }
-                    startRecording(title, url, intent.playbackElapsedExtra(), intent.recordingOwner())
+                    startRecording(title, url, intent.playbackElapsedExtra(), intent.recordingOwner(), intent.getStringExtra(EXTRA_STORAGE_PORTAL))
                 }
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startRecording(title: String, sourceUrl: String, playbackElapsedMillis: Long?, owner: UserScope?) {
+    private fun startRecording(title: String, sourceUrl: String, playbackElapsedMillis: Long?, owner: UserScope?, portalKey: String?) {
         val startedAt = System.currentTimeMillis()
         paused = false
         stopRequested = false
@@ -279,7 +281,8 @@ class LiveTvRecordingService : Service() {
         recordingJob = scope.launch {
             var outputUri: android.net.Uri? = null
             try {
-                outputUri = createOutput(title, owner)
+                outputUri = createOutput(title, owner, portalKey)
+                LiveTvRecorder.update(LiveTvRecorder.state.value.copy(outputUri = outputUri.toString()))
                 contentResolver.openOutputStream(outputUri, "w")!!.use { output ->
                     if (isHls(sourceUrl)) recordHls(sourceUrl, output)
                     else copyStream(sourceUrl, output)
@@ -586,7 +589,7 @@ class LiveTvRecordingService : Service() {
             .build()
     }
 
-    private fun createOutput(title: String, owner: UserScope?): android.net.Uri {
+    private fun createOutput(title: String, owner: UserScope?, portalKey: String?): android.net.Uri {
         val safe = title.replace(Regex("[\\/:*?\"<>|]+"), "_").trim().take(72).ifBlank { "Live TV" }
         val name = "$safe-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())}.ts"
         val values = ContentValues().apply {
@@ -605,7 +608,7 @@ class LiveTvRecordingService : Service() {
         }
         val uri = contentResolver.insert(recordingCollectionUri(), values)
             ?: error("Unable to create recording file")
-        try { RecordingOwnership(this).created(uri, owner) }
+        try { RecordingOwnership(this).created(uri, owner, portalKey) }
         catch (error: Exception) { runCatching { contentResolver.delete(uri, null, null) }; throw error }
         return uri
     }
@@ -619,6 +622,7 @@ class LiveTvRecordingService : Service() {
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
 
     companion object {
+        internal const val EXTRA_STORAGE_PORTAL = "recording_storage_portal"
         const val ACTION_START = "com.nikhil.niktv.action.START_LIVE_RECORDING"
         const val ACTION_STOP = "com.nikhil.niktv.action.STOP_LIVE_RECORDING"
         const val ACTION_PAUSE = "com.nikhil.niktv.action.PAUSE_LIVE_RECORDING"

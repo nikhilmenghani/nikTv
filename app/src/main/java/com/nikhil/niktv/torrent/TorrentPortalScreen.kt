@@ -292,14 +292,23 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         }
         val tools: @Composable () -> Unit = {
             Box {
-                DiscoveryAction("Advanced torrent search", Icons.Default.ManageSearch, iconOnly = true,
-                    selected = state.advancedSearch,
-                    onClick = { model.advancedSearch(!state.advancedSearch); search() })
+                PortalOptionsButton("Torrent options", entryModifier("tmdb-categories").then(entryModifier("downloads")),
+                    selected = browseMenu) { browseMenu = true }
+                PortalOptionsMenu(browseMenu, { browseMenu = false }) {
+                    NikDropdownMenuItem(text = { Text("Search titles (TMDB)") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = if (!state.advancedSearch) ({ Icon(Icons.Default.Check, null) }) else null,
+                        onClick = { browseMenu = false; model.advancedSearch(false); search() })
+                    NikDropdownMenuItem(text = { Text("Search torrent websites") },
+                        leadingIcon = { Icon(Icons.Default.ManageSearch, null) },
+                        trailingIcon = if (state.advancedSearch) ({ Icon(Icons.Default.Check, null) }) else null,
+                        onClick = { browseMenu = false; model.advancedSearch(true); search() })
+                    NikDropdownMenuItem(text = { Text("TMDB categories") }, leadingIcon = { Icon(Icons.Default.Category, null) },
+                        onClick = { browseMenu = false; categories = true })
+                    NikDropdownMenuItem(text = { Text("Torrent downloads") }, leadingIcon = { Icon(Icons.Default.Download, null) },
+                        onClick = { browseMenu = false; navigate(model::openDownloads) })
+                }
             }
-            DiscoveryAction("TMDB categories", Icons.Default.Category, iconOnly = true,
-                modifier = entryModifier("tmdb-categories"), onClick = { categories = true })
-            DiscoveryAction("Torrent downloads", Icons.Default.Download, iconOnly = true,
-                modifier = entryModifier("downloads"), onClick = { navigate(model::openDownloads) })
         }
         Box(Modifier.onFocusChanged { if (it.hasFocus) feedFocused = false }) {
             if (phone) PortalPhoneHeader {
@@ -321,38 +330,26 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
                     }, keyboardType = KeyboardType.Text, activationRequest = searchActivation,
                     editFinished = { finishSearch(collapse = false) }, editRequested = ::editSearch, submit = model::search)
                 searchButton()
-                Box {
-                    PortalOptionsButton("Torrent options", entryModifier("tmdb-categories").then(entryModifier("downloads")),
-                        selected = browseMenu) { browseMenu = true }
-                    PortalOptionsMenu(browseMenu, { browseMenu = false }) {
-                        NikDropdownMenuItem(text = { Text("Search titles (TMDB)") },
-                            leadingIcon = { Icon(Icons.Default.Search, null) },
-                            trailingIcon = if (!state.advancedSearch) ({ Icon(Icons.Default.Check, null) }) else null,
-                            onClick = { browseMenu = false; model.advancedSearch(false); search() })
-                        NikDropdownMenuItem(text = { Text("Search torrent websites") },
-                            leadingIcon = { Icon(Icons.Default.ManageSearch, null) },
-                            trailingIcon = if (state.advancedSearch) ({ Icon(Icons.Default.Check, null) }) else null,
-                            onClick = { browseMenu = false; model.advancedSearch(true); search() })
-                        NikDropdownMenuItem(text = { Text("TMDB categories") }, leadingIcon = { Icon(Icons.Default.Category, null) },
-                            onClick = { browseMenu = false; categories = true })
-                        NikDropdownMenuItem(text = { Text("Torrent downloads") }, leadingIcon = { Icon(Icons.Default.Download, null) },
-                            onClick = { browseMenu = false; navigate(model::openDownloads) })
-                    }
-                }
+                tools()
             } else PortalWideHeader(profile, onProfiles) {
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false,
                     modifier = if (state.title != null) entryModifier("details-back") else Modifier, onClick = ::back)
                 searchButton()
-                TorrentButton("Home", Icons.Default.Home, Modifier.height(if (short) 36.dp else 40.dp),
-                    primary = browseTab == DashboardSurface.HOME, onClick = { openRoot(DashboardSurface.HOME) })
-                TorrentButton("Movies", Icons.Default.Movie, Modifier.height(if (short) 36.dp else 40.dp),
-                    primary = browseTab == DashboardSurface.MOVIES, onClick = { openRoot(DashboardSurface.MOVIES) })
-                TorrentButton("Series", Icons.Default.Tv, Modifier.height(if (short) 36.dp else 40.dp),
-                    primary = browseTab == DashboardSurface.SERIES, onClick = { openRoot(DashboardSurface.SERIES) })
-                TorrentButton("My List", Icons.Default.VideoLibrary, Modifier.height(if (short) 36.dp else 40.dp)
-                    .then(entryModifier("my-list-tab")).semantics { selected = myListSelected; role = Role.Tab }
+                StableTileFocusViewport {
+                Row(Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                DiscoveryAction("Home", Icons.Default.Home,
+                    selected = browseTab == DashboardSurface.HOME, onClick = { openRoot(DashboardSurface.HOME) })
+                DiscoveryAction("Movies", Icons.Default.Movie,
+                    selected = browseTab == DashboardSurface.MOVIES, onClick = { openRoot(DashboardSurface.MOVIES) })
+                DiscoveryAction("Series", Icons.Default.Tv,
+                    selected = browseTab == DashboardSurface.SERIES, onClick = { openRoot(DashboardSurface.SERIES) })
+                DiscoveryAction("My List", Icons.Default.VideoLibrary, modifier =
+                    entryModifier("my-list-tab").semantics { selected = myListSelected; role = Role.Tab }
                     .focusProperties { if (myListSelected) down = requester("library-back") },
-                    primary = myListSelected, onClick = ::openMyList)
+                    selected = myListSelected, onClick = ::openMyList)
+                }
+                }
                 tools()
             }
         }

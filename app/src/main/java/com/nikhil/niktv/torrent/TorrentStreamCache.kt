@@ -2,10 +2,10 @@ package com.nikhil.niktv.torrent
 
 import android.content.Context
 import android.system.Os
+import android.system.OsConstants
 import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
-import java.nio.file.Files
 import java.security.MessageDigest
 
 /** App-private stream pieces, separate from permanent offline videos and worker partials. */
@@ -20,10 +20,40 @@ internal object TorrentStreamCache {
         internal var discard = false
     }
 
+    internal data class Entry(val id: String, val names: List<String>, val bytes: Long, val inUse: Boolean)
+
+    private fun ownerHash(owner: String) = MessageDigest.getInstance("SHA-256")
+        .digest(owner.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+    /** Only a person's own hash-prefixed directories are visible or eligible for cleanup. */
+    fun entries(context: Context, owner: String): List<Entry> = synchronized(lock) {
+        val root = File(context.filesDir, "torrent_stream_cache").canonicalFile
+        val prefix = ownerHash(owner) + "_"
+        root.listFiles().orEmpty().filter {
+            it.isDirectory && it.name.startsWith(prefix) && entryName.matches(it.name) &&
+                it.canonicalFile.parentFile == root && it.canonicalFile.name == it.name
+        }.sortedByDescending { it.lastModified() }.map { directory ->
+            val files = read(File(root, "${directory.name}.json"))?.optJSONObject("files")
+            Entry(directory.name, files?.keys()?.asSequence()?.map { it.substringAfterLast('/').substringAfterLast('\\') }?.toList().orEmpty(),
+                allocatedBytes(directory), directory.canonicalPath in active)
+        }
+    }
+
+    fun clearEntry(context: Context, owner: String, id: String): Boolean = synchronized(lock) {
+        require(entryName.matches(id) && id.startsWith(ownerHash(owner) + "_")) { "This stream belongs to another profile." }
+        val root = File(context.filesDir, "torrent_stream_cache").canonicalFile
+        val directory = File(root, id).canonicalFile
+        require(directory.parentFile == root && directory.name == id) { "Unsafe stream cache path." }
+        if (directory.path in active) return false
+        check(!directory.exists() || deleteCacheTree(directory)) { "Could not clear this stream." }
+        File(root, "$id.json").delete()
+        true
+    }
+
     fun acquire(context: Context, owner: String, nativeHash: String): Lease? = synchronized(lock) {
         require(owner.isNotBlank() && owner.length <= 4096)
         require(Regex("v1_[0-9a-f]{40}|v2_[0-9a-f]{64}").matches(nativeHash))
-        val ownerHash = MessageDigest.getInstance("SHA-256").digest(owner.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        val ownerHash = ownerHash(owner)
         val root = File(context.filesDir, "torrent_stream_cache").apply { mkdirs() }.canonicalFile
         prune(root)
         val key = "${ownerHash}_$nativeHash"
@@ -113,9 +143,15 @@ internal object TorrentStreamCache {
 
     /** Sparse video length is not disk consumption. Never follow cached symlinks. */
     fun allocatedBytes(file: File): Long {
-        if (!file.exists() || android.os.Build.VERSION.SDK_INT >= 26 && Files.isSymbolicLink(file.toPath())) return 0
+        if (!file.exists() || runCatching { OsConstants.S_ISLNK(Os.lstat(file.path).st_mode) }.getOrDefault(false)) return 0
         return if (file.isDirectory) file.listFiles().orEmpty().sumOf(::allocatedBytes)
         else runCatching { Os.stat(file.path).st_blocks * 512L }.getOrDefault(file.length()).coerceAtLeast(0)
+    }
+
+    private fun deleteCacheTree(file: File): Boolean {
+        if (runCatching { OsConstants.S_ISLNK(Os.lstat(file.path).st_mode) }.getOrDefault(false)) return file.delete()
+        if (file.isDirectory && !file.listFiles().orEmpty().map(::deleteCacheTree).all { it }) return false
+        return file.delete()
     }
 }
 

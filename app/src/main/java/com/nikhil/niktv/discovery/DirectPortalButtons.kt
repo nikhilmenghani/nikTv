@@ -25,6 +25,9 @@ internal class PortalFocusReturn {
     private val requesters = mutableMapOf<String, FocusRequester>()
     private var pending by mutableStateOf<String?>(null)
     private val routeOwners = mutableStateListOf<Any>()
+    private val headers = linkedMapOf<Any, FocusRequester>()
+    fun registerHeader(owner: Any, requester: FocusRequester) { headers[owner] = requester }
+    fun unregisterHeader(owner: Any) { headers.remove(owner) }
     fun requester(id: String) = requesters.getOrPut(id) { FocusRequester() }
     fun ownRoute(owner: Any) { routeOwners += owner }
     fun releaseRoute(owner: Any) { routeOwners -= owner }
@@ -32,7 +35,7 @@ internal class PortalFocusReturn {
     val pendingId: String? get() = pending
     fun clicked(id: String) { pending = id }
     fun cancel() { pending = null }
-    val preferred: FocusRequester? get() = pending?.let(requesters::get)
+    val preferred: FocusRequester? get() = pending?.let { headers.values.lastOrNull() ?: requesters[it] }
     val waiting: Boolean get() = pending != null
     fun restore(): Boolean {
         val success = preferred?.let { runCatching { it.requestFocus() }.getOrDefault(false) } == true
@@ -57,10 +60,9 @@ internal fun portalHeaderWidth(): androidx.compose.ui.unit.Dp {
 
 @Composable
 internal fun discoveryProfileHeaderWidth(clock: Boolean): androidx.compose.ui.unit.Dp {
-    val portals = portalHeaderWidth()
     val person = if (clock) (124f * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
         else if (discoveryHeaderActionSize() == 36.dp) 46.dp else 56.dp
-    return portals + (if (portals > 0.dp) 8.dp else 0.dp) + person
+    return person
 }
 
 @Composable
