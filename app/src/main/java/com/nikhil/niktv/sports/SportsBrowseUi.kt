@@ -142,7 +142,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             downFocus = if (selected != null) sourceFocus.firstOrNull() else gridEntry) { modifier ->
             Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 sportsMainTabs.forEach { tab ->
-                    DiscoveryAction(tab.title, horizontalPadding = 12.dp, selected = state.tab == tab,
+                    DiscoveryAction(tab.title, tab.navigationIcon, horizontalPadding = 10.dp, selected = state.tab == tab,
                         modifier = Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
                             val target = when { selected != null -> sourceFocus.firstOrNull() ?: backFocus

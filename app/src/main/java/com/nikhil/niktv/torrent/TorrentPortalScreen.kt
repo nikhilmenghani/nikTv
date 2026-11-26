@@ -165,9 +165,13 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         action()
     }
     fun finishSearch(collapse: Boolean = true) {
-        explicitEntry = "search"
-        enteringRoute = true
-        parking.request { runCatching { parkingRequester.requestFocus() }.getOrDefault(false) }
+        // A visible touch editor keeps ownership after the IME closes.
+        // Parking focus here races the user's next tap with header restoration.
+        if (!view.isInTouchMode) {
+            explicitEntry = "search"
+            enteringRoute = true
+            parking.request { runCatching { parkingRequester.requestFocus() }.getOrDefault(false) }
+        }
         if (collapse) searchExpanded = false
     }
     fun back() {
@@ -238,9 +242,11 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
     }
 
     val header: @Composable () -> Unit = {
-        val tools: @Composable () -> Unit = {
+        val searchButton: @Composable () -> Unit = {
             DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, focusHint = false,
                 modifier = entryModifier("search"), onClick = ::search)
+        }
+        val tools: @Composable () -> Unit = {
             DiscoveryAction("TMDB categories", Icons.Default.Category, iconOnly = true,
                 modifier = entryModifier("tmdb-categories"), onClick = { categories = true })
             DiscoveryAction("Torrent downloads", Icons.Default.Download, iconOnly = true,
@@ -251,9 +257,11 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
                 DiscoveryAction("Switch profile: $viewerName", visualLabel = viewerAvatar,
                     containerColor = viewer?.let { Color(it.color) } ?: MaterialTheme.colorScheme.primary, onClick = onProfiles)
                 Spacer(Modifier.weight(1f))
+                searchButton()
                 tools()
             } else PortalWideHeader(profile, onProfiles) {
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false, onClick = ::back)
+                searchButton()
                 TorrentButton("Home", Icons.Default.Home, Modifier.height(if (short) 36.dp else 40.dp),
                     primary = browseTab == DashboardSurface.HOME, onClick = { openRoot(DashboardSurface.HOME) })
                 TorrentButton("Movies", Icons.Default.Movie, Modifier.height(if (short) 36.dp else 40.dp),

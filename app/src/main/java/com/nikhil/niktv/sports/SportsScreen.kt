@@ -4,7 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.lifecycle.Lifecycle
@@ -16,6 +16,10 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import java.time.Instant
 import kotlinx.coroutines.delay
+
+@Composable
+internal fun rememberSportsStreamScroll(channelKey: String?): LazyGridState =
+    rememberSaveable(channelKey, saver = LazyGridState.Saver) { LazyGridState() }
 
 @Composable
 internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, source: SportsCatalogueSource = SportsCatalogueSource.CRICFY,
@@ -32,6 +36,9 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, sour
     var sport by rememberSaveable { mutableStateOf(defaults.sport) }
     var status by rememberSaveable { mutableStateOf(defaults.status) }
     var lastSource by rememberSaveable(state.selected?.key) { mutableStateOf<Int?>(null) }
+    // Keep the viewport through playback, but reset it when a tile is opened
+    // again. The browse state holder retains a separate viewport for each route.
+    val streamsScroll = rememberSportsStreamScroll(state.selected?.key)
     val pages = rememberSaveableStateHolder()
     var enteredFromPortal by remember { mutableStateOf(false) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -86,7 +93,7 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, sour
         val servers by model.servers.collectAsState()
         SportsBrowseContent(state, now, sport, { sport = it }, status, { status = it }, search, { search = it },
         back, { model.refresh() }, model::open,
-        { lastSource = it; model.play(it) }, lastSource = lastSource,
+        { lastSource = it; model.play(it) }, streamsScroll = streamsScroll, lastSource = lastSource,
         defaults = defaults,
         saveDefaultSport = { browsePreferences.setSport(it); defaults = browsePreferences.read(); sport = it },
         saveDefaultStatus = { browsePreferences.setStatus(it); defaults = browsePreferences.read(); status = it },

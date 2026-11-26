@@ -108,6 +108,14 @@ internal fun sportsPhoneLayout(): Boolean {
     return usesDiscoveryPhoneLayout(configuration, LocalContext.current.isTvLikeDevice(configuration))
 }
 
+internal val SportsTab.navigationIcon
+    get() = when (this) {
+        SportsTab.EVENTS -> Icons.Default.LiveTv
+        SportsTab.CHANNELS -> Icons.Default.Sports
+        SportsTab.CATEGORIES -> Icons.Default.Category
+        SportsTab.HIGHLIGHTS -> Icons.Default.VideoLibrary
+    }
+
 /** Matches the IPTV phone dock; tablets and televisions keep navigation in the header. */
 @Composable
 internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
@@ -117,12 +125,6 @@ internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
         sportsMainTabs.forEach { destination ->
             val active = destination == tab
             var focused by remember(destination) { mutableStateOf(false) }
-            val icon = when (destination) {
-                SportsTab.EVENTS -> Icons.Default.LiveTv
-                SportsTab.CHANNELS -> Icons.Default.Sports
-                SportsTab.CATEGORIES -> Icons.Default.Category
-                SportsTab.HIGHLIGHTS -> Icons.Default.VideoLibrary
-            }
             Surface(onClick = { select(destination) },
                 modifier = Modifier.weight(1f).heightIn(min = 56.dp).focusRequester(requesters.getValue(destination))
                     .onPreviewKeyEvent {
@@ -138,7 +140,7 @@ internal fun SportsBottomNavigation(tab: SportsTab, select: (SportsTab) -> Unit,
                 contentColor = if (active) Color.White else SportsMuted) {
                 Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Icon(icon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else SportsMuted)
+                    Icon(destination.navigationIcon, null, Modifier.size(22.dp), tint = if (active) Color(0xFFFF6778) else SportsMuted)
                     Text(destination.title, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
                 }

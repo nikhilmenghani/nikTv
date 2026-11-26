@@ -162,16 +162,22 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
                     }
                 trialSurfaces.forEachIndexed { index, tab ->
                     val active = !searchActive && library == null && surface == tab
-                    DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
-                        selected = active, horizontalPadding = 12.dp,
+                    val icon = when (tab) {
+                        DashboardSurface.HOME -> Icons.Default.Home
+                        DashboardSurface.MOVIES -> Icons.Default.Movie
+                        DashboardSurface.SERIES -> Icons.Default.Tv
+                        DashboardSurface.LIVE_TV -> Icons.Default.LiveTv
+                    }
+                    DiscoveryAction(tab.trialTitle(), icon, visualLabel = tab.trialTitle().removeSuffix(" 2"),
+                        selected = active, horizontalPadding = 10.dp,
                         modifier = tabFocus(index).discoveryNavigationTab(tab.trialTitle(), active, shared, tabRequester, playRequester),
                         onFocus = headerFocus) { if (experiment) navigate(tab.trialTitle()) else select(tab) }
                 }
-                DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
+                DiscoveryAction("Live TV", Icons.Default.LiveTv, selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 10.dp,
                     modifier = tabFocus(tabTargets.lastIndex - 1)
                         .discoveryNavigationTab("Live TV", library == DiscoveryLibraryDestination.LIVE_TV, shared, tabRequester, playRequester),
                     onFocus = headerFocus) { navigate("Live TV") }
-                DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
+                DiscoveryAction("My List", Icons.Default.VideoLibrary, selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 10.dp,
                     modifier = tabFocus(tabTargets.lastIndex)
                         .discoveryNavigationTab("My List", library == DiscoveryLibraryDestination.MY_LIST, shared, tabRequester, playRequester),
                     onFocus = headerFocus) { navigate("My List") }

@@ -176,7 +176,7 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
             headerActions, backFocus, menuFocus, downFocus = versionFocus) { modifier ->
             Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 sportsMainTabs.forEach { tab ->
-                    DiscoveryAction(tab.title, horizontalPadding = 12.dp, selected = tab == SportsTab.HIGHLIGHTS,
+                    DiscoveryAction(tab.title, tab.navigationIcon, horizontalPadding = 10.dp, selected = tab == SportsTab.HIGHLIGHTS,
                         modifier = Modifier.focusRequester(tabFocus.getValue(tab))
                             .onPreviewKeyEvent {
                                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) {
