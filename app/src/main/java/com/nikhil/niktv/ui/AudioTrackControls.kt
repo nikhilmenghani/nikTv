@@ -18,7 +18,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
-import kotlinx.coroutines.delay
 
 internal data class PlayerAudioTrackOption(val id: String, val label: String, val selected: Boolean)
 
@@ -29,11 +28,7 @@ internal fun PlayerAudioTrackDialog(
     onDismiss: () -> Unit
 ) {
     val requesters = remember(tracks.map { it.id }) { tracks.map { FocusRequester() } }
-    LaunchedEffect(tracks) {
-        delay(100L)
-        val selected = tracks.indexOfFirst { it.selected }.coerceAtLeast(0)
-        runCatching { requesters.getOrNull(selected)?.requestFocus() }
-    }
+    val entry = requesters.getOrNull(tracks.indexOfFirst { it.selected }.coerceAtLeast(0))
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(22.dp),
@@ -50,7 +45,8 @@ internal fun PlayerAudioTrackDialog(
         },
         text = {
             Column(
-                Modifier.widthIn(min = 280.dp, max = 440.dp).verticalScroll(rememberScrollState()),
+                Modifier.widthIn(min = 280.dp, max = 440.dp).verticalScroll(rememberScrollState())
+                    .then(entry?.let { Modifier.playerChoiceFocusEntry(it) } ?: Modifier),
                 verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 tracks.forEachIndexed { index, track ->

@@ -602,6 +602,7 @@ fun PlayerScreen(
     var pictureModePickerVisible by remember { mutableStateOf(false) }
     var returnToPictureSettings by remember { mutableStateOf(false) }
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var gestureSettingsVisible by remember(media.progressKey) { mutableStateOf(false) }
     var decoderPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     val decoderFocusRequester = remember(media.progressKey) { FocusRequester() }
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
@@ -610,9 +611,10 @@ fun PlayerScreen(
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = extraControlsOpen || playerPickerVisible || decoderPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
+    val playerOptionsOpen = extraControlsOpen || gestureSettingsVisible || playerPickerVisible || decoderPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
-    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(rememberPlayerGestureOwner(media))
+    val gestureOwner = rememberPlayerGestureOwner(media)
+    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(gestureOwner)
     val currentSwipeControls by rememberUpdatedState(swipeControls)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
@@ -726,6 +728,7 @@ fun PlayerScreen(
     val directionalInput = playerUsesDirectionalInput()
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val gesturesFocusRequester = remember(media.progressKey) { FocusRequester() }
     val moreFocusRequester = remember(media.progressKey) { FocusRequester() }
     val cricketScoreFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -2531,6 +2534,10 @@ fun PlayerScreen(
                                     modeFeedback = playerControlsTimeoutFeedback(seconds)
                                 }
                             ))
+                        if (gestureOwner != null) add(PlayerSettingAction(
+                            kind = PlayerSettingKind.GESTURES, requester = gesturesFocusRequester,
+                            icon = Icons.Default.TouchApp, contentDescription = "Gestures",
+                            onClick = { gestureSettingsVisible = true }))
                         add(PlayerSettingAction(
                                 kind = PlayerSettingKind.CRICKET,
                                 requester = cricketScoreFocusRequester,
@@ -3022,6 +3029,10 @@ fun PlayerScreen(
                 }
                 decoderPickerVisible = false; controlsVisible = true; settingsRibbon.restore(decoderFocusRequester)
             })
+        if (gestureSettingsVisible && gestureOwner != null) PlayerGestureControlsDialog(gestureOwner) {
+            settingsRibbon.restore(gesturesFocusRequester)
+            gestureSettingsVisible = false; controlsVisible = true
+        }
         if (playerPickerVisible) PlayerEngineQuickOverlay(
             selectedEngine = displayedPlayerChoice,
             allowedEngines = if (media.streamDrm != null || playbackDataSourceFactory != null) PROTECTED_PLAYER_ENGINES else null,

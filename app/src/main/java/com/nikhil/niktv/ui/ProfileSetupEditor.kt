@@ -106,7 +106,7 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
     val readyPortals = draft.portals.filter { it.ready }
     val opensDashboard = alwaysOpen || (openAfterSave && draft.enabled)
     val hasPortal = readyPortals.any { it.key in draft.selected } ||
-        ProfilePortalAccess.SPORTS in draft.selected || ProfilePortalAccess.PLAYFY in draft.selected
+        ProfilePortalAccess.SPORTS in draft.selected || ProfilePortalAccess.PLAYFY in draft.selected || ProfilePortalAccess.TORRENTS in draft.selected
     val canSave = !saving && (!opensDashboard || hasPortal)
     fun change(value: ProfileSetupDraft) { if (!saving) { draft = value; error = null } }
     fun leave() { if (!saving) onDismiss() }
@@ -202,10 +202,14 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
                                         onToggle = { change(draft.copy(selected = if (it) draft.selected + ProfilePortalAccess.SPORTS else draft.selected - ProfilePortalAccess.SPORTS)) })
                                     SettingsControlRow("Playfy TV", checked = ProfilePortalAccess.PLAYFY in draft.selected,
                                         onToggle = { change(draft.copy(selected = if (it) draft.selected + ProfilePortalAccess.PLAYFY else draft.selected - ProfilePortalAccess.PLAYFY)) })
+                                    SettingsControlRow("Torrents", checked = ProfilePortalAccess.TORRENTS in draft.selected,
+                                        description = "Search sources and stream directly on this device.",
+                                        onToggle = { change(draft.copy(selected = if (it) draft.selected + ProfilePortalAccess.TORRENTS else draft.selected - ProfilePortalAccess.TORRENTS)) })
                                     val starts = readyPortals.filter { it.key in draft.selected }.map { it.key to it.portal.setupName } +
                                         listOfNotNull(
                                             (ProfilePortalAccess.SPORTS to "Sports").takeIf { ProfilePortalAccess.SPORTS in draft.selected },
-                                            (ProfilePortalAccess.PLAYFY to "Playfy TV").takeIf { ProfilePortalAccess.PLAYFY in draft.selected })
+                                            (ProfilePortalAccess.PLAYFY to "Playfy TV").takeIf { ProfilePortalAccess.PLAYFY in draft.selected },
+                                            (ProfilePortalAccess.TORRENTS to "Torrents").takeIf { ProfilePortalAccess.TORRENTS in draft.selected })
                                     if (starts.size > 1) SettingsPickerRow("Open first", starts, draft.start ?: starts.first().first, { change(draft.copy(startingPortal = it)) })
                                     else Text(starts.firstOrNull()?.let { "Opens ${it.second}" }
                                         ?: if (opensDashboard) "Select at least one portal to continue." else "No portals selected.",
@@ -224,6 +228,9 @@ private fun ProfileSetupFormContent(initial: ProfileSetupDraft, onDismiss: () ->
                                     when (options) {
                                         0 -> ProfileSetupContentOptions(draft.content) { change(draft.copy(content = it)) }
                                         1 -> {
+                                            if (ProfilePortalAccess.TORRENTS in draft.selected) SettingsControlRow("Prefetch next torrent episode", checked = draft.torrentPrefetchNext,
+                                                description = "Prepare the next episode in the background while protecting current playback.",
+                                                onToggle = { change(draft.copy(torrentPrefetchNext = it)) })
                                             SettingsControlRow("Pinch to zoom", checked = draft.pinchToZoom,
                                                 description = "Allow two-finger zoom in the player. Off by default.", onToggle = { change(draft.copy(pinchToZoom = it)) })
                                             PlayerSwipeSettings(draft.swipeControls) { gesture, enabled ->

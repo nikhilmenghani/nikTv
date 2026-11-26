@@ -413,7 +413,9 @@ data class PlayingMedia(
     val userScope: com.nikhil.niktv.data.UserScope? = null,
     /** Stable logical portal association, independent of its local credentials. */
     val logicalPortalId: String = "",
-    val portalQuality: PortalPlaybackResolution? = null
+    val portalQuality: PortalPlaybackResolution? = null,
+    /** Available only for this playback lease; never persisted in history or sync. */
+    val sidecarSubtitles: List<PlaybackSidecarSubtitle> = emptyList()
 )
 
 class PlaybackStreamDrm(

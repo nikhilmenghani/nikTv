@@ -31,6 +31,8 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.nikhil.niktv.torrent.TorrentOfflineDownloads
+import com.nikhil.niktv.torrent.TorrentStreamCache
 
 enum class OfflineDownloadStatus { QUEUED, DOWNLOADING, PAUSED, COMPLETE, FAILED, MISSING }
 data class OfflineDownloadInfo(
@@ -76,7 +78,7 @@ object OfflineMediaDownloads {
         mediaCache.keys.toList().forEach { key ->
             runCatching { mediaCache.removeResource(key) }
         }
-        (before - mediaCache.cacheSpace.coerceAtLeast(0L)).coerceAtLeast(0L)
+        (before - mediaCache.cacheSpace.coerceAtLeast(0L)).coerceAtLeast(0L) + TorrentStreamCache.clearInactive(context)
     }
 
     fun cacheDataSourceFactory(context: Context): CacheDataSource.Factory = CacheDataSource.Factory()
@@ -146,6 +148,7 @@ object OfflineMediaDownloads {
 
     fun status(context: Context, requestId: String): OfflineDownloadStatus {
         if (requestId.isBlank()) return OfflineDownloadStatus.MISSING
+        if (requestId.startsWith(TorrentOfflineDownloads.PREFIX)) return TorrentOfflineDownloads.info(context, requestId).status
         hlsWorkInfo(context, requestId)?.let { work ->
             if (work.state == WorkInfo.State.SUCCEEDED &&
                 work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI).isNullOrBlank() &&
@@ -173,6 +176,7 @@ object OfflineMediaDownloads {
 
     fun info(context: Context, requestId: String): OfflineDownloadInfo {
         if (requestId.isBlank()) return OfflineDownloadInfo(OfflineDownloadStatus.MISSING)
+        if (requestId.startsWith(TorrentOfflineDownloads.PREFIX)) return TorrentOfflineDownloads.info(context, requestId)
         hlsWorkInfo(context, requestId)?.let { work ->
             if (work.state == WorkInfo.State.SUCCEEDED &&
                 work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI).isNullOrBlank() &&
@@ -206,6 +210,7 @@ object OfflineMediaDownloads {
         if (downloadId >= 0L) systemDownloadInfo(context, downloadId) else info(context, requestId)
 
     fun playableUri(context: Context, requestId: String, sourceUrl: String, downloadId: Long = -1L): String? {
+        if (requestId.startsWith(TorrentOfflineDownloads.PREFIX)) return TorrentOfflineDownloads.playableUri(context, requestId)
         if (downloadId >= 0L) {
             return context.getSystemService(SystemDownloadManager::class.java)
                 .getUriForDownloadedFile(downloadId)?.toString()
@@ -234,6 +239,7 @@ object OfflineMediaDownloads {
                 .getSystemService(SystemDownloadManager::class.java)
                 .getUriForDownloadedFile(downloadId)
             requestId.startsWith(HLS_WORK_PREFIX) -> persistedHlsOutput(context, requestId)?.let(Uri::parse)
+            requestId.startsWith(TorrentOfflineDownloads.PREFIX) -> TorrentOfflineDownloads.playableUri(context, requestId)?.let(Uri::parse)
             else -> null
         } ?: return null
 
@@ -254,6 +260,10 @@ object OfflineMediaDownloads {
     }
 
     fun remove(context: Context, requestId: String, downloadId: Long = -1L) {
+        if (requestId.startsWith(TorrentOfflineDownloads.PREFIX)) {
+            TorrentOfflineDownloads.remove(context, requestId)
+            return
+        }
         if (downloadId >= 0L) {
             // System DownloadManager owns this exact NikTV download id. Removing it
             // deletes only that tracked file; no shared-folder scan is performed.

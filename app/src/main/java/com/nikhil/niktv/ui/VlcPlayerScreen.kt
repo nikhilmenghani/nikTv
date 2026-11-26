@@ -292,9 +292,10 @@ internal fun VlcPlayerScreen(
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var speedPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var gestureSettingsVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = extraControlsOpen || speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
+    val playerOptionsOpen = extraControlsOpen || gestureSettingsVisible || speedPickerVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
@@ -316,7 +317,8 @@ internal fun VlcPlayerScreen(
         onSubtitleSettingsChanged(subtitleFileForParent, subtitleEnabledForParent,
             subtitleDelayForParent, subtitleAppearanceForParent)
     }
-    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(rememberPlayerGestureOwner(media))
+    val gestureOwner = rememberPlayerGestureOwner(media)
+    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(gestureOwner)
     val currentSwipeControls by rememberUpdatedState(swipeControls)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
@@ -386,6 +388,7 @@ internal fun VlcPlayerScreen(
     val directionalInput = playerUsesDirectionalInput()
     val pictureSettingsRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutRequester = remember(media.progressKey) { FocusRequester() }
+    val gesturesRequester = remember(media.progressKey) { FocusRequester() }
     val moreRequester = remember(media.progressKey) { FocusRequester() }
     val cricketScoreRequester = remember(media.progressKey) { FocusRequester() }
     val previousRequester = remember(media.progressKey) { FocusRequester() }
@@ -1912,6 +1915,10 @@ internal fun VlcPlayerScreen(
                                     modeFeedback = playerControlsTimeoutFeedback(seconds)
                                 }
                             ))
+                        if (gestureOwner != null) add(PlayerSettingAction(
+                            kind = PlayerSettingKind.GESTURES, requester = gesturesRequester,
+                            icon = Icons.Default.TouchApp, contentDescription = "Gestures",
+                            onClick = { gestureSettingsVisible = true }))
                         add(PlayerSettingAction(
                                 kind = PlayerSettingKind.CRICKET,
                                 requester = cricketScoreRequester,
@@ -2072,6 +2079,7 @@ internal fun VlcPlayerScreen(
                                 )
                             }
                         }
+                        PlayerDownloadedDataIndicator()
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -2412,6 +2420,10 @@ internal fun VlcPlayerScreen(
                 }
             }
         )
+        if (gestureSettingsVisible && gestureOwner != null) PlayerGestureControlsDialog(gestureOwner) {
+            settingsRibbon.restore(gesturesRequester)
+            gestureSettingsVisible = false; controlsVisible = true
+        }
         if (speedPickerVisible) PlaybackSpeedOverlay(playbackSpeed, onPlaybackSpeedChanged, {
             settingsRibbon.restore(speedRequester); speedPickerVisible = false; controlsVisible = true
         })
@@ -2544,6 +2556,9 @@ internal fun VlcPlayerScreen(
         }
         if (subtitleDialogOpen) {
             SubtitleSelectionDialog(
+                sidecarSubtitles = media.sidecarSubtitles,
+                downloadedSubtitlePath = externalSubtitleFile?.absolutePath,
+                downloadedSubtitleTrackId = "downloaded",
                 tracks = subtitleTracks.map { (id, label) ->
                     SubtitleTrackOption(id.toString(), label, !externalSubtitleEnabled && selectedSubtitleTrackId == id)
                 } + if (externalSubtitleFile != null) listOf(
@@ -2587,7 +2602,7 @@ internal fun VlcPlayerScreen(
                     player.setSpuTrack(-1)
                     selectedSubtitleTrackId = null
                 },
-                downloadedSubtitleName = externalSubtitleFile?.name,
+                downloadedSubtitleName = externalSubtitleFile?.let { playbackSubtitleDisplayName(it, media.sidecarSubtitles) },
                 onDeleteDownloadedSubtitle = externalSubtitleFile?.let { file ->
                     {
                         player.setSpuTrack(-1)

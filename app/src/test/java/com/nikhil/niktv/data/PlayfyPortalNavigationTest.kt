@@ -60,7 +60,7 @@ class PlayfyPortalNavigationTest {
         ProfilePortalAccess.setAllowed(context, general, ProfilePortalAccess.PLAYFY, false)
         assertTrue(ProfilePortalAccess.PLAYFY in ProfilePortalAccess.hidden(context, general))
         assertFalse(ProfilePortalAccess.SPORTS in ProfilePortalAccess.hidden(context, general))
-        assertTrue(ProfilePortalAccess.hidden(context, kids).isEmpty())
+        assertEquals(setOf(ProfilePortalAccess.TORRENTS), ProfilePortalAccess.hidden(context, kids))
         ProfilePortalAccess.setAllowed(context, general, ProfilePortalAccess.PLAYFY, true)
         ProfilePortalAccess.setAllowed(context, general, ProfilePortalAccess.SPORTS, false)
         assertFalse(ProfilePortalAccess.PLAYFY in ProfilePortalAccess.hidden(context, general))
@@ -89,4 +89,26 @@ class PlayfyPortalNavigationTest {
         assertTrue(ProfilePortalAccess.PLAYFY in restored.selected)
         assertFalse(ProfilePortalAccess.SPORTS in restored.selected)
     }
+    @Test fun torrentsAreOptInAndSetupRestoresTheirOwnDestination() = runBlocking {
+        val general = owner(UserProfileType.GENERAL)
+        val kids = owner(UserProfileType.KIDS)
+        assertTrue(ProfilePortalAccess.TORRENTS in ProfilePortalAccess.hidden(context, general))
+        ProfilePortalAccess.setAllowed(context, general, ProfilePortalAccess.TORRENTS, true)
+        assertFalse(ProfilePortalAccess.TORRENTS in ProfilePortalAccess.hidden(context, general))
+        assertTrue(ProfilePortalAccess.TORRENTS in ProfilePortalAccess.hidden(context, kids))
+        val profile = UserProfile(general.profileId, "Torrent viewer")
+        ProfileSetupStore.save(context, ProfileSetupDraft(profile, "101", existing = true,
+            selected = setOf(ProfilePortalAccess.TORRENTS), startingPortal = ProfilePortalAccess.TORRENTS, torrentPrefetchNext = true))
+        val restored = ProfileSetupStore.load(context, profile)
+        assertTrue(restored.canOpen)
+        assertEquals(ProfilePortalAccess.TORRENTS, restored.start)
+        assertTrue(restored.torrentPrefetchNext)
+        assertTrue(com.nikhil.niktv.torrent.TorrentPlaybackPreferences.enabled(context, general))
+        assertFalse(com.nikhil.niktv.torrent.TorrentPlaybackPreferences.enabled(context, kids))
+        assertEquals(setOf(ProfilePortalAccess.TORRENTS), restored.selected)
+        assertEquals(ViewerDestination(ViewerDestinationKind.TORRENTS), users.rememberedDestination(general))
+        ProfilePortalAccess.setAllowed(context, general, ProfilePortalAccess.TORRENTS, false)
+        assertTrue(ProfilePortalAccess.TORRENTS in ProfilePortalAccess.hidden(context, general))
+    }
+
 }

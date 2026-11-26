@@ -229,6 +229,8 @@ kotlin {
 }
 
 dependencies {
+    // Self-contained Android torrent engine (static C++ runtime; no player-runtime override).
+    implementation("com.frostwire:jlibtorrent-android:2.1.2.1")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
     implementation("androidx.room:room-runtime:2.8.4")

@@ -7,6 +7,7 @@ import com.nikhil.niktv.model.OfflineMediaDownload
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.nikhil.niktv.torrent.TorrentStreamCache
 
 data class AppStorageSnapshot(
     val totalBytes: Long,
@@ -49,6 +50,10 @@ suspend fun appStorageSnapshot(
     val sharedArtworkDirectory = File(appContext.cacheDir, "image_cache")
     val subtitleDirectory = File(appContext.cacheDir, "subtitles")
     val hlsDirectory = File(appContext.cacheDir, "hls_exports")
+    val torrentStreams = File(appContext.cacheDir, "torrent_streams")
+    val torrentPartials = File(appContext.filesDir, "torrent_partial")
+    val torrentDownloads = File(appContext.filesDir, "torrent_downloads")
+    val retainedStreams = File(appContext.filesDir, "torrent_stream_cache")
     val namedCacheBytes = directorySize(artworkDirectory) + directorySize(sharedArtworkDirectory) + directorySize(subtitleDirectory)
     // discovery_preview is deliberately unnamed: its bounded public metadata is
     // reported as temporary cache and removed by clearTemporaryCaches.
@@ -59,12 +64,13 @@ suspend fun appStorageSnapshot(
     AppStorageSnapshot(
         totalBytes = stats.totalBytes,
         availableBytes = stats.availableBytes,
-        offlineDownloadBytes = trackedPublicBytes,
-        mediaCacheBytes = OfflineMediaDownloads.cachedMediaBytes(appContext) + directorySize(hlsDirectory),
+        offlineDownloadBytes = trackedPublicBytes + directorySize(torrentDownloads),
+        mediaCacheBytes = OfflineMediaDownloads.cachedMediaBytes(appContext) + directorySize(hlsDirectory) +
+            TorrentStreamCache.allocatedBytes(torrentStreams) + TorrentStreamCache.allocatedBytes(torrentPartials) + TorrentStreamCache.allocatedBytes(retainedStreams),
         artworkCacheBytes = directorySize(artworkDirectory) + directorySize(sharedArtworkDirectory),
         subtitleCacheBytes = directorySize(subtitleDirectory),
         hlsWorkingBytes = 0L,
-        temporaryCacheBytes = (allCacheBytes - namedCacheBytes - directorySize(hlsDirectory)).coerceAtLeast(0L),
+        temporaryCacheBytes = (allCacheBytes - namedCacheBytes - directorySize(hlsDirectory) - directorySize(torrentStreams)).coerceAtLeast(0L),
         recordingBytes = LiveTvRecorder.recordings(appContext, includeDuration = false)
             .distinctBy { it.uri }.sumOf { it.sizeBytes.coerceAtLeast(0L) }
     )
@@ -93,7 +99,7 @@ suspend fun clearTemporaryCaches(context: Context): Long = withContext(Dispatche
     // Flow owns live SimpleCache/OkHttp instances. Deleting their files here would
     // invalidate open indexes; its own storage screen clears them through their owners.
     val excluded = setOf("artwork_cache", "image_cache", "subtitles", "hls_exports", "data",
-        "exoplayer", "exoplayer_music", "http_cache")
+        "exoplayer", "exoplayer_music", "http_cache", "torrent_streams")
     val before = unnamedCacheSize(appContext, excluded)
     deleteDirectoryContents(appContext.cacheDir, excluded, setOf("workdb.sqlite"))
     appContext.externalCacheDir?.let(::deleteDirectoryContents)

@@ -1,6 +1,7 @@
 package com.nikhil.niktv.sports
 
 import com.nikhil.niktv.ui.findActivity
+import com.nikhil.niktv.torrent.openTorrents
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -117,7 +118,7 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
             val loadedHiddenPortals: Set<String>? = androidx.compose.runtime.remember(viewerScope) {
                 com.nikhil.niktv.data.ProfilePortalAccess.observe(applicationContext, viewerScope)
             }.collectAsStateWithLifecycle(initialValue = null).value
-            val hiddenPortals = loadedHiddenPortals.orEmpty()
+            val hiddenPortals = loadedHiddenPortals ?: setOf(com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS)
             val viewers = users.profiles.collectAsStateWithLifecycle(initialValue = emptyList()).value
             val viewer = viewers.firstOrNull { it.id == viewerScope?.profileId }
             val actions = loadedPortals.orEmpty().filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }.map { portal -> com.nikhil.niktv.discovery.DirectPortalAction(portal.displayName,
@@ -140,7 +141,15 @@ open class SportsActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictu
                             viewerScope?.let { users.rememberDestination(it, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.PLAYFY)) }
                             openPlayfy(focusPortal = restoreFocus); finish()
                         }
-                    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
+                    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals },
+                com.nikhil.niktv.discovery.DirectPortalAction("Torrents", androidx.compose.material.icons.Icons.Default.Download,
+                    id = "torrents", opensNewWindow = true, open = {
+                        val restoreFocus = !view.isInTouchMode
+                        lifecycleScope.launch {
+                            viewerScope?.let { users.rememberDestination(it, com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.TORRENTS)) }
+                            openTorrents(focusPortal = restoreFocus); finish()
+                        }
+                    }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS !in hiddenPortals })
             val portalAccess = if (isPlayfyPortal) com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY else com.nikhil.niktv.data.ProfilePortalAccess.SPORTS
             if (portalAccess in hiddenPortals) {
                 androidx.compose.runtime.LaunchedEffect(viewerScope) {

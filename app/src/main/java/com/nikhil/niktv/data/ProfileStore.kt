@@ -491,6 +491,40 @@ class ProfileStore @JvmOverloads constructor(
     suspend fun saveOfflineDownloads(items: List<OfflineMediaDownload>) = preferences.editProfileMetadata { prefs ->
         prefs[offlineDownloadsKey] = Json.encodeToString(items)
     }
+    /** Queue/worker registration must merge under the captured viewer's edit
+     * lock rather than replacing a list read before another job completed. */
+    suspend fun upsertOfflineDownload(item: OfflineMediaDownload, scope: UserScope? = captureScope(),
+        expectedRequestId: String? = null): Boolean {
+        require(item.requestId.isNotBlank()) { "An offline download needs a request ID." }
+        var changed = false
+        scopedPreferences(scope).editProfileMetadata { prefs ->
+            val current = prefs[offlineDownloadsKey]?.let { raw ->
+                runCatching { Json.decodeFromString<List<OfflineMediaDownload>>(raw) }
+                    .getOrElse { throw IllegalStateException("Could not read existing offline downloads.", it) }
+            }.orEmpty()
+            val previous = current.firstOrNull { it.key == item.key }
+            if (expectedRequestId != null && previous?.requestId != expectedRequestId) return@editProfileMetadata
+            prefs[offlineDownloadsKey] = Json.encodeToString(listOf(item) + current.filterNot { it.key == item.key })
+            changed = true
+        }
+        return changed
+    }
+    /** A stale cancelled worker cannot remove a newer request for the same title. */
+    suspend fun removeOfflineDownload(key: String, requestId: String? = null,
+        scope: UserScope? = captureScope()): Boolean {
+        var changed = false
+        scopedPreferences(scope).editProfileMetadata { prefs ->
+            val current = prefs[offlineDownloadsKey]?.let { raw ->
+                runCatching { Json.decodeFromString<List<OfflineMediaDownload>>(raw) }
+                    .getOrElse { throw IllegalStateException("Could not read existing offline downloads.", it) }
+            }.orEmpty()
+            val remaining = current.filterNot { it.key == key && (requestId == null || it.requestId == requestId) }
+            if (remaining.size == current.size) return@editProfileMetadata
+            prefs[offlineDownloadsKey] = Json.encodeToString(remaining)
+            changed = true
+        }
+        return changed
+    }
     suspend fun setBrowseLayout(profileKey: String, layout: BrowseLayout) = preferences.editProfileMetadata { prefs ->
         val current = prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
         prefs[browseLayoutsKey] = Json.encodeToString(current + (profileKey to layout))

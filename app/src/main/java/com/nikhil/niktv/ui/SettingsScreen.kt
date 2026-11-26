@@ -1938,6 +1938,8 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
     val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
         .collectAsStateWithLifecycle(emptySet())
     val pinchToZoom by rememberPinchToZoomEnabled(owner)
+    val torrentPrefetch by remember(owner) { com.nikhil.niktv.torrent.TorrentPlaybackPreferences.observe(context, owner) }
+        .collectAsStateWithLifecycle(false)
     val swipeControls by rememberPlayerSwipeControls(owner)
     val viewerLayout by rememberViewerLayout(owner)
     val scope = rememberCoroutineScope()
@@ -1996,6 +1998,10 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
             SettingsControlRow("Playfy TV", checked = com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hidden,
                 onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
                     com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY, checked) } })
+            SettingsControlRow("Torrents", checked = com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS !in hidden,
+                description = "Search sources and stream directly on this device.",
+                onToggle = { checked -> update { com.nikhil.niktv.data.ProfilePortalAccess.setAllowed(context, owner,
+                    com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS, checked) } })
             if (choices.any { it.portal.portalType == com.nikhil.niktv.model.PortalType.XTREAM }) {
                 SettingsLinkRow(SettingsPage.XTREAM_CONTENT, "Xtream · Languages, content & sports")
             }
@@ -2003,6 +2009,9 @@ internal fun ViewerProfileSettings(profileId: String?, portals: List<com.nikhil.
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = SettingsOutline)
             Text("Playback", Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            if (com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS !in hidden) SettingsControlRow("Prefetch next torrent episode", checked = torrentPrefetch,
+                description = "Prepare the next episode in the background while protecting current playback.",
+                onToggle = { checked -> update { com.nikhil.niktv.torrent.TorrentPlaybackPreferences.set(context, owner, checked) } })
             SettingsControlRow("Pinch to zoom", checked = pinchToZoom,
                 description = "Allow two-finger zoom in the player for this profile.",
                 onToggle = { checked -> update {

@@ -27,7 +27,7 @@ import java.util.UUID
     val pinVerifier: String? = null,
 )
 @Serializable data class UserScope(val accountId: String, val profileId: String)
-@Serializable enum class ViewerDestinationKind { PORTAL, SPORTS, OFFLINE, PLAYFY }
+@Serializable enum class ViewerDestinationKind { PORTAL, SPORTS, OFFLINE, PLAYFY, TORRENTS }
 /** A device navigation preference. Portal cache keys never enter the sync document. */
 @Serializable data class ViewerDestination(val kind: ViewerDestinationKind, val portalKey: String = "")
 
@@ -387,7 +387,8 @@ class UserSyncStore private constructor(private val context: Context) {
                 current[key] = rebased
                 return@forEach
             }
-            if (old != null && !old.deleted && !remote.deleted && old.collection in setOf("history", "favorites", "series")) {
+            if (old != null && !old.deleted && !remote.deleted && (old.collection in setOf("history", "favorites", "series") ||
+                old.collection == "preferences" && torrentLibraryArtworkPreference(old.payload) && torrentLibraryArtworkPreference(remote.payload))) {
                 val winner = if (remote.newerThan(old)) remote else old
                 val other = if (winner === remote) old else remote
                 val payload = json.parseToJsonElement(winner.payload)

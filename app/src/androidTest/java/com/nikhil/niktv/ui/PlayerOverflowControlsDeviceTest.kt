@@ -8,12 +8,14 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
@@ -69,7 +71,19 @@ class PlayerOverflowControlsDeviceTest {
         val history = java.util.concurrent.CopyOnWriteArrayList<String>()
         val activations = java.util.concurrent.CopyOnWriteArrayList<String>()
         val paintedWidths = java.util.concurrent.ConcurrentHashMap<PlayerSettingKind, Int>()
+        val paintedBounds = java.util.concurrent.ConcurrentHashMap<PlayerSettingKind, Rect>()
+        val dockLayoutBounds = java.util.concurrent.ConcurrentHashMap<String, Rect>()
+        fun layoutBounds(label: String, coordinates: androidx.compose.ui.layout.LayoutCoordinates) {
+            // Focus scales the drawing around its center, not its layout slot.
+            // Accessibility bounds include that transient scale and touch inset.
+            val center = coordinates.localToWindow(androidx.compose.ui.geometry.Offset(coordinates.size.width / 2f, coordinates.size.height / 2f))
+            dockLayoutBounds[label] = Rect(kotlin.math.round(center.x - coordinates.size.width / 2f).toInt(),
+                kotlin.math.round(center.y - coordinates.size.height / 2f).toInt(),
+                kotlin.math.round(center.x + coordinates.size.width / 2f).toInt(),
+                kotlin.math.round(center.y + coordinates.size.height / 2f).toInt())
+        }
         var fixtureToggle: FocusRequester? = null
+        var fixtureScroll: ScrollState? = null
         try {
             await("Fixture window is ready for focus") { host.hasWindowFocus() }
             ins.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
@@ -86,17 +100,25 @@ class PlayerOverflowControlsDeviceTest {
                     PlayerSettingKind.INTRO, PlayerSettingKind.TIMEOUT, PlayerSettingKind.CRICKET, PlayerSettingKind.INFORMATION)
                     .map { kind -> PlayerSettingAction(kind, Icons.Default.Settings, kind.title,
                         onClick = { activations.add(kind.title); choice = kind }, requester = requesters.getValue(kind),
-                        modifier = Modifier.onGloballyPositioned { paintedWidths[kind] = it.size.width }
+                        modifier = Modifier.onGloballyPositioned {
+                            paintedWidths[kind] = it.size.width
+                            val visible = it.boundsInWindow()
+                            paintedBounds[kind] = Rect(kotlin.math.round(visible.left).toInt(), kotlin.math.round(visible.top).toInt(),
+                                kotlin.math.round(visible.right).toInt(), kotlin.math.round(visible.bottom).toInt())
+                        }
                             .onFocusChanged { if (it.isFocused) history.add(kind.title) }, value = "Current") }
                 Surface(Modifier.fillMaxSize().initialFocusEntry(toggle)) {
                     Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
                         Column(if (narrow) Modifier.width(360.dp) else Modifier.fillMaxWidth()) {
                             PlayerChromeIconButton(Icons.Default.Settings, "Seek fixture", {}, Modifier.focusRequester(seek)
+                                .onGloballyPositioned { layoutBounds("Seek fixture", it) }
                                 .focusProperties { down = play }
                                 .onFocusChanged { if (it.isFocused) history.add("Seek") })
                             Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                PlayerBottomActions(rememberScrollState()) {
+                                val dockScroll = rememberScrollState().also { fixtureScroll = it }
+                                PlayerBottomActions(dockScroll) {
                                     PlayerChromeIconButton(Icons.Default.Settings, "Play fixture", {}, Modifier.focusRequester(play)
+                                        .onGloballyPositioned { layoutBounds("Play fixture", it) }
                                         .focusProperties { right = if (open) state.firstOr(toggle) else toggle; up = seek }
                                         .onFocusChanged { if (it.isFocused) history.add("Play") })
                                     Spacer(Modifier.weight(1f))
@@ -119,14 +141,14 @@ class PlayerOverflowControlsDeviceTest {
             await("Settings is attached") { find("Settings fixture") != null }
             ins.runOnMainSync { requireNotNull(fixtureToggle).requestFocus() }
             await("Settings owns initial focus") { focused("Settings fixture") }
-            val playBefore = bounds("Play fixture")
-            val seekBefore = bounds("Seek fixture")
+            val playBefore = checkNotNull(dockLayoutBounds["Play fixture"])
+            val seekBefore = checkNotNull(dockLayoutBounds["Seek fixture"])
             val openedAt = history.size
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Opening retains Settings") { focused("Settings fixture") && find("Subtitles") != null }
             assertTrue("Opening must not move focus", history.drop(openedAt).isEmpty())
-            assertEquals("Opening leaves Play anchored", playBefore, bounds("Play fixture"))
-            assertEquals("Opening leaves seek anchored", seekBefore, bounds("Seek fixture"))
+            assertEquals("Opening leaves Play anchored", playBefore, dockLayoutBounds["Play fixture"])
+            assertEquals("Opening leaves seek anchored", seekBefore, dockLayoutBounds["Seek fixture"])
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             await("Left enters the physically adjacent last setting") { focused("Stream info") }
             assertEquals("Left must not jump across the row", listOf("Stream info"), history.drop(openedAt))
@@ -180,6 +202,35 @@ class PlayerOverflowControlsDeviceTest {
             repeat(actionsCount - 1) { key(KeyEvent.KEYCODE_DPAD_LEFT) }
             await("Reopening remains reachable") { focused("Subtitles") }
             assertEquals("Focus outline does not resize its cell", paintedSubtitleBefore, paintedWidths[PlayerSettingKind.SUBTITLES])
+            if (narrow) {
+                // Pixel evidence, rather than semantic bounds alone: an edge
+                // focus ring must retain both white vertical strokes after scroll.
+                // Focus semantics update before bring-into-view finishes its
+                // animation. Inspect the final painted viewport, not that
+                // legitimate intermediate scroll frame.
+                ins.waitForIdleSync()
+                await("Focused setting finishes scrolling into its viewport") { fixtureScroll?.isScrollInProgress == false }
+                ins.waitForIdleSync()
+                val image = checkNotNull(ins.uiAutomation.takeScreenshot())
+                try {
+                    // Accessibility expands small controls' touch bounds to
+                    // 48dp. Sample the actual 44dp painted object's outline.
+                    val cell = checkNotNull(paintedBounds[PlayerSettingKind.SUBTITLES])
+                    val folder = java.io.File(ins.targetContext.externalCacheDir, "navigation-audit").apply { mkdirs() }
+                    java.io.File(folder, "player-bottom-settings-narrow-outline.png").outputStream().use {
+                        image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    java.io.File(folder, "player-bottom-settings-narrow-outline.txt").writeText("bounds=$cell density=${ins.targetContext.resources.displayMetrics.density}")
+                    val stroke = kotlin.math.ceil(2.5f * ins.targetContext.resources.displayMetrics.density).toInt()
+                    fun whitePixels(start: Int, end: Int): Int = (start until end).count { x ->
+                        val pixel = image.getPixel(x.coerceIn(0, image.width - 1), cell.centerY().coerceIn(0, image.height - 1))
+                        android.graphics.Color.red(pixel) >= 225 && android.graphics.Color.green(pixel) >= 225 && android.graphics.Color.blue(pixel) >= 225
+                    }
+                    val required = kotlin.math.ceil(1.5f * ins.targetContext.resources.displayMetrics.density).toInt()
+                    assertTrue("Left focus stroke is fully painted inside the scroll viewport", whitePixels(cell.left, cell.left + stroke) >= required)
+                    assertTrue("Right focus stroke is fully painted inside the scroll viewport", whitePixels(cell.right - stroke, cell.right) >= required)
+                } finally { image.recycle() }
+            }
             NavigationAuditEvidence.capture("player-bottom-settings-${if (narrow) "narrow" else "wide"}")
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Up reaches the seek row") { focused("Seek fixture") }

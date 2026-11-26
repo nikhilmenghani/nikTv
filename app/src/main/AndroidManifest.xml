@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- MPV is guarded at runtime on API 26+. Other players still support API 24. -->
-    <uses-sdk tools:overrideLibrary="dev.jdtech.mpv" />
+    <uses-sdk tools:overrideLibrary="dev.jdtech.mpv,com.frostwire.jlibtorrent" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -28,6 +28,7 @@
         <meta-data android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME" android:value="com.nikhil.niktv.cast.CastOptionsProvider" />
         <activity android:name=".sports.SportsActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
         <activity android:name=".sports.PlayfyActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
+        <activity android:name=".torrent.TorrentActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
         <activity android:name=".TrailerPlayerActivity" android:exported="false" android:screenOrientation="userLandscape" />
         <activity android:name=".ExternalVideoActivity" android:exported="true"
             android:label="${appLabel}" android:launchMode="singleTop"
@@ -85,6 +86,7 @@
         </provider>
         <service android:name=".data.LanMediaShareService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <service android:name=".data.NikTvDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <receiver android:name=".torrent.TorrentDownloadCancelReceiver" android:exported="false" />
         <service android:name=".data.LiveTvRecordingService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

@@ -147,8 +147,8 @@ class UserProfilePreferencesTest {
         assertTrue(ProfilePortalAccess.allowed(context, portal, kids()))
         users.selectProfile(kids().profileId)
         ProfilePortalAccess.setAllowed(context, family(), ProfilePortalAccess.SPORTS, false)
-        assertTrue(ProfilePortalAccess.hidden(context, kids()).isEmpty())
-        assertEquals(setOf(ProfilePortalAccess.key(portal), ProfilePortalAccess.SPORTS), ProfilePortalAccess.hidden(context, family()))
+        assertEquals(setOf(ProfilePortalAccess.TORRENTS), ProfilePortalAccess.hidden(context, kids()))
+        assertEquals(setOf(ProfilePortalAccess.key(portal), ProfilePortalAccess.SPORTS, ProfilePortalAccess.TORRENTS), ProfilePortalAccess.hidden(context, family()))
         val records = users.snapshot("101").filter { it.payload.contains("profile_portal_access_v1") }
         assertTrue(records.isNotEmpty())
         assertTrue(records.all { it.profileId == family().profileId })

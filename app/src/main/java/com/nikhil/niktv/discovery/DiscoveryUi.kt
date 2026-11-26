@@ -1495,7 +1495,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false },
     categoryActions: (@Composable () -> Unit)? = null, trailerMedia: MediaItem? = null,
     emptyTitle: String = "Discover something to watch", contentInset: Dp = 0.dp,
-    openDetails: Boolean = false, stableSeriesHero: Boolean = false,
+    openDetails: Boolean = false, stableSeriesHero: Boolean = false, showListAction: Boolean = true,
     trailingActions: (@Composable () -> Unit)? = null) {
     val hasCarousel = carousel && count > 1
     if (portraitPhone) {
@@ -1505,7 +1505,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             playRequester, infoRequester, play, add, info, previous, next, hasCarousel, index, count,
             playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail, categoryActions,
             shadeArtworkBounds = compactDetail, trailerMedia = trailerMedia, emptyTitle = emptyTitle,
-            openDetails = openDetails)
+            openDetails = openDetails, showListAction = showListAction)
         return
     }
     var drag by remember { mutableFloatStateOf(0f) }
@@ -1578,7 +1578,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                     .then(if (openDetails) Modifier.focusRequester(infoRequester) else Modifier),
                 enabled = card != null && (openDetails || playEnabled), onFocus = onFocus, onClick = if (openDetails) info else play)
             }
-            DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
+            if (showListAction) DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
                 iconOnly = true, modifier = Modifier.widthIn(min = detailActionHeight).heightIn(min = detailActionHeight), enabled = card != null, onFocus = onFocus, onClick = add)
             if (!openDetails) DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, modifier = Modifier.widthIn(min = detailActionHeight).heightIn(min = detailActionHeight), mediaOverride = trailerMedia)
             if (!detail && !openDetails) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,

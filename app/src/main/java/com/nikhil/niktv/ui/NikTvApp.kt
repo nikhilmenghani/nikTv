@@ -2,6 +2,8 @@ package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.sports.openSports
 import com.nikhil.niktv.sports.openPlayfy
+import com.nikhil.niktv.torrent.openTorrents
+import com.nikhil.niktv.torrent.openTorrentDownload
 
 import com.nikhil.niktv.discovery.components.LocalRefreshProviderCategories
 import com.nikhil.niktv.discovery.DiscoveryScreenHost
@@ -499,7 +501,7 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
     val directPortalOwner = LocalViewingOwner.current
     val viewerLayout by rememberViewerLayout(directPortalOwner)
     val hiddenPortals by remember(directPortalOwner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(appContext, directPortalOwner) }
-        .collectAsStateWithLifecycle(emptySet())
+        .collectAsStateWithLifecycle(setOf(com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS))
     val accessiblePortals = state.profiles.filter { com.nikhil.niktv.data.ProfilePortalAccess.key(it) !in hiddenPortals }
     val directPortalScope = rememberCoroutineScope()
     val portalHostView = androidx.compose.ui.platform.LocalView.current
@@ -529,7 +531,18 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
                     }
                     appContext.openPlayfy(focusPortal = restoreFocus)
                 }
-            }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals })
+            }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.PLAYFY !in hiddenPortals },
+        com.nikhil.niktv.discovery.DirectPortalAction("Torrents", androidx.compose.material.icons.Icons.Default.Download,
+            id = "torrents", opensNewWindow = true, open = {
+                val restoreFocus = !portalHostView.isInTouchMode
+                directPortalScope.launch {
+                    directPortalOwner?.let { owner ->
+                        com.nikhil.niktv.data.UserSyncStore.get(appContext).rememberDestination(owner,
+                            com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.TORRENTS))
+                    }
+                    appContext.openTorrents(focusPortal = restoreFocus)
+                }
+            }).takeIf { com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS !in hiddenPortals })
     CompositionLocalProvider(com.nikhil.niktv.discovery.LocalDirectPortalActions provides directPortals,
         LocalViewerLayout provides viewerLayout, LocalUpNextEpisodeTitle provides remember(vm) { vm::observeUpNextEpisodeTitle }) {
     MaterialTheme(colorScheme = profileColors) {
@@ -798,7 +811,11 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
                     ,cancelCategoryFind = vm::cancelCategoryFind
                     ,openOfflineDownloads = vm::openOfflineDownloads
                     ,closeOfflineDownloads = closeProfileDownloads ?: vm::closeOfflineDownloads
-                    ,playOfflineDownload = vm::playOfflineDownload
+                    ,playOfflineDownload = { download ->
+                        if (download.profileKey == com.nikhil.niktv.torrent.TORRENT_OFFLINE_PROFILE)
+                            appContext.openTorrentDownload(download.key)
+                        else vm.playOfflineDownload(download)
+                    }
                     ,playRecording = vm::playRecording
                     ,playProviderMovie = vm::playProviderMovieDetails
                     ,closeProviderMovie = vm::closeProviderMovieDetails

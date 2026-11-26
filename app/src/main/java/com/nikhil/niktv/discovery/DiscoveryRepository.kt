@@ -84,6 +84,23 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
             }
         }.let { it.copy(cards = it.cards.filter { card -> card.released() }) }
 
+    /** Full collections reuse the regional request and cache instead of exposing
+     * a dead View all action for the compact landing-page preview. */
+    suspend fun feedPage(section: TmdbHomeSection, page: Int, stale: (WatchProviderPage) -> Unit = {},
+        refresh: Boolean = false): WatchProviderPage {
+        require(page in 1..500)
+        fun filtered(value: WatchProviderPage) = value.copy(cards = value.cards.filter {
+            it.released() && it.originalLanguage == section.regionalLanguage
+        })
+        return cached("feed-collection-v1:${section.name}:$page", if (refresh) 0L else DiscoveryCache.FEED_TTL,
+            WatchProviderPage.serializer(), { stale(filtered(it)) }) {
+            val (path, query) = discoveryFeedRequest(section)
+            val root = tmdb.discoveryJson(path, query + ("page" to page.toString()))
+            WatchProviderPage(cards(root, section.series), root["page"]?.jsonPrimitive?.intOrNull ?: page,
+                (root["total_pages"]?.jsonPrimitive?.intOrNull ?: page).coerceIn(page, 500))
+        }.let(::filtered)
+    }
+
     override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails =
         cached("detail-v4:${card.key}", DiscoveryCache.DETAIL_TTL, DiscoveryDetails.serializer(), stale) {
             val root = tmdb.discoveryJson("/${if (card.series) "tv" else "movie"}/${card.id}",

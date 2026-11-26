@@ -2,6 +2,7 @@ package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.sports.openSports
 import com.nikhil.niktv.sports.openPlayfy
+import com.nikhil.niktv.torrent.openTorrents
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.CubicBezierEasing
@@ -271,6 +272,7 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
         val sportsDestination = when (destination?.kind) {
             ViewerDestinationKind.SPORTS -> ProfilePortalAccess.SPORTS
             ViewerDestinationKind.PLAYFY -> ProfilePortalAccess.PLAYFY
+            ViewerDestinationKind.TORRENTS -> ProfilePortalAccess.TORRENTS
             else -> null
         }?.let { it !in ProfilePortalAccess.hidden(context, owner) } == true
         if (portals.isEmpty() && !sportsDestination) {
@@ -311,6 +313,9 @@ internal fun AccountProfileGate(vm: NikTvViewModel, content: @Composable (Boolea
                 else portals.firstOrNull()?.let { openPortal(it) }
             ViewerDestinationKind.PLAYFY -> if (sportsDestination)
                 context.openPlayfy()
+                else portals.firstOrNull()?.let { openPortal(it) }
+            ViewerDestinationKind.TORRENTS -> if (sportsDestination)
+                context.openTorrents()
                 else portals.firstOrNull()?.let { openPortal(it) }
             ViewerDestinationKind.PORTAL -> preferredViewerPortal(portals, destination.portalKey)?.let { openPortal(it) }
             null -> {

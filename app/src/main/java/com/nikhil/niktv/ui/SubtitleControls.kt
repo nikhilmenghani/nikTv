@@ -48,7 +48,9 @@ import com.nikhil.niktv.data.OnlineSubtitle
 import com.nikhil.niktv.data.OpenSubtitlesClient
 import com.nikhil.niktv.data.SubtitleSearchRequest
 import com.nikhil.niktv.model.PlayingMedia
+import com.nikhil.niktv.model.PlaybackSidecarSubtitle
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -89,9 +91,20 @@ internal fun SubtitleSelectionDialog(
     onDeleteDownloadedSubtitle: (() -> Unit)? = null,
     delaySupported: Boolean = true,
     appearanceSupported: Boolean = true,
-    limitationMessage: String? = null
+    limitationMessage: String? = null,
+    sidecarSubtitles: List<PlaybackSidecarSubtitle> = emptyList(),
+    downloadedSubtitlePath: String? = null,
+    downloadedSubtitleTrackId: String = "niktv:downloaded"
 ) {
     val context = LocalContext.current
+    val included = sidecarSubtitles.takeIf { onExternalSubtitle != null }.orEmpty().distinctBy { it.id }
+    val loadedIncluded = included.singleOrNull { playbackSidecarMatches(downloadedSubtitlePath, it) }
+    val loadedSelected = tracks.any { it.id == downloadedSubtitleTrackId && it.selected }
+    val visibleTracks = tracks.filterNot { loadedIncluded != null && it.id == downloadedSubtitleTrackId } + included.map {
+        SubtitleTrackOption("niktv:sidecar:${it.id}", "Included · ${it.label.ifBlank { it.fileName }}",
+            loadedSelected && loadedIncluded?.id == it.id)
+    }
+    val sidecarLoader = remember(context) { PlaybackSidecarSubtitleLoader(File(context.cacheDir, "subtitles")) }
     val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
     var searchMode by remember { mutableStateOf(false) }
@@ -102,7 +115,10 @@ internal fun SubtitleSelectionDialog(
     var searchError by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
-    val hasActiveSubtitle = tracks.isNotEmpty() || !downloadedSubtitleName.isNullOrBlank()
+    var sidecarDownloadingId by remember { mutableStateOf<String?>(null) }
+    var sidecarJob by remember { mutableStateOf<Job?>(null) }
+    var sidecarError by remember { mutableStateOf<String?>(null) }
+    val hasActiveSubtitle = visibleTracks.isNotEmpty() || !downloadedSubtitleName.isNullOrBlank()
     val hasDelayControls = hasActiveSubtitle && delaySupported
     val hasAppearanceControl = hasActiveSubtitle && appearanceSupported
     val canSearch = internetSearch != null && onExternalSubtitle != null
@@ -139,7 +155,7 @@ internal fun SubtitleSelectionDialog(
     val offFocusRequester = remember { FocusRequester() }
     // Keep the focus owner for each track even when selection or the list changes.
     val retainedTrackRequesters = remember { mutableMapOf<String, FocusRequester>() }
-    val trackFocusRequesters = listOf(offFocusRequester) + tracks.map {
+    val trackFocusRequesters = listOf(offFocusRequester) + visibleTracks.map {
         remember(retainedTrackRequesters, it.id) { retainedTrackRequesters.getOrPut(it.id) { FocusRequester() } }
     }
     val retainedResultRequesters = remember { mutableMapOf<String, FocusRequester>() }
@@ -152,17 +168,23 @@ internal fun SubtitleSelectionDialog(
         hasAppearanceControl -> appearanceFocusRequester
         else -> trackHeaderFocusRequester
     }
-    val initialTrackIndex = remember { tracks.indexOfFirst { it.selected } + 1 }
+    val initialTrackIndex = remember { visibleTracks.indexOfFirst { it.selected } + 1 }
     val initialTrackRequester = remember { trackFocusRequesters[initialTrackIndex] }
     val trackList = rememberLazyListState(initialFirstVisibleItemIndex = initialTrackIndex)
     val resultList = rememberLazyListState()
     var focusedTrackId by remember { mutableStateOf<String?>(null) }
-    val focusedTrackIndex = tracks.indexOfFirst { it.id == focusedTrackId } + 1
+    val focusedTrackIndex = visibleTracks.indexOfFirst { it.id == focusedTrackId } + 1
     var focusedResultId by remember { mutableStateOf<String?>(null) }
     val focusedResultIndex = results.indexOfFirst { it.id == focusedResultId }
     var trackListHasFocus by remember { mutableStateOf(false) }
     var resultListHasFocus by remember { mutableStateOf(false) }
     var navigationJob by remember { mutableStateOf<Job?>(null) }
+
+    fun cancelSidecar() {
+        sidecarJob?.cancel()
+        sidecarJob = null
+        sidecarDownloadingId = null
+    }
 
     fun focusControl(destination: FocusRequester): Boolean {
         navigationJob?.cancel()
@@ -216,13 +238,52 @@ internal fun SubtitleSelectionDialog(
         // This toolbar target survives both layouts. Focus it before removing a
         // focused field/result/track so no unrelated control receives interim focus.
         focusControl(modeFocusRequester)
+        cancelSidecar()
         editing = null
         searchMode = show
     }
 
     fun dismissPopup() {
         navigationJob?.cancel()
+        cancelSidecar()
         onDismiss()
+    }
+
+    fun selectTrack(id: String?) {
+        val includedSubtitle = included.firstOrNull { "niktv:sidecar:${it.id}" == id }
+        if (includedSubtitle == null) {
+            cancelSidecar()
+            sidecarError = null
+            onSelect(id)
+            return
+        }
+        if (sidecarDownloadingId == id) return
+        cancelSidecar()
+        sidecarError = null
+        if (loadedIncluded?.id == includedSubtitle.id && downloadedSubtitlePath?.let { File(it).isFile } == true) {
+            onSelect(downloadedSubtitleTrackId)
+            dismissPopup()
+            return
+        }
+        sidecarDownloadingId = id
+        sidecarJob = scope.launch {
+            var loaded: File? = null
+            var delivered = false
+            try {
+                val file = sidecarLoader.load(includedSubtitle)
+                loaded = file
+                onExternalSubtitle?.invoke(file)
+                delivered = true
+                dismissPopup()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                sidecarError = error.message ?: "This included subtitle could not be loaded."
+            } finally {
+                if (!delivered) loaded?.delete()
+                if (sidecarDownloadingId == id) sidecarDownloadingId = null
+            }
+        }
     }
 
     fun back() {
@@ -265,7 +326,7 @@ internal fun SubtitleSelectionDialog(
                     else if (!searchMode && trackListHasFocus) when (event.key) {
                         Key.DirectionUp -> if (focusedTrackIndex == 0) focusControl(trackHeaderFocusRequester)
                             else focusTrack(focusedTrackIndex - 1)
-                        Key.DirectionDown -> if (focusedTrackIndex < tracks.size) focusTrack(focusedTrackIndex + 1)
+                        Key.DirectionDown -> if (focusedTrackIndex < visibleTracks.size) focusTrack(focusedTrackIndex + 1)
                             else focusControl(afterTracksFocusRequester)
                         else -> { navigationJob?.cancel(); false }
                     } else if (searchMode && resultListHasFocus) when (event.key) {
@@ -316,6 +377,7 @@ internal fun SubtitleSelectionDialog(
                         if (!searchMode && onDeleteDownloadedSubtitle != null) IconButton(
                             onClick = {
                                 focusControl(trackHeaderFocusRequester)
+                                cancelSidecar()
                                 onDeleteDownloadedSubtitle()
                             },
                             modifier = Modifier.focusRequester(deleteFocusRequester).focusProperties {
@@ -462,22 +524,25 @@ internal fun SubtitleSelectionDialog(
                         state = trackList
                     ) {
                         item(key = "subtitle-off") {
-                            SubtitleTrackRow("Off", tracks.none { it.selected },
+                            SubtitleTrackRow("Off", visibleTracks.none { it.selected },
                                 Modifier.focusRequester(offFocusRequester)
                                     .onFocusChanged { if (it.isFocused) focusedTrackId = null }
-                                    .focusProperties { left = offFocusRequester; right = offFocusRequester }) { onSelect(null) }
+                                    .focusProperties { left = offFocusRequester; right = offFocusRequester }) { selectTrack(null) }
                         }
-                        items(tracks.size, key = { "subtitle-track:${tracks[it].id}" }) { index ->
-                            val track = tracks[index]
+                        items(visibleTracks.size, key = { "subtitle-track:${visibleTracks[it].id}" }) { index ->
+                            val track = visibleTracks[index]
                             val requester = trackFocusRequesters[index + 1]
                             SubtitleTrackRow(track.label, track.selected,
                                 Modifier.focusRequester(requester)
                                     .onFocusChanged { if (it.isFocused) focusedTrackId = track.id }
-                                    .focusProperties { left = requester; right = requester }) { onSelect(track.id) }
+                                    .focusProperties { left = requester; right = requester }, loading = sidecarDownloadingId == track.id) { selectTrack(track.id) }
                         }
-                        if (tracks.isEmpty()) item(key = "subtitle-empty") {
+                        if (visibleTracks.isEmpty()) item(key = "subtitle-empty") {
                             Text("No subtitle tracks are available in this stream.", Modifier.padding(12.dp))
                         }
+                    }
+                    if (!searchMode) sidecarError?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
                     if (!searchMode && hasDelayControls && !compact) Text("Subtitle timing")
                     if (!searchMode && hasDelayControls) Row(
@@ -496,7 +561,7 @@ internal fun SubtitleSelectionDialog(
                                 }
                             }.onPreviewKeyEvent {
                                 if (it.type != KeyEventType.KeyDown) false else when (it.key) {
-                                    Key.DirectionUp -> focusTrack(tracks.size)
+                                    Key.DirectionUp -> focusTrack(visibleTracks.size)
                                     Key.DirectionDown -> focusControl(when {
                                         delayMs != 0L -> resetFocusRequester
                                         hasAppearanceControl -> appearanceFocusRequester
@@ -521,7 +586,7 @@ internal fun SubtitleSelectionDialog(
                                 }
                             }.onPreviewKeyEvent {
                                 if (it.type != KeyEventType.KeyDown) false else when (it.key) {
-                                    Key.DirectionUp -> focusTrack(tracks.size)
+                                    Key.DirectionUp -> focusTrack(visibleTracks.size)
                                     Key.DirectionDown -> focusControl(when {
                                         delayMs != 0L -> resetFocusRequester
                                         hasAppearanceControl -> appearanceFocusRequester
@@ -560,7 +625,7 @@ internal fun SubtitleSelectionDialog(
                             if (it.type != KeyEventType.KeyDown) false else when (it.key) {
                                 Key.DirectionUp -> if (hasDelayControls) focusControl(
                                     if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
-                                ) else focusTrack(tracks.size)
+                                ) else focusTrack(visibleTracks.size)
                                 Key.DirectionDown -> focusControl(appearanceFocusRequester)
                                 else -> false
                             }
@@ -626,6 +691,7 @@ private fun SubtitleTrackRow(
     label: String,
     selected: Boolean,
     modifier: Modifier = Modifier,
+    loading: Boolean = false,
     onClick: () -> Unit
 ) {
     // NikTvTextActionButton owns the single matching rounded focus outline.
@@ -634,5 +700,6 @@ private fun SubtitleTrackRow(
         RadioButton(selected = selected, onClick = null)
         Text(label, Modifier.weight(1f).padding(start = 8.dp),
             style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (loading) CircularProgressIndicator(Modifier.padding(start = 6.dp).size(16.dp), strokeWidth = 2.dp)
     }
 }

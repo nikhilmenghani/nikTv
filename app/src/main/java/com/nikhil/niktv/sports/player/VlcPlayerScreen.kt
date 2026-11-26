@@ -283,11 +283,12 @@ internal fun VlcPlayerScreen(
     var pictureModePickerVisible by remember { mutableStateOf(false) }
     var returnToPictureSettings by remember { mutableStateOf(false) }
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var gestureSettingsVisible by remember(media.progressKey) { mutableStateOf(false) }
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = extraControlsOpen || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
+    val playerOptionsOpen = extraControlsOpen || gestureSettingsVisible || playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
@@ -299,7 +300,8 @@ internal fun VlcPlayerScreen(
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile) }
     var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile != null) }
     var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
-    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(rememberPlayerGestureOwner(media))
+    val gestureOwner = rememberPlayerGestureOwner(media)
+    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(gestureOwner)
     val currentSwipeControls by rememberUpdatedState(swipeControls)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
@@ -364,6 +366,7 @@ internal fun VlcPlayerScreen(
     val directionalInput = playerUsesDirectionalInput()
     val pictureSettingsRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutRequester = remember(media.progressKey) { FocusRequester() }
+    val gesturesRequester = remember(media.progressKey) { FocusRequester() }
     val moreRequester = remember(media.progressKey) { FocusRequester() }
     val cricketScoreRequester = remember(media.progressKey) { FocusRequester() }
     val previousRequester = remember(media.progressKey) { FocusRequester() }
@@ -1843,6 +1846,10 @@ internal fun VlcPlayerScreen(
                                     modeFeedback = playerControlsTimeoutFeedback(seconds)
                                 }
                             ))
+                        if (gestureOwner != null) add(PlayerSettingAction(
+                            kind = PlayerSettingKind.GESTURES, requester = gesturesRequester,
+                            icon = Icons.Default.TouchApp, contentDescription = "Gestures",
+                            onClick = { gestureSettingsVisible = true }))
                         add(PlayerSettingAction(
                                 kind = PlayerSettingKind.CRICKET,
                                 requester = cricketScoreRequester,
@@ -2293,6 +2300,10 @@ internal fun VlcPlayerScreen(
                 VideoAppearancePreferences.setActive(context, it)
             }
         )
+        if (gestureSettingsVisible && gestureOwner != null) PlayerGestureControlsDialog(gestureOwner) {
+            settingsRibbon.restore(gesturesRequester)
+            gestureSettingsVisible = false; controlsVisible = true
+        }
         if (playerPickerVisible) PlayerEngineQuickOverlay(
             selectedEngine = configuredEngine,
             onDismiss = {

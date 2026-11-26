@@ -2,6 +2,7 @@ package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.sports.openSports
 import com.nikhil.niktv.sports.openPlayfy
+import com.nikhil.niktv.torrent.openTorrents
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +14,7 @@ import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.SportsCricket
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -33,7 +35,7 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
     val context = LocalContext.current
     val owner = LocalViewingOwner.current
     val hidden by remember(owner) { com.nikhil.niktv.data.ProfilePortalAccess.observe(context, owner) }
-        .collectAsStateWithLifecycle(emptySet())
+        .collectAsStateWithLifecycle(setOf(com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS))
     val scope = rememberCoroutineScope()
     val entry = remember { FocusRequester() }
     val selected = profiles.indexOfFirst { it.cacheKey() == current?.cacheKey() }.coerceAtLeast(0)
@@ -78,6 +80,18 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                     Icon(Icons.Default.LiveTv, null)
                     Spacer(Modifier.width(12.dp))
                     Text("Playfy TV")
+                }
+                if (com.nikhil.niktv.data.ProfilePortalAccess.TORRENTS !in hidden) NikTvSecondaryActionButton(onClick = {
+                    scope.launch {
+                        owner?.let { captured -> com.nikhil.niktv.data.UserSyncStore.get(context).rememberDestination(captured,
+                            com.nikhil.niktv.data.ViewerDestination(com.nikhil.niktv.data.ViewerDestinationKind.TORRENTS)) }
+                        close()
+                        context.openTorrents()
+                    }
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(androidx.compose.material.icons.Icons.Default.Download, null)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Torrents")
                 }
             }
         }, confirmButton = {

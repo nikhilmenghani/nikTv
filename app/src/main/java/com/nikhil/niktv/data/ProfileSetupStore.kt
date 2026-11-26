@@ -29,11 +29,12 @@ internal data class ProfileSetupDraft(
     val parental: ProfileParentalPolicy = ProfileParentalPolicy(),
     val pinchToZoom: Boolean = false,
     val quality: Int = 0,
-    val swipeControls: PlayerSwipeControls = PlayerSwipeControls()
+    val swipeControls: PlayerSwipeControls = PlayerSwipeControls(),
+    val torrentPrefetchNext: Boolean = false
 ) {
     val canOpen get() = enabled && start != null
     val start: String? get() {
-        val ready = portals.filter { it.ready }.map { it.key } + listOf(ProfilePortalAccess.SPORTS, ProfilePortalAccess.PLAYFY)
+        val ready = portals.filter { it.ready }.map { it.key } + listOf(ProfilePortalAccess.SPORTS, ProfilePortalAccess.PLAYFY, ProfilePortalAccess.TORRENTS)
         return startingPortal?.takeIf { it in selected && it in ready } ?: ready.firstOrNull { it in selected }
     }
 }
@@ -69,11 +70,13 @@ internal object ProfileSetupStore {
         }.mapTo(mutableSetOf()) { it.key }.also {
             if (ProfilePortalAccess.SPORTS !in hidden) it.add(ProfilePortalAccess.SPORTS)
             if (ProfilePortalAccess.PLAYFY !in hidden) it.add(ProfilePortalAccess.PLAYFY)
+            if (ProfilePortalAccess.TORRENTS !in hidden) it.add(ProfilePortalAccess.TORRENTS)
         }
         val destination = owner?.let { users.rememberedDestination(it) }
         val start = when (destination?.kind) {
             ViewerDestinationKind.SPORTS -> ProfilePortalAccess.SPORTS
             ViewerDestinationKind.PLAYFY -> ProfilePortalAccess.PLAYFY
+            ViewerDestinationKind.TORRENTS -> ProfilePortalAccess.TORRENTS
             else -> portals.firstOrNull { it.portal.cacheKey() == destination?.portalKey }?.key
         }
         ProfileSetupDraft(profile ?: UserProfile(UUID.randomUUID().toString(), "", 0xFFE50914, "", UserProfileType.GENERAL),
@@ -81,7 +84,8 @@ internal object ProfileSetupStore {
             ProfileBrowsePreferences.layout(context, owner), portals, selected, start,
             XtreamContentPreferences.read(context, owner), owner?.let { ParentalControls.policy(context, it) } ?: ProfileParentalPolicy(),
             PlayerGesturePreferences.pinchToZoom(context, owner), PortalQualityPreferences.height(context, owner),
-            swipeControls = PlayerGesturePreferences.swipes(context, owner))
+            swipeControls = PlayerGesturePreferences.swipes(context, owner),
+            torrentPrefetchNext = com.nikhil.niktv.torrent.TorrentPlaybackPreferences.enabled(context, owner))
     }
 
     suspend fun save(context: Context, draft: ProfileSetupDraft): UserProfile = withContext(Dispatchers.IO) {
@@ -91,7 +95,7 @@ internal object ProfileSetupStore {
         require(draft.profile.name.isNotBlank()) { "Enter a profile name." }
         val chosen = draft.portals.filter { it.key in draft.selected }
         require(chosen.all { it.ready }) { "Set up the selected connection first." }
-        require(draft.selected.all { key -> key in setOf(ProfilePortalAccess.SPORTS, ProfilePortalAccess.PLAYFY) || chosen.any { it.key == key } })
+        require(draft.selected.all { key -> key in setOf(ProfilePortalAccess.SPORTS, ProfilePortalAccess.PLAYFY, ProfilePortalAccess.TORRENTS) || chosen.any { it.key == key } })
         val owner = UserScope(account, draft.profile.id)
         val profile = draft.profile.copy(name = draft.profile.name.trim(), avatar = draft.profile.avatar.trim())
         val connections = ProfileStore(context).scoped(owner)
@@ -101,12 +105,15 @@ internal object ProfileSetupStore {
             draft.portals.forEach { if (it.key in draft.selected) remove(it.key) else add(it.key) }
             if (ProfilePortalAccess.SPORTS in draft.selected) remove(ProfilePortalAccess.SPORTS) else add(ProfilePortalAccess.SPORTS)
             if (ProfilePortalAccess.PLAYFY in draft.selected) remove(ProfilePortalAccess.PLAYFY) else add(ProfilePortalAccess.PLAYFY)
+            if (ProfilePortalAccess.TORRENTS in draft.selected) remove(ProfilePortalAccess.TORRENTS) else add(ProfilePortalAccess.TORRENTS)
         }
         UserProfilePreferences.saveBatch(context, owner, listOf(
             UserProfilePreferences.Change("profile_portal_access_v1", "hidden", hidden),
+            UserProfilePreferences.Change("profile_portal_access_v1", "torrents_enabled", ProfilePortalAccess.TORRENTS in draft.selected),
             UserProfilePreferences.Change(ProfileBrowsePreferences.DOMAIN, "layout", draft.layout.name),
             UserProfilePreferences.Change("xtream_content_policy_v1", "policy", Json.encodeToString(XtreamContentPolicy.serializer(), draft.content)),
             UserProfilePreferences.Change("niktv_playback_ui", "pinch_to_zoom", draft.pinchToZoom),
+            UserProfilePreferences.Change("niktv_playback_ui", com.nikhil.niktv.torrent.TorrentPlaybackPreferences.KEY, draft.torrentPrefetchNext),
             UserProfilePreferences.Change("iptv_playback_quality", "height", draft.quality),
             UserProfilePreferences.Change("profile_parental_v1", "enabled", draft.parental.protectionEnabled, false),
             UserProfilePreferences.Change("profile_parental_v1", "show_sensitive_iptv", draft.parental.showSensitiveIptv, false),
@@ -124,6 +131,7 @@ internal object ProfileSetupStore {
         when (val start = draft.start) {
             ProfilePortalAccess.SPORTS -> users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.SPORTS))
             ProfilePortalAccess.PLAYFY -> users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.PLAYFY))
+            ProfilePortalAccess.TORRENTS -> users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.TORRENTS))
             null -> Unit
             else -> chosen.firstOrNull { it.key == start }?.let {
                 users.rememberDestination(owner, ViewerDestination(ViewerDestinationKind.PORTAL, it.portal.cacheKey()))

@@ -6,6 +6,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,7 +22,7 @@ import androidx.compose.ui.unit.dp
 internal enum class PlayerSettingKind(val title: String, val primaryOrder: Int? = null) {
     SUBTITLES("Subtitles", 0), AUDIO("Audio", 1), SPEED("Speed", 2), FIT("Video fit", 3),
     PICTURE("Picture", 4), PLAYER("Player", 5), DECODER("Decoder"), DOWNLOAD("Download", 6), SOURCE("Source", 7), REFRESH("Refresh", 0),
-    INTRO("Intro timing"), TIMEOUT("Controls timeout"), CRICKET("Cricket scores"), INFORMATION("Stream info"), PIP("Mini player")
+    INTRO("Intro timing"), TIMEOUT("Controls timeout"), GESTURES("Gestures"), CRICKET("Cricket scores"), INFORMATION("Stream info"), PIP("Mini player")
 }
 
 internal data class PlayerSettingAction(
@@ -108,6 +109,10 @@ internal fun PlayerSettingsRibbon(
     Row(modifier.onPreviewKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) { dismiss(); true } else false
     }, horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+        // PlayerChromeIconButton already reserves its explicit 40/44dp target.
+        // Material's extra 48dp touch bounds otherwise extend beyond that target
+        // and are clipped when a focused edge item is brought into this scroller.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         actions.forEachIndexed { index, action -> key(action.kind) {
             val previous = actions.getOrNull(index - 1)?.requester ?: left
             val next = actions.getOrNull(index + 1)?.requester ?: toggle
@@ -123,5 +128,6 @@ internal fun PlayerSettingsRibbon(
                 size = 40.dp, iconSize = 19.dp, scaleOnFocus = false, compact = true,
                 onFocused = onFocused)
         } }
+        }
     }
 }

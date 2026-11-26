@@ -618,13 +618,15 @@ fun PlayerScreen(
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var speedPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var gestureSettingsVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = extraControlsOpen || speedPickerVisible || playerPickerVisible || decoderPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
+    val playerOptionsOpen = extraControlsOpen || gestureSettingsVisible || speedPickerVisible || playerPickerVisible || decoderPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen || cricketScores.pickerOpen || cricketScores.moving || cricketScores.badgeHasFocus
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
-    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(rememberPlayerGestureOwner(media))
+    val gestureOwner = rememberPlayerGestureOwner(media)
+    val swipeControls by com.nikhil.niktv.ui.rememberPlayerSwipeControls(gestureOwner)
     val currentSwipeControls by rememberUpdatedState(swipeControls)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = providerPlayerQueue(media.episodeQueue)
@@ -742,6 +744,7 @@ fun PlayerScreen(
     val directionalInput = playerUsesDirectionalInput()
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val gesturesFocusRequester = remember(media.progressKey) { FocusRequester() }
     val moreFocusRequester = remember(media.progressKey) { FocusRequester() }
     val cricketScoreFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -2595,6 +2598,10 @@ fun PlayerScreen(
                                     modeFeedback = playerControlsTimeoutFeedback(seconds)
                                 }
                             ))
+                        if (gestureOwner != null) add(PlayerSettingAction(
+                            kind = PlayerSettingKind.GESTURES, requester = gesturesFocusRequester,
+                            icon = Icons.Default.TouchApp, contentDescription = "Gestures",
+                            onClick = { gestureSettingsVisible = true }))
                         add(PlayerSettingAction(
                                 kind = PlayerSettingKind.CRICKET,
                                 requester = cricketScoreFocusRequester,
@@ -2758,6 +2765,7 @@ fun PlayerScreen(
                                 )
                             }
                         }
+                        PlayerDownloadedDataIndicator()
                         if (playbackError == null && !startupTimedOut) {
                             Row(
                                 Modifier
@@ -3117,6 +3125,10 @@ fun PlayerScreen(
                 }
             }
         )
+        if (gestureSettingsVisible && gestureOwner != null) PlayerGestureControlsDialog(gestureOwner) {
+            settingsRibbon.restore(gesturesFocusRequester)
+            gestureSettingsVisible = false; controlsVisible = true
+        }
         if (speedPickerVisible) PlaybackSpeedOverlay(playbackSpeed, { playbackSpeed = it }, {
             settingsRibbon.restore(speedFocusRequester); speedPickerVisible = false; controlsVisible = true
         })
@@ -3305,6 +3317,8 @@ fun PlayerScreen(
         }
         if (subtitleDialogOpen) {
             SubtitleSelectionDialog(
+                sidecarSubtitles = media.sidecarSubtitles,
+                downloadedSubtitlePath = externalSubtitleFile?.absolutePath,
                 tracks = buildList {
                     addAll(subtitleTracks.map { track ->
                         SubtitleTrackOption(track.id, track.label, !externalSubtitleEnabled && track.group.isTrackSelected(track.trackIndex))
@@ -3364,7 +3378,7 @@ fun PlayerScreen(
                         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                         .build()
                 },
-                downloadedSubtitleName = externalSubtitleFile?.name,
+                downloadedSubtitleName = externalSubtitleFile?.let { playbackSubtitleDisplayName(it, media.sidecarSubtitles) },
                 onDeleteDownloadedSubtitle = externalSubtitleFile?.let { file ->
                     {
                         player.trackSelectionParameters = player.trackSelectionParameters
