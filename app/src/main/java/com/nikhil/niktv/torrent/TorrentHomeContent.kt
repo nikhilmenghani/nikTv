@@ -58,7 +58,8 @@ internal data class TorrentHomeFocus(
 )
 private data class HomeTile(val key: String, val title: String, val artwork: String?, val subtitle: String = "",
     val visible: (() -> Unit)? = null, val progress: Float? = null, val badge: String? = null,
-    val longClick: (() -> Unit)? = null, val card: DiscoveryCard? = null, val open: () -> Unit)
+    val longClick: (() -> Unit)? = null, val card: DiscoveryCard? = null,
+    val artworkPending: Boolean = false, val open: () -> Unit)
 private data class HomeRail(val key: String, val title: String, val entries: List<HomeTile>, val loading: Boolean,
     val error: String?, val load: () -> Unit, val viewAll: (() -> Unit)? = null, val square: Boolean = false, val wide: Boolean = false) {
     val viewAllKey: String get() = "home:$key:all"
@@ -72,8 +73,7 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
     returnKey: String?, modifier: Modifier = Modifier,
     configuration: TorrentDiscoveryConfiguration, series: Boolean, showLibrary: Boolean,
     displayed: DiscoveryCard? = null,
-    presentation: (DiscoveryCard?) -> Unit, contentFocused: Boolean, popup: Boolean, reduceMotion: Boolean,
-    phoneHeader: (@Composable () -> Unit)? = null) {
+    presentation: (DiscoveryCard?) -> Unit, contentFocused: Boolean, popup: Boolean, reduceMotion: Boolean) {
     val device = LocalConfiguration.current
     val television = LocalContext.current.isTvLikeDevice(device)
     val phone = device.usesPhoneLayout(television)
@@ -89,20 +89,19 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         if (!showLibrary || entries.isEmpty()) null else HomeRail("continue", "Continue Watching",
             entries.take(10).map { entry ->
                 val key = "home:continue:${entry.key}"
-                HomeTile(key, entry.title, if (phone)
-                    entry.episodeStill ?: entry.backdrop ?: entry.poster else entry.poster ?: entry.backdrop,
+                HomeTile(key, entry.title, entry.poster ?: entry.backdrop ?: entry.episodeStill,
                     entry.subtitle, progress = entry.progress, badge = entry.episodeBadge(),
                     longClick = { actions.libraryOptions(entry, key) }, card = entry.card,
                     open = { actions.resumeLibrary(entry, key) })
             }, false, null, {}, viewAll = if (entries.size > 10) ({
                 actions.libraryPage(TorrentLibraryPage.CONTINUE_WATCHING, "home:continue:all")
-            }) else null, wide = true)
+            }) else null, wide = false)
     }
     val shelves = remember(state.shelves, actions) { state.shelves.map { shelf ->
         HomeRail(shelf.key, shelf.title, shelf.cards.map { card ->
             val key = "home:${shelf.section.name}:${card.key}"
-            HomeTile(key, card.title, card.poster, card.date?.take(4).orEmpty(), card = card, open = { actions.openTitle(card, key) })
-        }, shelf.loading, shelf.error, { actions.shelf(shelf.section) },
+            HomeTile(key, card.title, card.poster ?: card.backdrop, card.date?.take(4).orEmpty(), card = card, open = { actions.openTitle(card, key) })
+        }, shelf.loading || (!shelf.loaded && shelf.cards.isEmpty() && shelf.error == null), shelf.error, { actions.shelf(shelf.section) },
             viewAll = if (shelf.hasMore) ({ actions.openCollection(TorrentHomeCollection(shelf.key, shelf.title,
                 shelf.section.series, section = shelf.section), "home:${shelf.key}:all") }) else null)
     } }
@@ -113,10 +112,10 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         HomeRail("home:genres:${market.name}", market.heading, state.genres.map { genre ->
             val key = "home:genres:${market.name}:${genre.id}"
             val artwork = GenreArtworkKey(series, genre.id, market)
-            HomeTile(key, genre.name, state.genreArtwork[artwork], visible = { actions.genreArtwork(artwork) },
+            HomeTile(key, genre.name, state.genreArtwork[artwork], artworkPending = artwork !in state.genreArtwork, visible = { actions.genreArtwork(artwork) },
                 open = { actions.openCollection(TorrentHomeCollection("genre:${market.name}:${genre.id}",
                     "${market.label} · ${genre.name}", series, genre = genre, market = market), key) })
-        }, state.genresLoading, state.genresError, actions.genres)
+        }, state.genresLoading || (!state.genresLoaded && state.genresError == null), state.genresError, actions.genres)
     } }
     val providers = remember(configuration.providers, state.providers, state.providersLoading, state.providersError, series, actions) {
         if (!configuration.providers) null else
@@ -124,9 +123,37 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
             val key = "home:providers:${provider.id}"
             HomeTile(key, provider.name, provider.logo, open = { actions.openCollection(TorrentHomeCollection(
                 "provider:${provider.id}", provider.name, series, provider = provider), key) })
-        }, state.providersLoading, state.providersError, actions.providers, square = true)
+        }, state.providersLoading || (!state.providersLoaded && state.providersError == null), state.providersError, actions.providers, square = true)
     }
     val rows = remember(history, shelves, genres, providers) { listOfNotNull(history) + shelves + genres + listOfNotNull(providers) }
+    if (phone) {
+        val nativeRows = remember(rows) {
+            rows.map { row ->
+                NativeDiscoveryRow(row.key, if (row.entries.isEmpty() && !row.loading && row.error == null)
+                    "${row.title} · No titles available" else row.title,
+                    row.entries.map { tile ->
+                        NativeDiscoveryItem(tile.key, tile.title,
+                            listOfNotNull(tile.badge, tile.subtitle.takeIf(String::isNotBlank)).distinct().joinToString(" · "),
+                            tile.artwork, tile.open, tile.longClick, tile.progress,
+                            source = if (row.square || row.key.contains("genres")) null else DiscoveryTileSource.TMDB,
+                            fitArtwork = row.square, onVisible = tile.visible, artworkPending = tile.artworkPending)
+                    }, actionLabel = row.error?.let { "Retry" }, action = row.load.takeIf { row.error != null },
+                    viewAll = row.viewAll, loading = row.loading)
+            }
+        }
+        val hero = state.hero
+        TorrentPhoneFeed(nativeRows, hero,
+            hero != null && library.isSaved(hero),
+            bodyFocus = focus.requester("home:native"), playFocus = focus.requester("home:hero"),
+            open = { hero?.let { actions.openTitle(it, "home:hero") } },
+            save = { hero?.let(actions.toggleSaved) },
+            previous = { if (state.heroes.isNotEmpty()) actions.hero(Math.floorMod(state.heroIndex - 1, state.heroes.size)) },
+            next = { if (state.heroes.isNotEmpty()) actions.hero((state.heroIndex + 1) % state.heroes.size) },
+            index = state.heroIndex, count = state.heroes.size, popup = popup, reduceMotion = reduceMotion,
+            visible = { id -> rows.firstOrNull { it.key == id }?.load?.invoke() })
+        LaunchedEffect(configuration.sections) { configuration.sections.take(2).forEach(actions.shelf) }
+        return
+    }
     LaunchedEffect(preview, contentFocused, scroll.isScrollInProgress) {
         val card = preview ?: return@LaunchedEffect
         if (contentFocused && !scroll.isScrollInProgress) {
@@ -178,8 +205,12 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
     }
     val heroHeight = if (phone) phoneDiscoveryHeroHeight() else trialHeroFrameHeight(
         trialHeroBaseHeight(device.screenHeightDp.toFloat(), true, television), density.fontScale).dp
-    LazyColumn(modifier.fillMaxSize(), state = scroll, verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(bottom = 20.dp)) {
+    val navigationInset = if (phone) 64.dp else 0.dp
+    Box(modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalHeroNavigationInset provides navigationInset) {
+    LazyColumn(Modifier.fillMaxSize(), state = scroll, verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(top = if (phone) 10.dp else 0.dp,
+            bottom = if (phone) LocalPhoneBottomChromeHeight.current + 20.dp else 20.dp)) {
         item("home:hero") {
             Box(Modifier.fillMaxWidth().onPlaced { focus.placed("home:hero") }) {
                 DiscoveryHero(hero, null, heroHeight, landscape = !phone, compact = short, detail = false,
@@ -192,7 +223,7 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
                     previous = { if (heroes.isNotEmpty()) { presentation(null); actions.hero((state.heroIndex - 1 + heroes.size) % heroes.size) } },
                     next = { if (heroes.isNotEmpty()) { presentation(null); actions.hero((state.heroIndex + 1) % heroes.size) } }, carousel = heroes.size > 1,
                     index = state.heroIndex, count = heroes.size, playLabel = "Open", portraitPhone = phone,
-                    openDetails = true, showListAction = true, phoneHeader = phoneHeader)
+                    openDetails = true, showListAction = true, phoneHeader = null)
             }
         }
         items(rows.size, key = { rows[it].key }) { index ->
@@ -203,6 +234,8 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
                 selected = { key, card -> rowSelection[row.key] = key; preview = card; focus.focused(key) },
                 move = { delta -> move(index, delta) })
         }
+    }
+    }
     }
 }
 

@@ -15,6 +15,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -28,6 +29,9 @@ class PlaybackProgressMarkerTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as PlaybackFixtureHostActivity
         val position = mutableLongStateOf(90_000L)
         val active = mutableStateOf(true)
+        val downloaded = MutableStateFlow<PlaybackDownloadedData?>(
+            PlaybackDownloadedData(100L, 40L, listOf(0L..19L, 70L..89L))
+        )
         fun find(node: AccessibilityNodeInfo?, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
             if (node == null) return null
             if (predicate(node)) return node
@@ -44,14 +48,30 @@ class PlaybackProgressMarkerTest {
             File(context.externalCacheDir, name).outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
             screenshot.recycle()
         }
+        fun verifyDownloadedMarks(slider: AccessibilityNodeInfo) {
+            val bounds = Rect().also(slider::getBoundsInScreen)
+            val screenshot = instrumentation.uiAutomation.takeScreenshot()
+            try {
+                fun hasMark(at: Float) = (bounds.top until bounds.bottom).any { y ->
+                    screenshot.getPixel(bounds.left + (bounds.width() * at).toInt(), y) == 0xFF75C9AB.toInt()
+                }
+                assertTrue("Downloaded range before the playhead", hasMark(.12f))
+                assertFalse("Undownloaded gap", hasMark(.51f))
+                assertTrue("Downloaded range after the playhead", hasMark(.77f))
+            } finally {
+                screenshot.recycle()
+            }
+        }
         try {
             instrumentation.runOnMainSync {
                 host.setContent {
                     MaterialTheme {
                         val requester = remember { FocusRequester() }
                         Box(Modifier.fillMaxSize().padding(32.dp)) {
-                            PlaybackProgressBar(position.longValue, 360_000L, { position.longValue = it },
-                                "timestamp-fixture", active = active.value, modifier = Modifier.focusRequester(requester))
+                            CompositionLocalProvider(LocalPlaybackDownloadProgress provides downloaded) {
+                                PlaybackProgressBar(position.longValue, 360_000L, { position.longValue = it },
+                                    "timestamp-fixture", active = active.value, modifier = Modifier.focusRequester(requester))
+                            }
                         }
                         LaunchedEffect(Unit) { requester.requestFocus() }
                     }
@@ -62,6 +82,7 @@ class PlaybackProgressMarkerTest {
             }
             val slider = requireNotNull(find(instrumentation.uiAutomation.rootInActiveWindow) { it.rangeInfo != null })
             assertEquals(.25f, (slider.rangeInfo.current - slider.rangeInfo.min) / (slider.rangeInfo.max - slider.rangeInfo.min), .01f)
+            verifyDownloadedMarks(slider)
             snapshot("progress-quarter.png")
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Dpad seek must commit once") { position.longValue == 100_000L }

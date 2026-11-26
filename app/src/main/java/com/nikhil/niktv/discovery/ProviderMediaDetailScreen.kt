@@ -131,7 +131,7 @@ private fun ProviderDetailSynopsis(overview: String?, title: String, remoteInfo:
 /** Provider identity is never replaced by the TMDB identity used for presentation. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTvState,
+internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTvState?,
     play: () -> Unit, close: () -> Unit, favorite: () -> Unit, isFavorite: Boolean,
     openTmdbMovie: (TrendingMovie) -> Unit, openTmdbSeries: (TrendingSeries) -> Unit,
     playRequester: FocusRequester = remember { FocusRequester() },
@@ -145,6 +145,9 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     synopsisAvailable: (Boolean) -> Unit = {},
     seasonCounts: (Map<Int, Int>) -> Unit = {},
     compactSeries: Boolean = false,
+    showBackButton: Boolean = true,
+    showMovieOptions: Boolean = true,
+    initialCard: DiscoveryCard? = null,
     discoveryDetails: DiscoveryDetails? = null,
     metadataSource: DiscoveryDataSource? = null,
     openDiscoveryDetail: ((DiscoveryCard) -> Unit)? = null,
@@ -156,10 +159,12 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val context = LocalContext.current
     val navigation = LocalProviderDetailNavigation.current
     val configuration = LocalConfiguration.current
-    val profile = app.savedProfile?.cacheKey().orEmpty()
+    val profile = app?.savedProfile?.cacheKey().orEmpty()
     val defaultRepository = remember(context, profile) { DiscoveryRepository(context, providerProfile = profile) }
     val repository = metadataSource ?: defaultRepository
-    var metadata by remember(profile, item.id, type) { mutableStateOf(DiscoveryDetails(providerDetailFallback(item, type))) }
+    var metadata by remember(profile, item.id, type) {
+        mutableStateOf(DiscoveryDetails(initialCard ?: providerDetailFallback(item, type)))
+    }
     var related by remember(profile, item.id, type) { mutableStateOf(emptyList<DiscoveryCard>()) }
     var relatedLoading by remember(profile, item.id, type) { mutableStateOf(false) }
     var relatedFailed by remember(profile, item.id, type) { mutableStateOf(false) }
@@ -278,7 +283,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 } else false
             },
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
+                if (showBackButton) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
                     focusHint = false,
                     modifier = Modifier.focusRequester(backRequester), onClick = close)
                 Spacer(Modifier.weight(1f))
@@ -290,7 +295,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         modifier = Modifier.size(48.dp), onClick = LocalOpenUserProfiles.current)
                 }
                 tools()
-                if (type == CatalogType.MOVIES) Box {
+                if (type == CatalogType.MOVIES && showMovieOptions) Box {
                     DiscoveryAction("Movie options", Icons.Default.MoreHoriz, iconOnly = true) { movieOptions = true }
                     ModernTileActionsMenu(movieOptions, isFavorite, dismiss = { movieOptions = false }, toggleFavorite = favorite,
                         clear = null, trailerItem = item.copy(externalTmdbId = metadata.card.id.takeIf { it > 0 } ?: item.externalTmdbId),
@@ -357,48 +362,29 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 }
             }
         } else if (!wideSeries && compactSeries) {
-            CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalHeroActionSizing provides true) {
-            Column(Modifier.fillMaxWidth()) {
-            Box(Modifier.fillMaxWidth()) {
-                Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false) }
-                Box(Modifier.matchParentSize().background(Brush.verticalGradient(
-                    0f to Color(0x99090B10), .30f to Color.Transparent, .58f to Color(0x33090B10), 1f to Color(0xFF090B10))))
-                Column(Modifier.fillMaxWidth().heightIn(min = heroHeight),
-                    verticalArrangement = Arrangement.SpaceBetween) {
-                    toolbar()
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(metadata.card.title, color = Color.White, style = MaterialTheme.typography.titleLarge,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        discoveryDetailMetadata(metadata.card).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
-                            Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            DiscoveryCompactPhoneSeriesHero(metadata.card, heroHeight, reduceMotion, toolbar) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth().onKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                            Key.DirectionDown -> { down(); true }
+                            Key.DirectionUp -> { heroUp?.invoke(); heroUp != null }
+                            else -> false
                         }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth().onKeyEvent { event ->
-                                if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                    Key.DirectionDown -> { down(); true }
-                                    Key.DirectionUp -> { heroUp?.invoke(); heroUp != null }
-                                    else -> false
-                                }
-                            }) {
-                            DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true, iconOnly = true,
-                                enabled = playEnabled, modifier = Modifier.focusRequester(playRequester), onClick = play)
-                            DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
-                                if (isFavorite) Icons.Default.Check else Icons.Default.Add, iconOnly = true, onClick = favorite)
-                            DiscoveryTrailerAction(metadata.card, iconOnly = true)
-                            LocalProviderSynopsisActions.current?.invoke()
+                    }) {
+                    DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true, iconOnly = true,
+                        enabled = playEnabled, modifier = Modifier.focusRequester(playRequester), onClick = play)
+                    DiscoveryAction(if (isFavorite) "In My List" else "Add to My List",
+                        if (isFavorite) Icons.Default.Check else Icons.Default.Add, iconOnly = true, onClick = favorite)
+                    DiscoveryTrailerAction(metadata.card, iconOnly = true)
+                    LocalProviderSynopsisActions.current?.invoke()
 
-                        }
-                        progressLabel?.let { Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall) }
-                        progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
-                            modifier = Modifier.fillMaxWidth().height(3.dp), color = Color(0xFFE50925),
-                            trackColor = Color(0xFF343842), drawStopIndicator = {}) }
-                    }
                 }
+                progressLabel?.let { Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall) }
+                progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
+                    modifier = Modifier.fillMaxWidth().height(3.dp), color = Color(0xFFE50925),
+                    trackColor = Color(0xFF343842), drawStopIndicator = {}) }
             }
             LocalProviderSynopsisPanel.current?.invoke()
-            }
-            }
         } else {
         Column(Modifier.fillMaxWidth().then(if (tabletSeriesOverlay) Modifier else Modifier.background(Color(0xFF090B10)))) {
             Box(Modifier.fillMaxWidth()) {
@@ -573,12 +559,13 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 })
         }
     }
-    relatedDetail?.takeIf { navigation != null }?.let { card ->
+    relatedDetail?.takeIf { navigation != null && app != null }?.let { card ->
         val nav = requireNotNull(navigation)
+        val providerApp = requireNotNull(app)
         Dialog(onDismissRequest = ::dismissRelated, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             val vm: DiscoveryViewModel = viewModel(key = "provider-related:$profile:${item.id}:${card.key}")
             ProviderRelatedDetailRoute(profile, card, vm, close = ::dismissRelated) {
-            DiscoveryPreviewScreen(app, if (card.series) DashboardSurface.SERIES else DashboardSurface.MOVIES,
+            DiscoveryPreviewScreen(providerApp, if (card.series) DashboardSurface.SERIES else DashboardSurface.MOVIES,
                 selectSurface = { relatedDetail = null; close(); nav.openDiscovery(it) }, exit = { relatedDetail = null },
                 navigate = { relatedDetail = null; close(); nav.navigate(it) },
                 playCard = { selected -> relatedDetail = null; if (selected.series) openTmdbSeries(TrendingSeries(selected.show())) else openTmdbMovie(TrendingMovie(selected.movie())) },

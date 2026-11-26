@@ -43,7 +43,8 @@ class TorrentDownloadWorker(context: Context, parameters: WorkerParameters) : Co
             TorrentOfflineDownloads.update(applicationContext, jobId, "downloading")
             val testOptions = regressionOptions.takeIf { BuildConfig.DEBUG && applicationContext.packageName.endsWith(".regression") }
             val running = TorrentStreamEngine(applicationContext, (testOptions ?: TorrentEngineOptions(downloadLimitBytesPerSecond = 512 * 1024)).copy(
-                cacheLimitBytes = job.sizeBytes, persistentCacheId = jobId, preserveCacheOnClose = true)).also { engine = it }
+                cacheLimitBytes = job.sizeBytes, persistentCacheId = jobId, preserveCacheOnClose = true,
+                allowDownloadFiles = job.genericFile)).also { engine = it }
             val files = running.prepare(job.source)
             val video = files.firstOrNull { it.index == job.fileIndex && it.name == job.fileName && it.sizeBytes == job.sizeBytes }
                 ?: files.singleOrNull { it.name == job.fileName && it.sizeBytes == job.sizeBytes }
@@ -63,7 +64,7 @@ class TorrentDownloadWorker(context: Context, parameters: WorkerParameters) : Co
                     }
                 }
                 try {
-                    running.play(video.index)
+                    running.selectDownload(video.index)
                     val completed = running.completedFile()
                     // Rename only after native disk/alert workers have stopped.
                     running.closeAndAwait()

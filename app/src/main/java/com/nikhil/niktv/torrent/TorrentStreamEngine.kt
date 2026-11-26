@@ -26,7 +26,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-internal data class TorrentVideoFile(val index: Int, val name: String, val sizeBytes: Long)
+internal data class TorrentVideoFile(val index: Int, val name: String, val sizeBytes: Long) {
+    val media: Boolean get() = torrentMediaFile(name)
+}
 internal data class TorrentStreamStatus(
     val stage: String = "Idle", val downloadedBytes: Long = 0, val totalBytes: Long = 0,
     val downloadBytesPerSecond: Long = 0, val peers: Int = 0, val seeds: Int = 0,
@@ -42,7 +44,8 @@ internal data class TorrentEngineOptions(
     val trace: ((String) -> Unit)? = null,
     val persistentCacheId: String? = null,
     val preserveCacheOnClose: Boolean = false,
-    val streamCacheOwner: String? = null
+    val streamCacheOwner: String? = null,
+    val allowDownloadFiles: Boolean = false
 )
 
 /** One playback-owned torrent. The player only receives hash-verified, flushed file ranges. */
@@ -234,11 +237,11 @@ internal class TorrentStreamEngine(context: Context, private val options: Torren
             }
             val video = (0 until files.numFiles()).filter { !files.padFileAt(it) }.mapNotNull { index ->
                 val name = files.filePath(index)
-                val extension = name.substringAfterLast('.', "").lowercase()
-                if (extension !in VIDEO_EXTENSIONS || Regex("(?i)(^|[/\\\\ ._-])sample([/\\\\ ._-]|$)").containsMatchIn(name)) null
+                if (!options.allowDownloadFiles && (!torrentMediaFile(name) ||
+                    Regex("(?i)(^|[/\\\\ ._-])sample([/\\\\ ._-]|$)").containsMatchIn(name))) null
                 else TorrentVideoFile(index, name, files.fileSize(index)).takeIf { it.sizeBytes > 0 }
             }
-            require(video.isNotEmpty()) { "This torrent has no supported video files." }
+            require(video.isNotEmpty()) { if (options.allowDownloadFiles) "This torrent has no downloadable files." else "This torrent has no supported media files." }
             prepared = true
             trace("metadata-ready files=${video.size} pieces=${metadata.numPieces()} pieceLength=$pieceLength")
             mutable.update { if (closed.get()) it else it.copy(stage = "Choose a video", error = null) }
@@ -258,15 +261,18 @@ internal class TorrentStreamEngine(context: Context, private val options: Torren
         val message = "Torrent streaming is unavailable on this device."
         fail(message); close(); throw IOException(message, error)
     }
+    suspend fun selectDownload(fileIndex: Int) { playSelected(fileIndex, streaming = false) }
 
-    private suspend fun playSelected(fileIndex: Int): String = withContext(Dispatchers.IO) {
+    private suspend fun playSelected(fileIndex: Int, streaming: Boolean = true): String = withContext(Dispatchers.IO) {
         ensureOpen()
         check(prepared && selected == null) { "Choose a new torrent source to restart playback." }
         val metadata = requireNotNull(info)
         val files = metadata.files()
         require(fileIndex in 0 until files.numFiles())
         val size = files.fileSize(fileIndex)
-        require(files.filePath(fileIndex).substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS)
+        require(torrentMediaFile(files.filePath(fileIndex)) || (!streaming && options.allowDownloadFiles)) {
+            "This file can be downloaded. Choose a media file to play."
+        }
         require(size > 0) { "This video is empty." }
         if (options.persistentCacheId != null) require(size <= options.cacheLimitBytes) { "This video exceeds the offline download size limit." }
         val dir = requireNotNull(cache)
@@ -297,6 +303,11 @@ internal class TorrentStreamEngine(context: Context, private val options: Torren
             }
         }
         mutable.update { if (closed.get()) it else it.copy(stage = "Buffering", totalBytes = size, error = null) }
+        if (!streaming) {
+            if (hasRetainedPayload) recheckRetainedSelection(fileIndex)
+            mutable.update { it.copy(stage = "Downloading") }
+            return@withContext ""
+        }
         // A real initial buffer, not an overall torrent percentage, determines readiness.
         val startupEnd = minOf(size, 2L * 1024 * 1024)
         // Do not give the whole steady-state window critical deadlines while a
@@ -785,7 +796,6 @@ internal class TorrentStreamEngine(context: Context, private val options: Torren
         private val CACHE_DIRECTORY = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
         private const val MAX_DESCRIPTOR = 8 * 1024 * 1024
         private const val MAX_PIECE = 16 * 1024 * 1024
-        private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mkv", "webm", "avi", "mov", "ts", "m2ts")
     }
 }
 
@@ -808,7 +818,9 @@ internal class TorrentRangeServer(private val engine: TorrentStreamEngine, priva
         catch (_: IllegalArgumentException) { return newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, MIME_PLAINTEXT, "").apply { addHeader("Content-Range", "bytes */$size") } }
         val mime = if (subtitle != null) when (subtitle.name.substringAfterLast('.').lowercase()) {
             "vtt" -> "text/vtt"; "ass", "ssa" -> "text/x-ssa"; else -> "application/x-subrip"
-        } else when (video.name.substringAfterLast('.').lowercase()) { "mkv" -> "video/x-matroska"; "webm" -> "video/webm"; "ts", "m2ts" -> "video/mp2t"; else -> "video/mp4" }
+        } else when (video.name.substringAfterLast('.').lowercase()) { "mkv" -> "video/x-matroska"; "webm" -> "video/webm"; "ts", "m2ts" -> "video/mp2t"
+            "mp3" -> "audio/mpeg"; "m4a" -> "audio/mp4"; "aac" -> "audio/aac"; "flac" -> "audio/flac"
+            "ogg", "opus" -> "audio/ogg"; "wav" -> "audio/wav"; else -> "video/mp4" }
         return try {
             val stream = if (session.method == Method.HEAD) java.io.ByteArrayInputStream(byteArrayOf())
                 else if (subtitle != null) engine.openSubtitle(subtitle.index, range.first, range.last)

@@ -12,7 +12,8 @@ internal val HOME_SECTIONS = listOf(
 
 internal data class TorrentHomeShelf(
     val section: TmdbHomeSection, val cards: List<DiscoveryCard> = emptyList(),
-    val loading: Boolean = false, val error: String? = null, val hasMore: Boolean = false
+    val loading: Boolean = false, val error: String? = null, val hasMore: Boolean = false,
+    val loaded: Boolean = false
 ) {
     val key: String get() = "torrent-home:${section.name}"
     val title: String get() = section.title
@@ -22,6 +23,7 @@ internal data class TorrentHomeState(
     val shelves: List<TorrentHomeShelf> = HOME_SECTIONS.map { TorrentHomeShelf(it) },
     val genres: List<WatchProvider> = emptyList(), val providers: List<WatchProvider> = emptyList(),
     val genresLoading: Boolean = false, val providersLoading: Boolean = false,
+    val genresLoaded: Boolean = false, val providersLoaded: Boolean = false,
     val genresError: String? = null, val providersError: String? = null,
     val genreArtwork: Map<GenreArtworkKey, String?> = emptyMap(), val heroIndex: Int = 0
 ) {

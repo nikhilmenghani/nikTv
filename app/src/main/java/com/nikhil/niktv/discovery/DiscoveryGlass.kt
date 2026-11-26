@@ -31,7 +31,8 @@ import kotlinx.coroutines.withContext
 
 /** Window coordinates keep native hero islands and the outer glass chrome aligned. */
 internal data class MobileGlassSource(val artwork: String?, val bounds: Rect,
-    val fit: Boolean = false, val topAligned: Boolean = false, val fillWidth: Boolean = false)
+    val fit: Boolean = false, val topAligned: Boolean = false, val fillWidth: Boolean = false,
+    val movingBounds: (() -> Rect)? = null)
 internal val LocalPublishMobileGlassSource = staticCompositionLocalOf<(MobileGlassSource?) -> Unit> { {} }
 internal val LocalMobileGlassFit = staticCompositionLocalOf { false }
 internal val LocalMobileGlassTopAligned = staticCompositionLocalOf { false }

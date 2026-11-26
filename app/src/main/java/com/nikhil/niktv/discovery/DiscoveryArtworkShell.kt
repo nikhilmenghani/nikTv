@@ -26,6 +26,7 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     backdropBehindRows: Boolean = false, reduceMotion: Boolean = false, initialSceneArtwork: String? = null,
     artworkIdentity: Pair<String, DashboardSurface>? = null,
     clearFailedArtwork: Boolean = false,
+    publishToParent: Boolean = false,
     header: @Composable () -> Unit, content: @Composable () -> Unit) {
     val density = LocalDensity.current
     var inset by remember(phone) { mutableStateOf(if (phone) 64.dp else 80.dp) }
@@ -37,11 +38,13 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
     // A prior visit may have ended on a different hero. Seed only from this route's current selection.
     var artwork by remember(sceneIdentity) { mutableStateOf(initialSceneArtwork?.let { MobileGlassSource(it, Rect.Zero) }) }
     val artworkBounds = remember(sceneIdentity) { mutableStateOf(Rect.Zero) }
-    val movingBounds = remember(artworkBounds) { { artworkBounds.value } }
-    val publish = remember(sceneIdentity, backdropBehindRows) { { value: MobileGlassSource? ->
+    val parentPublisher = LocalPublishMobileGlassSource.current
+    val movingBounds = remember(artworkBounds) { { artwork?.movingBounds?.invoke() ?: artworkBounds.value } }
+    val publish = remember(sceneIdentity, backdropBehindRows, publishToParent, parentPublisher) { { value: MobileGlassSource? ->
         artworkBounds.value = value?.bounds ?: Rect.Zero
         if (clearFailedArtwork && value?.artwork == failedArtwork && failedArtwork != null) artwork = null
         else if (!backdropBehindRows || !value?.artwork.isNullOrBlank()) artwork = value?.copy(bounds = Rect.Zero)
+        if (publishToParent) parentPublisher(value)
     } }
     Box(Modifier.fillMaxSize().background(if (overlay) Color(0xFF090B10) else Color.Transparent).safeDrawingPadding().onGloballyPositioned {
         viewportTop = it.positionInWindow().y
@@ -68,7 +71,7 @@ internal fun DiscoveryArtworkShell(overlay: Boolean, phone: Boolean,
                 LocalMobileGlassTopAligned provides (!backdropBehindRows && artwork?.topAligned == true),
                 LocalMobileGlassFillWidth provides (!backdropBehindRows && artwork?.fillWidth == true)) {
                 Box(Modifier.fillMaxWidth().drawBehind {
-                    val bounds = artworkBounds.value
+                    val bounds = movingBounds()
                     if (!backdropBehindRows && !bounds.isEmpty && bounds.bottom <= viewportTop + inset.toPx()) {
                         drawRect(Color(0xFF090B10))
                     }

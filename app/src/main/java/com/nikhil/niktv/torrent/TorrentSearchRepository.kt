@@ -33,7 +33,7 @@ internal enum class TorrentSearchProvider(val label: String) {
 }
 
 internal data class RawTorrentListing(val title: String, val hash: String?, val size: Long?, val seeds: Int?,
-    val magnet: String? = null, val torrent: String? = null)
+    val magnet: String? = null, val torrent: String? = null, val category: String? = null)
 
 internal class TorrentSourceAccessRequired : IOException("This source requires an API key for playback links")
 
@@ -133,10 +133,52 @@ internal class TorrentSearchRepository(
         snapshot
     }
 
-    private suspend fun fetch(provider: TorrentSearchProvider, query: String, card: DiscoveryCard): String {
+    suspend fun searchDirect(query: String, scope: TorrentSearchScope,
+        onUpdate: (TorrentSearchSnapshot) -> Unit = {}): TorrentSearchSnapshot = coroutineScope {
+        val term = query.trim().take(200)
+        require(term.isNotEmpty()) { "Enter a torrent search." }
+        // NikBot's category search uses APIBay's explicit categories. The other
+        // public adapters have no reliable type filter and join unrestricted search.
+        val providers = if (scope == TorrentSearchScope.ALL)
+            listOf(TorrentSearchProvider.APIBAY, TorrentSearchProvider.CSV, TorrentSearchProvider.BITSEARCH)
+            else listOf(TorrentSearchProvider.APIBAY)
+        var snapshot = TorrentSearchSnapshot(pending = providers.map { it.label }.toSet())
+        val updates = Mutex()
+        onUpdate(snapshot)
+        providers.map { provider -> launch {
+            var failure: String? = null
+            val results = try {
+                val body = fetch(provider, term, scope = scope)
+                withContext(Dispatchers.Default) {
+                    val rows = when (provider) {
+                        TorrentSearchProvider.APIBAY -> parseApiBay(json.parseToJsonElement(body))
+                        TorrentSearchProvider.CSV -> parseTorrentsCsv(json.parseToJsonElement(body))
+                        TorrentSearchProvider.BITSEARCH -> parseBitsearch(body)
+                        else -> emptyList()
+                    }
+                    rows.mapNotNull { rawTorrentSource(it, provider.label) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                failure = if (error is java.io.InterruptedIOException) "Timed out" else "Could not reach this source"
+                emptyList()
+            }
+            updates.withLock {
+                snapshot = snapshot.copy(results = mergeTorrentSources(snapshot.results + results, requireSeeders = false),
+                    pending = snapshot.pending - provider.label,
+                    errors = if (failure == null) snapshot.errors else snapshot.errors + (provider.label to failure!!))
+                onUpdate(snapshot)
+            }
+        } }.forEach { it.join() }
+        snapshot
+    }
+
+    private suspend fun fetch(provider: TorrentSearchProvider, query: String, card: DiscoveryCard? = null,
+        scope: TorrentSearchScope = TorrentSearchScope.ALL): String {
         val (base, params) = when (provider) {
-            TorrentSearchProvider.TORRENTCLAW -> "https://torrentclaw.com/api/v1/search" to mapOf("q" to card.title, "contentType" to "movie")
-            TorrentSearchProvider.APIBAY -> "https://apibay.org/q.php" to mapOf("q" to query, "cat" to if (card.series) "205,208" else "200")
+            TorrentSearchProvider.TORRENTCLAW -> "https://torrentclaw.com/api/v1/search" to mapOf("q" to requireNotNull(card).title, "contentType" to "movie")
+            TorrentSearchProvider.APIBAY -> "https://apibay.org/q.php" to mapOf("q" to query,
+                "cat" to if (card == null) scope.apiCategory else if (card.series) "205,208" else "200")
             TorrentSearchProvider.BITSEARCH -> "https://bitsearch.eu/search" to mapOf("q" to query)
             TorrentSearchProvider.CSV -> "https://torrents-csv.com/service/search" to mapOf("q" to query)
         }
@@ -180,16 +222,31 @@ internal class TorrentSearchRepository(
 }
 
 internal fun sourceFromListing(row: RawTorrentListing, card: DiscoveryCard, episode: TmdbEpisode?, provider: String): TorrentSource? {
+    if (!torrentListingMatches(row.title, card, episode)) return null
+    return validatedListingSource(row, provider, requireSeeders = true,
+        seasonPack = episode != null && torrentSeasonPack(row.title, episode.seasonNumber))
+}
+
+internal fun rawTorrentSource(row: RawTorrentListing, provider: String): TorrentSource? {
+    val category = row.category?.toIntOrNull()
+    if (category != null && category in 500..599) return null
+    if (com.nikhil.niktv.data.adultContentLabel(row.category.orEmpty()) ||
+        com.nikhil.niktv.data.adultContentLabel(row.title) ||
+        Regex("(?i)\\b(?:nude clips|nudist|sex videos)\\b").containsMatchIn(row.title)) return null
+    return validatedListingSource(row, provider, requireSeeders = false,
+        kind = torrentContentKind(row.title, row.category))
+}
+
+private fun validatedListingSource(row: RawTorrentListing, provider: String, requireSeeders: Boolean,
+    seasonPack: Boolean = false, kind: TorrentContentKind = TorrentContentKind.VIDEO): TorrentSource? {
     val hash = validatedTorrentHash(row.hash) ?: return null
     val size = row.size?.takeIf { it > 0 } ?: return null
-    val seeds = row.seeds?.takeIf { it > 0 } ?: return null
-    if (!torrentListingMatches(row.title, card, episode)) return null
+    val seeds = row.seeds?.takeIf { if (requireSeeders) it > 0 else it >= 0 } ?: return null
     val magnet = if (row.magnet.isNullOrBlank()) torrentMagnet(hash, row.title) else matchingTorrentMagnet(row.magnet, hash) ?: return null
     val descriptor = row.torrent?.takeIf {
         runCatching { val uri = java.net.URI(it); uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank() }.getOrDefault(false)
     }
-    return TorrentSource(hash, row.title.take(400), magnet, descriptor, size, seeds, torrentQuality(row.title), provider,
-        episode != null && torrentSeasonPack(row.title, episode.seasonNumber))
+    return TorrentSource(hash, row.title.take(400), magnet, descriptor, size, seeds, torrentQuality(row.title), provider, seasonPack, kind)
 }
 
 internal fun parseApiBay(root: JsonElement): List<RawTorrentListing> {
@@ -243,12 +300,13 @@ internal fun parseBitsearch(html: String): List<RawTorrentListing> {
     }
     val seeds = card.select("span").firstOrNull { it.text().equals("seeders", true) }
         ?.previousElementSibling()?.text()?.replace(",", "")?.toIntOrNull()
-    RawTorrentListing(title, hash, size, seeds, magnet, descriptor)
+    RawTorrentListing(title, hash, size, seeds, magnet, descriptor,
+        card.selectFirst("a[href*=/category/], a[href*=/browse/], .category")?.text())
 }
 }
 
 private fun JsonObject.listing(hashKey: String, sizeKey: String) = text("name")?.let {
-    RawTorrentListing(it, text(hashKey), long(sizeKey), int("seeders"))
+    RawTorrentListing(it, text(hashKey), long(sizeKey), int("seeders"), category = text("category"))
 }
 private fun JsonObject.text(key: String): String? = (get(key) as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank)
 private fun JsonObject.int(key: String): Int? = (get(key) as? JsonPrimitive)?.intOrNull

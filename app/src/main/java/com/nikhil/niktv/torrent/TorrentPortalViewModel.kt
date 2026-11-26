@@ -35,6 +35,9 @@ internal data class TorrentPortalState(
     val seasons: List<Int> = emptyList(), val season: Int? = null,
     val episodes: List<TmdbEpisode> = emptyList(), val episode: TmdbEpisode? = null,
     val sources: TorrentSearchSnapshot? = null, val selectedSource: TorrentSource? = null,
+    val advancedSearch: Boolean = false, val directSources: TorrentSearchSnapshot? = null,
+    val directSearchRevision: Long = 0,
+    val fileDownloads: List<TorrentDownloadJob> = emptyList(),
     val files: List<TorrentVideoFile> = emptyList(), val transfer: TorrentStreamStatus? = null,
     val loading: String? = null, val error: String? = null, val playing: PlayingMedia? = null,
     val playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
@@ -44,10 +47,10 @@ internal data class TorrentPortalState(
     val advanceRequested: Boolean = false
 ) {
     val surface: DashboardSurface get() = rootSurface
-    val browsingFeeds: Boolean get() = query.isBlank() && homeCollection == null && libraryPage == null && !downloadsOpen
+    val browsingFeeds: Boolean get() = query.isBlank() && directSources == null && homeCollection == null && libraryPage == null && !downloadsOpen
 }
 
-private data class TorrentDownloadTarget(val card: DiscoveryCard, val episode: TmdbEpisode?, val source: TorrentSource)
+private data class TorrentDownloadTarget(val card: DiscoveryCard?, val episode: TmdbEpisode?, val source: TorrentSource)
 
 /** Torrent URLs live only in this playback owner; IPTV mappings and sync stay untouched. */
 internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) {
@@ -66,6 +69,7 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
     private var generation = 0L
     private val homeJobs = mutableMapOf<String, Job>()
     private var titleOrigin: String? = null
+    private val detailParents = ArrayDeque<Pair<TorrentPortalState, String?>>()
     private var collectionOrigin: String? = null
     private var collectionOriginSurface = DashboardSurface.HOME
     private var downloadsOriginSurface = DashboardSurface.HOME
@@ -85,6 +89,7 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
     private var progressDuration = 0L
     private var progressSavedAt = 0L
     private var libraryMetadataJob: Job? = null
+    private var fileDownloadsJob: Job? = null
     private val owner = UserSyncStore.get(app).selectedScope.value
     private var nextPlanJob: Job? = null
     private var nextPrepareJob: Job? = null
@@ -155,6 +160,10 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
     }
 
     fun query(value: String) { mutable.update { it.copy(query = value) } }
+    fun advancedSearch(enabled: Boolean) {
+        job?.cancel(); generation++
+        mutable.update { it.copy(advancedSearch = enabled, directSources = null, titles = emptyList(), loading = null, error = null) }
+    }
     fun type(series: Boolean) {
         if (mutable.value.surface == (if (series) DashboardSurface.SERIES else DashboardSurface.MOVIES) &&
             mutable.value.browsingFeeds && mutable.value.title == null) return
@@ -164,7 +173,7 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         pendingResume = null; libraryPlayback = false
         mutable.update { it.copy(home = false, rootSurface = if (series) DashboardSurface.SERIES else DashboardSurface.MOVIES,
             homeCollection = null, libraryPage = null, downloadsOpen = false, series = series, title = null,
-            sources = null, query = "", error = null, titles = emptyList(), loading = null, returnFocus = null) }
+            sources = null, directSources = null, query = "", error = null, titles = emptyList(), loading = null, returnFocus = null) }
         applyDiscoveryConfiguration(mutable.value.surface)
     }
 
@@ -174,7 +183,7 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         pendingResume = null; libraryPlayback = false
         mutable.update { it.copy(home = true, rootSurface = DashboardSurface.HOME, series = false,
             homeCollection = null, libraryPage = null, downloadsOpen = false, title = null, sources = null,
-            titles = emptyList(), query = "", loading = null, error = null, returnFocus = null) }
+            titles = emptyList(), directSources = null, query = "", loading = null, error = null, returnFocus = null) }
         applyDiscoveryConfiguration(DashboardSurface.HOME)
     }
 
@@ -184,7 +193,7 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         pendingResume = null; libraryPlayback = false
         mutable.update { it.copy(rootSurface = surface, home = surface == DashboardSurface.HOME,
             series = surface == DashboardSurface.SERIES, query = "", titles = emptyList(), title = null,
-            homeCollection = null, libraryPage = null, downloadsOpen = false, sources = null,
+            homeCollection = null, libraryPage = null, downloadsOpen = false, sources = null, directSources = null,
             loading = null, error = null, returnFocus = "search") }
         applyDiscoveryConfiguration(surface)
     }
@@ -206,6 +215,41 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         pendingResume = null; libraryPlayback = false
         mutable.update { it.copy(downloadsOpen = true, title = null, sources = null, loading = null, error = null, returnFocus = "downloads-back") }
         refreshDownloads()
+        refreshFileDownloads()
+    }
+    private fun refreshFileDownloads() {
+        val captured = owner ?: return
+        fileDownloadsJob?.cancel()
+        fileDownloadsJob = viewModelScope.launch {
+            do {
+                val files = withContext(Dispatchers.IO) { TorrentOfflineDownloads.files(getApplication(), captured) }
+                mutable.update { it.copy(fileDownloads = files) }
+                if (files.none { it.state in setOf("queued", "downloading") }) break
+                delay(1_000)
+            } while (isActive)
+        }
+    }
+    fun removeFileDownload(file: TorrentDownloadJob) {
+        if (file.owner != owner || mutable.value.fileDownloads.none { it.id == file.id }) return
+        TorrentOfflineDownloads.remove(getApplication(), TorrentOfflineDownloads.PREFIX + file.id) {
+            viewModelScope.launch { refreshFileDownloads() }
+        }
+    }
+    fun openFileDownload(file: TorrentDownloadJob) {
+        if (file.owner != owner || mutable.value.fileDownloads.none { it.id == file.id }) return
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val uri = withContext(Dispatchers.IO) { TorrentOfflineDownloads.fileUri(app, file) }
+            if (uri == null) {
+                mutable.update { it.copy(notice = "This file has not finished downloading.") }
+                return@launch
+            }
+            val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension) ?: "application/octet-stream"
+            runCatching {
+                app.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            }.onFailure { mutable.update { it.copy(notice = "Install an app that can open ${file.extension.uppercase()} files.") } }
+        }
     }
 
     private fun refreshDownloads() {
@@ -281,7 +325,18 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         offlineMetadata = metadata
         lastSource = null
         lastFile = TorrentVideoFile(-1, metadata.fileName ?: entry.media.title + "." + entry.fileType.lowercase(), metadata.sizeBytes ?: 0L)
-        val card = metadata.card ?: throw IllegalStateException("This download has no title metadata.")
+        val card = metadata.card
+        if (card == null) {
+            val known = mutable.value.library.continueWatching.firstOrNull { it.key == metadata.key }
+            val resume = requestedPosition.takeIf { it > 0 } ?: known?.positionMillis ?: 0L
+            pendingResume = null
+            mutable.update { it.copy(title = null, episode = null, sources = null, files = emptyList(), transfer = null,
+                playing = makePlaying(entry.media, uri, lastFile!!, resume, null, null).copy(offlinePlayback = true),
+                error = null, nextTarget = null, nextStatus = null, nextReady = false, advanceRequested = false) }
+            downloaded.value = null
+            videoStarted = false
+            return
+        }
         val episode = metadata.tmdbEpisode
         val existing = mutable.value
         if (!libraryPlayback) {
@@ -333,7 +388,9 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         mutable.update { it.copy(discoveryConfiguration = configuration,
             homeData = it.homeData.copy(shelves = configuration.sections.map { section -> shelfCache[section] ?: TorrentHomeShelf(section) }, heroIndex = 0,
                 genres = if (differentCatalog) emptyList() else it.homeData.genres,
+                genresLoaded = !differentCatalog && it.homeData.genresLoaded,
                 providers = if (differentCatalog) emptyList() else it.homeData.providers,
+                providersLoaded = !differentCatalog && it.homeData.providersLoaded,
                 genreArtwork = if (differentCatalog) emptyMap() else it.homeData.genreArtwork)) }
         if (mutable.value.browsingFeeds && mutable.value.title == null) configuration.sections.take(2).forEach(::homeShelf)
     }
@@ -362,9 +419,9 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         if (section !in mutable.value.discoveryConfiguration.sections) return
         val key = "feed:${section.name}"
         val shelf = mutable.value.homeData.shelves.firstOrNull { it.section == section } ?: return
-        if (homeJobs[key]?.isActive == true || (shelf.cards.isNotEmpty() && shelf.error == null)) return
+        if (homeJobs[key]?.isActive == true || (shelf.loaded && shelf.error == null)) return
         fun publish(page: DiscoveryFeedPage) = updateHome { home -> home.copy(shelves = home.shelves.map {
-            if (it.section == section) it.copy(cards = page.cards, hasMore = page.hasMore) else it
+            if (it.section == section) it.copy(cards = page.cards, hasMore = page.hasMore, loaded = true) else it
         }) }
         updateHome { home -> home.copy(shelves = home.shelves.map {
             if (it.section == section) it.copy(loading = true, error = null) else it
@@ -383,10 +440,10 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
 
     fun homeGenres() {
         val current = mutable.value.homeData
-        if (homeJobs["genres"]?.isActive == true || (current.genres.isNotEmpty() && current.genresError == null)) return
+        if (homeJobs["genres"]?.isActive == true || (current.genresLoaded && current.genresError == null)) return
         updateHome { it.copy(genresLoading = true, genresError = null) }
         homeJobs["genres"] = viewModelScope.launch {
-            try { val genres = homeRepository.genres(mutable.value.surface == DashboardSurface.SERIES); updateHome { it.copy(genres = genres) } }
+            try { val genres = homeRepository.genres(mutable.value.surface == DashboardSurface.SERIES); updateHome { it.copy(genres = genres, genresLoaded = true) } }
             catch (cancel: CancellationException) { throw cancel }
             catch (error: Exception) { updateHome { it.copy(genresError = error.message ?: "Could not load genres.") } }
             finally { updateHome { it.copy(genresLoading = false) } }
@@ -395,10 +452,10 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
 
     fun homeProviders() {
         val current = mutable.value.homeData
-        if (homeJobs["providers"]?.isActive == true || (current.providers.isNotEmpty() && current.providersError == null)) return
+        if (homeJobs["providers"]?.isActive == true || (current.providersLoaded && current.providersError == null)) return
         updateHome { it.copy(providersLoading = true, providersError = null) }
         homeJobs["providers"] = viewModelScope.launch {
-            try { val providers = homeRepository.providers(mutable.value.surface == DashboardSurface.SERIES); updateHome { it.copy(providers = providers) } }
+            try { val providers = homeRepository.providers(mutable.value.surface == DashboardSurface.SERIES); updateHome { it.copy(providers = providers, providersLoaded = true) } }
             catch (cancel: CancellationException) { throw cancel }
             catch (error: Exception) { updateHome { it.copy(providersError = error.message ?: "Could not load providers.") } }
             finally { updateHome { it.copy(providersLoading = false) } }
@@ -423,7 +480,7 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         collectionOrigin = originKey
         collectionOriginSurface = mutable.value.surface
         pauseHomeLoading()
-        mutable.update { it.copy(home = false, homeCollection = target, libraryPage = null, downloadsOpen = false, series = target.series, title = null,
+        mutable.update { it.copy(directSources = null, home = false, homeCollection = target, libraryPage = null, downloadsOpen = false, series = target.series, title = null,
             titles = emptyList(), sources = null, query = "", collectionPage = 0, collectionHasMore = false,
             returnFocus = null, error = null) }
         loadHomeCollection(target, 1)
@@ -486,7 +543,7 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         job?.cancel(); generation++; pauseHomeLoading()
         libraryOrigin = originKey
         pendingResume = null; libraryPlayback = false
-        mutable.update { it.copy(home = false, homeCollection = null, libraryPage = page, downloadsOpen = false, title = null,
+        mutable.update { it.copy(directSources = null, home = false, homeCollection = null, libraryPage = page, downloadsOpen = false, title = null,
             sources = null, query = "", titles = emptyList(), loading = null, error = null, returnFocus = null) }
     }
 
@@ -501,6 +558,16 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
             episode = entry.tmdbEpisode, sources = null, selectedSource = null, error = null, returnFocus = null) }
         if (card == null) {
             launch("Reopening torrent…") { token ->
+                val captured = owner
+                val local = if (captured == null) null else mutable.value.downloads.firstOrNull {
+                    it.media.id.startsWith("torrent:raw:${entry.infoHash}:") &&
+                        TorrentOfflineLibrary.metadata(getApplication(), captured, it)?.fileName == entry.fileName
+                }
+                val localUri = local?.let { withContext(Dispatchers.IO) {
+                    OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl, it.downloadId)
+                } }
+                if (token != generation) return@launch
+                if (local != null && localUri != null) { playDownloadInternal(local, localUri, token, entry.positionMillis); return@launch }
                 val stored = owner?.let { TorrentLibraryStore.source(getApplication(), it, entry.key) }
                 val source = stored ?: validatedTorrentHash(entry.infoHash)?.let { torrentMagnet(it, entry.title) }
                 if (token != generation) return@launch
@@ -610,20 +677,36 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         mutable.update { it.copy(home = false, homeCollection = null, libraryPage = null, downloadsOpen = false) }
         if (current.query.isBlank()) {
             job?.cancel(); generation++
-            mutable.update { it.copy(title = null, sources = null, titles = emptyList(), loading = null, error = null) }
+            mutable.update { it.copy(title = null, sources = null, directSources = null, titles = emptyList(), loading = null, error = null) }
             applyDiscoveryConfiguration(mutable.value.surface)
+            return
+        }
+        if (current.advancedSearch) {
+            mutable.update { it.copy(directSources = TorrentSearchSnapshot(), directSearchRevision = it.directSearchRevision + 1,
+                title = null, sources = null, titles = emptyList()) }
+            launch("Searching torrent websites…") { token ->
+                val result = repository.searchDirect(current.query, torrentSearchScope(current.surface)) { update ->
+                    if (token == generation) mutable.update { it.copy(directSources = update) }
+                }
+                if (token == generation) mutable.update { it.copy(directSources = result, returnFocus = null) }
+            }
             return
         }
         launch(if (current.query.isBlank()) "Loading popular titles…" else "Searching TMDB…") { token ->
             val titles = if (current.surface == DashboardSurface.HOME) coroutineScope {
                 val movies = async { repository.titles(current.query.trim(), false) }
                 val series = async { repository.titles(current.query.trim(), true) }
-                (movies.await() + series.await()).distinctBy(DiscoveryCard::key)
-            } else repository.titles(current.query.trim(), current.series)
+                val films = movies.await()
+                val shows = series.await()
+                (0 until maxOf(films.size, shows.size)).flatMap { index ->
+                    listOfNotNull(films.getOrNull(index), shows.getOrNull(index))
+                }.distinctBy(DiscoveryCard::key)
+            } else repository.titles(current.query.trim(), current.surface == DashboardSurface.SERIES)
             if (token == generation) mutable.update { it.copy(titles = titles, title = null, sources = null, returnFocus = null) }
         }
     }
     fun open(card: DiscoveryCard, originKey: String? = null) {
+        detailParents.clear()
         cancelLibraryMetadata()
         pauseHomeLoading()
         pendingResume = null; libraryPlayback = false
@@ -638,6 +721,13 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
                 if (token == generation) mutable.update { it.copy(episodes = episodes) }
             }
         }
+    }
+    fun openRelated(card: DiscoveryCard) {
+        val current = mutable.value
+        if (current.title?.key == card.key || !card.torrentPublished()) return
+        val parents = detailParents.toList() + (current to titleOrigin)
+        open(card)
+        detailParents.addAll(parents.takeLast(32))
     }
     fun season(number: Int) {
         val card = mutable.value.title ?: return
@@ -678,11 +768,23 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         }
     }
     fun source(source: TorrentSource) {
+        if (!source.kind.media) { download(source); return }
         downloadTarget = null
         mutable.update { it.copy(selectedSource = source, transferPurpose = TorrentTransferPurpose.STREAM, returnFocus = "source:${source.infoHash}") }
         val current = mutable.value
         val card = current.title
-        if (card == null) { prepare(source.source); return }
+        if (card == null) {
+            launch("Checking offline copy…") { token ->
+                val offline = mutable.value.downloads.firstOrNull { it.media.id.startsWith("torrent:raw:${source.infoHash}:") }
+                val uri = offline?.let { withContext(Dispatchers.IO) {
+                    OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl, it.downloadId)
+                } }
+                if (token != generation) return@launch
+                if (offline != null && uri != null) playDownloadInternal(offline, uri, token)
+                else prepare(source.source)
+            }
+            return
+        }
         launch("Checking offline copy…") { token ->
             val offline = if (explicitSourceChoice) null else completedDownload(card, current.episode)
             if (token != generation) return@launch
@@ -691,10 +793,10 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         }
     }
     fun download(source: TorrentSource) {
-        val card = mutable.value.title ?: return
+        val card = mutable.value.title
         if (owner == null) { mutable.update { it.copy(error = "Open a profile before downloading.") }; return }
         val episode = mutable.value.episode
-        if (card.series && episode == null) return
+        if (card?.series == true && episode == null) return
         cancelLibraryMetadata()
         pendingResume = null
         downloadTarget = TorrentDownloadTarget(card, episode, source)
@@ -737,7 +839,8 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         val closing = lastClosingEngine
         mutable.update { it.copy(transfer = TorrentStreamStatus(stage = "Connecting to torrent…"), files = emptyList(), error = null) }
         lastSource = source.trim()
-        val selected = TorrentStreamEngine(getApplication(), streamOptions())
+        val selected = TorrentStreamEngine(getApplication(), streamOptions().copy(
+            allowDownloadFiles = mutable.value.transferPurpose == TorrentTransferPurpose.DOWNLOAD && downloadTarget?.card == null))
         engine = selected
         observeTransfer(selected)
         launch("Connecting to torrent…") { token ->
@@ -763,7 +866,19 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         val target = downloadTarget ?: return
         val captured = owner ?: return
         val app = getApplication<Application>()
-        val existing = mutable.value.downloads.firstOrNull { torrentOfflineMatches(it, target.card, target.episode) }
+        val card = target.card
+        val metadataHash = selected.sourceInfoHash ?: target.source.infoHash
+        val identity = if (card == null) "torrent:raw:$metadataHash:${file.index}" else torrentOfflineMediaId(card, target.episode)
+        val existing = mutable.value.downloads.firstOrNull { it.media.id == identity && it.profileKey == TORRENT_OFFLINE_PROFILE }
+        val priorFile = if (!file.media) withContext(Dispatchers.IO) {
+            TorrentOfflineDownloads.files(app, captured).firstOrNull { it.identity == identity }
+        } else null
+        if (priorFile != null && priorFile.state !in setOf("failed", "cancelled")) {
+            stopTransfer()
+            mutable.update { it.copy(files = emptyList(), transfer = null, notice = "This file is already in Torrent downloads.") }
+            refreshFileDownloads()
+            return
+        }
         if (existing != null) {
             val info = withContext(Dispatchers.IO) { OfflineMediaDownloads.info(app, existing.requestId, existing.downloadId) }
             if (token != generation || engine !== selected) return
@@ -773,21 +888,25 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
                 return
             }
         }
-        val metadataHash = selected.sourceInfoHash
         var handle: com.nikhil.niktv.data.OfflineDownloadHandle? = null
         var registration: OfflineMediaDownload? = null
         var committed = false
-        val cachedSeasons = episodeCache.filterKeys { it.first == target.card.id }.mapKeys { it.key.second }
+        val cachedSeasons = episodeCache.filterKeys { it.first == card?.id }.mapKeys { it.key.second }
         val seasons = mutable.value.seasons
         try {
             // Cancellation during the enqueue/metadata boundary must still own
             // the new request and clean it up, rather than abandon a hidden worker.
             withContext(NonCancellable + Dispatchers.IO) {
-                handle = TorrentOfflineDownloads.enqueue(app, torrentOfflineMediaId(target.card, target.episode),
-                    if (target.episode == null) target.card.title else "${target.card.title} · S${target.episode.seasonNumber}:E${target.episode.episodeNumber}",
-                    target.source.source, file.index, file.name, file.sizeBytes, captured)
-                registration = TorrentOfflineLibrary.register(app, captured, handle!!, target.card, target.episode, file, metadataHash)
-                if (target.card.series) TorrentOfflineLibrary.rememberSequence(app, captured, target.card.id, seasons, cachedSeasons)
+                val title = if (card == null) file.name.substringAfterLast('/')
+                    else if (target.episode == null) card.title else "${card.title} · S${target.episode.seasonNumber}:E${target.episode.episodeNumber}"
+                handle = TorrentOfflineDownloads.enqueue(app, identity, title,
+                    target.source.source, file.index, file.name, file.sizeBytes, captured, genericFile = !file.media)
+                registration = when {
+                    !file.media -> null
+                    card == null -> TorrentOfflineLibrary.registerRaw(app, captured, handle!!, file, metadataHash)
+                    else -> TorrentOfflineLibrary.register(app, captured, handle!!, card, target.episode, file, metadataHash)
+                }
+                if (card?.series == true) TorrentOfflineLibrary.rememberSequence(app, captured, card.id, seasons, cachedSeasons)
             }
             currentCoroutineContext().ensureActive()
             if (token != generation || engine !== selected) return
@@ -800,7 +919,9 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
         }
         stopTransfer()
         downloadTarget = null
-        mutable.update { it.copy(files = emptyList(), transfer = null, notice = "Download queued. Find it in Offline downloads.") }
+        mutable.update { it.copy(files = emptyList(), transfer = null, notice = if (file.media) "Download queued. Find it in Offline downloads." else "File queued. Find it in Torrent downloads.") }
+        refreshFileDownloads()
+        if (priorFile != null) TorrentOfflineDownloads.remove(app, TorrentOfflineDownloads.PREFIX + priorFile.id)
         if (existing != null) persistenceScope.launch { OfflineMediaDownloads.remove(app, existing.requestId, existing.downloadId) }
     }
     private suspend fun startFile(selected: TorrentStreamEngine, file: TorrentVideoFile, token: Long, position: Long = 0) {
@@ -903,6 +1024,15 @@ internal class TorrentPortalViewModel(app: Application) : AndroidViewModel(app) 
             return true
         }
         if (current.title != null) {
+            if (detailParents.isNotEmpty()) {
+                val (parent, origin) = detailParents.removeLast()
+                titleOrigin = origin
+                mutable.update { it.copy(title = parent.title, seasons = parent.seasons, season = parent.season,
+                    episodes = parent.episodes, episode = parent.episode, sources = parent.sources,
+                    loading = null, error = parent.error, returnFocus = "movie-sources") }
+                if (parent.sources?.finished == false) sources()
+                return true
+            }
             mutable.update { it.copy(title = null, sources = null, loading = null, error = null,
                 returnFocus = safeLibraryOrigin(titleOrigin) ?: "title:${current.title.key}") }
             return true

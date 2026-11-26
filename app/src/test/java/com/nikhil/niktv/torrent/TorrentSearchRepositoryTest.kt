@@ -3,6 +3,13 @@ package com.nikhil.niktv.torrent
 import com.nikhil.niktv.data.TmdbEpisode
 import com.nikhil.niktv.discovery.DiscoveryCard
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.runBlocking
+import com.nikhil.niktv.model.DashboardSurface
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import java.util.Collections
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -13,6 +20,93 @@ class TorrentSearchRepositoryTest {
     private val hash = "1234567890abcdef1234567890abcdef12345678"
     private fun listing(title: String = "Big.Buck.Bunny.2008.1080p.WEB-DL", seeds: Int = 12,
         magnet: String? = null) = RawTorrentListing(title, hash, 600_000_000L, seeds, magnet)
+
+    @Test fun searchScopeFollowsTheActiveTab() {
+        assertEquals(TorrentSearchScope.MOVIES, torrentSearchScope(DashboardSurface.MOVIES))
+        assertEquals(TorrentSearchScope.SERIES, torrentSearchScope(DashboardSurface.SERIES))
+        assertEquals(TorrentSearchScope.ALL, torrentSearchScope(DashboardSurface.HOME))
+    }
+
+    @Test fun rawSearchPreservesFilesAndDoesNotRequireATmdbTitleOrReleaseYear() {
+        val video = rawTorrentSource(listing("Taarak Mehta S01E5000.mkv"), "Fixture")!!
+        assertEquals(TorrentContentKind.VIDEO, video.kind)
+        val book = rawTorrentSource(listing("Public domain book.epub", seeds = 0), "Fixture")!!
+        assertEquals(TorrentContentKind.FILE, book.kind)
+        assertFalse(book.kind.media)
+        assertEquals(0, book.seeders)
+        assertNull(rawTorrentSource(listing().copy(size = 0), "Fixture"))
+        assertNull(rawTorrentSource(listing().copy(hash = "0".repeat(40)), "Fixture"))
+        assertNull(rawTorrentSource(listing(seeds = -1), "Fixture"))
+    }
+
+    @Test fun classificationUsesTheFileBeforeReleaseTagsAndDistinguishesAudio() {
+        assertEquals(TorrentContentKind.FILE, torrentContentKind("Film 1080p subtitles.zip", "201"))
+        assertEquals(TorrentContentKind.FILE, torrentContentKind("Ubuntu.iso", null))
+        assertEquals(TorrentContentKind.FILE, torrentContentKind("Film 1080p.srt", "201"))
+        assertEquals(TorrentContentKind.FILE, torrentContentKind("Unknown title", null))
+        assertEquals(TorrentContentKind.VIDEO, torrentContentKind("A film", "207"))
+        assertEquals(TorrentContentKind.VIDEO, torrentContentKind("A show S01E02", null))
+        assertEquals(TorrentContentKind.AUDIO, torrentContentKind("Public domain recording.flac", null))
+        assertTrue(torrentMediaFile("folder/FILE.MKV"))
+        assertTrue(torrentMediaFile("folder/song.mp3"))
+        assertFalse(torrentMediaFile("folder/book.pdf"))
+    }
+
+    @Test fun rawSearchKeepsThePortalAdultContentExclusion() {
+        assertNull(rawTorrentSource(listing("Unrelated adult upload"), "Fixture"))
+        assertNull(rawTorrentSource(listing().copy(category = "501"), "Fixture"))
+        assertNull(rawTorrentSource(listing().copy(category = "Porn"), "Fixture"))
+        assertNotNull(rawTorrentSource(listing("A legitimate crime drama.mkv"), "Fixture"))
+    }
+
+    @Test fun rawMergingKeepsZeroSeedFilesWithoutChangingNormalSourceRules() {
+        val row = rawTorrentSource(listing("Book.pdf", seeds = 0), "A")!!
+        assertTrue(mergeTorrentSources(listOf(row)).isEmpty())
+        val rows = mergeTorrentSources(listOf(row, row.copy(provider = "B")), requireSeeders = false)
+        assertEquals(1, rows.size)
+        assertEquals("A · B", rows.single().provider)
+    }
+
+    @Test fun directCategorySearchSendsTheRawQueryAndOnlyUsesCategoryAwareAdapter() = runBlocking {
+        val requests = Collections.synchronizedList(mutableListOf<okhttp3.HttpUrl>())
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            requests += chain.request().url
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("""[{"name":"Unmapped show S01E5000","info_hash":"$hash","size":"1000","seeders":"2","category":"205"}]""".toResponseBody()).build()
+        }.build()
+        val result = TorrentSearchRepository(http = http).searchDirect("taarak mehta", TorrentSearchScope.SERIES)
+        assertTrue(result.finished)
+        assertTrue(result.errors.toString(), result.errors.isEmpty())
+        assertEquals(1, result.results.size)
+        assertEquals("Unmapped show S01E5000", result.results.single().title)
+        assertEquals(1, requests.size)
+        assertEquals("apibay.org", requests.single().host)
+        assertEquals("taarak mehta", requests.single().queryParameter("q"))
+        assertEquals("205,208", requests.single().queryParameter("cat"))
+    }
+
+    @Test fun allFilesSearchRunsWebsiteAdaptersAndMergesProgressWithoutTmdb() = runBlocking {
+        val hosts = Collections.synchronizedSet(mutableSetOf<String>())
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val host = chain.request().url.host
+            hosts += host
+            val body = when (host) {
+                "apibay.org" -> """[{"name":"Public domain book.epub","info_hash":"$hash","size":"1000","seeders":"0","category":"601"}]"""
+                "torrents-csv.com" -> """{"torrents":[{"name":"Public domain book.epub","infohash":"$hash","size_bytes":1000,"seeders":3}]}"""
+                else -> "<html><body>No results</body></html>"
+            }
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(body.toResponseBody()).build()
+        }.build()
+        val updates = mutableListOf<TorrentSearchSnapshot>()
+        val result = TorrentSearchRepository(http = http).searchDirect("public domain", TorrentSearchScope.ALL) { updates += it }
+        assertEquals(setOf("apibay.org", "torrents-csv.com", "bitsearch.eu"), hosts)
+        assertEquals(3, updates.first().pending.size)
+        assertTrue(result.finished)
+        assertEquals(TorrentContentKind.FILE, result.results.single().kind)
+        assertEquals(3, result.results.single().seeders)
+        assertEquals("The Pirate Bay · Torrents.csv", result.results.single().provider)
+    }
 
     @Test fun movieRequiresTheSelectedTitleAndYear() {
         assertTrue(torrentListingMatches("Big.Buck.Bunny.2008.1080p.WEB-DL", movie))

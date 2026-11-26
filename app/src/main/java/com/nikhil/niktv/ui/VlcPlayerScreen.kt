@@ -2079,7 +2079,6 @@ internal fun VlcPlayerScreen(
                                 )
                             }
                         }
-                        PlayerDownloadedDataIndicator()
                         Row(
                             Modifier
                                 .fillMaxWidth()

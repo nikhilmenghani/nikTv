@@ -60,6 +60,19 @@ internal object TorrentOfflineLibrary {
         check(ProfileStore(context).upsertOfflineDownload(entry, owner))
         entry
     }
+    suspend fun registerRaw(context: Context, owner: UserScope, handle: OfflineDownloadHandle,
+        file: TorrentVideoFile, infoHash: String?): OfflineMediaDownload = withContext(Dispatchers.IO) {
+        val metadata = torrentLibraryEntry(file = file, infoHash = infoHash,
+            titleFallback = file.name.substringAfterLast('/'))
+        val media = MediaItem("torrent:raw:${infoHash.orEmpty()}:${file.index}",
+            file.name.substringAfterLast('/'), logo = null, command = null)
+        val entry = OfflineMediaDownload(requestId = handle.requestId, profileKey = TORRENT_OFFLINE_PROFILE,
+            catalogType = CatalogType.MOVIES, media = media, fileType = handle.fileType)
+        check(context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
+            .putString(key(owner, handle.requestId), json.encodeToString(metadata)).commit())
+        check(ProfileStore(context).upsertOfflineDownload(entry, owner))
+        entry
+    }
 
     suspend fun metadata(context: Context, owner: UserScope, entry: OfflineMediaDownload): TorrentLibraryEntry? = withContext(Dispatchers.IO) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getString(key(owner, entry.requestId), null)

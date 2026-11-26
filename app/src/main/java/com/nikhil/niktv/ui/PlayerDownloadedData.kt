@@ -2,20 +2,17 @@ package com.nikhil.niktv.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
 
@@ -53,34 +50,44 @@ internal fun normalizedDownloadedByteRanges(totalBytes: Long, ranges: List<LongR
     return merged
 }
 
-/** Collect here so byte updates never rebuild the player or its media/seek state. */
 @Composable
-internal fun PlayerDownloadedDataIndicator(modifier: Modifier = Modifier) {
-    val progress = LocalPlaybackDownloadProgress.current ?: return
-    val data by progress.collectAsStateWithLifecycle()
-    val ranges = remember(data?.totalBytes, data?.ranges) {
-        normalizedDownloadedByteRanges(data?.totalBytes ?: 0L, data?.ranges.orEmpty())
+internal fun rememberPlayerDownloadedData(): State<PlaybackDownloadedData?>? =
+    LocalPlaybackDownloadProgress.current?.collectAsStateWithLifecycle()
+
+private val downloadedRangeColor = Color(0xFF75C9AB)
+
+@Composable
+internal fun PlayerDownloadedDataLabel(data: State<PlaybackDownloadedData?>, modifier: Modifier = Modifier) {
+    val download = data.value
+    val percent = download?.percent
+    val warning = download?.storageWarning?.takeIf(String::isNotBlank)
+    if (percent == null && warning == null) return
+    Text(
+        warning ?: "Downloaded $percent%",
+        modifier.semantics {
+            contentDescription = listOfNotNull(
+                percent?.let { "Downloaded $it percent; positions are approximate" }, warning
+            ).joinToString(". ")
+        },
+        style = MaterialTheme.typography.labelSmall, color = if (warning != null) Color(0xFFFFCC80) else downloadedRangeColor,
+        maxLines = 1, overflow = TextOverflow.Ellipsis
+    )
+}
+
+/** Verified byte offsets approximate time on files with uneven bit rates. */
+@Composable
+internal fun PlayerDownloadedTrackMarks(data: State<PlaybackDownloadedData?>, modifier: Modifier) {
+    val download = data.value ?: return
+    val total = download.totalBytes.takeIf { it > 0L }?.toDouble() ?: return
+    val ranges = remember(download.totalBytes, download.ranges) {
+        normalizedDownloadedByteRanges(download.totalBytes, download.ranges)
     }
-    val label = "Downloaded · ${data?.percent?.let { "$it%" } ?: "—"}"
-    val warning = data?.storageWarning?.takeIf { it.isNotBlank() }
-    val accent = Color(0xFF75C9AB)
-    Column(modifier.fillMaxWidth().heightIn(min = 24.dp).padding(horizontal = 8.dp)
-        .semantics { contentDescription = "Downloaded data: ${data?.percent?.let { "$it percent" } ?: "waiting"}" +
-            (warning?.let { ". $it" } ?: "") }, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 16.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = accent, maxLines = 1)
-            if (warning != null) Text(warning, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFFFFCC80), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Canvas(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp))) {
-            drawRect(Color.White.copy(alpha = .12f))
-            val total = data?.totalBytes?.takeIf { it > 0L }?.toDouble() ?: return@Canvas
-            for (range in ranges) {
-                val left = (range.first.toDouble() / total * size.width).toFloat()
-                val right = ((range.last + 1L).toDouble() / total * size.width).toFloat()
-                drawRect(accent, Offset(left, 0f), Size((right - left).coerceAtLeast(0f), size.height))
-            }
+    Canvas(modifier) {
+        for (range in ranges) {
+            val start = (range.first / total * size.width).toFloat()
+            val end = ((range.last + 1L) / total * size.width).toFloat()
+            val left = if (layoutDirection == LayoutDirection.Rtl) size.width - end else start
+            drawRect(downloadedRangeColor, Offset(left, 0f), Size(end - start, size.height))
         }
     }
 }

@@ -1213,14 +1213,15 @@ internal fun ModernEpisodeCard(
     onClick: () -> Unit,
     offlineDownload: OfflineMediaDownload?,
     offlineRevision: Long,
-    onDownload: () -> Unit,
-    onRemoveDownload: () -> Unit,
+    onDownload: (() -> Unit)?,
+    onRemoveDownload: (() -> Unit)?,
     landscapePoster: Boolean = false,
     wideList: Boolean = false,
     compactList: Boolean = false,
     refreshTmdb: (() -> Unit)? = null,
     refreshingTmdb: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showAlternateSources: Boolean = true
 ) {
     val overlayFocusManager = LocalFocusManager.current
     val overlayKeyboard = LocalSoftwareKeyboardController.current
@@ -1279,6 +1280,8 @@ internal fun ModernEpisodeCard(
     val episodeDescription = episode.description?.takeUnless { description ->
         description.trim().equals(series.description?.trim(), ignoreCase = true)
     }
+    val hasEpisodeActions = showAlternateSources || onDownload != null || onRemoveDownload != null ||
+        refreshTmdb != null || !episodeDescription.isNullOrBlank()
 
     val progressFraction = remember(progress) {
         if (progress != null && progress.durationMillis > 0L) {
@@ -1316,7 +1319,7 @@ internal fun ModernEpisodeCard(
             .remoteCombinedClickable(
                 interactionSource = episodeInteractionSource,
                 onClick = onClick,
-                onLongClick = { retainEpisodeFocus(); episodeActionsExpanded = true }
+                onLongClick = if (hasEpisodeActions) ({ retainEpisodeFocus(); episodeActionsExpanded = true }) else null
             )
     ) {
         Column {
@@ -1429,15 +1432,15 @@ internal fun ModernEpisodeCard(
             leadingIcon = { if (refreshingTmdb) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Default.Cached, null) }, enabled = !refreshingTmdb,
             onClick = { episodeActionsExpanded = false; refreshTmdb() })
-        AlternateSourceMenuItem(episode, CatalogType.SERIES,
+        if (showAlternateSources) AlternateSourceMenuItem(episode, CatalogType.SERIES,
             dismiss = { episodeActionsExpanded = false }, series = series,
             season = episode.seasonNumber ?: episode.title.seasonNumberFromTitle(),
             episode = episode.episodeNumber ?: episode.title.episodeNumberFromTitle())
-        if (offlineDownload == null || displayedOfflineStatus in setOf(
+        val canDownload = offlineDownload == null || displayedOfflineStatus in setOf(
                 OfflineDownloadStatus.FAILED,
                 OfflineDownloadStatus.MISSING
             )
-        ) {
+        if (canDownload && onDownload != null) {
             NikDropdownMenuItem(
                 text = { Text("Download episode") },
                 leadingIcon = { Icon(Icons.Default.DownloadForOffline, null) },
@@ -1448,7 +1451,7 @@ internal fun ModernEpisodeCard(
                     onDownload()
                 }
             )
-        } else {
+        } else if (!canDownload && onRemoveDownload != null) {
             NikDropdownMenuItem(
                 text = {
                     Text(
@@ -1494,6 +1497,6 @@ internal fun ModernEpisodeCard(
         title = { Text(if (offlineStatus == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
         text = { Text("Remove “${episode.displayTitle(series)}” from offline downloads?") },
         dismissButton = { NikTvTextActionButton(onClick = { confirmRemoval = false }) { Text("Keep") } },
-        confirmButton = { NikTvPrimaryActionButton(onClick = { confirmRemoval = false; onRemoveDownload() }) { Text("Remove") } }
+        confirmButton = { NikTvPrimaryActionButton(onClick = { confirmRemoval = false; onRemoveDownload?.invoke() }) { Text("Remove") } }
     )
 }

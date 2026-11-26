@@ -2765,7 +2765,6 @@ fun PlayerScreen(
                                 )
                             }
                         }
-                        PlayerDownloadedDataIndicator()
                         if (playbackError == null && !startupTimedOut) {
                             Row(
                                 Modifier
@@ -4106,6 +4105,7 @@ internal fun PlaybackProgressBar(
     bufferedPosition: Long? = null,
     externalSeekRevision: Int = 0
 ) {
+    val download = rememberPlayerDownloadedData()
     val safeDuration = duration.coerceAtLeast(0L)
     var preview by remember(mediaKey, externalSeekRevision) { mutableStateOf<Long?>(null) }
     var pendingSeek by remember(mediaKey, externalSeekRevision) { mutableStateOf<Long?>(null) }
@@ -4203,7 +4203,9 @@ internal fun PlaybackProgressBar(
             Modifier.fillMaxWidth().padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Spacer(Modifier.weight(1f))
+            Box(Modifier.weight(1f).padding(end = 8.dp)) {
+                if (download != null) PlayerDownloadedDataLabel(download)
+            }
             Text(
                 "−$remaining  /  $total",
                 color = Color.White.copy(alpha = 0.70f),
@@ -4260,6 +4262,7 @@ internal fun PlaybackProgressBar(
                             .fillMaxWidth(fraction)
                             .background(MaterialTheme.colorScheme.primary)
                     )
+                    if (download != null && safeDuration > 0L) PlayerDownloadedTrackMarks(download, Modifier.matchParentSize())
                 }
             },
             colors = SliderDefaults.colors(

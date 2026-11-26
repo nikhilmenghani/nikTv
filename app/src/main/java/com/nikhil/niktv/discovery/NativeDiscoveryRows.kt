@@ -41,6 +41,7 @@ internal data class NativeDiscoveryItem(
     val source: DiscoveryTileSource? = null,
     val fitArtwork: Boolean = false,
     val onVisible: (() -> Unit)? = null,
+    val artworkPending: Boolean = false,
 )
 internal data class NativeDiscoveryRow(val id: String, val title: String, val items: List<NativeDiscoveryItem>, val isHero: Boolean = false,
     val actionLabel: String? = null, val action: (() -> Unit)? = null, val viewAll: (() -> Unit)? = null,

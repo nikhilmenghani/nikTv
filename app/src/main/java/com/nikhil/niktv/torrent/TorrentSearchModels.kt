@@ -8,6 +8,39 @@ import java.net.URLEncoder
 import java.text.Normalizer
 import java.util.Locale
 
+internal enum class TorrentContentKind(val label: String, val media: Boolean) {
+    VIDEO("Video", true), AUDIO("Audio", true), FILE("File", false)
+}
+
+internal enum class TorrentSearchScope(val label: String, val apiCategory: String) {
+    ALL("All files", "0"), MOVIES("Movies", "201,207"), SERIES("Series", "205,208")
+}
+
+internal fun torrentSearchScope(surface: com.nikhil.niktv.model.DashboardSurface) = when (surface) {
+    com.nikhil.niktv.model.DashboardSurface.MOVIES -> TorrentSearchScope.MOVIES
+    com.nikhil.niktv.model.DashboardSurface.SERIES -> TorrentSearchScope.SERIES
+    else -> TorrentSearchScope.ALL
+}
+
+internal val TORRENT_VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mkv", "webm", "avi", "mov", "ts", "m2ts")
+internal val TORRENT_AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "flac", "ogg", "opus", "wav")
+internal fun torrentMediaFile(name: String): Boolean =
+    name.substringAfterLast('.', "").lowercase(Locale.ROOT) in TORRENT_VIDEO_EXTENSIONS + TORRENT_AUDIO_EXTENSIONS
+
+internal fun torrentContentKind(title: String, category: String?): TorrentContentKind {
+    val extension = Regex("(?i)\\.([a-z0-9]{2,8})(?:\\s|$|\\])").findAll(title).lastOrNull()?.groupValues?.get(1)?.lowercase(Locale.ROOT)
+    if (extension in TORRENT_VIDEO_EXTENSIONS) return TorrentContentKind.VIDEO
+    if (extension in TORRENT_AUDIO_EXTENSIONS) return TorrentContentKind.AUDIO
+    if (extension in setOf("pdf", "epub", "mobi", "zip", "rar", "7z", "iso", "exe", "apk", "dmg", "txt", "cbz", "cbr",
+            "srt", "vtt", "ass", "ssa", "sub", "csv", "json", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "deb", "rpm", "msi")) return TorrentContentKind.FILE
+    val number = category?.toIntOrNull()
+    if ((number != null && number in 200..299) || category?.contains(Regex("(?i)video|movie|television|tv")) == true) return TorrentContentKind.VIDEO
+    if ((number != null && number in 100..199) || category?.contains(Regex("(?i)audio|music")) == true) return TorrentContentKind.AUDIO
+    if (number != null && number >= 300) return TorrentContentKind.FILE
+    if (Regex("(?i)(?:s\\d{1,3}e\\d{1,5}|\\b(?:480|720|1080|2160)p\\b|\\b(?:hdtv|pdtv|webrip|web-dl|bluray|bdrip|dvdrip|x264|x265)\\b)").containsMatchIn(title)) return TorrentContentKind.VIDEO
+    return TorrentContentKind.FILE
+}
+
 /** Search listings are hints; the engine still verifies metadata, files and actual peer availability. */
 internal data class TorrentSource(
     val infoHash: String,
@@ -18,7 +51,8 @@ internal data class TorrentSource(
     val seeders: Int,
     val quality: String?,
     val provider: String,
-    val seasonPack: Boolean = false
+    val seasonPack: Boolean = false,
+    val kind: TorrentContentKind = TorrentContentKind.VIDEO
 ) {
     val source: String get() = magnetUri.ifBlank { torrentUrl.orEmpty() }
     val playable: Boolean get() = seeders > 0 && source.isNotBlank()
@@ -116,7 +150,9 @@ internal fun matchingTorrentMagnet(value: String?, hash: String): String? = runC
     value.takeIf { hashes == listOf("urn:btih:$hash") }
 }.getOrNull()
 
-internal fun mergeTorrentSources(rows: List<TorrentSource>): List<TorrentSource> = rows.filter(TorrentSource::playable)
+internal fun mergeTorrentSources(rows: List<TorrentSource>, requireSeeders: Boolean = true): List<TorrentSource> = rows.filter {
+    it.source.isNotBlank() && if (requireSeeders) it.seeders > 0 else it.seeders >= 0
+}
     .groupBy(TorrentSource::infoHash).values.map { duplicates ->
         val best = duplicates.maxBy(TorrentSource::seeders)
         best.copy(torrentUrl = best.torrentUrl ?: duplicates.firstNotNullOfOrNull { it.torrentUrl },

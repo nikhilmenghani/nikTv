@@ -35,6 +35,52 @@ class TorrentOfflineDownloadDeviceTest {
         fail(label)
     }
 
+    @Test fun genericFileDownloadsWithoutPlayerAndRemainsPrivateToItsOwner() = runBlocking {
+        val context = ins.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val args = InstrumentationRegistry.getArguments()
+        val port = args.getString("torrent_peer_port")?.toIntOrNull()
+        assumeTrue("Controlled legal native peer required", port != null)
+        val owner = UserScope("fixture-account", "generic-file-profile")
+        val descriptor = File(context.filesDir, "torrent-fixture.torrent")
+        val settings = TorrentEngineOptions(discovery = false, peerHost = "127.0.0.1", peerPort = port!!,
+            allowLocalDescriptor = true, allowDownloadFiles = true)
+        val probe = TorrentStreamEngine(context, settings)
+        val file = try {
+            val selected = probe.prepare(descriptor.toURI().toString()).first { it.name.endsWith("torrent-proof-long.en.srt") }
+            assertFalse(selected.media)
+            try { probe.play(selected.index); fail("Nonmedia must never enter the player") }
+            catch (_: IllegalArgumentException) { }
+            selected
+        } finally { probe.closeAndAwait() }
+        var requestId: String? = null
+        try {
+            TorrentDownloadWorker.regressionOptions = settings
+            val handle = TorrentOfflineDownloads.enqueue(context, "generic-subtitle", "Legal subtitle file",
+                descriptor.toURI().toString(), file.index, file.name, file.sizeBytes, owner, genericFile = true)
+            requestId = handle.requestId
+            assertEquals("SRT", handle.fileType)
+            await("Native worker finishes the generic file", 90_000) {
+                val info = TorrentOfflineDownloads.info(context, handle.requestId)
+                check(info.status != OfflineDownloadStatus.FAILED) { "Generic file download failed" }
+                info.status == OfflineDownloadStatus.COMPLETE
+            }
+            assertNull("Generic files have no player URI", TorrentOfflineDownloads.playableUri(context, handle.requestId))
+            val job = TorrentOfflineDownloads.files(context, owner).single { it.id == handle.requestId.removePrefix(TorrentOfflineDownloads.PREFIX) }
+            assertTrue(job.genericFile)
+            assertTrue(TorrentOfflineDownloads.files(context, UserScope("fixture-account", "other-profile")).none { it.id == job.id })
+            val uri = checkNotNull(TorrentOfflineDownloads.fileUri(context, job))
+            assertEquals("content", uri.scheme)
+            val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            assertEquals(file.sizeBytes, bytes.size.toLong())
+            assertEquals(args.getString("torrent_subtitle_srt_sha256"),
+                MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
+        } finally {
+            TorrentDownloadWorker.regressionOptions = null
+            requestId?.let { TorrentOfflineDownloads.remove(context, it) }
+        }
+    }
+
     @Test fun workerCompletesMovesAndReopensSeekableOfflineVideo() = runBlocking {
         val context = ins.targetContext
         check(context.packageName.endsWith(".regression"))

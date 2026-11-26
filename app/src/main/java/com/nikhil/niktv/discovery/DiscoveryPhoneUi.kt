@@ -43,6 +43,7 @@ import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.ui.tileFocusOutline
 import com.nikhil.niktv.ui.usesShortWideLayout
+import com.nikhil.niktv.ui.initialFocusEntry
 
 internal enum class DiscoveryPhoneDestination(val title: String) {
     HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), PROVIDERS("Portals"), LIBRARY("My List")
@@ -80,21 +81,55 @@ internal fun detailDiscoveryHeroHeight(portraitPhone: Boolean, television: Boole
     else trialHeroFrameHeight(trialHeroBaseHeight(screenHeight, true, television) + 48f, density.fontScale).dp
 }
 
+@Composable
+internal fun DiscoveryCompactPhoneSeriesHero(card: DiscoveryCard, height: Dp, reduceMotion: Boolean,
+    toolbar: @Composable () -> Unit, actions: @Composable ColumnScope.() -> Unit) {
+    CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalHeroActionSizing provides true) {
+        Box(Modifier.fillMaxWidth()) {
+            Box(Modifier.matchParentSize()) { DiscoveryBackdrop(card, reduceMotion, Alignment.TopCenter, shaded = false) }
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                0f to Color(0x99090B10), .30f to Color.Transparent, .58f to Color(0x33090B10), 1f to Color(0xFF090B10))))
+            Column(Modifier.fillMaxWidth().heightIn(min = height), verticalArrangement = Arrangement.SpaceBetween) {
+                toolbar()
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(card.title, color = Color.White, style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    discoveryDetailMetadata(card).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    actions()
+                }
+            }
+        }
+    }
+}
+
 /** Geometry is device-width based; text scale never changes artwork ratios. */
 internal fun phoneDiscoveryPosterWidth(widthDp: Int) = ((widthDp - 48f) / 2.25f).coerceIn(100f, 176f)
 internal fun usesDiscoveryPhoneLayout(smallestWidthDp: Int, television: Boolean) = smallestWidthDp < 600 && !television
 
 @Composable
 internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?,
-    select: (DiscoveryPhoneDestination) -> Unit, modifier: Modifier = Modifier) {
+    select: (DiscoveryPhoneDestination) -> Unit, modifier: Modifier = Modifier,
+    showLiveTv: Boolean = true, portalTrigger: FocusRequester? = null,
+    tabModifier: (DiscoveryPhoneDestination) -> Modifier = { Modifier }) {
     var portalsOpen by remember { mutableStateOf(false) }
     val portals = LocalDirectPortalActions.current
     LaunchedEffect(portals.size) { if (portals.size <= 1) portalsOpen = false }
     val portalFocusReturn = LocalPortalFocusReturn.current
     val tabFocus = LocalDiscoveryPhoneTabFocus.current
+    val selectedPortal = remember { FocusRequester() }
+    fun closePortals() {
+        portalsOpen = false
+        if (portalTrigger != null) runCatching { portalTrigger.requestFocus() }
+    }
     PortalPhoneDock(modifier) {
-        (DiscoveryPhoneDestination.entries.filterNot { it == DiscoveryPhoneDestination.PROVIDERS } +
-            if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination ->
+        val tabs = DiscoveryPhoneDestination.entries.filter {
+            it != DiscoveryPhoneDestination.PROVIDERS && (showLiveTv || it != DiscoveryPhoneDestination.LIVE)
+        }
+        (tabs + if (portals.size > 1) listOf(DiscoveryPhoneDestination.PROVIDERS) else emptyList()).forEach { destination ->
             val active = destination == selected
             var focused by remember(destination) { mutableStateOf(false) }
             val icon = when (destination) {
@@ -108,6 +143,9 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
             Box(Modifier.weight(1f)) {
             Surface(onClick = { if (destination == DiscoveryPhoneDestination.PROVIDERS) portalsOpen = true else select(destination) },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                    .then(tabModifier(destination))
+                    .then(if (destination == DiscoveryPhoneDestination.PROVIDERS && portalTrigger != null)
+                        Modifier.focusRequester(portalTrigger) else Modifier)
                     .then(tabFocus[destination]?.let { Modifier.focusRequester(it) } ?: Modifier)
                     .onFocusChanged { focused = it.isFocused }
                     .semantics { this.selected = active; contentDescription = destination.title
@@ -129,15 +167,20 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                 }
             }
             if (destination == DiscoveryPhoneDestination.PROVIDERS) DropdownMenu(
-                expanded = portalsOpen, onDismissRequest = { portalsOpen = false },
+                expanded = portalsOpen, onDismissRequest = ::closePortals,
+                modifier = if (portalTrigger != null) Modifier.initialFocusEntry(selectedPortal) else Modifier,
                 containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
                 portals.forEach { portal ->
                     com.nikhil.niktv.ui.NikDropdownMenuItem(
                         text = { Text(portal.name) },
                         leadingIcon = { Icon(portal.icon, null) },
                         trailingIcon = if (portal.selected) ({ Icon(Icons.Default.Check, "Selected portal") }) else null,
-                        modifier = Modifier.semantics { this.selected = portal.selected },
-                        onClick = { portalsOpen = false; portalFocusReturn.cancel(); portal.open() })
+                        modifier = Modifier.then(if (portalTrigger != null && portal.selected)
+                            Modifier.focusRequester(selectedPortal) else Modifier).semantics { this.selected = portal.selected },
+                        onClick = {
+                            closePortals()
+                            if (portalTrigger == null || !portal.selected) { portalFocusReturn.cancel(); portal.open() }
+                        })
                 }
             }
             }
@@ -199,17 +242,21 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     val dragThreshold = with(LocalDensity.current) { 56.dp.toPx() }
     val portraitPoster = card?.backdrop.isNullOrBlank()
     val picture = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, if (portraitPoster) 780 else 1280)
-    var heroBounds by remember(picture) { mutableStateOf(Rect.Zero) }
-    val glassSource = MobileGlassSource(picture, heroBounds, fitArtwork,
-        (compactDetail && !portraitPoster) || artworkAlignment == Alignment.TopCenter, false)
+    val heroBounds = remember(picture) { mutableStateOf(Rect.Zero) }
+    // Window coordinates change on every native scroll frame. Read them while
+    // drawing glass, without rebuilding the hero and its measured controls.
+    val movingBounds = remember(heroBounds) { { heroBounds.value } }
+    val glassSource = MobileGlassSource(picture, Rect.Zero, fitArtwork,
+        (compactDetail && !portraitPoster) || artworkAlignment == Alignment.TopCenter, false, movingBounds)
     val publishGlass = LocalPublishMobileGlassSource.current
     LaunchedEffect(glassSource) { publishGlass(glassSource) }
     DisposableEffect(publishGlass) { onDispose { publishGlass(null) } }
     CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalMobileGlassArtwork provides picture,
-        LocalMobileGlassBounds provides heroBounds, LocalMobileGlassFit provides glassSource.fit,
+        LocalMobileGlassBounds provides Rect.Zero, LocalMobileGlassMovingBounds provides movingBounds,
+        LocalMobileGlassFit provides glassSource.fit,
         LocalMobileGlassTopAligned provides glassSource.topAligned, LocalMobileGlassFillWidth provides glassSource.fillWidth) {
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds = Rect(it.positionInWindow(), it.size.toSize()) }) {
+        Box(Modifier.fillMaxWidth().heightIn(min = height + navigationInset).onGloballyPositioned { heroBounds.value = Rect(it.positionInWindow(), it.size.toSize()) }) {
             Crossfade(picture, modifier = Modifier.matchParentSize(), animationSpec = tween(if (reduceMotion) 0 else 250), label = "phoneHeroArtwork") { url ->
                 AsyncImage(ImageRequest.Builder(context).data(url).size(if (portraitPoster) 780 else 1280, if (portraitPoster) 1170 else 720)
                     .apply { if (detail && !shadeArtworkBounds) transformations(DiscoveryPhoneBackdropTransformation()) }.crossfade(false).build(), null,
