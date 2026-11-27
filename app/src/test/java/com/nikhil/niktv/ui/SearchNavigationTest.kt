@@ -5,6 +5,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SearchNavigationTest {
+    @Test fun closingSearchReopensBlankWithoutLosingTheUnderlyingPage() {
+        val origin = NikTvState(savedProfile = profile, discoverySurface = DashboardSurface.MOVIES,
+            searchOpen = true, searchQuery = "avengers", searchResults = listOf(result),
+            searchPage = 3, searchHasMore = true, searchServerLoading = true,
+            searchActivityDetail = "Checking page 3", items = listOf(saved))
+        val reopened = origin.closeSearchNavigation().openSearchNavigation()
+        assertEquals("", reopened.searchQuery)
+        assertTrue(reopened.searchResults.isEmpty())
+        assertFalse(reopened.searchServerLoading)
+        assertFalse(reopened.searchHasMore)
+        assertNull(reopened.searchActivityDetail)
+        assertEquals(DashboardSurface.MOVIES, reopened.discoverySurface)
+        assertEquals(listOf(saved), reopened.items)
+    }
     @Test fun movieContainerBackRestoresMovieCategoryAndFreshProgressWithoutOpeningSearch() {
         val movie = MediaItem("event", "Event", null, "container")
         val category = Category("sports", "Sports", CatalogType.MOVIES)

@@ -123,7 +123,6 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
     val episodesScroll = rememberLazyGridState()
     val sourcesScroll = rememberLazyListState()
     val downloadsScroll = rememberLazyListState()
-    val filesScroll = rememberLazyListState()
     val transferOpen = state.transfer != null || state.files.isNotEmpty()
     val browsingFeeds = state.title == null && state.browsingFeeds
     val homeHeroes = remember(state.homeData.shelves, torrentCurrentDate()) { state.homeData.heroes }
@@ -244,7 +243,6 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         runCatching { requester("tmdb-categories").requestFocus() }
         categories = false
     }
-    LaunchedEffect(transferOpen) { if (transferOpen) filesScroll.requestScrollToItem(0) }
     LaunchedEffect(state.notice) {
         state.notice?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Short); model.dismissNotice() }
     }
@@ -800,22 +798,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
     }
-    if (transferOpen) {
-        val cancelFocus = remember { FocusRequester() }
-        Dialog(onDismissRequest = model::cancelTransfer, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.padding(horizontal = 20.dp).widthIn(max = 640.dp).fillMaxWidth()
-                .height((configuration.screenHeightDp * .72f).coerceIn(180f, 520f).dp),
-                shape = RoundedCornerShape(16.dp), color = Color(0xF5171B24), border = BorderStroke(1.dp, Color.White.copy(alpha = .16f))) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(if (state.transferPurpose == TorrentTransferPurpose.DOWNLOAD) {
-                        if (state.files.size > 1 && state.loading == null) "Choose file to download" else "Preparing download"
-                    } else if (state.files.size > 1 && state.loading == null) "Choose video" else "Preparing stream", style = MaterialTheme.typography.titleMedium)
-                    TorrentTransferPanel(state, model, Modifier.weight(1f), cancelFocus, filesScroll)
-                }
-            }
-            LaunchedEffect(Unit) { withFrameNanos { }; runCatching { cancelFocus.requestFocus() } }
-        }
-    }
+    if (transferOpen) TorrentPreparationDialog(state, model::cancelTransfer, model::retryTransfer, model::file)
     if (categories) TorrentCategoriesDialog(state.surface, state.homeCollection?.section, ::closeCategories,
         customize = { categories = false; configure = true }) { section ->
         closeCategories()
@@ -1174,34 +1157,6 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         TorrentButton(if (inList) "Remove from My List" else "Add to My List", if (inList) Icons.Default.Check else Icons.Default.Add,
             Modifier.size(40.dp), iconOnly = true, onClick = toggleSaved)
         TorrentButton("Open magnet", Icons.Default.Link, Modifier.size(40.dp).then(manualModifier), iconOnly = true, onClick = onOpenMagnet)
-    }
-}
-
-@Composable private fun TorrentTransferPanel(state: TorrentPortalState, model: TorrentPortalViewModel, modifier: Modifier,
-    cancelFocus: FocusRequester, filesScroll: androidx.compose.foundation.lazy.LazyListState) {
-    val transfer = state.transfer
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (state.loading != null) TorrentLoading(transfer?.stage ?: state.loading!!)
-        transfer?.let {
-            Text("${torrentSize(it.downloadedBytes)} / ${torrentSize(it.totalBytes)} · ${torrentSize(it.downloadBytesPerSecond)}/s · ${it.peers} peers", fontSize = 12.sp, color = Color.White.copy(alpha = .7f))
-            if (it.totalBytes > 0) LinearProgressIndicator(progress = { (it.downloadedBytes.toFloat() / it.totalBytes).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-            it.storageWarning?.let { warning -> Text(warning, fontSize = 11.sp, lineHeight = 15.sp, color = Color(0xFFFFD79A)) }
-        }
-        (state.error ?: transfer?.error)?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TorrentButton("Cancel", Icons.Default.Close, Modifier.height(40.dp).focusRequester(cancelFocus), onClick = model::cancelTransfer)
-            if (state.error != null || transfer?.error != null) TorrentButton("Retry", Icons.Default.Refresh, Modifier.height(40.dp), onClick = model::retryTransfer)
-        }
-        if (state.files.size > 1 && state.loading == null) Text(
-            if (state.transferPurpose == TorrentTransferPurpose.DOWNLOAD) "Choose a file to download" else "Choose the media to play",
-            style = MaterialTheme.typography.titleSmall)
-        LazyColumn(Modifier.weight(1f), state = filesScroll, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.files, key = { it.index }) { file ->
-                TorrentListCard(file.name.substringAfterLast('/'), torrentSize(file.sizeBytes),
-                    actionIcon = if (state.transferPurpose == TorrentTransferPurpose.DOWNLOAD) Icons.Default.Download else Icons.Default.PlayArrow,
-                    onClick = { model.file(file) })
-            }
-        }
     }
 }
 

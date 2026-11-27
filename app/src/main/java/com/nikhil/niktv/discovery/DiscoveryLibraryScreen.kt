@@ -63,7 +63,7 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
         if (focusNavigationOnEntry && remote && !trialCollection && state.modernIptvCategory == null &&
             (libraryLabel == null || sharedHeader?.focusedTab != libraryLabel)) repeat(8) {
             withFrameNanos { }
-            if (runCatching { (phoneTab ?: tab).requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            if (runCatching { (phoneTab ?: sharedHeader?.entryRequester(tab) ?: tab).requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
     }
     Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {

@@ -294,7 +294,7 @@ private fun DiscoveryPreviewContent(
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer) }
     }
     // The IPTV movie dialog covers this composition without stopping its lifecycle.
-    val presentationActive = foreground && app.providerMovieDetails == null && !parentModalOpen
+    val presentationActive = foreground && app.providerMovieDetails == null && !parentModalOpen && !LocalSuppressDiscoveryHeader.current
     LaunchedEffect(profile, surface) { vm.bind(profile, surface, app.tmdbSectionsBySurface[surface], experiment = experiment) }
     DisposableEffect(vm, profile, surface) {
         vm.resume(profile, surface)
@@ -937,10 +937,11 @@ private fun DiscoveryPreviewContent(
                             // focusing only the Compose/native bridge leaves the next arrow
                             // free to enter that bar. Confirm focus on the mounted tab even if the
                             // movable header reported focus just before it changed parents.
-                            if (!menuEntry && restoreNativeSelection && recycled) {
+                            if (!menuEntry && restoreNativeSelection && recycled && sharedHeader?.focusedTab != "Search") {
                                 if (nativeFocusRestorer.restore()) return@LaunchedEffect
                             } else {
-                                val target = if (menuEntry) phoneTabFocus ?: tabRequester else playRequester
+                                val target = if (sharedHeader?.focusedTab == "Search") sharedHeader.searchRequester
+                                    else if (menuEntry) phoneTabFocus ?: tabRequester else playRequester
                                 if (runCatching { target.requestFocus() }.getOrDefault(false)) {
                                     if (menuEntry && sharesLandingHeader) {
                                         withFrameNanos { }
@@ -1051,7 +1052,7 @@ private fun DiscoveryPreviewContent(
                         var readinessFrames = 0
                         while (!hostView.hasWindowFocus() && !focusRestoration.canceled && readinessFrames++ < 60) withFrameNanos { }
                         if (focusRestoration.canceled || !ownsFocusRoute()) return
-                        val key = focusRestoration.target
+                        val key = focusRestoration.target.takeUnless { state.detail == null && sharedHeader?.focusedTab == "Search" }
                         // An attached return tile can focus before the first draw; only
                         // new header/detail entry needs the extra composition frames.
                         if (key == null) { withFrameNanos { }; withFrameNanos { } }
@@ -1065,7 +1066,7 @@ private fun DiscoveryPreviewContent(
                         repeat(20) { attempt ->
                             if (focusRestoration.canceled || !ownsFocusRoute()) return
                             val focused = if (state.detail == null && portalFocusReturn.waiting) portalFocusReturn.restore()
-                                else runCatching { if (state.detail == null) tabRequester.requestFocus() else playRequester.requestFocus() }.getOrDefault(false)
+                                else runCatching { if (state.detail == null) (sharedHeader?.entryRequester(tabRequester) ?: tabRequester).requestFocus() else playRequester.requestFocus() }.getOrDefault(false)
                             if (attempt == 0 || attempt == 19 || focused) navigationTrace?.invoke("entry-focus surface=$surface nav=${app.discoveryNavigationId} handled=$handledNavigationId menuEntry=$menuEntry attempt=$attempt target=${if (state.detail == null) "tab" else "play"} focused=$focused first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset}")
                             if (focused) {
                                 // A restored row can briefly take focus while the lazy header
@@ -1875,8 +1876,9 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     val headerSizing = LocalDiscoveryHeaderActionSizing.current
     val detailSize = detailActionSize()
     val shortWide = LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))
+    val compactMenu = headerSizing && LocalUnifiedPortalMenu.current
     val headerSize = discoveryHeaderActionSize()
-    val contentInset = if (headerSizing) if (shortWide) 8.dp else 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
+    val contentInset = if (compactMenu) if (shortWide) 8.dp else 10.dp else if (headerSizing) if (shortWide) 8.dp else 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
     val fixedIcon = iconOnly || (television && collapsible)
     Box {
     DiscoveryMobileGlassContainer(focused = focused) {
@@ -1893,9 +1895,11 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
             focused = it.isFocused
             if (it.isFocused) onFocus()
         },
-        shape = RoundedCornerShape(10.dp), shadowElevation = 0.dp, tonalElevation = 0.dp, color = containerColor ?: if (selected) Accent else if (focused) Color.White
-            else if (LocalMobileGlassEnabled.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
-        border = if (LocalMobileGlassEnabled.current) null else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
+        shape = RoundedCornerShape(10.dp), shadowElevation = 0.dp, tonalElevation = 0.dp, color = containerColor ?: if (selected) { if (LocalUnifiedPortalMenu.current) Color.White.copy(alpha = .14f) else Accent } else if (focused) Color.White
+            else if (LocalMobileGlassEnabled.current || LocalUnifiedPortalMenu.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
+        border = if (LocalMobileGlassEnabled.current) null
+            else if (LocalUnifiedPortalMenu.current) BorderStroke(2.dp, if (focused) Color.White else Color.Transparent)
+            else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
         contentColor = if (focused && !selected && containerColor == null) Color.Black else Color.White) {
         Row(Modifier.then(if (fixedIcon) Modifier.fillMaxSize() else Modifier)
             .padding(start = if (fixedIcon) 0.dp else contentInset, end = if (fixedIcon) 0.dp else if (headerSizing || collapsible) contentInset else trailingPadding,

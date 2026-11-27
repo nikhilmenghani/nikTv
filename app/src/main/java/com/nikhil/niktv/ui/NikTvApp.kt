@@ -901,6 +901,7 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
                     })
             }
             state.error?.let { error ->
+                val diagnosticsText by rememberPortalDiagnosticsText(error, vm.portalDiagnosticsRetryAtMillis(error))
                 val authorizationExpired = error.isAuthorizationFailureText()
                 var showDiagnostics by remember(error) { mutableStateOf(!authorizationExpired) }
                 val reauthenticateRequester = remember(error) { FocusRequester() }
@@ -940,14 +941,14 @@ private fun NikTvAppContent(vm: NikTvViewModel, checkingForRequiredUpdate: Boole
                             }
                             if (showDiagnostics) SelectionContainer {
                                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                                    Text(error, style = MaterialTheme.typography.bodySmall)
+                                    Text(diagnosticsText, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             PortalDiagnosticsActions(authorizationExpired, state.reauthenticating, showDiagnostics,
                                 reauthenticateRequester, diagnosticsCloseRequester,
                                 close = vm::dismissError, reauthenticate = vm::reauthenticate,
-                                copy = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) })
+                                copy = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", diagnosticsText)) })
                         }
                     }
                 }

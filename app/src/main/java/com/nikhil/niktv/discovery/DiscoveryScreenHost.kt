@@ -396,7 +396,7 @@ internal fun DiscoveryScreenHost(
 
     // Determine the current content to show in the main pane
     @Composable
-    fun MainContent(modifier: Modifier = Modifier) {
+    fun MainContent(modifier: Modifier = Modifier, searchUnderlay: Boolean = false) {
         Box(modifier) {
             when {
                 state.offlineDownloadsOpen -> {
@@ -431,7 +431,7 @@ internal fun DiscoveryScreenHost(
                     setBrowseLayout = setBrowseLayout,
                     openCategoryManager = openCategoryManager
                 )
-                state.searchOpen -> DiscoverySearchContent(
+                state.searchOpen && !searchUnderlay -> DiscoverySearchContent(
                     state = state,
                     close = closeSearch,
                     setType = setSearchType,
@@ -481,10 +481,10 @@ internal fun DiscoveryScreenHost(
                     playCard = { card -> if (card.series) openTrendingSeries(com.nikhil.niktv.data.TrendingSeries(card.show()))
                         else openTrendingMovie(com.nikhil.niktv.data.TrendingMovie(card.movie())) },
                     detailVisibilityChanged = { phoneDetailOpen = it }) }
-                previewVisible -> browseStateHolder.SaveableStateProvider("discovery2:${state.savedProfile?.cacheKey()}:${state.discoverySurface}:${state.discoveryExperiment}") {
+                (previewVisible || searchUnderlay && state.discoverySurface != null) -> browseStateHolder.SaveableStateProvider("discovery2:${state.savedProfile?.cacheKey()}:${state.discoverySurface}:${state.discoveryExperiment}") {
                     CompositionLocalProvider(LocalDiscoveryExperiment provides state.discoveryExperiment) {
                     com.nikhil.niktv.discovery.DiscoveryPreviewScreen(
-                    app = state, surface = requireNotNull(state.discoverySurface), selectSurface = openTrial,
+                    app = if (searchUnderlay) state.copy(searchOpen = false) else state, surface = requireNotNull(state.discoverySurface), selectSurface = openTrial,
                     exit = {
                         if (state.discoverySurface == DashboardSurface.HOME) exitConfirmationOpen = true
                         else landingHome()
@@ -575,7 +575,8 @@ internal fun DiscoveryScreenHost(
                 },
                 chooseMovie = selectTmdbMovieMatch, chooseSeries = selectTmdbSeriesMatch)
             else if (discoverySearch) com.nikhil.niktv.discovery.DiscoverySearchScreen(
-                state, back = closeSearch, select = openTrial, navigate = navigateDiscovery
+                state, back = closeSearch, select = openTrial, navigate = navigateDiscovery,
+                underlay = { MainContent(Modifier.fillMaxSize(), searchUnderlay = true) }
             ) { MainContent(Modifier.fillMaxSize()) }
             else if (discoveryLibrary != null) com.nikhil.niktv.discovery.DiscoveryLibraryScreen(
                 state, discoveryLibrary,

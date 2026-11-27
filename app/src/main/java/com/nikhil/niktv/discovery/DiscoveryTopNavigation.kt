@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -49,7 +51,7 @@ import java.util.Date
 @Composable
 internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     surface: DashboardSurface, navigate: (String) -> Unit, customize: (() -> Unit)?,
-    categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
+    categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}, modifier: Modifier = Modifier, onFocus: () -> Unit = {}) {
     val openLanPlayback = com.nikhil.niktv.ui.LocalOpenLanPlayback.current
     val configure = LocalConfigureProviderDiscovery.current
     val isExperiment = LocalDiscoveryExperiment.current
@@ -59,7 +61,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     var categoryTrigger by remember { mutableIntStateOf(0) }
     if ((phone || isExperiment) && surface != DashboardSurface.HOME && options?.live != true) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
-        PortalOptionsButton("Options") { change(true) }
+        PortalOptionsButton("Options", modifier, onFocus = onFocus) { change(true) }
         PortalOptionsMenu(expanded, { change(false) }) {
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); configure(CatalogType.LIVE_TV) })
@@ -74,7 +76,15 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
 }
 
 internal class SharedDiscoveryHeader {
+    var menuWidth by mutableStateOf<androidx.compose.ui.unit.Dp?>(null)
     var focusedTab: String? = null
+    val focusTargets = mutableMapOf<String, FocusRequester>()
+    val searchRequester = FocusRequester()
+    val closeSearchRequester = FocusRequester()
+    var searchActivation by mutableIntStateOf(0)
+    var consumedSearchActivation = 0
+    fun entryRequester(fallback: FocusRequester): FocusRequester =
+        if (focusedTab == "Search") searchRequester else focusTargets[focusedTab] ?: fallback
     val content = movableContentOf<DiscoveryHeaderContent> { header ->
         with(header) {
             DiscoveryTopNavigationLayout(surface, profile, tabRequester, playRequester, back, select, navigate,
@@ -85,6 +95,9 @@ internal class SharedDiscoveryHeader {
 }
 
 internal val LocalSharedDiscoveryHeader = staticCompositionLocalOf<SharedDiscoveryHeader?> { null }
+internal val LocalInlineSearchQuery = staticCompositionLocalOf<(@Composable () -> Unit)?> { null }
+internal val LocalInlineSearchClose = staticCompositionLocalOf<(() -> Unit)?> { null }
+internal val LocalInlineSearchProgress = staticCompositionLocalOf<Float?> { null }
 
 /** Selection semantics and focus are immediate. Only the small drawn mark animates. */
 @Composable
@@ -125,6 +138,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
     library: DiscoveryLibraryDestination? = null, searchActive: Boolean = false, shareAcrossTabs: Boolean = false) {
+    if (LocalSuppressDiscoveryHeader.current) { Spacer(Modifier.height(80.dp)); return }
     val shared = LocalSharedDiscoveryHeader.current.takeIf { shareAcrossTabs }
     if (shared != null) shared.content(DiscoveryHeaderContent(surface, profile, tabRequester, playRequester,
         back, select, navigate, headerFocus, menu, changeMenu, customize,
@@ -146,19 +160,59 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
     val experiment = LocalDiscoveryExperiment.current
     val tabs = rememberScrollState()
     val tabTargets = remember { List(trialSurfaces.size + 2) { FocusRequester() } }
-    PortalWideHeader(profile, { navigate("Profile") }, Modifier.discoveryHeaderFocusEntry(tabRequester)) {
-        DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false, onClick = back)
+    val query = LocalInlineSearchQuery.current.takeIf { searchActive }
+    var menuVisible by remember { mutableStateOf(query == null) }
+    LaunchedEffect(query != null) { menuVisible = query == null }
+    val menuReveal = animateFloatAsState(if (menuVisible) 1f else 0f, tween(180), label = "menuReturnReveal")
+    val searchReveal = LocalInlineSearchProgress.current ?: 1f
+    val searchOwner = LocalSharedDiscoveryHeader.current
+    val stableSearch = searchOwner?.searchRequester ?: remember { FocusRequester() }
+    val backTarget = remember { FocusRequester() }
+    val optionsTarget = remember { FocusRequester() }
+    searchOwner?.focusTargets?.apply {
+        put("Back", backTarget); put("Options", optionsTarget)
+        (trialSurfaces.map { it.trialTitle() } + listOf("Live TV", "My List")).forEachIndexed { index, label -> put(label, tabTargets[index]) }
+    }
+    LaunchedEffect(query == null) {
+        // The movable header crosses the search shell. Restore its surviving
+        // origin after attachment, without entering through Back or Home.
+        if (query == null && searchOwner?.focusedTab == "Search") stableSearch.requestFocus()
+    }
+    PortalWideHeader(profile, { navigate("Profile") },
+        Modifier.discoveryHeaderFocusEntry(if (searchOwner?.focusedTab == "Search") stableSearch else tabRequester,
+            enabled = query == null, selectedNow = { searchOwner?.entryRequester(tabRequester) ?: tabRequester }), unified = true, attachedSearch = query != null) {
+        if (query == null) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false,
+            modifier = Modifier.focusRequester(backTarget).focusProperties { right = stableSearch },
+            onFocus = { searchOwner?.focusedTab = "Back"; headerFocus() }, onClick = back)
         DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive, horizontalPadding = 10.dp,
-            focusHint = false,
-            modifier = if (searchActive) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
-            onFocus = headerFocus) { navigate("Search") }
+            focusHint = false, modifier = Modifier.focusRequester(stableSearch).focusProperties {
+                left = if (query == null) backTarget else FocusRequester.Cancel
+                right = if (query == null) tabTargets.first() else playRequester
+            },
+            onFocus = { shared?.focusedTab = "Search"; headerFocus() }) {
+                searchOwner?.let { it.searchActivation++ }
+                if (query == null) navigate("Search")
+            }
+        if (query != null) {
+            Box(Modifier.weight(1f).graphicsLayer { alpha = searchReveal; translationX = (1f - searchReveal) * 16.dp.toPx() }) { query() }
+        } else {
         StableTileFocusViewport {
-            Row(Modifier.weight(1f, fill = false).horizontalScroll(tabs).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+            Row(Modifier.weight(1f, fill = false).graphicsLayer { alpha = menuReveal.value; translationX = -(1f - menuReveal.value) * 16.dp.toPx() }.horizontalScroll(tabs).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 fun tabFocus(index: Int) = Modifier.focusRequester(tabTargets[index])
                     .focusProperties {
-                        start = tabTargets.getOrNull(index - 1) ?: FocusRequester.Default
-                        end = tabTargets.getOrNull(index + 1) ?: FocusRequester.Default
+                        start = tabTargets.getOrNull(index - 1) ?: stableSearch
+                        left = tabTargets.getOrNull(index - 1) ?: stableSearch
+                        end = tabTargets.getOrNull(index + 1) ?: optionsTarget
+                        right = tabTargets.getOrNull(index + 1) ?: optionsTarget
+                    }
+                    .onPreviewKeyEvent { event ->
+                        if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) {
+                            val target = if (event.key == Key.DirectionLeft) tabTargets.getOrNull(index - 1) ?: stableSearch
+                                else tabTargets.getOrNull(index + 1) ?: optionsTarget
+                            if (event.type == KeyEventType.KeyDown) target.requestFocus()
+                            true
+                        } else false
                     }
                 trialSurfaces.forEachIndexed { index, tab ->
                     val active = !searchActive && library == null && surface == tab
@@ -171,32 +225,33 @@ private fun DiscoveryTopNavigationLayout(surface: DashboardSurface, profile: Str
                     DiscoveryAction(tab.trialTitle(), icon, visualLabel = tab.trialTitle().removeSuffix(" 2"),
                         selected = active, horizontalPadding = 10.dp,
                         modifier = tabFocus(index).discoveryNavigationTab(tab.trialTitle(), active, shared, tabRequester, playRequester),
-                        onFocus = headerFocus) { if (experiment) navigate(tab.trialTitle()) else select(tab) }
+                        onFocus = headerFocus) { shared?.focusedTab = tab.trialTitle(); if (experiment) navigate(tab.trialTitle()) else select(tab) }
                 }
                 DiscoveryAction("Live TV", Icons.Default.LiveTv, selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 10.dp,
                     modifier = tabFocus(tabTargets.lastIndex - 1)
                         .discoveryNavigationTab("Live TV", library == DiscoveryLibraryDestination.LIVE_TV, shared, tabRequester, playRequester),
-                    onFocus = headerFocus) { navigate("Live TV") }
+                    onFocus = headerFocus) { shared?.focusedTab = "Live TV"; navigate("Live TV") }
                 DiscoveryAction("My List", Icons.Default.VideoLibrary, selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 10.dp,
                     modifier = tabFocus(tabTargets.lastIndex)
                         .discoveryNavigationTab("My List", library == DiscoveryLibraryDestination.MY_LIST, shared, tabRequester, playRequester),
-                    onFocus = headerFocus) { navigate("My List") }
+                    onFocus = headerFocus) { shared?.focusedTab = "My List"; navigate("My List") }
             }
         }
-        DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize)
+        DiscoveryBrowseMenu(menu, changeMenu, surface, navigate, customize,
+            modifier = Modifier.focusRequester(optionsTarget).focusProperties { left = tabTargets.last() },
+            onFocus = { searchOwner?.focusedTab = "Options"; headerFocus() })
+        }
     }
 }
 
 @Composable
 private fun Modifier.discoveryNavigationTab(label: String, active: Boolean, shared: SharedDiscoveryHeader?,
     tabRequester: FocusRequester, playRequester: FocusRequester): Modifier {
-    val inactiveRequester = remember { FocusRequester() }
     return semantics { contentDescription = label; selected = active; role = Role.Tab }
         .onFocusChanged { focus ->
             if (focus.isFocused) shared?.focusedTab = label
-            else if (shared?.focusedTab == label) shared.focusedTab = null
         }
-        .focusRequester(if (active) tabRequester else inactiveRequester)
+        .then(if (active) Modifier.focusRequester(tabRequester) else Modifier)
         .focusProperties { down = if (active) playRequester else FocusRequester.Default }
 }
 

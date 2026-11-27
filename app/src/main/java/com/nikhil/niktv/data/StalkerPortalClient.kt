@@ -142,10 +142,10 @@ class StalkerPortalClient(private val context: Context) {
                     throw java.io.IOException("Could not resolve the provider hostname. Check your internet connection or DNS, then retry. (${it.message})", it)
                 }
                 if (it is PortalRateLimitCooldownException) {
-                    error("Portal protection is active. Wait ${it.remainingSeconds} seconds before making another server request.")
+                    error("Portal protection is active. Wait ${providerSearchWaitLabel(it.remainingSeconds)} before making another server request.")
                 }
                 if (it is PortalHttpException && it.statusCode == 429) {
-                    error("The portal is temporarily rate-limiting requests. Wait ${it.retryAfterSeconds ?: 30} seconds, then try again once.")
+                    error("The portal is temporarily rate-limiting requests. Wait ${providerSearchWaitLabel(it.retryAfterSeconds ?: 30)}, then try again once.")
                 }
                 attempts += "${endpoint.pathForMessage()}: ${it.message}"
                 null
@@ -1031,7 +1031,7 @@ class StalkerPortalClient(private val context: Context) {
         minimumSpacingMillis = when (params["action"]) {
             "create_link" -> PLAYBACK_LINK_REQUEST_SPACING_MS
             "get_short_epg" -> GUIDE_REQUEST_SPACING_MS
-            else -> MIN_REQUEST_SPACING_MS
+            else -> if (!params["search"].isNullOrBlank()) SEARCH_REQUEST_SPACING_MS else MIN_REQUEST_SPACING_MS
         },
         checkAllowed = ::checkTrafficCooldown,
         onWait = onProviderWait
@@ -1200,6 +1200,8 @@ class StalkerPortalClient(private val context: Context) {
         }.distinct()
     }
 
+    internal fun cooldownDeadlineMillis(): Long? = trafficPrefs.getLong("blocked_until", 0L).takeIf { it > 0L }
+
     private fun checkTrafficCooldown() {
         val now = System.currentTimeMillis()
         val blockedUntil = trafficPrefs.getLong("blocked_until", 0L)
@@ -1212,7 +1214,7 @@ class StalkerPortalClient(private val context: Context) {
     private fun recordRateLimit(retryAfter: Long?) {
         val strikes = (trafficPrefs.getInt("rate_limit_strikes", 0) + 1).coerceAtMost(5)
         val exponential = 30L * (1L shl (strikes - 1))
-        val seconds = maxOf(retryAfter ?: 30L, exponential).coerceAtMost(30L * 60L)
+        val seconds = providerCooldownSeconds(retryAfter, strikes)
         val source = if (retryAfter != null && retryAfter >= exponential) "provider retry delay" else "NikTV retry backoff"
         Log.w("NikTvPortalTraffic", "HTTP 429: cooldownSeconds=$seconds source=$source providerRetrySeconds=$retryAfter")
         trafficPrefs.edit().putInt("rate_limit_strikes", strikes).putString("cooldown_source", source)
@@ -1456,6 +1458,7 @@ class StalkerPortalClient(private val context: Context) {
         private const val HW_VERSION = "1.7-BD-00"
         private const val API_SIGNATURE = "262"
         private const val MIN_REQUEST_SPACING_MS = 1_000L
+        private const val SEARCH_REQUEST_SPACING_MS = 3_000L
         private const val GUIDE_REQUEST_SPACING_MS = 250L
         private const val PLAYBACK_LINK_REQUEST_SPACING_MS = 150L
     }
@@ -1520,8 +1523,18 @@ private class PortalHttpException(
 ) : IllegalStateException(message)
 
 private class PortalRateLimitCooldownException(val remainingSeconds: Long, source: String? = null) :
-    IllegalStateException("Portal requests are paused for $remainingSeconds seconds" +
+    IllegalStateException("Portal requests are paused for ${providerSearchWaitLabel(remainingSeconds)}" +
         (source?.let { " ($it)" } ?: ""))
+
+internal fun portalSearchRetryAfterSeconds(error: Exception): Long? = when (error) {
+    is PortalRateLimitCooldownException -> error.remainingSeconds
+    is PortalHttpException -> error.retryAfterSeconds?.takeIf { error.statusCode == 429 || error.statusCode == 503 }
+        ?: 30L.takeIf { error.statusCode == 429 }
+    else -> null
+}
+
+internal fun isTransientPortalSearchFailure(error: Exception): Boolean =
+    error is java.io.IOException || error is PortalHttpException && error.statusCode in 500..599
 
 /** Top-level VOD containers often include an episode_id sentinel of zero. */
 internal fun isPortalEpisodeRow(isEpisode: Boolean, episodeId: String?): Boolean =

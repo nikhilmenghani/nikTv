@@ -5,6 +5,13 @@ import org.junit.Test
 import androidx.compose.ui.focus.FocusDirection
 
 class DiscoveryNavigationLayoutTest {
+    @Test fun horizontalNavigationInsideTheHeaderDoesNotBounceToTheActiveTab() {
+        val entry = DiscoveryHeaderEntry()
+        assertTrue(entry.redirect(FocusDirection.Enter))
+        assertFalse(entry.redirect(FocusDirection.Left))
+        assertFalse(entry.redirect(FocusDirection.Right))
+        assertTrue(entry.redirect(FocusDirection.Up))
+    }
     @Test fun recreatedHeaderRedirectsInitialEntryBeforeBackAndAllowsExplicitPopupReturn() {
         val entry = DiscoveryHeaderEntry()
         assertTrue(entry.redirect(FocusDirection.Enter))

@@ -8,6 +8,23 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 
 class AllCategorySearchTest {
+    @Test fun retryVisitsOnlyUnfinishedCategoriesAndRetainsAllEarlierMatches() = runBlocking {
+        val completed = mutableMapOf<String, PortalSearchPage>()
+        val calls = mutableListOf<String>()
+        var fail = true
+        val search: suspend (String) -> PortalSearchPage = {
+            calls += it
+            if (it == "broken" && fail) throw IOException("Temporary failure")
+            page(item(it))
+        }
+        val first = searchAllCategoryPage(1, listOf("good", "broken"), search, completed = completed)
+        assertEquals(1, first.failedCategories)
+        calls.clear(); fail = false
+        val retry = searchAllCategoryPage(1, listOf("good", "broken"), search, completed = completed)
+        assertEquals(listOf("broken"), calls)
+        assertEquals(setOf("*", "good", "broken"), retry.page.items.map { it.id }.toSet())
+        assertEquals(0, retry.failedCategories)
+    }
     private fun item(id: String, title: String = id) = MediaItem(id, title, null, null)
     private fun page(vararg items: MediaItem, more: Boolean = false) = PortalSearchPage(items.toList(), 1, more)
 

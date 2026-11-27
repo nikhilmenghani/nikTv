@@ -35,6 +35,120 @@ class SearchLayoutDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
 
+    @Test fun inlineTabletSearchKeepsHeaderGeometryAndReturnsFocusWithoutFallback() {
+        val host = instrumentation.startActivitySync(Intent(instrumentation.targetContext, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val profile = PortalProfile("Inline search fixture", "https://fixture.invalid", "")
+        val app = mutableStateOf(NikTvState(savedProfile = profile, restoring = false, discoverySurface = DashboardSurface.HOME))
+        val shared = SharedDiscoveryHeader()
+        val homeFocus = FocusRequester()
+        val queryFocus = AtomicReference<FocusRequester?>()
+        val focusEvents = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val movie = MediaItem("movie", "Friends movie fixture", null, null, searchResultType = SearchContentType.MOVIES)
+        val series = MediaItem("series", "Friends series fixture", null, null, searchResultType = SearchContentType.SERIES)
+        fun results(type: SearchContentType) = listOf(movie, series).filter { type == SearchContentType.ALL || it.searchResultType == type }
+        fun control(name: String) = find(root()) { it.contentDescription?.toString() == name }
+        fun queryNode() = find(root()) { it.isEditable || it.className?.toString()?.endsWith("EditText") == true }
+        try {
+            instrumentation.setInTouchMode(true)
+            instrumentation.uiAutomation.setOnAccessibilityEventListener { event ->
+                if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED)
+                    focusEvents += (event.contentDescription?.toString() ?: event.text.joinToString())
+            }
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
+                CompositionLocalProvider(LocalSharedDiscoveryHeader provides shared) {
+                    val tab = homeFocus; val body = remember { FocusRequester() }
+                    if (app.value.searchOpen) DiscoverySearchScreen(app.value,
+                        back = { app.value = app.value.closeSearchNavigation() }, select = {}, navigate = {}) {
+                        DiscoverySearchContent(app.value, close = { app.value = app.value.closeSearchNavigation() },
+                            setType = { app.value = app.value.copy(searchType = it, searchResults = results(it)) }, setCategory = {},
+                            setQuery = { app.value = app.value.copy(searchQuery = it, searchResults = results(app.value.searchType)) }, search = {},
+                            useRecent = {}, deleteRecent = {}, openResult = {}, loadMore = {}, toggleFavorite = {},
+                            headerFocusRequester = LocalDiscoverySearchHeaderFocus.current,
+                            queryFocusRequester = LocalDiscoverySearchQueryFocus.current.also { queryFocus.set(it) })
+                    } else Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) { DiscoveryTopNavigation(DashboardSurface.HOME, profile.displayName, tab, body, {}, {},
+                        navigate = { if (it == "Search") app.value = app.value.copy(searchOpen = true) },
+                        headerFocus = {}, menu = false, changeMenu = {}, customize = null, shareAcrossTabs = true) }
+                }
+            } } }
+            await("IPTV menu is ready") { control("Search") != null }
+            val menuTop = bounds(clickable(control("Search")!!)).top
+            val menuRight = bounds(clickable(control("Options")!!)).right
+            await("Compact menu width is measured") { shared.menuWidth != null }
+            val menuWidth = shared.menuWidth
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { homeFocus.requestFocus() }
+            await("Header entry lands on Home") { shared.focusedTab == "Home" }
+            for (tab in listOf("Movies", "Series", "Live TV", "My List", "Options")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right reaches $tab") { focused(tab) }
+            }
+            for (tab in listOf("My List", "Live TV", "Series", "Movies", "Home", "Search", "Back")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                await("Left reaches $tab") { focused(tab) }
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right from Back reaches Search") { focused("Search") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right from Search reaches Home") { focused("Home") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Left from Home reaches Search") { shared.focusedTab == "Search" }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Search opens its editor and keyboard together") {
+                queryNode()?.isFocused == true && host.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+            }
+            assertTrue("Editor stays in the menu row: $menuTop / ${bounds(queryNode()!!).top}", kotlin.math.abs(menuTop - bounds(queryNode()!!).top) <= 12)
+            assertEquals("Opening search preserves the original menu width", menuWidth, shared.menuWidth)
+            assertTrue("Search must not grow beyond the original menu", bounds(clickable(control("Close search")!!)).right <= menuRight + 2)
+            val input = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "friends") }
+            assertTrue(queryNode()!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, input))
+            await("Attached filters and results appear") { typeNode("Series") != null && label(series.title) != null && label(movie.title) != null }
+            assertTrue("Filters are below the menu query", bounds(typeNode("Series")!!).top > bounds(queryNode()!!).bottom)
+            assertTrue("Filters attach directly below the query", bounds(typeNode("Series")!!).top - bounds(queryNode()!!).bottom <
+                (24 * host.resources.displayMetrics.density).toInt())
+            assertTrue(clickable(typeNode("Series")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            await("Filter preserves query and scopes results") { app.value.searchQuery == "friends" && label(movie.title) == null && label(series.title) != null }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("First Back dismisses IME while keeping search open") { app.value.searchOpen && host.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == false }
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { queryFocus.get()!!.requestFocus() }
+            await("Query accepts remote focus without opening IME") { queryNode()?.isFocused == true }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Down reaches selected filter") { focused("Series") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Movies") { focused("Movies") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("OK applies Movies without losing focus") { app.value.searchType == SearchContentType.MOVIES && focused("Movies") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            await("Up returns to query without editing") { queryNode()?.isFocused == true }
+            assertFalse(host.window.decorView.rootWindowInsets!!.isVisible(android.view.WindowInsets.Type.ime()))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Clear") { control("Clear search")?.let { clickable(it).isFocused } == true }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Clear retains surviving query focus") { app.value.searchQuery.isEmpty() && control("Clear search") == null && queryNode()?.isFocused == true }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches submit") {
+                find(root()) { it.contentDescription?.toString() == "Search" && bounds(it).left > bounds(queryNode()!!).right && clickable(it).isFocused } != null
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Close remains reachable to the right of Search") { focused("Close search") }
+            instrumentation.runOnMainSync { app.value = app.value.copy(searchQuery = "avengers") }
+            await("Populated search retains Close focus") { focused("Close search") && control("Clear search") != null }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("X closes the populated search") { !app.value.searchOpen }
+            await("Search origin receives focus directly") { control("Search")?.let { clickable(it).isFocused } == true }
+            assertFalse("Closing must not focus Back", focusEvents.takeLast(3).any { it == "Back" })
+            assertFalse("Closing must not focus Home", focusEvents.takeLast(3).any { it == "Home" })
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Reopening starts with a blank editable search") { app.value.searchOpen && queryNode()?.isFocused == true && app.value.searchQuery.isEmpty() }
+            screenshot(host, "iptv-inline-menu-search-closed")
+        } finally {
+            instrumentation.uiAutomation.setOnAccessibilityEventListener(null)
+            instrumentation.runOnMainSync { host.finish() }; currentHost = null
+        }
+    }
+
     @Test fun incomingResultsStayAtTopUntilRemoteBrowsingStarts() {
         val context = instrumentation.targetContext
         check(context.packageName.endsWith(".regression"))
@@ -682,6 +796,8 @@ class SearchLayoutDeviceTest {
         val tree = root()
         val current = tree?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         current?.refresh()
+        // Material's active-tab focus wrapper can surround the clickable child.
+        if (current != null && find(current, ::matches) != null) return true
         val currentOwner = current?.let { generateSequence(it) { it.parent }.firstOrNull { it.isClickable } ?: it }
         // The header and query submit action both have the accessible name Search.
         // Match the nearest action so a focused row does not also count as its X.

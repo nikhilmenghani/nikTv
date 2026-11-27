@@ -8,6 +8,14 @@ internal fun NikTvState.openSearchNavigation(): NikTvState = copy(
     settingsOpen = false
 )
 
+/** Closing the search surface ends the query, while provider/history caches remain reusable. */
+internal fun NikTvState.closeSearchNavigation(): NikTvState = copy(
+    searchOpen = false, searchQuery = "", searchResults = emptyList(), searchPage = 0,
+    searchHasMore = false, searchProviderMessage = null, searchLocalLoading = false,
+    searchServerLoading = false, searchActivityTitle = null, searchActivityDetail = null,
+    searchActivityProgress = null
+)
+
 /**
  * An in-memory return route, not a replacement app-state snapshot. In particular,
  * returning to results must retain fresh progress, history and provider caches.

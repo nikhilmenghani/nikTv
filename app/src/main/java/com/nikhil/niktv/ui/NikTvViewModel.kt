@@ -17,6 +17,8 @@ import com.nikhil.niktv.data.UserScope
 import com.nikhil.niktv.data.UserSyncStore
 import com.nikhil.niktv.data.AccountSyncManager
 import com.nikhil.niktv.data.StalkerPortalClient
+import com.nikhil.niktv.data.portalSearchRetryAfterSeconds
+import com.nikhil.niktv.data.isTransientPortalSearchFailure
 import com.nikhil.niktv.data.TmdbClient
 import com.nikhil.niktv.data.TrendingMovie
 import com.nikhil.niktv.data.TrendingSeries
@@ -5516,16 +5518,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     fun closeSearch() {
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
-        _state.update {
-            it.copy(
-                searchOpen = false,
-                searchLocalLoading = false,
-                searchServerLoading = false
-                ,searchActivityTitle = null
-                ,searchActivityDetail = null
-                ,searchActivityProgress = null
-            )
-        }
+        _state.update { it.closeSearchNavigation() }
     }
 
     fun setSearchType(type: SearchContentType) {
@@ -5917,11 +5910,41 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     private fun hasGlobalSearchSession(profileKey: String, query: String) =
         globalSearchPager != null && globalSearchPagerKey == "$profileKey|$query"
 
+    private suspend fun <T> recoverSearchRequest(location: String, request: suspend () -> T): T = coroutineScope {
+        var countdown: Job? = null
+        try { recoverProviderSearch(retryAfterSeconds = ::portalSearchRetryAfterSeconds,
+            transientFailure = ::isTransientPortalSearchFailure,
+            onWait = { seconds ->
+                Log.w("NikTvSearch", "provider_search_wait seconds=$seconds; pending page retained")
+                countdown?.cancel()
+                countdown = launch {
+                    val until = SystemClock.elapsedRealtime() + seconds * 1000L
+                    do {
+                        val remaining = ((until - SystemClock.elapsedRealtime() + 999L) / 1000L).coerceAtLeast(0)
+                        _state.update { it.copy(searchActivityTitle = if (seconds >= 30) "Provider rate limit" else "Retrying IPTV provider",
+                            searchActivityDetail = "Retry in ${providerSearchWaitLabel(remaining)} · Resumes automatically",
+                            searchActivityProgress = null) }
+                        delay(1000)
+                    } while (SystemClock.elapsedRealtime() < until)
+                }
+            }) {
+            countdown?.cancel()
+            _state.update { it.copy(searchActivityTitle = "Searching IPTV", searchActivityDetail = location) }
+            try { request() } catch (error: Exception) {
+                if (error !is kotlinx.coroutines.CancellationException)
+                    Log.w("NikTvSearch", "provider_search_failed kind=${error.javaClass.simpleName}; page retained")
+                throw error
+            }
+        } } finally { countdown?.cancel() }
+    }
+
     private suspend fun searchProviderPage(
         session: PortalSession, type: SearchContentType, query: String, page: Int, categoryId: String
     ): PortalSearchPage {
         if (session.profile.portalType != PortalType.XTREAM || type == SearchContentType.EPISODES) {
-            return portal.search(session, type, query, page, categoryId)
+            return recoverSearchRequest("${type.title} · Checking provider page $page") {
+                portal.search(session, type, query, page, categoryId)
+            }
         }
         val catalog = collectionCatalog(session, catalogTypeForSearch(type), force = page == 1)
         return withContext(Dispatchers.Default) {
@@ -5938,7 +5961,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
     ) {
         val session = _state.value.session ?: return
         val key = "$profileKey|$query"
-        if (!append || globalSearchPagerKey != key) {
+        if (globalSearchPagerKey != key || globalSearchPager == null || (!append && globalSearchPager?.hasMore != true)) {
             globalSearchPager = GlobalSearchPager(exhaustiveCategories = session.profile.portalType == PortalType.STALKER)
             globalSearchPagerKey = key
         }
@@ -5986,7 +6009,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     val raw = store.browseCatalog(catalogType, profileKey).first()?.categories
                         .orEmpty().ifEmpty {
                             withAutomaticSessionRetry(session) { activeSession ->
-                                portal.categories(activeSession, catalogType)
+                                recoverSearchRequest("${type.title} · Loading categories") { portal.categories(activeSession, catalogType) }
                             }
                         }
                     val categories = filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters)
@@ -6004,12 +6027,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             failures += batch.failures
             // Stalker's wildcard can omit whole categories even after returning hits.
             // Finish initial category coverage automatically; leave later pages/retries pageable.
-            } while (current() && session.profile.portalType == PortalType.STALKER && pager.hasInitialPages && failures == 0)
+            } while (current() && session.profile.portalType == PortalType.STALKER && pager.hasInitialPages)
             if (current()) store.savePagedSearch(SearchResultCache(profileKey, SearchContentType.ALL, query, "*", 1,
-                pager.hasMore, _state.value.searchResults, allCategoriesComplete = !pager.hasMore && failures == 0,
+                pager.hasMore, _state.value.searchResults, allCategoriesComplete = !pager.hasMore && pager.failedPages == 0,
                 resultTypes = _state.value.searchResults.map { it.searchResultType }))
             if (current()) _state.update { it.copy(
-                searchProviderMessage = if (failures > 0) "Some provider pages failed. Local results remain available; use Search provider to retry." else null
+                searchProviderMessage = if (pager.failedPages > 0) "${pager.failedPages} provider pages remain pending. Retry provider to continue from the unfinished pages." else null
             ) }
         } finally {
             if (current()) _state.update { it.copy(searchServerLoading = false, searchHasMore = pager.hasMore,
@@ -6019,6 +6042,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
 
     private var scopedSearchProgressKey: String? = null
     private var scopedSearchProgress = SearchPageProgress()
+    private var scopedCompletedPageKey: String? = null
+    private var scopedCompletedCategories = mutableMapOf<String, PortalSearchPage>()
 
     private suspend fun fetchSearchPage(
         query: String,
@@ -6046,6 +6071,12 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             scopedSearchProgress = SearchPageProgress()
         }
         val pageProgress = scopedSearchProgress
+        val completedKey = "$progressKey|$page"
+        if (scopedCompletedPageKey != completedKey) {
+            scopedCompletedPageKey = completedKey
+            scopedCompletedCategories = mutableMapOf()
+        }
+        val completedCategories = scopedCompletedCategories
 
         val categorySearch = session.profile.portalType == PortalType.STALKER && categoryId == "*"
         var categoryFailures = 0
@@ -6057,14 +6088,18 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                 val catalogType = catalogTypeForSearch(type)
                 val categories = _state.value.searchCategories.ifEmpty {
                     val raw = store.browseCatalog(catalogType, profileKey).first()?.categories.orEmpty().ifEmpty {
-                        withAutomaticSessionRetry(session) { portal.categories(it, catalogType) }
+                        recoverSearchRequest("${type.title} · Loading categories") {
+                            withAutomaticSessionRetry(session) { portal.categories(it, catalogType) }
+                        }
                     }
                     filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters)
                 }.filter { it.id != "*" }
                 searchedCategories = categories.isNotEmpty()
                 val result = searchAllCategoryPage(page, categories.map { it.id },
                     search = { category -> withAutomaticSessionRetry(session) { active ->
-                        portal.search(active, type, query, page, category)
+                        recoverSearchRequest("${type.title} · Checking provider page $page") {
+                            portal.search(active, type, query, page, category)
+                        }
                     } },
                     progress = { scanned, total -> _state.update { current -> current.copy(
                         searchActivityTitle = "Searching IPTV categories",
@@ -6076,7 +6111,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                             current.searchQuery.trim().equals(query, true)) current.copy(
                             searchResults = (existing + discovered).rankSearchResults(query, type), searchUsedServer = true)
                         else current
-                    } })
+                    } }, completed = completedCategories)
                 categoryFailures = result.failedCategories
                 result.page
             }
@@ -6085,7 +6120,8 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
             val combined =
                 (existing + result.items).rankSearchResults(query, type)
 
-            val hasMore = pageProgress.hasNext(result)
+            val hasMore = categoryFailures > 0 || pageProgress.hasNext(result)
+            val completedPage = if (categoryFailures > 0) (result.page - 1).coerceAtLeast(0) else result.page
 
             val cache =
                 SearchResultCache(
@@ -6093,7 +6129,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                     type,
                     query,
                     categoryId,
-                    result.page,
+                    completedPage,
                     hasMore,
                     combined,
                     allCategoriesComplete = categorySearch && searchedCategories && page == 1 && !hasMore && categoryFailures == 0
@@ -6117,7 +6153,7 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
                             "Some categories could not be searched. Retry provider to include them." else null,
                         searchServerLoading = false,
                         searchUsedServer = true,
-                        searchPage = result.page,
+                        searchPage = completedPage,
                         searchHasMore = hasMore
                         ,searchActivityTitle = null
                         ,searchActivityDetail = null
@@ -9079,6 +9115,9 @@ class NikTvViewModel @JvmOverloads constructor(application: Application, profile
         val otherEpisode = other.episodeNumber ?: other.title.episodeOrderFromTitle() ?: 0
         return thisEpisode > otherEpisode
     }
+    internal fun portalDiagnosticsRetryAtMillis(error: String): Long? =
+        if (isPortalCooldownDiagnostic(error)) portal.cooldownDeadlineMillis() else null
+
     fun dismissError() {
         val manual = manualReauthenticationJob?.isActive == true
         if (manual) {

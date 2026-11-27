@@ -6,6 +6,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GlobalSearchPagerTest {
+    @Test fun failedCategoryDoesNotPreventVisitingUntouchedInitialCategories() = runBlocking {
+        val pager = GlobalSearchPager(exhaustiveCategories = true)
+        val visited = mutableSetOf<String>()
+        val search: suspend (SearchContentType, String, Int) -> PortalSearchPage = { type, category, page ->
+            if (category == "bad") throw java.io.IOException("Unavailable")
+            visited += "$type/$category"
+            PortalSearchPage(listOf(media("$type/$category")), page, false)
+        }
+        var batches = 0
+        do {
+            pager.next(search) { listOf("bad", "later") }
+            assertTrue("Initial coverage must terminate", ++batches < 20)
+        } while (pager.hasInitialPages)
+        globalSearchTypes.forEach { assertTrue("$it/later" in visited) }
+        assertEquals(3, pager.failedPages)
+        assertTrue(pager.hasMore)
+    }
     private fun media(id: String) = MediaItem(id, "Title $id", null, null)
 
     @Test fun publishesEachPageBeforeRequestingTheNextType() = runBlocking {

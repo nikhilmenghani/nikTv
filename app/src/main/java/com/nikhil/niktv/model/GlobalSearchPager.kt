@@ -11,6 +11,7 @@ class GlobalSearchPager(private val exhaustiveCategories: Boolean = false) {
         globalSearchTypes.forEach { add(Cursor(it, "*")) }
     }
     val hasMore: Boolean get() = pending.isNotEmpty()
+    val failedPages: Int get() = pending.count { it.retry }
     val hasInitialPages: Boolean get() = pending.any { it.page == 1 && !it.retry }
     private val expanded = mutableSetOf<SearchContentType>()
 

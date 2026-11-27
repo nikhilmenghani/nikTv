@@ -11,11 +11,13 @@ internal fun requiresCategorySearch(portal: PortalType, type: SearchContentType,
 internal suspend fun searchAllCategoryPage(page: Int, categoryIds: List<String>,
     search: suspend (String) -> PortalSearchPage,
     progress: (Int, Int) -> Unit = { _, _ -> },
-    publish: (List<MediaItem>) -> Unit = {}): AllCategorySearchResult {
-    suspend fun request(category: String) = try { Result.success(search(category)) }
+    publish: (List<MediaItem>) -> Unit = {},
+    completed: MutableMap<String, PortalSearchPage>? = null): AllCategorySearchResult {
+    suspend fun request(category: String) = try { Result.success(completed?.get(category) ?: search(category)) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) { Result.failure(error) }
     val wildcard = request("*")
+    wildcard.getOrNull()?.let { completed?.put("*", it) }
     var items = wildcard.getOrNull()?.items.orEmpty()
     val rawIds = wildcard.getOrNull()?.providerItemIds.orEmpty().toMutableSet()
     var more = wildcard.getOrNull()?.hasMore ?: false
@@ -27,7 +29,8 @@ internal suspend fun searchAllCategoryPage(page: Int, categoryIds: List<String>,
         currentCoroutineContext().ensureActive()
         progress(index * 3, categories.size)
         val pages = coroutineScope { batch.map { category -> async { request(category) } }.awaitAll() }
-        for (result in pages) result.fold(onSuccess = { found ->
+        for ((categoryIndex, result) in pages.withIndex()) result.fold(onSuccess = { found ->
+            completed?.put(batch[categoryIndex], found)
             successes++
             items = (items + found.items).distinctBy { it.id }
             rawIds += found.providerItemIds

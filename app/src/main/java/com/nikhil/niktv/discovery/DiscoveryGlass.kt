@@ -120,6 +120,7 @@ internal fun discoveryHeaderWidths(available: Float, desiredMenu: Float, desired
 internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropBounds: Rect,
     focused: Boolean = false, fitArtwork: Boolean = false, topAligned: Boolean = false, fillWidth: Boolean = false,
     baseColor: Color = Color(0x77171B24), artworkOpacity: Float = .68f, tint: Color = Color(0x71101520),
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(10.dp),
     content: @Composable BoxScope.() -> Unit) {
     val hasArtwork = !artwork.isNullOrBlank() && artworkOpacity > 0f
     val painter = if (hasArtwork) {
@@ -138,7 +139,6 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
     } else null
     val position = if (hasArtwork) remember { mutableStateOf(Offset.Zero) } else null
     val movingBounds = if (painter != null) LocalMobileGlassMovingBounds.current else null
-    val shape = remember { RoundedCornerShape(10.dp) }
     val glassHighlight = remember {
         Brush.verticalGradient(listOf(Color.White.copy(alpha = .12f), Color.Transparent, Color.Black.copy(alpha = .12f)))
     }
