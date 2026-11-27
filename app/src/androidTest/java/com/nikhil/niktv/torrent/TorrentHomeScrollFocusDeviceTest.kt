@@ -13,14 +13,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.discovery.DiscoveryAction
 import com.nikhil.niktv.discovery.DiscoveryCard
+import com.nikhil.niktv.discovery.NativeDiscoveryFocusRestorer
 import com.nikhil.niktv.ui.NikColors
 import com.nikhil.niktv.ui.PlaybackFixtureHostActivity
 import com.nikhil.niktv.ui.InitialFocusEntry
@@ -44,15 +43,14 @@ class TorrentHomeScrollFocusDeviceTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
         val sections = HOME_SECTIONS
         val data = mutableStateOf(TorrentHomeState(shelves = sections.mapIndexed { i, section ->
-            TorrentHomeShelf(section, if (i == 5) emptyList() else listOf(DiscoveryCard(i + 1, section.series, "Tile $i")),
+            TorrentHomeShelf(section, if (i == 5) emptyList() else listOf(DiscoveryCard(i + 1, section.series, "Tile $i", date = "2020-01-01")),
                 loading = i == 5, loaded = i != 5)
         }))
         val requests = ConcurrentHashMap<String, FocusRequester>()
         val focus = AtomicReference<String?>()
         val events = CopyOnWriteArrayList<String>()
-        val positions = ConcurrentHashMap<String, Float>()
-        val attachedEntries = ConcurrentHashMap<String, () -> Unit>()
         val loadCalls = AtomicInteger()
+        val nativeFocusRestorer = NativeDiscoveryFocusRestorer()
         fun tile(i: Int) = "home:${sections[i].name}:${if (sections[i].series) "tv" else "movie"}:${i + 1}"
         fun await(label: String, condition: () -> Boolean) {
             val end = SystemClock.uptimeMillis() + 8_000
@@ -74,7 +72,14 @@ class TorrentHomeScrollFocusDeviceTest {
             var stableFrames = 0
             val end = SystemClock.uptimeMillis() + 5_000
             while (SystemClock.uptimeMillis() < end) {
-                val current = positions[k]
+                val value = AtomicReference<Float?>()
+                ins.runOnMainSync {
+                    host.window.decorView.findFocus()?.takeIf { focus.get() == k }?.let { view ->
+                        val location = IntArray(2); view.getLocationOnScreen(location)
+                        value.set(location[1].toFloat())
+                    }
+                }
+                val current = value.get()
                 if (current != null) {
                     stableFrames = if (current == previous) stableFrames + 1 else 0
                     if (stableFrames >= 4) return current
@@ -110,9 +115,8 @@ class TorrentHomeScrollFocusDeviceTest {
                         .onFocusChanged {
                             if (it.isFocused) { focus.set(k); events += k }
                             else if (focus.compareAndSet(k, null)) events += "lost:$k"
-                        }.onGloballyPositioned { positions[k] = it.boundsInWindow().top }
+                        }
                     SideEffect {
-                        if (entryTarget != null) attachedEntries[entryTarget] = { restore() }
                         restore()
                     }
                     Column(Modifier.size(cfg.screenWidthDp.dp, cfg.screenHeightDp.dp)) {
@@ -120,17 +124,21 @@ class TorrentHomeScrollFocusDeviceTest {
                         TorrentHomeContent(data.value, TorrentLibraryState(),
                             TorrentHomeActions({ _, _ -> }, { _, _ -> }, {}, { if (it == sections.last()) loadCalls.incrementAndGet() },
                                 {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }),
-                            TorrentHomeFocus(::modifier, ::request, { restore() }, {}, { k, prepare ->
+                            TorrentHomeFocus(::modifier, ::request, { restore() }, { k ->
+                                if (focus.getAndSet(k) != k) events += k
+                            }, { k, prepare ->
                                 pending = k; prepare(); restore()
                             }), pending, Modifier.weight(1f),
                             TorrentDiscoveryConfiguration(sections, genres = false, providers = false),
                             series = false, showLibrary = false, presentation = {}, contentFocused = true,
-                            popup = false, reduceMotion = true)
+                            popup = false, reduceMotion = true, nativeFocusRestorer = nativeFocusRestorer)
                     }
                 }
             } } }
-            await("First row attached") { requests[tile(0)] != null }
-            ins.runOnMainSync { requests.getValue(tile(0)).requestFocus() }
+            await("Hero attached") { requests["home:hero"] != null }
+            ins.runOnMainSync { requests.getValue("home:hero").requestFocus() }
+            await("Hero focused") { focus.get() == "home:hero" }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("First tile focused") { focus.get() == tile(0) }
             for (i in 1..4) {
                 key(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -138,12 +146,6 @@ class TorrentHomeScrollFocusDeviceTest {
             }
             settledPosition(tile(4))
             events.clear()
-            // An already-consumed previous onPlaced callback can arrive after
-            // a newer move. It must not focus the still-mounted previous rail.
-            ins.runOnMainSync { attachedEntries.getValue(tile(3)).invoke() }
-            ins.waitForIdleSync()
-            assertEquals("A stale entry cannot reclaim the previous row", tile(4), focus.get())
-            assertTrue("A stale entry never flashes focus backward: $events", events.isEmpty())
             val before = settledPosition(tile(4))
             events.clear()
             val loadsBefore = loadCalls.get()
@@ -154,13 +156,17 @@ class TorrentHomeScrollFocusDeviceTest {
             // A row publication and artwork change must not steal focus either.
             ins.runOnMainSync {
                 data.value = data.value.copy(shelves = data.value.shelves.mapIndexed { i, shelf ->
-                    if (i == 5) shelf.copy(cards = listOf(DiscoveryCard(6, shelf.section.series, "Tile 5")), loading = false, loaded = true)
+                    if (i == 5) shelf.copy(cards = listOf(DiscoveryCard(6, shelf.section.series, "Tile 5", date = "2020-01-01")), loading = false, loaded = true)
                     else shelf.copy(cards = shelf.cards.map { it.copy(poster = "", title = "Updated ${it.title}") })
                 })
             }
             // The next rail may legitimately remain outside a short viewport.
             // Observe publication on the visible focused tile before pressing Down.
-            await("Visible posters reflect published data") { visibleText("Updated Tile 4") }
+            await("Visible posters reflect published data") {
+                val label = AtomicReference<String?>()
+                ins.runOnMainSync { label.set(host.window.decorView.findFocus()?.contentDescription?.toString()) }
+                label.get()?.contains("Updated Tile 4") == true
+            }
             ins.waitForIdleSync()
             assertEquals("Publishing data retains focus", tile(4), focus.get())
             assertTrue("Publishing never focuses a fallback: $events", events.isEmpty())
@@ -175,6 +181,14 @@ class TorrentHomeScrollFocusDeviceTest {
             assertEquals("Bottom Down retains the viewport", bottom, settledPosition(tile(5)), 1f)
             key(KeyEvent.KEYCODE_DPAD_UP)
             await("Up remains usable") { focus.get() == tile(4) }
+            val savedTop = settledPosition(tile(4))
+            ins.runOnMainSync { requests.getValue("search").requestFocus() }
+            await("Header focus was explicitly selected") { focus.get() == "search" }
+            events.clear()
+            ins.runOnMainSync { assertTrue(nativeFocusRestorer.restore()) }
+            await("Feed entry restores its actual native tile") { focus.get() == tile(4) }
+            assertEquals("Entry does not flash the hero or another poster", listOf(tile(4)), events.filterNot { it.startsWith("lost:") })
+            assertEquals("Entry keeps the native viewport", savedTop, settledPosition(tile(4)), 1f)
         } finally { ins.runOnMainSync { host.finish() }; ins.setInTouchMode(true) }
     }
 }

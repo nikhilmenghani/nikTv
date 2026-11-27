@@ -98,6 +98,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
     val viewerAvatar = viewer?.avatar?.ifBlank { viewer.name.take(1).uppercase() }
         ?: profile.take(1).ifBlank { "N" }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
+    val homeFocusRestorer = remember(state.surface) { NativeDiscoveryFocusRestorer() }
     fun requester(key: String) = requesters.getOrPut(key) { FocusRequester() }
     val view = LocalView.current
     val windowFocused = LocalWindowInfo.current.isWindowFocused
@@ -125,6 +126,8 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
     val filesScroll = rememberLazyListState()
     val transferOpen = state.transfer != null || state.files.isNotEmpty()
     val browsingFeeds = state.title == null && state.browsingFeeds
+    val homeHeroes = remember(state.homeData.shelves, torrentCurrentDate()) { state.homeData.heroes }
+    val homeHero = homeHeroes.getOrNull(state.homeData.heroIndex) ?: homeHeroes.firstOrNull()
     val reduceMotion = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val libraryEntries = if (state.libraryPage == TorrentLibraryPage.CONTINUE_WATCHING) state.library.continueWatching else state.library.saved
     val myListSelected = state.libraryPage == TorrentLibraryPage.MY_LIST && !state.downloadsOpen
@@ -136,7 +139,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         state.downloadsOpen -> "downloads-back"
         state.libraryPage != null -> "library-back"
         state.homeCollection != null -> "collection-back"
-        browsingFeeds && state.homeData.hero != null -> "home:hero"
+        browsingFeeds && homeHero != null -> "home:hero"
         else -> "search"
     }
     val entryPending = !transferOpen && (state.returnFocus != null || explicitEntry != null || (!view.isInTouchMode && enteringRoute))
@@ -148,7 +151,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
             return false
         }
         val targetKey = when {
-            phone && browsingFeeds && state.title == null && routeEntry.startsWith("home:") && routeEntry != "home:hero" -> "home:native"
+            browsingFeeds && state.title == null && routeEntry.startsWith("home:") && routeEntry != "home:hero" -> "home:native"
             phone && myListSelected && routeEntry.startsWith("library:") -> "library-native"
             else -> routeEntry
         }
@@ -157,7 +160,8 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         // pending target after a successful handoff. They must share the same
         // one-shot owner as onEnter, rather than reclaiming the old tile later.
         return entryPolicy.request {
-            val success = runCatching { target.requestFocus() }.getOrDefault(false)
+            val success = if (targetKey == "home:native") homeFocusRestorer.restore()
+                else runCatching { target.requestFocus() }.getOrDefault(false)
             traceTorrentFocus { "entry target=$targetKey success=$success explicit=$explicitEntry returning=${state.returnFocus}" }
             if (success) {
                 enteringRoute = false
@@ -371,7 +375,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
         LocalMobileGlassFillWidth provides (glassSource?.fillWidth ?: false)) {
     Box(Modifier.fillMaxSize()) {
     if (!phone && (browsingFeeds || state.title != null)) {
-        DiscoveryBackdrop(state.title ?: presentedCard ?: state.homeData.hero, reduceMotion = reduceMotion)
+        DiscoveryBackdrop(state.title ?: presentedCard ?: homeHero, reduceMotion = reduceMotion)
         if (state.title != null) Box(Modifier.matchParentSize().background(Brush.verticalGradient(
             0f to Color.Transparent, .25f to Color.Transparent, .46f to Color(0x40090B10),
             .75f to Color(0xB3090B10), 1f to Color(0xFF090B10))))
@@ -560,6 +564,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
                         showLibrary = state.surface == DashboardSurface.HOME, displayed = presentedCard,
                         presentation = { presentedCard = it }, contentFocused = feedFocused,
                         popup = browseMenu || categories || configure || manual || libraryOptions != null || sourceOptions != null,
+                        nativeFocusRestorer = homeFocusRestorer,
                         reduceMotion = reduceMotion)
                     }
                 } else {
@@ -787,7 +792,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
                 { openRoot(if (it) DashboardSurface.SERIES else DashboardSurface.MOVIES) }, ::openMyList, portalEntryFocus,
                 if (state.downloadsOpen) requester("downloads-back")
                 else if (state.libraryPage != null) requester("library-back")
-                else if (browsingFeeds) requester(focusedHome ?: if (state.homeData.hero != null) "home:hero" else "search")
+                else if (browsingFeeds) requester("home:native")
                 else preferred?.let { requester("title:${it.key}") }, requester("home:dock"), entryModifier("my-list-tab"))
         }
     if (phone && state.title == null) Box(Modifier.align(Alignment.TopCenter)
@@ -853,7 +858,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
             val next = entries.getOrNull(index + 1) ?: entries.getOrNull(index - 1)
             val destination = next?.let { origin.removeSuffix(entry.key) + it.key }
                 ?: if (origin.startsWith("library:")) "library-back"
-                else if (state.homeData.hero != null) "home:hero" else "search"
+                else if (homeHero != null) "home:hero" else "search"
             handoff(destination) { libraryOptions = null; action() }
         }
         AlertDialog(onDismissRequest = ::close, modifier = Modifier.initialFocusEntry(closeFocus),

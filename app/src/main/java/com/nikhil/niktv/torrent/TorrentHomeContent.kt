@@ -1,36 +1,23 @@
 package com.nikhil.niktv.torrent
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.niktv.discovery.*
-import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.usesPhoneLayout
@@ -62,10 +49,9 @@ private data class HomeTile(val key: String, val title: String, val artwork: Str
     val longClick: (() -> Unit)? = null, val card: DiscoveryCard? = null,
     val artworkPending: Boolean = false, val open: () -> Unit)
 private data class HomeRail(val key: String, val title: String, val entries: List<HomeTile>, val loading: Boolean,
-    val error: String?, val load: () -> Unit, val viewAll: (() -> Unit)? = null, val square: Boolean = false, val wide: Boolean = false) {
+    val error: String?, val load: () -> Unit, val viewAll: (() -> Unit)? = null, val square: Boolean = false) {
     val viewAllKey: String get() = "home:$key:all"
-    fun indexOf(itemKey: String?): Int =
-        if (viewAll != null && entries.isNotEmpty() && itemKey == viewAllKey) entries.size else entries.indexOfFirst { it.key == itemKey }
+
 }
 
 /** Pure public-metadata Home, built with the same hero, fades and poster tiles as IPTV. */
@@ -74,17 +60,16 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
     returnKey: String?, modifier: Modifier = Modifier,
     configuration: TorrentDiscoveryConfiguration, series: Boolean, showLibrary: Boolean,
     displayed: DiscoveryCard? = null,
-    presentation: (DiscoveryCard?) -> Unit, contentFocused: Boolean, popup: Boolean, reduceMotion: Boolean) {
+    presentation: (DiscoveryCard?) -> Unit, contentFocused: Boolean, popup: Boolean, reduceMotion: Boolean,
+    nativeFocusRestorer: NativeDiscoveryFocusRestorer? = null) {
     val device = LocalConfiguration.current
     val television = LocalContext.current.isTvLikeDevice(device)
     val phone = device.usesPhoneLayout(television)
     val short = device.usesShortWideLayout(television)
     val density = LocalDensity.current
-    val scroll = rememberLazyListState()
-    val rowSelection = remember { mutableStateMapOf<String, String>() }
+    var activity by remember { mutableStateOf(HeroActivity(false, false, false, false, false, false)) }
     var preview by remember { mutableStateOf<DiscoveryCard?>(null) }
     val publishPreview by rememberUpdatedState(presentation)
-    val tileWidth = if (phone) phoneDiscoveryPosterWidth(device.screenWidthDp).dp else if (short) 92.dp else 120.dp
     val history = remember(library.continueWatching, showLibrary, phone, actions) {
         val entries = library.continueWatching
         if (!showLibrary || entries.isEmpty()) null else HomeRail("continue", "Continue Watching",
@@ -96,7 +81,7 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
                     open = { actions.resumeLibrary(entry, key) })
             }, false, null, {}, viewAll = if (entries.size > 10) ({
                 actions.libraryPage(TorrentLibraryPage.CONTINUE_WATCHING, "home:continue:all")
-            }) else null, wide = false)
+            }) else null)
     }
     val shelves = remember(state.shelves, actions) { state.shelves.map { shelf ->
         HomeRail(shelf.key, shelf.title, shelf.cards.map { card ->
@@ -127,11 +112,7 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         }, state.providersLoading || (!state.providersLoaded && state.providersError == null), state.providersError, actions.providers, square = true)
     }
     val rows = remember(history, shelves, genres, providers) { listOfNotNull(history) + shelves + genres + listOfNotNull(providers) }
-    if (BuildConfig.TORRENT_FOCUS_DIAGNOSTICS) LaunchedEffect(scroll) {
-        snapshotFlow { scroll.firstVisibleItemIndex }.collect { traceTorrentFocus { "viewport first=$it" } }
-    }
-    if (phone) {
-        val nativeRows = remember(rows) {
+    val nativeRows = remember(rows) {
             rows.map { row ->
                 NativeDiscoveryRow(row.key, if (row.entries.isEmpty() && !row.loading && row.error == null)
                     "${row.title} · No titles available" else row.title,
@@ -145,176 +126,77 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
                     viewAll = row.viewAll, loading = row.loading)
             }
         }
-        val hero = state.hero
+    val heroes = remember(state.shelves, torrentCurrentDate()) { state.heroes }
+    val hero = displayed ?: heroes.getOrNull(state.heroIndex) ?: heroes.firstOrNull()
+    if (phone) {
         TorrentPhoneFeed(nativeRows, hero,
             hero != null && library.isSaved(hero),
             bodyFocus = focus.requester("home:native"), playFocus = focus.requester("home:hero"),
             open = { hero?.let { actions.openTitle(it, "home:hero") } },
             save = { hero?.let(actions.toggleSaved) },
-            previous = { if (state.heroes.isNotEmpty()) actions.hero(Math.floorMod(state.heroIndex - 1, state.heroes.size)) },
-            next = { if (state.heroes.isNotEmpty()) actions.hero((state.heroIndex + 1) % state.heroes.size) },
-            index = state.heroIndex, count = state.heroes.size, popup = popup, reduceMotion = reduceMotion,
-            visible = { id -> rows.firstOrNull { it.key == id }?.load?.invoke() })
+            previous = { if (heroes.isNotEmpty()) actions.hero(Math.floorMod(state.heroIndex - 1, heroes.size)) },
+            next = { if (heroes.isNotEmpty()) actions.hero((state.heroIndex + 1) % heroes.size) },
+            index = state.heroIndex, count = heroes.size, popup = popup, reduceMotion = reduceMotion,
+            visible = { id -> rows.firstOrNull { it.key == id }?.load?.invoke() }, focusRestorer = nativeFocusRestorer)
         LaunchedEffect(configuration.sections) { configuration.sections.take(2).forEach(actions.shelf) }
         return
     }
-    LaunchedEffect(preview, contentFocused, scroll.isScrollInProgress) {
+    val selected by rememberUpdatedState<(String, String) -> Unit> { rowKey, itemKey ->
+        val row = rows.firstOrNull { it.key == rowKey }
+        val tile = row?.entries?.firstOrNull { it.key == itemKey }
+        if (tile != null) { preview = tile.card; focus.focused(tile.key) }
+        else if (row != null && itemKey == "__row_all__") focus.focused(row.viewAllKey)
+    }
+    LaunchedEffect(preview, contentFocused, activity.scrolling) {
         val card = preview ?: return@LaunchedEffect
-        if (contentFocused && !scroll.isScrollInProgress) {
-            delay(150) // Let fast D-pad browsing settle before swapping the backdrop.
+        if (contentFocused && !activity.scrolling) {
+            delay(150)
             publishPreview(card)
         }
     }
-    fun target(row: HomeRail): String? = rowSelection[row.key]?.takeIf { row.indexOf(it) >= 0 }
-        ?: row.entries.firstOrNull()?.key ?: "home:${row.key}:retry".takeIf { row.error != null }
-    fun move(from: Int, delta: Int) {
-        traceTorrentFocus { "move from=$from delta=$delta rows=${rows.size}" }
-        val indices = if (delta > 0) (from + 1)..rows.lastIndex else (from - 1 downTo 0)
-        val next = indices.firstOrNull { index ->
-            index in rows.indices && (target(rows[index]) != null || rows[index].loading)
-        }
-        // Loading rows have no focusable posters yet. Keep the current tile
-        // mounted and focused, and let the next Down enter once data arrives.
-        // A bottom boundary must never wrap to Search and scroll Home upward.
-        if (next != null && target(rows[next]) == null) {
-            traceTorrentFocus { "wait row=${rows[next].key}" }
-            rows[next].load()
-            return
-        }
-        if (next == null && delta > 0) { traceTorrentFocus { "bottom from=$from" }; return }
-        val key = next?.let { target(rows[it]) }
-            ?: if (state.hero != null) "home:hero" else "search"
-        focus.handoff(key) {
-            val position = next?.plus(1) ?: 0.takeIf { delta < 0 }
-            if (position != null && scroll.layoutInfo.visibleItemsInfo.none { it.index == position }) {
-                scroll.requestScrollToItem(position)
-            }
-        }
-    }
-    LaunchedEffect(configuration.sections) {
-        configuration.sections.take(2).forEach(actions.shelf)
-    }
-    val returnPosition = when (returnKey) {
-        null -> null
-        "home:hero", "search", "tmdb-categories", "downloads" -> 0
-        else -> rows.indexOfFirst { it.indexOf(returnKey) >= 0 || returnKey == "home:${it.key}:retry" }
-            .takeIf { it >= 0 }?.plus(1)
-    }
-    LaunchedEffect(returnKey, returnPosition) {
-        if (returnPosition != null && scroll.layoutInfo.visibleItemsInfo.none { it.index == returnPosition }) {
-            scroll.requestScrollToItem(returnPosition)
-        }
-    }
-    val heroes = state.heroes
-    val hero = displayed ?: state.hero
-    val heroVisible by remember { derivedStateOf { scroll.firstVisibleItemIndex == 0 } }
-    val foreground = LocalWindowInfo.current.isWindowFocused
     val currentHeroIndex by rememberUpdatedState(state.heroIndex)
-    val activity = HeroActivity(heroVisible, foreground, contentFocused, scroll.isScrollInProgress, false, popup)
-    LaunchedEffect(activity, state.heroes.size, reduceMotion) {
-        if (activity.mayRotate && !reduceMotion && state.heroes.size > 1) while (true) {
+    LaunchedEffect(activity.mayRotate, popup, reduceMotion, heroes.size) {
+        if (activity.mayRotate && !popup && !reduceMotion && heroes.size > 1) while (true) {
             delay(8_000)
-            presentation(null)
-            actions.hero((currentHeroIndex + 1) % state.heroes.size)
+            publishPreview(null)
+            actions.hero((currentHeroIndex + 1) % heroes.size)
         }
     }
-    val heroHeight = if (phone) phoneDiscoveryHeroHeight() else trialHeroFrameHeight(
+    val heroHeight = trialHeroFrameHeight(
         trialHeroBaseHeight(device.screenHeightDp.toFloat(), true, television), density.fontScale).dp
-    val navigationInset = if (phone) 64.dp else 0.dp
-    Box(modifier.fillMaxSize()) {
-    CompositionLocalProvider(LocalHeroNavigationInset provides navigationInset) {
-    LazyColumn(Modifier.fillMaxSize(), state = scroll, verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(top = if (phone) 10.dp else 0.dp,
-            bottom = if (phone) LocalPhoneBottomChromeHeight.current + 20.dp else 20.dp)) {
-        item("home:hero") {
+    // Match IPTV Home: retain native row/card pools and viewport state instead of
+    // composing whole poster rails as they enter a nested LazyColumn/LazyRow.
+    RecycledDiscoveryRows(nativeRows, modifier.fillMaxSize().onPlaced { focus.placed("home:native") },
+        focusEntry = focus.requester("home:native"),
+        focusRestorer = nativeFocusRestorer,
+        up = { runCatching { focus.requester("search").requestFocus() } },
+        visible = { key -> rows.firstOrNull { it.key == key }?.load?.invoke() },
+        animateFocus = !reduceMotion, cacheTileDrawing = television,
+        containedCaptions = true, cardShadows = true, transparentBackground = true,
+        showSkeletons = true, reconcileSkeletons = true, restoreTouchSelection = true,
+        restoreSelection = true, restoreViewportOnEntry = true,
+        retainFocusWhileLoading = true,
+        heroHeightPx = with(density) { heroHeight.roundToPx() },
+        focused = { row, item -> selected(row, item) },
+        heroActivity = { activity = it },
+        heroFocusEntry = { runCatching { focus.requester("home:hero").requestFocus() }.getOrDefault(false) },
+        hero = { focused, down, up ->
             Box(Modifier.fillMaxWidth().onPlaced { focus.placed("home:hero") }) {
-                DiscoveryHero(hero, null, heroHeight, landscape = !phone, compact = short, detail = false,
+                DiscoveryHero(hero, null, heroHeight, landscape = true, compact = short, detail = false,
                     loading = hero == null && state.shelves.any { it.loading },
-                    inList = hero != null && library.saved.any { it.tmdbId == hero.id && it.series == hero.series },
+                    inList = hero != null && library.isSaved(hero),
                     playRequester = focus.requester("home:hero"), infoRequester = remember { FocusRequester() },
                     play = { hero?.let { actions.openTitle(it, "home:hero") } }, add = { hero?.let(actions.toggleSaved) },
-                    info = { hero?.let { actions.openTitle(it, "home:hero") } }, onFocus = { preview = null; focus.focused("home:hero") },
-                    onDown = { move(-1, 1) }, onUp = { runCatching { focus.requester("search").requestFocus() }.getOrDefault(false) },
-                    previous = { if (heroes.isNotEmpty()) { presentation(null); actions.hero((state.heroIndex - 1 + heroes.size) % heroes.size) } },
-                    next = { if (heroes.isNotEmpty()) { presentation(null); actions.hero((state.heroIndex + 1) % heroes.size) } }, carousel = heroes.size > 1,
-                    index = state.heroIndex, count = heroes.size, playLabel = "Open", portraitPhone = phone,
-                    openDetails = true, showListAction = true, phoneHeader = null)
+                    info = { hero?.let { actions.openTitle(it, "home:hero") } },
+                    onFocus = { preview = null; focus.focused("home:hero"); focused("play") },
+                    onDown = down, onUp = { up(); true },
+                    previous = { if (heroes.isNotEmpty()) { publishPreview(null); actions.hero(Math.floorMod(state.heroIndex - 1, heroes.size)) } },
+                    next = { if (heroes.isNotEmpty()) { publishPreview(null); actions.hero((state.heroIndex + 1) % heroes.size) } },
+                    carousel = heroes.size > 1, index = state.heroIndex, count = heroes.size,
+                    playLabel = "Open", openDetails = true, showListAction = true)
             }
-        }
-        items(rows.size, key = { rows[it].key }) { index ->
-            val row = rows[index]
-            LaunchedEffect(row.key) { row.load() }
-            val width = if (phone && row.wide) ((device.screenWidthDp - 32) * .68f).dp.coerceIn(200.dp, 280.dp) else tileWidth
-            TorrentHomeRail(row, width, phone, focus, returnKey, reduceMotion,
-                selected = { key, card -> rowSelection[row.key] = key; preview = card; focus.focused(key) },
-                move = { delta -> move(index, delta) })
-        }
-    }
-    }
-    }
-}
-
-@Composable private fun TorrentHomeRail(row: HomeRail, width: Dp, phone: Boolean, focus: TorrentHomeFocus,
-    returnKey: String?, reduceMotion: Boolean, selected: (String, DiscoveryCard?) -> Unit, move: (Int) -> Unit) {
-    val index = row.indexOf(returnKey)
-    val wanted = index.coerceAtLeast(0)
-    val scroll = rememberLazyListState(initialFirstVisibleItemIndex = wanted)
-    val height = when {
-        row.square -> width
-        phone -> phoneDiscoveryCardHeight(width.value, row.wide, LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
-        else -> width * 1.5f
-    }
-    LaunchedEffect(returnKey, index) {
-        if (index >= 0 && scroll.layoutInfo.visibleItemsInfo.none { it.index == index }) scroll.requestScrollToItem(index)
-    }
-    Column(Modifier.padding(horizontal = if (phone) 16.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = if (phone) 0.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(row.title, Modifier.weight(1f), color = Color.White, fontSize = if (phone) 19.sp else 16.sp,
-                lineHeight = if (phone) 24.sp else 20.sp, fontWeight = FontWeight.SemiBold)
-            // Keep skeleton and loaded rails the same height; a separate
-            // progress line shrinks the content and shifts a bottom viewport.
-            if (row.loading && row.entries.isEmpty()) LinearProgressIndicator(Modifier.width(64.dp).height(3.dp))
-        }
-        row.error?.let { message ->
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(message, Modifier.weight(1f), color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
-                DiscoveryAction("Retry", Icons.Default.Refresh, modifier = focus.modifier("home:${row.key}:retry"), onClick = row.load)
-            }
-        }
-        if (row.entries.isEmpty() && !row.loading && row.error == null) Text("No titles available yet", fontSize = 12.sp, color = Color.White.copy(alpha = .55f))
-        LazyRow(state = scroll, horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 6.dp),
-            modifier = Modifier.fillMaxWidth().focusGroup().onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown)) {
-                    move(if (event.key == Key.DirectionUp) -1 else 1); true
-                } else false
-            }) {
-            if (row.entries.isEmpty() && row.loading) items(5) {
-                Box(Modifier.size(width, height)
-                    .background(Color.White.copy(alpha = .07f), RoundedCornerShape(10.dp)))
-            }
-            items(row.entries, key = { it.key }, contentType = { "poster" }) { tile ->
-                if (BuildConfig.TORRENT_FOCUS_DIAGNOSTICS) DisposableEffect(tile.key) {
-                    traceTorrentFocus { "attach key=${tile.key}" }
-                    onDispose { traceTorrentFocus { "detach key=${tile.key}" } }
-                }
-                tile.visible?.let { visible -> LaunchedEffect(tile.key) { visible() } }
-                TorrentLibraryPoster(tile.title, tile.artwork, tile.subtitle, width, progress = tile.progress,
-                    badge = tile.badge, aspect = if (row.square) 1f else if (phone && row.wide) 16f / 9f else 2f / 3f,
-                    modifier = focus.modifier(tile.key), reduceMotion = reduceMotion, onFocus = { selected(tile.key, tile.card) }, onClick = tile.open,
-                    onLongClick = tile.longClick)
-            }
-            if (row.entries.isNotEmpty()) row.viewAll?.let { open ->
-                item(key = row.viewAllKey, contentType = "view-all") {
-                    Box(Modifier.size(width, height), contentAlignment = Alignment.Center) {
-                        DiscoveryAction("View all",
-                            modifier = focus.modifier(row.viewAllKey).semantics { contentDescription = "View all ${row.title}" },
-                            onFocus = { selected(row.viewAllKey, null) }, onClick = open)
-                    }
-                }
-            }
-        }
-    }
+        })
+    LaunchedEffect(configuration.sections) { configuration.sections.take(2).forEach(actions.shelf) }
 }
 
 internal fun TorrentLibraryEntry.episodeBadge(): String? = season?.let { seasonNumber ->

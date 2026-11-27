@@ -15,7 +15,7 @@ internal fun TorrentPhoneFeed(rows: List<NativeDiscoveryRow>, card: DiscoveryCar
     playFocus: FocusRequester, open: () -> Unit, save: () -> Unit,
     previous: () -> Unit, next: () -> Unit, index: Int, count: Int,
     popup: Boolean, reduceMotion: Boolean, visible: (String) -> Unit = {},
-    rotate: () -> Unit = next) {
+    rotate: () -> Unit = next, focusRestorer: NativeDiscoveryFocusRestorer? = null) {
     var mayRotate by remember { mutableStateOf(false) }
     val currentRotate by rememberUpdatedState(rotate)
     LaunchedEffect(mayRotate, count, popup, reduceMotion) {
@@ -26,6 +26,7 @@ internal fun TorrentPhoneFeed(rows: List<NativeDiscoveryRow>, card: DiscoveryCar
     DiscoveryArtworkShell(overlay = true, phone = true, publishToParent = true,
         header = { Spacer(Modifier.height(64.dp)) }, content = {
         RecycledDiscoveryRows(rows, Modifier.fillMaxSize(), bodyFocus,
+            focusRestorer = focusRestorer,
             up = { runCatching { playFocus.requestFocus() } },
             visible = visible, animateFocus = !reduceMotion, containedCaptions = true,
             cardShadows = true, homeTileProportions = false, restoreSelection = true,

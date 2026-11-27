@@ -98,7 +98,7 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel? = null, sour
         saveDefaultSport = { browsePreferences.setSport(it); defaults = browsePreferences.read(); sport = it },
         saveDefaultStatus = { browsePreferences.setStatus(it); defaults = browsePreferences.read(); status = it },
         selectTab = model::selectTab, openCategory = model::openCategory, openChannel = model::openChannel,
-        toggleFavourite = model::toggleFavourite, toggleFavourites = model::toggleFavourites, adjacentChannel = model::adjacentChannel,
+        toggleFavourite = model::toggleFavourite, toggleFavourites = model::toggleFavourites,
         addPlaylist = model::addPlaylist, importPlaylist = model::importPlaylist, removePlaylist = model::removePlaylist,
         dismissLibraryError = model::dismissLibraryError,
         toggleChannelFlag = model::toggleChannelFlag, setAvailabilityFilter = model::setAvailabilityFilter,

@@ -79,7 +79,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
     popupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}, showSkeletons: Boolean = false,
     navigationTrace: ((String) -> Unit)? = null, restoreTouchSelection: Boolean = false, reconcileSkeletons: Boolean = false,
     transparentBackground: Boolean = false, restoreViewportOnEntry: Boolean = restoreSelection,
-    allowFocus: Boolean = true) {
+    allowFocus: Boolean = true, focused: (String, String) -> Unit = { _, _ -> },
+    retainFocusWhileLoading: Boolean = false) {
     val position = rememberSaveable(saver = RecycledPosition.Saver) { RecycledPosition() }
     val host = LocalView.current
     val parentComposition = rememberCompositionContext()
@@ -106,6 +107,8 @@ internal fun RecycledDiscoveryRows(rows: List<NativeDiscoveryRow>, modifier: Mod
             view.onHeroActivity = heroActivity
             view.onPopupAnchor = popupAnchor
             view.onNavigationTrace = navigationTrace
+            view.onSelected = focused
+            view.retainFocusWhileLoading = retainFocusWhileLoading
             view.focusHost = host
             view.onUp = { view.leave(host, up) }; view.onVisible = visible; view.update(displayedRows)
         })
@@ -309,6 +312,8 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         }
     var onUp: () -> Unit = {}
     var onVisible: (String) -> Unit = {}
+    var onSelected: (String, String) -> Unit = { _, _ -> }
+    var retainFocusWhileLoading = false
     var onPopupAnchor: (androidx.compose.ui.unit.IntRect) -> Unit = {}
     private val work = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val images = DiscoveryTileArtworkLoader()
@@ -585,6 +590,10 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         val index = list.indexOfFirst { it.id == source } + step
         if (index < 0) onUp()
         else list.getOrNull(index)?.let {
+            if (retainFocusWhileLoading && it.loading && it.items.isEmpty()) {
+                onVisible(it.id)
+                return
+            }
             reveal(it.id, position.columns[it.id] ?: if (it.isHero) "play" else it.items.firstOrNull()?.id.orEmpty())
         }
     }
@@ -598,6 +607,7 @@ private class RailRecycler(context: Context, private val position: RecycledPosit
         loadingFocusRow = row.takeIf { item.isBlank() && models[row]?.items.isNullOrEmpty() }
         position.row = row; position.item = item.ifBlank { position.columns[row].orEmpty() }
         if (item.isNotBlank() && item != ROW_ALL && item != ROW_REMOVE) position.columns[row] = item
+        onSelected(row, item)
     }
     private fun horizontal(row: String, item: String, direction: Int) {
         val items = railItems[row].orEmpty()

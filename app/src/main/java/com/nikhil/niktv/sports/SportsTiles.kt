@@ -143,7 +143,7 @@ internal fun sportsFlagDescription(flag: SportsChannelFlag): String {
     }
 }
 
-@Composable internal fun SportsDetailHeader(channel: SportsChannel, event: SportsEvent?, detail: SportsChannelDetail, now: Instant, adjacent: (Int) -> Unit) {
+@Composable internal fun SportsDetailHeader(channel: SportsChannel, event: SportsEvent?, now: Instant) {
     Surface(Modifier.fillMaxWidth(), color = SportsSurface, contentColor = Color.White, shape = SportsShape) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             SportsLogo(channel.image, "", Modifier.size(56.dp))
@@ -152,8 +152,6 @@ internal fun sportsFlagDescription(flag: SportsChannelFlag): String {
                 Text(event?.let { listOf(it.sport, it.competition).filter(String::isNotBlank).joinToString(" · ") } ?: channel.group.ifBlank { channel.category }, color = SportsMuted, style = MaterialTheme.typography.labelMedium)
                 if (event != null) Text(sportsEventClock(event, now), color = SportsMuted, style = MaterialTheme.typography.labelSmall)
             }
-            if (detail.previous != null) NikTvSecondaryActionButton({ adjacent(-1) }) { Icon(Icons.Default.SkipPrevious, "Previous channel", Modifier.size(20.dp)) }
-            if (detail.next != null) NikTvSecondaryActionButton({ adjacent(1) }) { Icon(Icons.Default.SkipNext, "Next channel", Modifier.size(20.dp)) }
         }
     }
 }

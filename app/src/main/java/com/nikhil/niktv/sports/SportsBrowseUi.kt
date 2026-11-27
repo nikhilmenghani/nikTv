@@ -3,11 +3,8 @@ package com.nikhil.niktv.sports
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -23,7 +20,6 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,7 +42,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     saveDefaultSport: (String) -> Unit = {}, saveDefaultStatus: (String) -> Unit = {},
     selectTab: (SportsTab) -> Unit = {}, openCategory: (SportsCategory) -> Unit = {},
     openChannel: (SportsChannel) -> Unit = {}, toggleFavourite: (SportsChannel) -> Unit = {},
-    toggleFavourites: () -> Unit = {}, adjacentChannel: (Int) -> Unit = {},
+    toggleFavourites: () -> Unit = {},
     addPlaylist: (String, String) -> Unit = { _, _ -> }, importPlaylist: (android.net.Uri, String) -> Unit = { _, _ -> },
     removePlaylist: (SportsCategory) -> Unit = {}, dismissLibraryError: () -> Unit = {},
     toggleChannelFlag: (SportsChannel) -> Unit = {}, setAvailabilityFilter: (SportsAvailabilityFilter) -> Unit = {},
@@ -59,10 +55,8 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val optionsAction = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     val gridEntry = remember { FocusRequester() }
-    val relatedEntry = remember { FocusRequester() }
     val sourceFocus = remember(state.streams) { state.streams.map { FocusRequester() } }
     val selected = state.selected
-    var relatedExpanded by rememberSaveable(selected?.key) { mutableStateOf(false) }
     val browseChannels = if (state.favouritesOnly) state.favourites else if (state.collection != null) state.collectionChannels else state.channels
     val groups = remember(browseChannels) { listOf("All groups") + browseChannels.map { it.group }.filter(String::isNotBlank).distinct() }
     val sports = remember(state.events, state.filters, sport) { sportsEventFilterChoices(state.events, state.filters, sport) }
@@ -157,7 +151,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
       Column(Modifier.weight(1f).padding(horizontal = if (compact) 14.dp else 24.dp).padding(top = 10.dp),
           verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (selected != null) {
-            SportsDetailHeader(selected, state.event, state.detail, now, adjacentChannel)
+            SportsDetailHeader(selected, state.event, now)
             state.channelFlags[selected.key]?.let { flag -> SportsAvailabilityNotice(flag) {
                 toggleChannelFlag(selected); restore(sourceFocus.getOrNull(lastSource ?: 0) ?: backFocus)
             } }
@@ -166,37 +160,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             state.streamError?.let { SportsFailure(it, refresh) }
             if (!state.loadingStreams && state.streams.isEmpty() && state.streamError == null) SportsEmpty("Streams are not available yet", "Refresh to check this channel again.")
             SportsGrid(state.streams, { "source:${it.title}:${state.streams.indexOf(it)}" }, streamsScroll, if (compact) 150 else 190,
-                Modifier.weight(1f), headerFocus, relatedEntry.takeIf { state.detail.related.isNotEmpty() },
-                requester = { index -> sourceFocus[index] }, footer = {
-                    if (state.detail.related.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Surface(onClick = { relatedExpanded = !relatedExpanded }, color = SportsSurface, contentColor = SportsMuted,
-                            shape = SportsShape, modifier = Modifier.fillMaxWidth().focusRequester(relatedEntry)
-                                .remoteFocusFrame(SportsShape)
-                                .semantics { stateDescription = if (relatedExpanded) "Expanded" else "Collapsed" }
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) false
-                                    else { scope.launch {
-                                        if (state.streams.isNotEmpty()) streamsScroll.scrollToItem(state.streams.lastIndex)
-                                        withFrameNanos { }; runCatching { (sourceFocus.lastOrNull() ?: backFocus).requestFocus() }
-                                    }; true }
-                                }) {
-                            Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Related channels (${state.detail.related.size})", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                                Icon(if (relatedExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    if (relatedExpanded) "Hide related channels" else "Show related channels", Modifier.size(20.dp))
-                            }
-                        }
-                        AnimatedVisibility(relatedExpanded) {
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(4.dp, 2.dp, 4.dp, 8.dp)) {
-                                items(state.detail.related, key = { it.key }) { item ->
-                                    SportsChannelTile(item, state.favourites.any { it.key == item.key }, Modifier.width(152.dp)
-                                        .focusProperties { up = relatedEntry },
-                                        click = { openChannel(item) }, menu = { contextItem = item; restoreTile = relatedEntry }, flag = state.channelFlags[item.key])
-                                }
-                            }
-                        }
-                    }
-                }) { stream, index, modifier ->
+                Modifier.weight(1f), headerFocus, requester = { index -> sourceFocus[index] }) { stream, index, modifier ->
                 SportsSourceTile(stream, index, state.resolving == index, modifier, state.resolving == null || state.resolving == index) { play(index) }
             }
         } else {
@@ -313,7 +277,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
 /** Exact row/column movement, including targets virtualized outside the viewport. */
 @Composable internal fun <T> SportsGrid(rows: List<T>, key: (T) -> String, scroll: LazyGridState, minWidth: Int,
     modifier: Modifier, above: FocusRequester, below: FocusRequester? = null, entry: FocusRequester? = null,
-    requester: (Int) -> FocusRequester, footer: (@Composable () -> Unit)? = null, tile: @Composable (T, Int, Modifier) -> Unit) {
+    requester: (Int) -> FocusRequester, tile: @Composable (T, Int, Modifier) -> Unit) {
     val scope = rememberCoroutineScope()
     val coordinator = remember(scope) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(scope) }
     var movement by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -326,6 +290,8 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                 .then(if (entry != null) Modifier.focusRequester(entry) else Modifier)
                 .onFocusChanged { if (!it.hasFocus) { movement?.cancel(); coordinator.cancel() } }.focusGroup(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(5.dp, 4.dp, 5.dp, 18.dp)) {
+                // Only real rows belong here. A loading-time footer at index zero
+                // becomes the retained scroll anchor when sources arrive above it.
                 itemsIndexed(rows, key = { index, item -> "${key(item)}:$index" }) { index, item ->
                     tile(item, index, Modifier.fillMaxWidth()
                         .focusRequester(requester(index)).onPreviewKeyEvent { event ->
@@ -336,10 +302,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                                 target == rows.size -> {
                                     movement?.cancel()
                                     coordinator.cancel()
-                                    if (below != null) movement = scope.launch {
-                                        if (footer != null) scroll.scrollToItem(rows.size)
-                                        withFrameNanos { }; runCatching { below.requestFocus() }
-                                    }
+                                    below?.let { runCatching { it.requestFocus() } }
                                 }
                                 target != index -> {
                                     movement?.cancel()
@@ -351,7 +314,6 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                             true
                         })
                 }
-                if (footer != null) item(key = "sports-grid-footer", span = { GridItemSpan(maxLineSpan) }) { footer() }
             }
         }
     }

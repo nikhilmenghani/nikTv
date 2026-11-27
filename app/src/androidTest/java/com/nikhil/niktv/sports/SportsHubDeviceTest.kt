@@ -69,6 +69,89 @@ class SportsHubDeviceTest {
         return ins.startActivitySync(Intent(ins.targetContext, SportsFixtureHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
     }
 
+    @Test fun streamChoicesStartAtTopAfterLoadingAndReopening() {
+        val activity = host()
+        ins.setInTouchMode(true)
+        val state = mutableStateOf(SportsState(loading = false))
+        var viewport: androidx.compose.foundation.lazy.grid.LazyGridState? = null
+        val sources = (1..40).map { SportsStream("https://fixture.invalid/$it", "Fixture source $it") }
+        val channel = SportsChannel("fixture", "Fixture event", "fixture-event")
+        try {
+            ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                val scroll = rememberSportsStreamScroll(state.value.selected?.key)
+                SideEffect { viewport = scroll }
+                val pages = rememberSaveableStateHolder()
+                pages.SaveableStateProvider(state.value.route) {
+                    SportsBrowseContent(state.value, Instant.now(), "All sports", {}, "Now & next", {}, "", {},
+                        {}, {}, {}, {}, streamsScroll = scroll)
+                }
+            } } }
+            for (portal in SportsCatalogueSource.entries) {
+                repeat(2) { opening ->
+                    ins.runOnMainSync { state.value = SportsState(source = portal, channel = channel, loading = false, loadingStreams = true) }
+                    await("Empty loading grid is measured") { viewport?.layoutInfo?.totalItemsCount != null }
+                    ins.waitForIdleSync()
+                    ins.runOnMainSync { state.value = state.value.copy(loadingStreams = false, streams = sources,
+                        detail = SportsChannelDetail(related = listOf(channel))) }
+                    await("Sources are measured") { viewport?.layoutInfo?.totalItemsCount?.let { it >= sources.size } == true }
+                    ins.waitForIdleSync()
+                    Thread.sleep(350)
+                    assertEquals("$portal opening $opening starts at first source", 0, viewport!!.firstVisibleItemIndex)
+                    assertEquals("$portal opening $opening shows the whole first row", 0, viewport!!.firstVisibleItemScrollOffset)
+                    // Leave the page scrolled; reopening the same event must start fresh.
+                    ins.runOnMainSync { viewport!!.requestScrollToItem(30) }
+                    await("Sources scrolled down") { viewport!!.firstVisibleItemIndex > 0 }
+                    ins.runOnMainSync { state.value = SportsState(source = portal, loading = false) }
+                    ins.waitForIdleSync()
+                }
+            }
+        } finally { ins.runOnMainSync { activity.finish() } }
+    }
+
+    @Test fun streamChoicesDpadKeepsWholeRowsVisibleWithoutRelatedFooter() {
+        for (portal in SportsCatalogueSource.entries) {
+            val activity = host()
+            var viewport: androidx.compose.foundation.lazy.grid.LazyGridState? = null
+            val sources = (1..40).map { SportsStream("https://fixture.invalid/$it", "Fixture source $it") }
+            val channel = SportsChannel("fixture", "Fixture event", "fixture-event")
+            try {
+                ins.runOnMainSync { activity.setContent { MaterialTheme(colorScheme = NikColors) {
+                    val scroll = rememberSportsStreamScroll(channel.key)
+                    SideEffect { viewport = scroll }
+                    SportsBrowseContent(SportsState(source = portal, channel = channel, streams = sources, loading = false,
+                        detail = SportsChannelDetail(related = listOf(channel), previous = "previous", next = "next")),
+                        Instant.now(), "All sports", {}, "Now & next", {}, "", {}, {}, {}, {}, {}, streamsScroll = scroll)
+                } } }
+                await("$portal starts on first source") { focused("Fixture source 1") }
+                val columns = viewport!!.layoutInfo.visibleItemsInfo.count { it.row == 0 }
+                assertTrue(columns > 0)
+                var index = 0
+                while (index / columns < sources.lastIndex / columns) {
+                    index = (index + columns).coerceAtMost(sources.lastIndex)
+                    key(KeyEvent.KEYCODE_DPAD_DOWN)
+                    await("$portal moves to source ${index + 1}") { focused("Fixture source ${index + 1}") }
+                    val item = viewport!!.layoutInfo.visibleItemsInfo.first { it.index == index }
+                    assertTrue("Focused row is fully revealed", item.offset.y >= viewport!!.layoutInfo.viewportStartOffset &&
+                        item.offset.y + item.size.height <= viewport!!.layoutInfo.viewportEndOffset)
+                }
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                assertTrue("Bottom does not jump to another control", focused("Fixture source ${index + 1}"))
+                while (index >= columns) {
+                    index -= columns
+                    key(KeyEvent.KEYCODE_DPAD_UP)
+                    await("$portal returns to source ${index + 1}") { focused("Fixture source ${index + 1}") }
+                }
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                await("Up exits the first row to the header") {
+                    focused(if (portal == SportsCatalogueSource.PLAYFY) "Playfy options" else "Sports options") || focused("Live Events")
+                }
+                assertNull(find("Related channels (1)"))
+                assertNull(find("Previous channel"))
+                assertNull(find("Next channel"))
+            } finally { ins.runOnMainSync { activity.finish() } }
+        }
+    }
+
     @Test fun tabsTilesSourceChoicesAndCategoryReturnSupportDpadAndTouch() {
         val activity = host()
         val now = Instant.parse("2026-10-28T10:00:00Z")
