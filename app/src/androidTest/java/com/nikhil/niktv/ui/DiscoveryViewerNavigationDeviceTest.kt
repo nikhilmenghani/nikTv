@@ -258,7 +258,7 @@ class DiscoveryViewerNavigationDeviceTest {
                     LocalOpenUserProfiles provides { opens.incrementAndGet() }) {
                     MaterialTheme(colorScheme = NikColors) {
                         if (sports.value) {
-                            com.nikhil.niktv.sports.SportsHeader("Sports", {}, emptyList(), profile, remember { FocusRequester() }, navigation = {})
+                            com.nikhil.niktv.sports.SportsHeader("Sports", {}, emptyList(), profile, remember { FocusRequester() }, menuItems = emptyList())
                             LaunchedEffect(Unit) { withFrameNanos { }; profile.requestFocus() }
                         } else {
                             DiscoveryPhoneHeader(com.nikhil.niktv.model.DashboardSurface.HOME, false, profile, remember { FocusRequester() },

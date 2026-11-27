@@ -1876,15 +1876,31 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     val headerSizing = LocalDiscoveryHeaderActionSizing.current
     val detailSize = detailActionSize()
     val shortWide = LocalConfiguration.current.usesShortWideLayout(LocalContext.current.isTvLikeDevice(LocalConfiguration.current))
-    val compactMenu = headerSizing && LocalUnifiedPortalMenu.current
+    // Read composition locals before focus-dependent styling. Conditional reads
+    // inside Surface arguments change its sibling composition groups on focus.
+    // The action's layout/focus target must survive that redraw.
+    val unifiedMenu = LocalUnifiedPortalMenu.current
+    val mobileGlass = LocalMobileGlassEnabled.current
+    val heroSizing = LocalHeroActionSizing.current
+    val glassButtons = LocalDiscoveryGlassButtons.current
+    val compactMenu = headerSizing && unifiedMenu
     val headerSize = discoveryHeaderActionSize()
     val contentInset = if (compactMenu) if (shortWide) 8.dp else 10.dp else if (headerSizing) if (shortWide) 8.dp else 12.dp else if (iconOnly || collapsible) 10.dp else horizontalPadding
     val fixedIcon = iconOnly || (television && collapsible)
+    val actionColor = containerColor ?: if (selected) {
+        if (unifiedMenu) Color.White.copy(alpha = .14f) else Accent
+    } else if (focused) Color.White
+        else if (mobileGlass || unifiedMenu) Color.Transparent
+        else Color(0xFF242831).copy(alpha = if (glassButtons) .38f else .85f)
+    val actionBorder = if (mobileGlass) null
+        else if (unifiedMenu) BorderStroke(2.dp, if (focused) Color.White else Color.Transparent)
+        else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58))
+    val actionContentColor = if (focused && !selected && containerColor == null) Color.Black else Color.White
     Box {
     DiscoveryMobileGlassContainer(focused = focused) {
-    Surface(onClick = { showHint = false; hintActivity++; onClick() }, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) headerSize else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else if (shortWide) 36.dp else 40.dp)
-        .widthIn(min = if (headerSizing) headerSize else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else 0.dp)
-        .then(if (fixedIcon) Modifier.size(if (headerSizing) headerSize else if (LocalMobileGlassEnabled.current || LocalHeroActionSizing.current) detailSize else if (shortWide) 36.dp else 40.dp) else Modifier)
+    Surface(onClick = { showHint = false; hintActivity++; onClick() }, enabled = enabled, modifier = modifier.heightIn(min = if (headerSizing) headerSize else if (mobileGlass || heroSizing) detailSize else if (shortWide) 36.dp else 40.dp)
+        .widthIn(min = if (headerSizing) headerSize else if (mobileGlass || heroSizing) detailSize else 0.dp)
+        .then(if (fixedIcon) Modifier.size(if (headerSizing) headerSize else if (mobileGlass || heroSizing) detailSize else if (shortWide) 36.dp else 40.dp) else Modifier)
         .then(if (collapsible) Modifier.semantics { contentDescription = label } else Modifier)
         .onPreviewKeyEvent {
             if (hintEligible && it.type == KeyEventType.KeyDown) { showHint = false; hintActivity++ }
@@ -1895,12 +1911,8 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
             focused = it.isFocused
             if (it.isFocused) onFocus()
         },
-        shape = RoundedCornerShape(10.dp), shadowElevation = 0.dp, tonalElevation = 0.dp, color = containerColor ?: if (selected) { if (LocalUnifiedPortalMenu.current) Color.White.copy(alpha = .14f) else Accent } else if (focused) Color.White
-            else if (LocalMobileGlassEnabled.current || LocalUnifiedPortalMenu.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
-        border = if (LocalMobileGlassEnabled.current) null
-            else if (LocalUnifiedPortalMenu.current) BorderStroke(2.dp, if (focused) Color.White else Color.Transparent)
-            else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
-        contentColor = if (focused && !selected && containerColor == null) Color.Black else Color.White) {
+        shape = RoundedCornerShape(10.dp), shadowElevation = 0.dp, tonalElevation = 0.dp,
+        color = actionColor, border = actionBorder, contentColor = actionContentColor) {
         Row(Modifier.then(if (fixedIcon) Modifier.fillMaxSize() else Modifier)
             .padding(start = if (fixedIcon) 0.dp else contentInset, end = if (fixedIcon) 0.dp else if (headerSizing || collapsible) contentInset else trailingPadding,
                 top = if (fixedIcon) 0.dp else if (shortWide) 6.dp else 8.dp, bottom = if (fixedIcon) 0.dp else if (shortWide) 6.dp else 8.dp), verticalAlignment = Alignment.CenterVertically,

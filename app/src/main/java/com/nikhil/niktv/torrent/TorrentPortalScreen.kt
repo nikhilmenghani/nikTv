@@ -85,6 +85,7 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
     var configure by remember { mutableStateOf(false) }
     var browseMenu by remember { mutableStateOf(false) }
     var searchExpanded by remember { mutableStateOf(false) }
+    val searchActivationState = remember { PortalSearchActivation() }
     var searchActivation by remember { mutableIntStateOf(0) }
     var searchOwnsFocus by remember { mutableStateOf(false) }
     var searchOriginSurface by remember { mutableStateOf(state.surface) }
@@ -145,10 +146,6 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
     val entryPolicy = remember(routeEntry, entryPending) { InitialFocusEntry() }
     fun requestRouteEntry(): Boolean {
         if (searchOwnsFocus || !entryPending || !windowFocused || routeEntry == "search" && imeVisible) return false
-        if (routeEntry == "manual" && !searchExpanded && state.title == null) {
-            searchExpanded = true
-            return false
-        }
         val targetKey = when {
             browsingFeeds && state.title == null && routeEntry.startsWith("home:") && routeEntry != "home:hero" -> "home:native"
             phone && myListSelected && routeEntry.startsWith("library:") -> "library-native"
@@ -299,11 +296,13 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
                 modifier = entryModifier("search"),
                 onClick = { if (phone && searchExpanded) model.search() else search() })
         }
-        val tools: @Composable () -> Unit = {
+        val tools: @Composable (Modifier) -> Unit = { menuModifier ->
             Box {
-                PortalOptionsButton("Torrent options", entryModifier("tmdb-categories").then(entryModifier("downloads")),
+                PortalOptionsButton("Torrent options", menuModifier.then(entryModifier("tmdb-categories")).then(entryModifier("downloads")).then(entryModifier("manual")),
                     selected = browseMenu) { browseMenu = true }
                 PortalOptionsMenu(browseMenu, { browseMenu = false }) {
+                    NikDropdownMenuItem(text = { Text("Open magnet or torrent") }, leadingIcon = { Icon(Icons.Default.Link, null) },
+                        onClick = { browseMenu = false; manual = true })
                     NikDropdownMenuItem(text = { Text("Search titles (TMDB)") },
                         leadingIcon = { Icon(Icons.Default.Search, null) },
                         trailingIcon = if (!state.advancedSearch) ({ Icon(Icons.Default.Check, null) }) else null,
@@ -337,30 +336,31 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
                             if (searchExpanded) placeable.placeRelative(0, 0)
                         }
                     }, keyboardType = KeyboardType.Text, activationRequest = searchActivation,
-                    editFinished = { finishSearch(collapse = false) }, editRequested = ::editSearch, submit = model::search)
+                    editFinished = { finishSearch(collapse = false) }, editRequested = ::editSearch,
+                    activationState = searchActivationState, submit = model::search)
                 searchButton()
-                tools()
-            } else PortalWideHeader(profile, onProfiles) {
-                DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, focusHint = false,
-                    modifier = if (state.title != null) entryModifier("details-back") else Modifier, onClick = ::back)
-                searchButton()
-                StableTileFocusViewport {
-                Row(Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                DiscoveryAction("Home", Icons.Default.Home,
-                    selected = browseTab == DashboardSurface.HOME, onClick = { openRoot(DashboardSurface.HOME) })
-                DiscoveryAction("Movies", Icons.Default.Movie,
-                    selected = browseTab == DashboardSurface.MOVIES, onClick = { openRoot(DashboardSurface.MOVIES) })
-                DiscoveryAction("Series", Icons.Default.Tv,
-                    selected = browseTab == DashboardSurface.SERIES, onClick = { openRoot(DashboardSurface.SERIES) })
-                DiscoveryAction("My List", Icons.Default.VideoLibrary, modifier =
-                    entryModifier("my-list-tab").semantics { selected = myListSelected; role = Role.Tab }
-                    .focusProperties { if (myListSelected) down = requester("library-back") },
-                    selected = myListSelected, onClick = ::openMyList)
-                }
-                }
-                tools()
-            }
+                tools(Modifier)
+            } else PortalWideNavigation(profile, onProfiles, ::back,
+                items = listOf(
+                    PortalMenuItem("Home", Icons.Default.Home, browseTab == DashboardSurface.HOME) { openRoot(DashboardSurface.HOME) },
+                    PortalMenuItem("Movies", Icons.Default.Movie, browseTab == DashboardSurface.MOVIES) { openRoot(DashboardSurface.MOVIES) },
+                    PortalMenuItem("Series", Icons.Default.Tv, browseTab == DashboardSurface.SERIES) { openRoot(DashboardSurface.SERIES) },
+                    PortalMenuItem("My List", Icons.Default.VideoLibrary, myListSelected,
+                        entryModifier("my-list-tab").focusProperties { if (myListSelected) down = requester("library-back") }, ::openMyList)),
+                backModifier = if (state.title != null) entryModifier("details-back") else Modifier,
+                searchModifier = entryModifier("search"), searchOpen = searchExpanded && state.title == null,
+                openSearch = { if (state.title != null) { model.home(); search() } else if (searchExpanded) model.search() else search() },
+                closeSearch = {
+                    searchOwnsFocus = false; searchExpanded = false
+                    if (state.homeCollection != null || state.libraryPage != null || state.downloadsOpen) model.query("")
+                    else model.cancelSearch(searchOriginSurface)
+                }, query = { fieldModifier ->
+                    TorrentTextField(state.query, model::query, if (state.advancedSearch) "Search torrent websites" else when (state.surface) {
+                        DashboardSurface.MOVIES -> "Search movies"; DashboardSurface.SERIES -> "Search series"; else -> "Search movies or series"
+                    }, fieldModifier, KeyboardType.Text, activationRequest = searchActivation,
+                        editFinished = { searchOwnsFocus = false }, editRequested = ::editSearch, compact = true,
+                        activationState = searchActivationState, submit = model::search)
+                }, options = tools)
         }
     }
     CompositionLocalProvider(LocalPublishMobileGlassSource provides publishGlass,
@@ -395,22 +395,6 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
             else if (phone) 16.dp else if (short) 12.dp else 24.dp),
             verticalArrangement = Arrangement.spacedBy(if (browsingFeeds && !searchExpanded && !phoneDetails) 0.dp else if (short) 6.dp else 10.dp)) {
             if (state.title == null) {
-                val showSearch = searchExpanded || (!browsingFeeds && !state.downloadsOpen && state.libraryPage == null)
-                if (!phone) Row(Modifier.fillMaxWidth().then(if (browsingFeeds) Modifier.padding(horizontal = if (phone) 16.dp else 24.dp) else Modifier)
-                    .layout { measurable, constraints ->
-                        val placeable = measurable.measure(constraints)
-                        layout(placeable.width, if (showSearch) placeable.height else 0) {
-                            if (showSearch) placeable.placeRelative(0, 0)
-                        }
-                    }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TorrentTextField(state.query, model::query, if (state.advancedSearch) "Search torrent websites" else "Search movies or series", Modifier.weight(1f), keyboardType = KeyboardType.Text,
-                        activationRequest = searchActivation, editFinished = {
-                            finishSearch(collapse = state.query.isBlank())
-                        }, editRequested = ::editSearch, submit = model::search)
-                    TorrentButton("Search", Icons.Default.Search,
-                        Modifier.size(48.dp).then(entryModifier("submit-search")), iconOnly = true, onClick = { if (state.loading == null) model.search() })
-                    TorrentButton("Open magnet", Icons.Default.Link, Modifier.size(48.dp).then(entryModifier("manual")), iconOnly = true, onClick = { manual = true })
-                }
                 if (state.downloadsOpen) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TorrentButton("Back", Icons.AutoMirrored.Filled.ArrowBack, Modifier.size(40.dp).then(entryModifier("downloads-back")),
@@ -1210,156 +1194,8 @@ internal fun TorrentPortalScreen(model: TorrentPortalViewModel, profile: String,
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable internal fun TorrentTextField(value: String, change: (String) -> Unit, label: String, modifier: Modifier,
     keyboardType: KeyboardType, activationRequest: Int = 0, editFinished: () -> Unit = {},
-    editRequested: () -> Unit = {}, submit: () -> Unit) {
-    var editing by remember { mutableStateOf(false) }
-    var fieldFocused by remember { mutableStateOf(false) }
-    val requester = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
-    val keyboard = LocalSoftwareKeyboardController.current
-    val interactionSource = remember { MutableInteractionSource() }
-    val fieldColors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White,
-        unfocusedBorderColor = Color(0xFF454B58), cursorColor = Color.White,
-        focusedPlaceholderColor = Color.White.copy(alpha = .6f), unfocusedPlaceholderColor = Color.White.copy(alpha = .6f))
-    val fieldShape = RoundedCornerShape(12.dp)
-    val fieldHeight = with(LocalDensity.current) { maxOf(48.dp, 18.sp.toDp() + 20.dp) }
-    val ime = WindowInsets.isImeVisible
-    val currentIme by rememberUpdatedState(ime)
-    var sawIme by remember { mutableStateOf(false) }
-    var pendingHide by remember { mutableStateOf(false) }
-    var showRequested by remember { mutableStateOf(false) }
-    var editSession by remember { mutableIntStateOf(0) }
-    var activationKey by remember { mutableStateOf<Int?>(null) }
-    var seenActivation by remember { mutableIntStateOf(activationRequest) }
-    fun stopEditing(returnControl: Boolean = false) {
-        // show() is asynchronous: Back can cancel before the IME window exists.
-        // Retain ownership so a late attachment is still hidden by this field.
-        pendingHide = pendingHide || currentIme || showRequested
-        editing = false; sawIme = false; showRequested = false
-        activationKey = null
-        keyboard?.hide()
-        if (returnControl) editFinished()
-    }
-    fun activate() {
-        editRequested()
-        sawIme = false; showRequested = false
-        activationKey = null
-        editing = true; editSession++
-    }
-    LaunchedEffect(activationRequest) {
-        if (activationRequest != seenActivation && activationRequest > 0) activate()
-        seenActivation = activationRequest
-    }
-    LaunchedEffect(editing, editSession) {
-        if (editing) {
-            // Search/Back can hide one IME window while the user immediately
-            // starts another edit. Wait for that owned hide to complete before
-            // showing the next session, so old insets cannot close the new one.
-            if (pendingHide) snapshotFlow { currentIme }.first { !it }
-            pendingHide = false
-            withFrameNanos { }
-            if (editing) {
-                requester.requestFocus()
-                showRequested = true
-                keyboard?.show()
-            }
-        }
-    }
-    LaunchedEffect(ime, editing, showRequested, pendingHide) {
-        when {
-            !editing -> {
-                sawIme = false
-                if (ime && pendingHide) keyboard?.hide()
-            }
-            !showRequested -> Unit
-            ime -> sawIme = true
-            sawIme -> stopEditing(returnControl = true)
-        }
-    }
-    // Back may arrive before the keyboard window attaches. Once attached,
-    // intercept it before the IME so editing ends in the same key event, not
-    // in a later inset-observation effect that could swallow the next arrow.
-    BackHandler(enabled = editing && !ime, onBack = { stopEditing(returnControl = true) })
-    BasicTextField(value, change, modifier.heightIn(min = fieldHeight).focusRequester(requester)
-        .onFocusChanged {
-            // First placement can report unfocused before the explicit edit
-            // request acquires focus. Only a real focus loss ends that session.
-            val lostFocus = fieldFocused && !it.isFocused
-            fieldFocused = it.isFocused
-            if (lostFocus) {
-                activationKey = null
-                if (editing) stopEditing()
-            }
-        }
-        .onPreInterceptKeyBeforeSoftKeyboard { event ->
-            val direction = when (event.nativeKeyEvent.keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP -> FocusDirection.Up
-                KeyEvent.KEYCODE_DPAD_DOWN -> FocusDirection.Down
-                KeyEvent.KEYCODE_DPAD_LEFT -> FocusDirection.Left
-                KeyEvent.KEYCODE_DPAD_RIGHT -> FocusDirection.Right
-                else -> null
-            }
-            if (!editing && direction != null) {
-                // A cancelled IME may still be detaching. It has no ownership
-                // of directional navigation once this editor is read-only.
-                if (event.type == KeyEventType.KeyDown) {
-                    if (currentIme || pendingHide) keyboard?.hide()
-                    focusManager.moveFocus(direction)
-                }
-                true
-            } else if (editing && event.key == Key.Back) {
-                if (event.type == KeyEventType.KeyUp) stopEditing(returnControl = true)
-                true
-            } else false
-        }
-        .onPreviewKeyEvent { event ->
-            val direction = when (event.nativeKeyEvent.keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP -> FocusDirection.Up
-                KeyEvent.KEYCODE_DPAD_DOWN -> FocusDirection.Down
-                KeyEvent.KEYCODE_DPAD_LEFT -> FocusDirection.Left
-                KeyEvent.KEYCODE_DPAD_RIGHT -> FocusDirection.Right
-                else -> null
-            }
-            val vertical = direction == FocusDirection.Up || direction == FocusDirection.Down
-            if (direction != null && (vertical || !editing)) {
-                // Read-only TextField still handles arrows as cursor movement.
-                // Single-line editors have no vertical cursor movement. End
-                // editing before moving out, including immediately after Back
-                // when Android's IME visibility notification is still pending.
-                // Horizontal keys remain cursor controls during active editing.
-                if (event.type == KeyEventType.KeyDown) {
-                    if (editing) stopEditing()
-                    focusManager.moveFocus(direction)
-                }
-                true
-            } else if (event.nativeKeyEvent.keyCode in setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
-                val code = event.nativeKeyEvent.keyCode
-                when {
-                    event.type == KeyEventType.KeyDown && !editing -> { activationKey = code; true }
-                    event.type == KeyEventType.KeyUp && activationKey == code -> { activate(); true }
-                    // Enter DOWN may submit and make the field read-only. Its
-                    // matching UP belongs to that submission, not a new click.
-                    event.type == KeyEventType.KeyUp && !editing -> true
-                    else -> false
-                }
-            } else false
-        }.pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial); activate() } },
-        readOnly = !editing, singleLine = true, interactionSource = interactionSource,
-        cursorBrush = SolidColor(Color.White), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, lineHeight = 18.sp, color = Color.White),
-        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Search,
-            keyboardType = keyboardType, capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false,
-            showKeyboardOnFocus = false),
-        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { stopEditing(); submit() }),
-        decorationBox = { inner ->
-            OutlinedTextFieldDefaults.DecorationBox(value = value, innerTextField = inner, enabled = true,
-                singleLine = true, visualTransformation = VisualTransformation.None, interactionSource = interactionSource,
-                placeholder = { Text(label, maxLines = 1, fontSize = 13.sp, lineHeight = 18.sp,
-                    overflow = TextOverflow.Ellipsis) }, colors = fieldColors,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                container = { OutlinedTextFieldDefaults.Container(enabled = true, isError = false,
-                    interactionSource = interactionSource, colors = fieldColors, shape = fieldShape,
-                    focusedBorderThickness = 2.dp, unfocusedBorderThickness = 1.dp) })
-        })
-}
+    editRequested: () -> Unit = {}, compact: Boolean = false, activationState: PortalSearchActivation? = null, submit: () -> Unit) =
+    PortalSearchField(value, change, label, modifier, keyboardType, activationRequest, editFinished, editRequested, compact, activationState, submit)
 
 internal fun torrentSize(bytes: Long): String = when {
     bytes >= 1024L * 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f GB", bytes / (1024.0 * 1024 * 1024))

@@ -35,6 +35,145 @@ class SearchLayoutDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
 
+    @Test fun compactHomeHeroRetainsFullButtonsAndHorizontalFocus() {
+        val host = instrumentation.startActivitySync(Intent(instrumentation.targetContext, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val play = FocusRequester()
+        val card = DiscoveryCard(1, false, "The Hunger Games: Sunrise on the Reaping",
+            overview = "Return to the world of Panem twenty-four years before the original story. ".repeat(4),
+            date = "2026-01-01", rating = 7.8, genres = listOf("Science Fiction", "Action"))
+        try {
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
+                Box(Modifier.fillMaxWidth().height(240.dp)) {
+                    DiscoveryHero(card, null, 240.dp, landscape = true, compact = true, detail = false,
+                        loading = false, inList = false, playRequester = play, infoRequester = remember { FocusRequester() },
+                        play = {}, add = {}, info = {}, onFocus = {}, onDown = {}, previous = {}, next = {},
+                        carousel = true, index = 0, count = 10, playLabel = "Open", openDetails = true)
+                }
+            } } }
+            await("Hero is mounted") { label("Open") != null }
+            val minimum = (44 * host.resources.displayMetrics.density).toInt()
+            for (name in listOf("Open", "My List", "Previous featured title", "Next featured title")) {
+                val node = label(name) ?: find(root()) { it.contentDescription?.toString() == name }!!
+                assertTrue("$name keeps its full button height", bounds(clickable(node)).height() >= minimum)
+            }
+            instrumentation.runOnMainSync { play.requestFocus() }
+            await("Open is focused") { focused("Open") }
+            for (name in listOf("My List", "Previous featured title", "Next featured title")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                await("Right reaches $name") { focused(name) }
+            }
+            for (name in listOf("Previous featured title", "My List", "Open")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                await("Left reaches $name") { focused(name) }
+            }
+        } finally {
+            instrumentation.runOnMainSync { host.finish() }
+            currentHost = null
+            instrumentation.setInTouchMode(true)
+        }
+    }
+
+    @Test fun sharedPortalMenusNavigateAndSearchWithoutChangingWidth() {
+        val host = instrumentation.startActivitySync(Intent(instrumentation.targetContext, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        currentHost = host
+        val initial = FocusRequester()
+        var expanded by mutableStateOf(false)
+        var query by mutableStateOf("")
+        var activation by mutableIntStateOf(0)
+        var mode by mutableIntStateOf(0)
+        var optionsClicks by mutableIntStateOf(0)
+        var editorMounted by mutableStateOf(true)
+        val activationState = PortalSearchActivation()
+        fun control(name: String) = find(root()) { it.contentDescription?.toString() == name }
+        fun editor() = find(root()) { it.isEditable || it.className?.toString()?.endsWith("EditText") == true }
+        val labels = listOf("Home", "Movies", "Series", "My List")
+        try {
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme(colorScheme = NikColors) {
+                val config = Configuration(LocalConfiguration.current).apply {
+                    screenWidthDp = if (mode == 1) 800 else 1200
+                    screenHeightDp = if (mode == 1) 400 else 750
+                    if (mode == 2) uiMode = Configuration.UI_MODE_TYPE_TELEVISION
+                }
+                CompositionLocalProvider(LocalConfiguration provides config) {
+                    Box(Modifier.fillMaxSize().safeDrawingPadding()
+                        .initialFocusEntry(initial, enabled = !expanded, entryHandled = expanded)) {
+                        PortalWideNavigation("Fixture", {}, {}, labels.mapIndexed { index, label ->
+                            PortalMenuItem(label, Icons.Default.PlayArrow, index == 0,
+                                if (index == 0) Modifier.focusRequester(initial) else Modifier) {}
+                        }, searchOpen = expanded, openSearch = { expanded = true; activation++ },
+                            closeSearch = { expanded = false; query = "" },
+                            query = { if (editorMounted) PortalSearchField(query, { query = it }, "Search titles", it,
+                                androidx.compose.ui.text.input.KeyboardType.Text, activationRequest = activation, compact = true,
+                                activationState = activationState, submit = {}) else Spacer(it) },
+                            options = { PortalOptionsButton("Options", it) { optionsClicks++ } })
+                    }
+                }
+            } } }
+            for (layout in 0..2) {
+                instrumentation.runOnMainSync { mode = layout }
+                await("Menu ready in layout $layout") { control("Home") != null }
+                instrumentation.setInTouchMode(false)
+                instrumentation.runOnMainSync { initial.requestFocus() }
+                await("Home focused") { focused("Home") }
+                for (name in labels.drop(1) + "Options") {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("Shared menu Right reaches $name") { focused(name) }
+                }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Options is clickable") { optionsClicks == layout + 1 }
+                for (name in labels.reversed() + listOf("Search", "Back")) {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                    await("Shared menu Left reaches $name") { focused(name) }
+                }
+                val menuRight = bounds(clickable(control("Options")!!)).right
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Search editor opens in layout $layout") { editor()?.isFocused == true && WindowInsetsVisible(host) }
+                assertTrue(bounds(clickable(control("Close search")!!)).right <= menuRight + 2)
+                editor()!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "friends")
+                })
+                // Real Fire TV uses its own floating IME and is verified on the
+                // device. A TV Configuration override on a tablet is a layout test.
+                if (layout != 2) {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+                    await("Submit hides keyboard without losing editor") { !WindowInsetsVisible(host) && editor()?.isFocused == true }
+                    if (layout == 0) {
+                        instrumentation.runOnMainSync { editorMounted = false }
+                        await("Details remove the search editor") { editor() == null }
+                        instrumentation.runOnMainSync { editorMounted = true }
+                        await("Returning restores the editor") { editor() != null }
+                        instrumentation.waitForIdleSync()
+                        assertFalse("Returning from details must not replay the old keyboard request", WindowInsetsVisible(host))
+                        assertTrue(editor()!!.performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+                        await("Returned query accepts focus without opening keyboard") { editor()?.isFocused == true && !WindowInsetsVisible(host) }
+                    }
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                    await("OK reopens keyboard in layout $layout") { WindowInsetsVisible(host) && editor()?.isFocused == true && host.hasWindowFocus() }
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                    await("Back hides keyboard and retains search in layout $layout") { !WindowInsetsVisible(host) && expanded && host.hasWindowFocus() && control("Close search") != null }
+                }
+                if (layout != 2) {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                    await("Left exits the returned editor to Search") { focused("Search") }
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("Right returns to read-only editor") { editor()?.isFocused == true && !WindowInsetsVisible(host) }
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    await("Right exits the editor to X") { focused("Close search") }
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                } else assertTrue(clickable(control("Close search")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                await("X closes and clears query") { !expanded && query.isEmpty() && focused("Search") }
+            }
+        } finally { instrumentation.runOnMainSync { host.finish() }; currentHost = null }
+    }
+
+    private fun WindowInsetsVisible(host: PlaybackFixtureHostActivity) =
+        host.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+
     @Test fun inlineTabletSearchKeepsHeaderGeometryAndReturnsFocusWithoutFallback() {
         val host = instrumentation.startActivitySync(Intent(instrumentation.targetContext, PlaybackFixtureHostActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
@@ -108,13 +247,18 @@ class SearchLayoutDeviceTest {
             val artworkWithKeyboard = artworkBounds.get()
             val input = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "friends") }
             assertTrue(queryNode()!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, input))
+            val shortWindow = host.resources.configuration.screenHeightDp < 480
+            if (shortWindow) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                await("Short window dismisses keyboard before inspecting results") { !WindowInsetsVisible(host) && app.value.searchOpen }
+            }
             await("Attached filters and results appear") { typeNode("Series") != null && label(series.title) != null && label(movie.title) != null }
             assertTrue("Filters are below the menu query", bounds(typeNode("Series")!!).top > bounds(queryNode()!!).bottom)
             assertTrue("Filters attach directly below the query", bounds(typeNode("Series")!!).top - bounds(queryNode()!!).bottom <
                 (24 * host.resources.displayMetrics.density).toInt())
             assertTrue(clickable(typeNode("Series")!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             await("Filter preserves query and scopes results") { app.value.searchQuery == "friends" && label(movie.title) == null && label(series.title) != null }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            if (!shortWindow) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             await("First Back dismisses IME while keeping search open") { app.value.searchOpen && host.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == false }
             instrumentation.waitForIdleSync()
             assertEquals("Keyboard must not resize the artwork underlay", artworkWithKeyboard, artworkBounds.get())

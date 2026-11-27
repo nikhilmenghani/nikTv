@@ -21,7 +21,6 @@ import com.nikhil.niktv.discovery.*
 import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.usesPhoneLayout
-import com.nikhil.niktv.ui.usesShortWideLayout
 import kotlinx.coroutines.delay
 
 internal data class TorrentHomeActions(
@@ -65,7 +64,6 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
     val device = LocalConfiguration.current
     val television = LocalContext.current.isTvLikeDevice(device)
     val phone = device.usesPhoneLayout(television)
-    val short = device.usesShortWideLayout(television)
     val density = LocalDensity.current
     var activity by remember { mutableStateOf(HeroActivity(false, false, false, false, false, false)) }
     var preview by remember { mutableStateOf<DiscoveryCard?>(null) }
@@ -182,7 +180,9 @@ internal fun TorrentHomeContent(state: TorrentHomeState, library: TorrentLibrary
         heroFocusEntry = { runCatching { focus.requester("home:hero").requestFocus() }.getOrDefault(false) },
         hero = { focused, down, up ->
             Box(Modifier.fillMaxWidth().onPlaced { focus.placed("home:hero") }) {
-                DiscoveryHero(hero, null, heroHeight, landscape = true, compact = short, detail = false,
+            // The recycled frame uses IPTV Home's compact hero budget, including on TV.
+            // The full-size variant consumes that frame before the action row is measured.
+            DiscoveryHero(hero, null, heroHeight, landscape = true, compact = true, detail = false,
                     loading = hero == null && state.shelves.any { it.loading },
                     inList = hero != null && library.isSaved(hero),
                     playRequester = focus.requester("home:hero"), infoRequester = remember { FocusRequester() },

@@ -101,7 +101,7 @@ internal fun TorrentPreparationDialog(state: TorrentPortalState, cancel: () -> U
                         }
                     }
                     itemsIndexed(state.files, key = { _, file -> "file:${file.index}" }) { index, file ->
-                        val target = targets.getOrPut(file.index) { FocusRequester() }
+                        val target = remember(file.index) { targets.getOrPut(file.index) { FocusRequester() } }
                         TorrentPreparationFileCard(file, download, Modifier.focusRequester(target).onFocusChanged {
                             if (it.isFocused) lastFocusedFile = file.index
                         }.focusProperties {

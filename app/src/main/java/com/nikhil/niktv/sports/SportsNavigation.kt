@@ -31,6 +31,10 @@ import com.nikhil.niktv.discovery.PortalOptionsMenu
 import com.nikhil.niktv.discovery.PortalPhoneDock
 import com.nikhil.niktv.discovery.PortalPhoneHeader
 import com.nikhil.niktv.discovery.PortalWideHeader
+import com.nikhil.niktv.discovery.PortalWideNavigation
+import com.nikhil.niktv.discovery.PortalMenuItem
+import com.nikhil.niktv.discovery.PortalSearchField
+import com.nikhil.niktv.discovery.PortalSearchActivation
 import com.nikhil.niktv.discovery.discoveryTabIndicator
 import com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout
 import com.nikhil.niktv.ui.isTvLikeDevice
@@ -45,23 +49,28 @@ internal data class SportsHeaderAction(val label: String, val icon: ImageVector,
 @Composable
 internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsHeaderAction>,
     backFocus: FocusRequester, menuFocus: FocusRequester, downFocus: FocusRequester? = null,
-    navigation: @Composable (Modifier) -> Unit) {
+    menuItems: List<PortalMenuItem>, query: String = "", setQuery: (String) -> Unit = {},
+    searchFocus: FocusRequester = remember { FocusRequester() }, closeSearch: (() -> Unit)? = null,
+    searchPlaceholder: String = "Find a team or channel") {
     val phone = sportsPhoneLayout()
     val viewer = com.nikhil.niktv.ui.LocalSelectedUserProfile.current
     val openProfiles = com.nikhil.niktv.ui.LocalOpenUserProfiles.current
     val firstAction = remember { FocusRequester() }
     var expanded by remember { mutableStateOf(false) }
+    var searchActivation by remember { mutableIntStateOf(0) }
+    val searchActivationState = remember { PortalSearchActivation() }
+    val searchAction = actions.firstOrNull { it.label.startsWith("Search ") }
     fun close(action: (() -> Unit)? = null) {
         // Establish the surviving origin before replacing the popup with a dialog.
         runCatching { menuFocus.requestFocus() }
         action?.invoke()
         expanded = false
     }
-    @Composable fun options() {
+    @Composable fun options(modifier: Modifier = Modifier) {
         Box {
             PortalOptionsButton(if (title == "Playfy TV") "Playfy options" else "Sports options",
                 selected = actions.any { it.label == "Categories" && it.selected },
-                modifier = Modifier.focusRequester(menuFocus)
+                modifier = modifier.focusRequester(menuFocus)
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && downFocus != null) {
                             runCatching { downFocus.requestFocus() }; true
@@ -69,7 +78,7 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
                     }, open = { expanded = true })
             PortalOptionsMenu(expanded, { close() },
                 modifier = Modifier.initialFocusEntry(firstAction)) {
-                actions.forEachIndexed { index, action ->
+                actions.filter { phone || it !== searchAction }.forEachIndexed { index, action ->
                     NikDropdownMenuItem(text = { Text(action.label, color = Color.White) },
                         leadingIcon = { Icon(action.icon, null, tint = Color.White) },
                         trailingIcon = { if (action.selected) Icon(Icons.Default.Check, null, tint = Color.White) },
@@ -81,12 +90,14 @@ internal fun SportsHeader(title: String, back: () -> Unit, actions: List<SportsH
         }
     }
     if (!phone) {
-        PortalWideHeader(viewer?.name.orEmpty(), openProfiles) {
-            DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
-                focusHint = false, modifier = Modifier.focusRequester(backFocus), onClick = back)
-            navigation(Modifier.weight(1f, fill = false))
-            options()
-        }
+        PortalWideNavigation(viewer?.name.orEmpty(), openProfiles, back, menuItems,
+            backModifier = Modifier.focusRequester(backFocus), searchOpen = searchAction?.selected == true,
+            openSearch = searchAction?.let { action -> { searchActivation++; if (!action.selected) action.onClick() } },
+            closeSearch = { closeSearch?.invoke() ?: searchAction?.onClick?.invoke() },
+            query = { modifier -> PortalSearchField(query, setQuery, searchPlaceholder,
+                modifier.focusRequester(searchFocus), androidx.compose.ui.text.input.KeyboardType.Text,
+                activationRequest = searchActivation, compact = true, activationState = searchActivationState, submit = {}) },
+            options = { options(it) })
     } else {
         PortalPhoneHeader {
             viewer?.let { profile ->

@@ -148,7 +148,7 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
             scroll.scrollToItem(0); previousCollection = state.collectionId; previousCatalogue = catalogue
         }
     }
-    LaunchedEffect(searchVisible) { if (searchVisible) { withFrameNanos { }; runCatching { search.requestFocus() } } }
+    LaunchedEffect(searchVisible) { if (compact && searchVisible) { withFrameNanos { }; runCatching { search.requestFocus() } } }
     val visible = remember(state.videos, query) { state.videos.filter { it.title.contains(query.trim(), true) } }
     val sections = remember(state.sections, state.videos, query) {
         state.sections.ifEmpty { listOf(CricketVideoSection(null, "Featured highlights", state.videos)) }
@@ -162,7 +162,7 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
         lastFocusKey?.takeIf { validFocus }?.let { requesters.getOrPut(it) { FocusRequester() } } ?: header
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
-        .initialFocusEntry(initial)) {
+        .initialFocusEntry(initial, enabled = !searchVisible, entryHandled = searchVisible)) {
         val title = state.collections.firstOrNull { it.id == state.collectionId }?.title ?: "Highlights"
         val headerActions = buildList {
             add(SportsHeaderAction("Categories", Icons.Default.Category) { selectTab(SportsTab.CATEGORIES) })
@@ -173,19 +173,14 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
             add(SportsHeaderAction("Cricbuzz configuration", Icons.Default.Key, onClick = importConfiguration))
         }
         SportsHeader(title, { if (state.collectionId != null) selectCollection(null) else onClose() },
-            headerActions, backFocus, menuFocus, downFocus = versionFocus) { modifier ->
-            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                sportsMainTabs.forEach { tab ->
-                    DiscoveryAction(tab.title, tab.navigationIcon, horizontalPadding = 10.dp, selected = tab == SportsTab.HIGHLIGHTS,
-                        modifier = Modifier.focusRequester(tabFocus.getValue(tab))
-                            .onPreviewKeyEvent {
-                                if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) {
-                                    versionFocus.requestFocus()
-                                } else false
-                            }, onClick = { selectTab(tab) })
-                }
-            }
-        }
+            headerActions, backFocus, menuFocus, downFocus = versionFocus,
+            menuItems = sportsMainTabs.map { tab ->
+                com.nikhil.niktv.discovery.PortalMenuItem(tab.title, tab.navigationIcon, tab == SportsTab.HIGHLIGHTS,
+                    Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent {
+                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) versionFocus.requestFocus() else false
+                    }) { selectTab(tab) }
+            }, query = query, setQuery = { query = it }, searchFocus = search,
+            closeSearch = { searchVisible = false; query = "" }, searchPlaceholder = "Find a team or video")
       Column(Modifier.weight(1f).padding(horizontal = if (compact) 14.dp else 24.dp).padding(top = 10.dp),
           verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (!compact && state.collectionId != null) Text(title, color = Color.White,
@@ -214,7 +209,7 @@ internal fun CricketHighlightsContent(state: CricketHighlightsState, onClose: ()
         if (state.loading) SportsLoading("Loading cricket videos")
         if (state.selected == null) state.error?.let { SportsFailure(it, refresh) }
         if (state.configured) {
-            if (searchVisible) OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().focusRequester(search).onPreviewKeyEvent {
+            if (compact && searchVisible) OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().focusRequester(search).onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) {
                     runCatching { entry.requestFocus() }.getOrDefault(false)
                 } else false

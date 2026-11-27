@@ -9,8 +9,11 @@ import androidx.compose.ui.platform.LocalWindowInfo
 
 /** Choose the entry target before an automatic first-child focus can be painted. */
 @Composable
-internal fun Modifier.initialFocusEntry(target: FocusRequester, enabled: Boolean = true): Modifier {
+internal fun Modifier.initialFocusEntry(target: FocusRequester, enabled: Boolean = true, entryHandled: Boolean = false): Modifier {
     val entry = remember(target) { InitialFocusEntry() }
+    // An explicitly opened editor/overlay already owns entry, even when the
+    // default tab has been removed from composition before the first D-pad use.
+    if (entryHandled) entry.request { true }
     val windowFocused = LocalWindowInfo.current.isWindowFocused
     LaunchedEffect(target, enabled, windowFocused) {
         if (enabled && windowFocused) {

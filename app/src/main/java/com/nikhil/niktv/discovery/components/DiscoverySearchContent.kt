@@ -331,7 +331,7 @@ internal fun DiscoverySearchContent(
             activateSearchField()
         }
     }
-    val imeVisible = WindowInsets.isImeVisible
+    val imeVisible = com.nikhil.niktv.discovery.rememberPortalImeVisibility()
     LaunchedEffect(searchEditing, imeVisible) {
         if (!searchEditing) {
             editSessionSawIme = false

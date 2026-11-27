@@ -87,9 +87,9 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
         apply()
         statusOpen = false; sportOpen = false; availabilityOpen = false; groupsOpen = false
     }
-    fun closeSearch() { editing = false; searchOpen = false; setQuery(""); keyboard?.hide(); restore(optionsAction) }
+    fun closeSearch() { editing = false; searchOpen = false; setQuery(""); keyboard?.hide(); if (compact) restore(optionsAction) }
     BackHandler(searchOpen && selected == null) { closeSearch() }
-    LaunchedEffect(searchOpen) { if (searchOpen) { withFrameNanos { }; runCatching { searchFocus.requestFocus() }; if (editing) keyboard?.show() } }
+    LaunchedEffect(searchOpen) { if (compact && searchOpen) { withFrameNanos { }; runCatching { searchFocus.requestFocus() }; if (editing) keyboard?.show() } }
     LaunchedEffect(state.collection?.id, state.importing, state.libraryError) {
         if (addOpen && !state.importing && state.libraryError == null && state.collection?.custom == true) addOpen = false
     }
@@ -105,7 +105,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
     val initial = portalEntryFocus ?: if (selected != null) sourceFocus.getOrNull(lastSource ?: 0) ?: backFocus else if (restoreOrigin) originFocus else headerFocus
     fun tileRequester(key: String): FocusRequester = if (restoreOrigin && key == lastTile) originFocus else tileFocus.getOrPut(key) { FocusRequester() }
     Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).windowInsetsPadding(WindowInsets.safeDrawing)
-        .initialFocusEntry(initial)) {
+        .initialFocusEntry(initial, enabled = !searchOpen, entryHandled = searchOpen)) {
         val headerActions = buildList {
             add(SportsHeaderAction("Categories", Icons.Default.Category, state.tab == SportsTab.CATEGORIES) { selectTab(SportsTab.CATEGORIES) })
             if (selected == null) add(SportsHeaderAction("Search sports", Icons.Default.Search, searchOpen) {
@@ -133,21 +133,17 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
             add(SportsHeaderAction("Stream compatibility: ${resolverMode.title}", Icons.Default.Settings) { resolverOpen = true })
         }
         SportsHeader(state.source.title, back, headerActions, backFocus, optionsAction,
-            downFocus = if (selected != null) sourceFocus.firstOrNull() else gridEntry) { modifier ->
-            Row(modifier.horizontalScroll(rememberScrollState()).focusGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                sportsMainTabs.forEach { tab ->
-                    DiscoveryAction(tab.title, tab.navigationIcon, horizontalPadding = 10.dp, selected = state.tab == tab,
-                        modifier = Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
-                            val target = when { selected != null -> sourceFocus.firstOrNull() ?: backFocus
-                                showsAvailability && state.availabilityFilter != SportsAvailabilityFilter.ALL &&
-                                    availableKeys.none { state.availabilityFilter.includes(state.channelFlags[it]) } -> optionsAction
-                                else -> gridEntry }
+            downFocus = if (selected != null) sourceFocus.firstOrNull() else gridEntry,
+            menuItems = sportsMainTabs.map { tab ->
+                com.nikhil.niktv.discovery.PortalMenuItem(tab.title, tab.navigationIcon, state.tab == tab,
+                    Modifier.focusRequester(tabFocus.getValue(tab)).onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                            val target = if (selected != null) sourceFocus.firstOrNull() ?: backFocus else gridEntry
                             runCatching { target.requestFocus() }; true
-                        }, onClick = { keyboard?.hide(); selectTab(tab) })
-                }
-            }
-        }
+                        } else false
+                    }) { keyboard?.hide(); selectTab(tab) }
+            }, query = query, setQuery = setQuery, searchFocus = searchFocus, closeSearch = ::closeSearch,
+            searchPlaceholder = if (state.tab == SportsTab.EVENTS && !state.favouritesOnly) "Find a team or event" else "Find a channel or category")
       Column(Modifier.weight(1f).padding(horizontal = if (compact) 14.dp else 24.dp).padding(top = 10.dp),
           verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (selected != null) {
@@ -169,7 +165,7 @@ internal fun SportsBrowseContent(state: SportsState, now: Instant, sport: String
                     style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (state.collection?.custom == true) DiscoveryAction("Playlist options", Icons.Default.MoreHoriz, iconOnly = true) { contextCategory = state.collection }
             }
-            if (searchOpen) Box(Modifier.fillMaxWidth()) {
+            if (compact && searchOpen) Box(Modifier.fillMaxWidth()) {
                 SeriesEpisodeSearchField(query, setQuery, ::closeSearch, readOnly = !editing,
                 modifier = Modifier.focusRequester(searchFocus).onPreviewKeyEvent {
                     if (!editing && it.type == KeyEventType.KeyUp && it.key in listOf(Key.DirectionCenter, Key.Enter)) { editing = true; keyboard?.show(); true } else false
