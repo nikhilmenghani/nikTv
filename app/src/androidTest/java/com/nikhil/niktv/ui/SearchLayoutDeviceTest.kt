@@ -44,6 +44,7 @@ class SearchLayoutDeviceTest {
         val shared = SharedDiscoveryHeader()
         val homeFocus = FocusRequester()
         val queryFocus = AtomicReference<FocusRequester?>()
+        val artworkBounds = AtomicReference<androidx.compose.ui.geometry.Rect?>()
         val focusEvents = java.util.concurrent.CopyOnWriteArrayList<String>()
         val movie = MediaItem("movie", "Friends movie fixture", null, null, searchResultType = SearchContentType.MOVIES)
         val series = MediaItem("series", "Friends series fixture", null, null, searchResultType = SearchContentType.SERIES)
@@ -60,7 +61,9 @@ class SearchLayoutDeviceTest {
                 CompositionLocalProvider(LocalSharedDiscoveryHeader provides shared) {
                     val tab = homeFocus; val body = remember { FocusRequester() }
                     if (app.value.searchOpen) DiscoverySearchScreen(app.value,
-                        back = { app.value = app.value.closeSearchNavigation() }, select = {}, navigate = {}) {
+                        back = { app.value = app.value.closeSearchNavigation() }, select = {}, navigate = {},
+                        underlay = { Box(Modifier.fillMaxSize().safeDrawingPadding()
+                            .onGloballyPositioned { artworkBounds.set(it.boundsInWindow()) }) }) {
                         DiscoverySearchContent(app.value, close = { app.value = app.value.closeSearchNavigation() },
                             setType = { app.value = app.value.copy(searchType = it, searchResults = results(it)) }, setCategory = {},
                             setQuery = { app.value = app.value.copy(searchQuery = it, searchResults = results(app.value.searchType)) }, search = {},
@@ -101,6 +104,8 @@ class SearchLayoutDeviceTest {
             assertTrue("Editor stays in the menu row: $menuTop / ${bounds(queryNode()!!).top}", kotlin.math.abs(menuTop - bounds(queryNode()!!).top) <= 12)
             assertEquals("Opening search preserves the original menu width", menuWidth, shared.menuWidth)
             assertTrue("Search must not grow beyond the original menu", bounds(clickable(control("Close search")!!)).right <= menuRight + 2)
+            await("Artwork underlay is measured") { artworkBounds.get() != null }
+            val artworkWithKeyboard = artworkBounds.get()
             val input = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "friends") }
             assertTrue(queryNode()!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, input))
             await("Attached filters and results appear") { typeNode("Series") != null && label(series.title) != null && label(movie.title) != null }
@@ -111,6 +116,8 @@ class SearchLayoutDeviceTest {
             await("Filter preserves query and scopes results") { app.value.searchQuery == "friends" && label(movie.title) == null && label(series.title) != null }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             await("First Back dismisses IME while keeping search open") { app.value.searchOpen && host.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == false }
+            instrumentation.waitForIdleSync()
+            assertEquals("Keyboard must not resize the artwork underlay", artworkWithKeyboard, artworkBounds.get())
             instrumentation.setInTouchMode(false)
             instrumentation.runOnMainSync { queryFocus.get()!!.requestFocus() }
             await("Query accepts remote focus without opening IME") { queryNode()?.isFocused == true }

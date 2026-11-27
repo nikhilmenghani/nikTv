@@ -83,7 +83,10 @@ internal fun DiscoverySearchScreen(
         LocalInlineSearchClose provides closeSearch, LocalInlineSearchProgress provides if (phone) null else reveal.value) {
       Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
         if (!phone) {
-            Box(Modifier.fillMaxSize().focusProperties { onEnter = { cancelFocusChange() } }.focusGroup()) {
+            // The keyboard belongs to the search editor, not the retained browse scene.
+            // Prevent its safeDrawing padding from shrinking/re-cropping the artwork.
+            Box(Modifier.fillMaxSize().consumeWindowInsets(WindowInsets.ime.exclude(WindowInsets.systemBars))
+                .focusProperties { onEnter = { cancelFocusChange() } }.focusGroup()) {
                 CompositionLocalProvider(LocalSuppressDiscoveryHeader provides true) { underlay() }
             }
             Box(Modifier.fillMaxSize().focusProperties { canFocus = false }
